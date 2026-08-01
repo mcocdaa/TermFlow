@@ -64,6 +64,8 @@ describe('TerminalView', () => {
     expect(wrapper.get('[data-computer-name]').text()).toBe('设计工作站')
     expect(wrapper.get('[data-connection-status]').text()).toContain('正在连接')
     expect(wrapper.get('[data-term-name]').text()).toBe('产品开发')
+    expect(wrapper.get('[data-action="edit-term-name"]').text()).toBe('')
+    expect(wrapper.get('[data-action="edit-term-name"]').find('svg').exists()).toBe(true)
     expect(wrapper.get('.terminal-frame').attributes('data-display-mode')).toBe('font-100')
 
     const canvas = wrapper.findComponent(TerminalCanvas)

@@ -11,14 +11,19 @@
 - Installation Credential：只能为本机注册 Instance；
 - Instance Credential：只能连接并上报一个指定 Instance。
 
-B 只存 token 的 SHA-256 哈希；注册码单次使用且十分钟过期。A 必须保存可用的
-Installation/Instance 原始凭据，因此它们只写入本机明确的 `0600` 文件；父目录为
-`0700`，普通模型 repr、stdout 和日志保持遮蔽。
+B 只存 token 的 SHA-256 哈希；注册码最多成功使用一次且默认 60 秒过期。关闭生成
+注册码的 Web 页面不会撤销已经复制出去的码；它仍会在首次成功使用或 B 记录的到期点
+失效。A 必须保存可用的 Installation/Instance 原始凭据，因此它们只写入本机明确的
+`0600` 文件；父目录为 `0700`，普通模型 repr、stdout 和日志保持遮蔽。
 
 Web C 的登录页把 Admin Token 交换为 8 小时内存会话。浏览器只得到 `HttpOnly`、
 `SameSite=Strict` Cookie；HTTPS 部署使用 `Secure` 和 `__Host-` 前缀。WebSocket 握手还
 检查精确 Origin allowlist。Admin Token 不写 localStorage、sessionStorage、URL 或前端
 日志。curl 和原生客户端仍可使用 Bearer Header。
+
+Computer 的注册时间由 B 创建 Installation 时记录，最近在线时间由 B 收到 A 的注册、
+心跳或拓扑更新时记录；两者都以 UTC 存储和传输，不依赖 A 的本地时钟。Web C 按当前
+访问设备的时区显示，并带时区标识。
 
 ## 本地边界
 

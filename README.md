@@ -32,7 +32,7 @@ export TERMFLOW_ALLOW_INSECURE_LOOPBACK=true
 uv run --package termflow-control-plane termflow-control serve --host 127.0.0.1 --port 8000
 ```
 
-另一个终端创建十分钟有效的一次性注册码：
+另一个终端创建 60 秒有效的一次性注册码：
 
 ```bash
 uv run --package termflow-control-plane termflow-control enrollment create
