@@ -71,6 +71,36 @@ async function clickPaneCenter(page: Page, pane: PaneGeometry) {
   return point
 }
 
+async function expectWordSelection(
+  page: Page,
+  terminalOutputFrames: Buffer[],
+  pane: PaneGeometry,
+  suffix: string,
+  exitCopyMode = false,
+) {
+  const firstWord = `LEFT${suffix}`
+  const secondWord = `RIGHT${suffix}`
+  await page.locator('.terminal-host textarea').focus()
+  if (exitCopyMode) await page.keyboard.press('q')
+  await page.keyboard.type(String.raw`printf '\033[2J\033[H${firstWord}    ${secondWord}'`)
+  const outputStart = terminalOutputFrames.length
+  await page.keyboard.press('Enter')
+  await expect.poll(() => Buffer.concat(terminalOutputFrames.slice(outputStart)).toString('utf8')).toContain(secondWord)
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  await expect(page.locator('.xterm')).toHaveClass(/enable-mouse-events/)
+  const secondWordColumn = pane.left + firstWord.length + 4 + Math.floor(secondWord.length / 2)
+  const selectionTarget = await terminalPoint(page, secondWordColumn, pane.top)
+  await page.keyboard.down('Shift')
+  await page.mouse.dblclick(selectionTarget.x, selectionTarget.y)
+  await page.keyboard.up('Shift')
+  const copied = await page.locator('.xterm').evaluate((element) => {
+    const clipboard = new DataTransfer()
+    element.dispatchEvent(new ClipboardEvent('copy', { bubbles: true, cancelable: true, clipboardData: clipboard }))
+    return clipboard.getData('text/plain')
+  })
+  expect(copied).toBe(secondWord)
+}
+
 test('uses the real dashboard, themes, terminal transport, and responsive controls', async ({ page }, testInfo) => {
   const terminalFrames: Buffer[] = []
   const terminalOutputFrames: Buffer[] = []
@@ -266,6 +296,7 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
     const [, rightPane] = await selectLeftPaneWithKeyboard(page)
     await clickPaneCenter(page, rightPane)
     await expect.poll(async () => (await panesForTerm(page)).find((pane) => pane.active)?.pane_id).toBe(rightPane.pane_id)
+    await expectWordSelection(page, terminalOutputFrames, rightPane, 'FIFTY')
   } else {
     await page.getByRole('button', { name: '快捷操作' }).click()
     await expect(page.getByLabel('移动端 Tmux 操作')).toBeVisible()
@@ -319,27 +350,7 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
     }).toEqual({ col: target.col, row: target.row })
     expect(await frame.evaluate((element) => ({ left: element.scrollLeft, top: element.scrollTop }))).toEqual(scrollBefore)
 
-    const firstWord = 'LEFTWORD'
-    const secondWord = 'RIGHTWORD'
-    await page.locator('.terminal-host textarea').focus()
-    await page.keyboard.press('q')
-    await page.keyboard.type(String.raw`printf '\033[2J\033[H${firstWord}    ${secondWord}'`)
-    const outputStart = terminalOutputFrames.length
-    await page.keyboard.press('Enter')
-    await expect.poll(() => Buffer.concat(terminalOutputFrames.slice(outputStart)).toString('utf8')).toContain(secondWord)
-    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-    await expect(page.locator('.xterm')).toHaveClass(/enable-mouse-events/)
-    const secondWordColumn = rightPane.left + firstWord.length + 4 + Math.floor(secondWord.length / 2)
-    const selectionTarget = await terminalPoint(page, secondWordColumn, rightPane.top)
-    await page.keyboard.down('Shift')
-    await page.mouse.dblclick(selectionTarget.x, selectionTarget.y)
-    await page.keyboard.up('Shift')
-    const copied = await page.locator('.xterm').evaluate((element) => {
-      const clipboard = new DataTransfer()
-      element.dispatchEvent(new ClipboardEvent('copy', { bubbles: true, cancelable: true, clipboardData: clipboard }))
-      return clipboard.getData('text/plain')
-    })
-    expect(copied).toBe(secondWord)
+    await expectWordSelection(page, terminalOutputFrames, rightPane, 'FIT', true)
   }
 
   if (screenshotDir) await page.screenshot({ path: `${screenshotDir}/${testInfo.project.name}.png` })
