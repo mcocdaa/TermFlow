@@ -1,0 +1,49 @@
+@layer tokens {
+  :root,
+  :root[data-theme='graphite-signal'] {
+    color-scheme: dark;
+    --color-page: #101419;
+    --color-panel: #171d24;
+    --color-elevated: #202832;
+    --color-terminal: #080b0f;
+    --color-terminal-foreground: #f2f5f7;
+    --color-terminal-selection: #30413d;
+    --terminal-black: #1b222a;
+    --terminal-red: #ff6b7a;
+    --terminal-green: #42d392;
+    --terminal-yellow: #f6c85f;
+    --terminal-blue: #70a5eb;
+    --terminal-magenta: #c792ea;
+    --terminal-cyan: #63d6e5;
+    --terminal-white: #d8dee9;
+    --terminal-bright-black: #66717c;
+    --terminal-bright-red: #ff8894;
+    --terminal-bright-green: #6ee7b7;
+    --terminal-bright-yellow: #ffe08a;
+    --terminal-bright-blue: #9bc3ff;
+    --terminal-bright-magenta: #dfadff;
+    --terminal-bright-cyan: #8ce9f1;
+    --terminal-bright-white: #ffffff;
+    --color-border: #34404d;
+    --color-text-primary: #f2f5f7;
+    --color-text-secondary: #b8c2cc;
+    --color-text-muted: #8795a3;
+    --color-accent: #42d392;
+    --color-accent-contrast: #07120d;
+    --color-focus: #8fe9bd;
+    --color-online: #42d392;
+    --color-warning: #f6c85f;
+    --color-danger: #ff6b7a;
+    --shadow-panel: 0 18px 55px #00000059;
+    --radius-sm: 0.35rem;
+    --radius-md: 0.65rem;
+    --radius-lg: 1rem;
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-5: 1.5rem;
+    --font-ui: Inter, ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  }
+}
