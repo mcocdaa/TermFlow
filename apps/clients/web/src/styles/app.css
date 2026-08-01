@@ -103,9 +103,12 @@
   .terminal-identity, .terminal-titlebar-actions { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
   .terminal-identity { overflow: hidden; font-family: var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
   .terminal-titlebar-actions { margin-inline-start: auto; }
-  .terminal-metadata { min-width: 0; display: grid; line-height: 1.15; }
-  .terminal-name-row { display: flex; align-items: center; min-width: 0; }
-  .terminal-name-row strong { overflow: hidden; text-overflow: ellipsis; }
+  .terminal-metadata { min-width: 0; line-height: 1.15; }
+  .terminal-identifiers { min-width: 0; display: flex; align-items: center; gap: var(--space-2); white-space: nowrap; }
+  .terminal-name-trigger { min-width: 0; max-width: min(22rem, 36vw); border: 0; border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); background: transparent; text-align: start; }
+  .terminal-name-trigger strong, .terminal-identifiers small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .terminal-name-trigger:hover, .terminal-name-trigger:focus-visible { background: var(--color-elevated); color: var(--color-accent); }
+  .terminal-identifiers small { min-width: 0; }
   .terminal-metadata small, .terminal-status { color: var(--color-text-muted); font-size: 0.75rem; }
   .terminal-name-form { display: flex; align-items: center; gap: var(--space-1); margin: 0; }
   .terminal-name-form input { width: min(18rem, 35vw); min-height: 2rem; padding: var(--space-1) var(--space-2); }
@@ -123,10 +126,12 @@
   .floating-menu button { min-height: 2.5rem; border: 0; border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); background: transparent; text-align: start; }
   .floating-menu button:hover, .floating-menu button:focus-visible { background: var(--color-elevated); }
   .display-menu button { display: flex; align-items: center; gap: var(--space-2); }
-  .action-menu { width: min(26rem, 80vw); max-height: min(35rem, 70dvh); overflow: auto; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-1); }
+  .action-menu { width: min(26rem, 80vw); max-height: min(35rem, 70dvh); overflow: visible; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-1); }
   .action-search { grid-column: 1 / -1; }
-  .action-menu button { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-  .action-menu small { color: var(--color-text-muted); font-family: var(--font-mono); }
+  .action-menu button { position: relative; display: flex; align-items: center; justify-content: flex-start; overflow: visible; }
+  .action-binding-tooltip { position: absolute; z-index: 4; inset: 0; display: flex; align-items: center; justify-content: center; gap: var(--space-1); padding: var(--space-2); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-accent) 16%, var(--color-elevated)); color: var(--color-text-secondary); font-size: 0.76rem; line-height: 1.4; opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
+  .action-binding-tooltip code { padding: 0 var(--space-1); border: 1px solid color-mix(in srgb, var(--color-accent) 38%, var(--color-border)); border-radius: 0.25rem; background: var(--color-terminal); color: var(--color-accent); font-family: var(--font-mono); }
+  .action-menu button:hover .action-binding-tooltip, .action-menu button:focus-visible .action-binding-tooltip { opacity: 1; }
   .action-menu .destructive { color: var(--color-danger); }
   .mobile-action-trigger, .mobile-action-drawer, .mobile-keybar { display: none; }
   .danger-button { min-height: 2.75rem; border: 1px solid var(--color-danger); border-radius: var(--radius-md); padding: var(--space-2) var(--space-4); background: var(--color-danger); color: var(--color-panel); font-weight: 750; }

@@ -1,9 +1,9 @@
 <template>
   <section class="terminal-view" aria-labelledby="terminal-title">
     <h1 id="terminal-title" class="sr-only">远程终端</h1>
-    <TerminalTitlebar :title="termName" :computer-name="computerName" :status="connectionStatus" v-model:display-mode="displayMode" @rename="updateTermName">
-      <PaneFocusMenu :panes="panes" @focus="terminalCanvas?.focusPane($event)" @reset="terminalCanvas?.resetViewport()" />
-      <TmuxActionMenu :bindings="bindings" :active-pane-id="activePane?.pane_id ?? null" :disabled="connectionStatus !== 'connected'" @action="runAction" @request-close="requestClose" />
+    <TerminalTitlebar :title="termName" :computer-name="computerName" :status="connectionStatus" :display-menu-open="openMenu === 'display'" v-model:display-mode="displayMode" @update:display-menu-open="setMenuOpen('display', $event)" @rename="updateTermName">
+      <PaneFocusMenu :panes="panes" :open="openMenu === 'pane'" @update:open="setMenuOpen('pane', $event)" @focus="terminalCanvas?.focusPane($event)" @reset="terminalCanvas?.resetViewport()" />
+      <TmuxActionMenu :bindings="bindings" :active-pane-id="activePane?.pane_id ?? null" :disabled="connectionStatus !== 'connected'" :open="openMenu === 'tmux'" @update:open="setMenuOpen('tmux', $event)" @action="runAction" @request-close="requestClose" />
     </TerminalTitlebar>
     <TerminalCanvas ref="terminalCanvas" :term-id="termId" :display-mode="displayMode" :transform-input="transformInput" @bindings="bindings = $event" @reset-input="modifierResetKey = $event" @status="connectionStatus = $event" @authentication-required="handleAuthenticationRequired" @action-result="handleActionResult" />
     <p v-if="renameError" class="terminal-error" role="alert">{{ renameError }}</p>
@@ -48,6 +48,8 @@ const displayMode = computed<DisplayMode>({
 const termName = ref(`Term · ${termId.value}`)
 const computerName = ref('Computer 未报告')
 const connectionStatus = ref<TerminalConnectionStatus>('connecting')
+type DesktopMenu = 'display' | 'tmux' | 'pane'
+const openMenu = ref<DesktopMenu | null>(null)
 const renameError = ref('')
 const panes = ref<PaneTopologyDto[]>([])
 const terminalCanvas = ref<InstanceType<typeof TerminalCanvas> | null>(null)
@@ -60,6 +62,7 @@ let topologyGeneration = 0
 const activePane = computed(() => panes.value.find((pane) => pane.active) ?? panes.value[0])
 const closePane = computed(() => panes.value.find((pane) => pane.pane_id === closePaneId.value) ?? (closePaneId.value ? { pane_id: closePaneId.value, title: closePaneId.value } as PaneTopologyDto : null))
 const transformInput = (value: string | Uint8Array) => typeof value === 'string' ? modifiers.consume(value) : value
+function setMenuOpen(menu: DesktopMenu, open: boolean) { openMenu.value = open ? menu : (openMenu.value === menu ? null : openMenu.value) }
 function runAction(actionId: TerminalActionId, paneId: string | null) { terminalCanvas.value?.sendAction(actionId, { targetPaneId: paneId ?? undefined }) }
 function requestClose(paneId: string | null, returnFocus: HTMLElement | null) { closeReturnFocus.value = returnFocus; closePaneId.value = paneId }
 function confirmClose(payload: { paneId: string; confirmed: true }) { terminalCanvas.value?.sendAction('close_pane', { targetPaneId: payload.paneId, confirmed: true }); closePaneId.value = null }
