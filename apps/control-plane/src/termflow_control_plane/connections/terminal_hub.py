@@ -46,6 +46,8 @@ class BrowserTerminal:
         self._last_seq = 0
         self.close_requested = False
         self.remote_closed = False
+        self.input_bytes = 0
+        self.input_audited = False
 
     @property
     def terminated(self) -> bool:

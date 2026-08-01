@@ -151,11 +151,6 @@ class TerminalRouter:
 
     async def input(self, terminal: BrowserTerminal, data: bytes) -> None:
         payload = TerminalInputPayload.from_bytes(terminal.terminal_id, data)
-        await self._record(
-            "terminal.input",
-            terminal,
-            input_bytes=len(data),
-        )
         try:
             await self._enqueue(
                 terminal,
@@ -170,6 +165,17 @@ class TerminalRouter:
                 error_code=exc.code,
             )
             raise
+        terminal.input_bytes += len(data)
+
+    async def _record_input_total(self, terminal: BrowserTerminal) -> None:
+        if terminal.input_audited or terminal.input_bytes == 0:
+            return
+        terminal.input_audited = True
+        await self._record(
+            "terminal.input",
+            terminal,
+            input_bytes=terminal.input_bytes,
+        )
 
     async def action(
         self,
@@ -213,6 +219,7 @@ class TerminalRouter:
         terminal.close_requested = True
         current = await self._hub.current(terminal.instance_id)
         error_code: str | None = None
+        await self._record_input_total(terminal)
         await self._record(
             "terminal.close",
             terminal,
