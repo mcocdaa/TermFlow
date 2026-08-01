@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     trusted_web_origins: Annotated[tuple[str, ...], NoDecode] = ()
     browser_session_ttl_seconds: int = Field(default=8 * 60 * 60, ge=60)
     browser_session_capacity: int = Field(default=4096, ge=1)
+    enrollment_token_ttl_seconds: int = Field(default=60, ge=10, le=600)
     terminal_max_frame_bytes: int = Field(default=65_536, ge=1, le=65_536)
     terminal_input_rate_bytes_per_second: int = Field(default=256 * 1024, ge=1)
     terminal_queue_max_messages: int = Field(default=256, ge=1)
