@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
 from uuid import UUID
@@ -98,7 +99,6 @@ class _CurrentTerminal:
     size: TerminalSize
     size_task: asyncio.Task[None] | None = None
     opened_announced: bool = False
-    startup_output: list[RemoteOutputChunk] = field(default_factory=list)
 
 
 class TerminalManager:
@@ -138,6 +138,7 @@ class TerminalManager:
         self._size_poll_seconds = size_poll_seconds
         self._current: _CurrentTerminal | None = None
         self._grace_task: asyncio.Task[None] | None = None
+        self._backpressure_task: asyncio.Task[None] | None = None
         self._bridge_is_connected = True
         self._lock = asyncio.Lock()
 
@@ -155,7 +156,25 @@ class TerminalManager:
     def _send(self, message_type: MessageType, payload: BaseModel) -> bool:
         if not self._bridge_is_connected:
             return False
-        return self._publish(self._message(message_type, payload))
+        published = self._publish(self._message(message_type, payload))
+        if (
+            not published
+            and message_type is not MessageType.TERMINAL_CLOSED
+            and message_type.value.startswith("terminal.")
+            and self._current is not None
+            and self._backpressure_task is None
+        ):
+            self._backpressure_task = asyncio.create_task(
+                self._close_for_backpressure()
+            )
+        return published
+
+    async def _close_for_backpressure(self) -> None:
+        try:
+            async with self._lock:
+                await self._close_current("internal_error")
+        finally:
+            self._backpressure_task = None
 
     def _send_topology(self, topology: TopologySnapshot | None = None) -> None:
         payload = TopologyChangedPayload(topology=topology or self._topology_provider())
@@ -194,7 +213,6 @@ class TerminalManager:
         ):
             return
         if not current.opened_announced:
-            current.startup_output.append(chunk)
             return
         self._publish_output(chunk)
 
@@ -262,9 +280,13 @@ class TerminalManager:
             raise
         self._send_opened_and_bindings(current)
         current.opened_announced = True
-        for chunk in current.startup_output:
+        try:
+            startup_output = remote.replay_after(0)
+        except ReplayGap:
+            await self._close_current("stream_gap")
+            return
+        for chunk in startup_output:
             self._publish_output(chunk)
-        current.startup_output.clear()
         current.size_task = asyncio.create_task(self._size_loop(current))
 
     def _send_opened_and_bindings(self, current: _CurrentTerminal) -> None:
@@ -319,6 +341,17 @@ class TerminalManager:
             ),
         )
 
+    async def _discard_current(self) -> None:
+        """Detach a stale proxy without declaring the browser terminal final."""
+
+        current = self._current
+        if current is None:
+            return
+        self._current = None
+        if current.size_task is not None:
+            current.size_task.cancel()
+        await current.remote.close()
+
     async def _handle_open(self, request: TerminalOpenPayload) -> None:
         current = self._current
         if current is not None and request.terminal_id == current.remote.terminal_id:
@@ -332,7 +365,7 @@ class TerminalManager:
                 try:
                     replay = current.remote.replay_after(after_seq)
                 except ReplayGap:
-                    await self._close_current("stream_gap")
+                    await self._discard_current()
                 else:
                     self._cancel_grace()
                     self._send_opened_and_bindings(current)
@@ -340,17 +373,9 @@ class TerminalManager:
                         await self._on_output(chunk)
                     return
             else:
-                await self._close_current("stream_gap")
+                await self._discard_current()
         elif current is not None:
             await self._close_current("replaced")
-        elif request.resume_stream_id is not None:
-            self._send(
-                MessageType.TERMINAL_CLOSED,
-                TerminalClosedPayload(
-                    terminal_id=request.terminal_id,
-                    reason="stream_gap",
-                ),
-            )
         self._cancel_grace()
         await self._open_fresh(request.terminal_id)
 
@@ -446,7 +471,10 @@ class TerminalManager:
                 if current is None or current.remote.terminal_id != terminal_input.terminal_id:
                     self._invalid_message(message)
                 else:
-                    await current.remote.write(terminal_input.to_bytes())
+                    try:
+                        await current.remote.write(terminal_input.to_bytes())
+                    except Exception:
+                        await self._close_current("internal_error")
             elif message.type is MessageType.TERMINAL_ACTION:
                 await self._handle_action(cast(TerminalActionPayload, payload))
             elif message.type is MessageType.TERMINAL_CLOSE:
@@ -462,6 +490,12 @@ class TerminalManager:
 
     async def close(self) -> None:
         self._cancel_grace()
+        backpressure_task = self._backpressure_task
+        self._backpressure_task = None
+        if backpressure_task is not None:
+            backpressure_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await backpressure_task
         async with self._lock:
             if self._current is not None:
                 current = self._current

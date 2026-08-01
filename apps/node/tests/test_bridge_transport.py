@@ -13,7 +13,13 @@ from termflow_node.config.models import InstallationConfig
 from termflow_node.control_plane_client import ControlPlaneClient
 from termflow_node.instances.models import InstanceLifecycle, LocalInstance
 from termflow_node.instances.store import InstanceStore
-from termflow_protocol import MessageType, TopologySnapshot, WireMessage
+from termflow_protocol import (
+    MessageType,
+    TerminalClosedPayload,
+    TerminalOutputPayload,
+    TopologySnapshot,
+    WireMessage,
+)
 
 
 def _instance(tmp_path, *, token: str | None) -> LocalInstance:
@@ -210,3 +216,54 @@ async def test_all_producers_share_one_serial_send_queue_and_lifecycle(tmp_path)
     await asyncio.wait_for(task, timeout=1)
     assert websocket.max_concurrent == 1
     assert listener.events == ["connected", "disconnected"]
+
+
+@pytest.mark.asyncio
+async def test_terminal_teardown_has_reserved_transport_capacity(tmp_path) -> None:
+    instance = _instance(tmp_path, token="instance-secret-token")
+    store = InstanceStore(tmp_path / "instances")
+    store.save(instance)
+    transport = BridgeTransport(
+        installation=_installation(),
+        instance=instance,
+        store=store,
+        control_plane=ControlPlaneClient(),
+        topology_provider=lambda: TopologySnapshot(
+            session_id="$0", session_name="main", revision=1, windows=[]
+        ),
+        queue_size=1,
+    )
+    terminal_id = uuid4()
+    stream_id = uuid4()
+    output = WireMessage(
+        type=MessageType.TERMINAL_OUTPUT,
+        instance_id=instance.instance_id,
+        payload=TerminalOutputPayload.from_bytes(
+            terminal_id, stream_id, 1, b"full"
+        ).model_dump(mode="json"),
+    )
+    closed = WireMessage(
+        type=MessageType.TERMINAL_CLOSED,
+        instance_id=instance.instance_id,
+        payload=TerminalClosedPayload(
+            terminal_id=terminal_id, reason="internal_error"
+        ).model_dump(mode="json"),
+    )
+
+    assert transport.enqueue_nowait(output)
+    assert not transport.enqueue_nowait(output)
+    assert transport.enqueue_nowait(closed)
+    replacement_id = uuid4()
+    replacement = WireMessage(
+        type=MessageType.TERMINAL_CLOSED,
+        instance_id=instance.instance_id,
+        payload=TerminalClosedPayload(
+            terminal_id=replacement_id, reason="internal_error"
+        ).model_dump(mode="json"),
+    )
+    assert transport.enqueue_nowait(replacement)
+    assert (await transport._outbound.get()).type is MessageType.TERMINAL_OUTPUT
+    latest_close = await transport._outbound.get()
+    assert latest_close.type is MessageType.TERMINAL_CLOSED
+    assert latest_close.payload["terminal_id"] == str(replacement_id)
+    assert transport._outbound.empty()

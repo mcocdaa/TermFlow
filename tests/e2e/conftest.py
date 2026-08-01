@@ -204,13 +204,17 @@ class TermFlowSystem:
         return False
 
     def topology(self, instance_id: UUID) -> dict[str, object]:
-        response = httpx.get(
-            f"{self.base_url}/api/v1/instances/{instance_id}/topology",
-            headers=self.admin_headers,
-            timeout=2,
-        )
-        response.raise_for_status()
-        return response.json()["topology"]
+        deadline = time.monotonic() + 5
+        while True:
+            response = httpx.get(
+                f"{self.base_url}/api/v1/instances/{instance_id}/topology",
+                headers=self.admin_headers,
+                timeout=2,
+            )
+            if response.status_code != 409 or time.monotonic() >= deadline:
+                response.raise_for_status()
+                return response.json()["topology"]
+            time.sleep(0.05)
 
     def first_pane_id(self, instance_id: UUID) -> str:
         topology = self.topology(instance_id)

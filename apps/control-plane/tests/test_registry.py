@@ -7,7 +7,12 @@ from termflow_control_plane.connections.registry import (
     InstanceOffline,
     LiveInstanceRegistry,
 )
-from termflow_protocol import MessageType, TerminalInputPayload, WireMessage
+from termflow_protocol import (
+    MessageType,
+    TerminalClosePayload,
+    TerminalInputPayload,
+    WireMessage,
+)
 
 
 @pytest.mark.asyncio
@@ -41,6 +46,30 @@ async def test_full_connection_queue_fails_fast() -> None:
     await registry.enqueue(instance_id, message)
     with pytest.raises(ConnectionBackpressure):
         await registry.enqueue(instance_id, message)
+
+
+@pytest.mark.asyncio
+async def test_terminal_close_uses_reserved_connection_queue_slot() -> None:
+    registry = LiveInstanceRegistry(queue_size=1)
+    instance_id = uuid4()
+    connection = await registry.register(instance_id)
+    heartbeat = WireMessage(
+        type=MessageType.BRIDGE_HEARTBEAT,
+        instance_id=instance_id,
+        payload={},
+    )
+    await registry.enqueue(instance_id, heartbeat)
+    close = WireMessage(
+        type=MessageType.TERMINAL_CLOSE,
+        instance_id=instance_id,
+        payload=TerminalClosePayload(
+            terminal_id=uuid4(), reason="client_closed"
+        ).model_dump(mode="json"),
+    )
+
+    assert registry.enqueue_current_nowait(instance_id, close)
+    assert (await connection.outbound.get()).type is MessageType.BRIDGE_HEARTBEAT
+    assert (await connection.outbound.get()).type is MessageType.TERMINAL_CLOSE
 
 
 @pytest.mark.asyncio

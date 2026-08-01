@@ -71,6 +71,17 @@ def bridge_websocket_url(server_url: str) -> str:
 
 
 class BridgeTransport:
+    _CONTROL_RESERVE = 8
+    _CONTROL_TYPES = {
+        MessageType.BRIDGE_HEARTBEAT,
+        MessageType.TOPOLOGY_CHANGED,
+        MessageType.TERMINAL_OPENED,
+        MessageType.TERMINAL_BINDINGS,
+        MessageType.TERMINAL_SIZE,
+        MessageType.TERMINAL_ACTION_RESULT,
+        MessageType.TERM_RENAME_RESULT,
+    }
+
     def __init__(
         self,
         *,
@@ -92,7 +103,10 @@ class BridgeTransport:
         self._topology_provider = topology_provider
         self._connect = connect
         self._heartbeat_interval = heartbeat_interval
-        self._outbound: asyncio.Queue[WireMessage] = asyncio.Queue(maxsize=queue_size)
+        self._normal_queue_size = queue_size
+        self._outbound: asyncio.Queue[WireMessage] = asyncio.Queue(
+            maxsize=queue_size + self._CONTROL_RESERVE + 1
+        )
         self._backoff = backoff or ReconnectBackoff()
         self._sleep = sleep
         self._connection_listener: ConnectionListener | None = None
@@ -102,11 +116,33 @@ class BridgeTransport:
         return self._instance
 
     def enqueue_nowait(self, message: WireMessage) -> bool:
+        if message.type is MessageType.TERMINAL_CLOSED:
+            self._discard_queued_terminal_closed()
+        queued = self._outbound.qsize()
+        if message.type is MessageType.TERMINAL_CLOSED:
+            limit = self._normal_queue_size + self._CONTROL_RESERVE + 1
+        elif message.type in self._CONTROL_TYPES:
+            limit = self._normal_queue_size + self._CONTROL_RESERVE
+        else:
+            limit = self._normal_queue_size
+        if queued >= limit:
+            return False
         try:
             self._outbound.put_nowait(message)
         except asyncio.QueueFull:
             return False
         return True
+
+    def _discard_queued_terminal_closed(self) -> None:
+        """Keep only the latest one-owner terminal teardown under stalled I/O."""
+
+        retained: list[WireMessage] = []
+        while not self._outbound.empty():
+            queued = self._outbound.get_nowait()
+            if queued.type is not MessageType.TERMINAL_CLOSED:
+                retained.append(queued)
+        for queued in retained:
+            self._outbound.put_nowait(queued)
 
     def set_connection_listener(self, listener: ConnectionListener) -> None:
         self._connection_listener = listener
@@ -220,7 +256,7 @@ class BridgeTransport:
     async def _heartbeat_loop(self) -> None:
         while True:
             await self._sleep(self._heartbeat_interval)
-            await self._outbound.put(
+            self.enqueue_nowait(
                 WireMessage(
                     type=MessageType.BRIDGE_HEARTBEAT,
                     instance_id=self._instance.instance_id,

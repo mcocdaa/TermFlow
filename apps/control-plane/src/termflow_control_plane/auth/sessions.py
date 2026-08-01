@@ -35,6 +35,7 @@ class BrowserSessionStore:
         ttl: timedelta,
         capacity: int,
         clock: Callable[[], datetime] | None = None,
+        on_revoke: Callable[[str], None] | None = None,
     ) -> None:
         if ttl <= timedelta(0):
             raise ValueError("ttl must be positive")
@@ -43,6 +44,7 @@ class BrowserSessionStore:
         self._ttl = ttl
         self._capacity = capacity
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._on_revoke = on_revoke
         self._sessions: OrderedDict[str, datetime] = OrderedDict()
 
     def __repr__(self) -> str:
@@ -51,13 +53,21 @@ class BrowserSessionStore:
     def _prune(self, now: datetime) -> None:
         expired = [digest for digest, expiry in self._sessions.items() if expiry <= now]
         for digest in expired:
-            self._sessions.pop(digest, None)
+            self._remove(digest)
+
+    def _remove(self, digest: str) -> bool:
+        if self._sessions.pop(digest, None) is None:
+            return False
+        if self._on_revoke is not None:
+            self._on_revoke(digest)
+        return True
 
     def create(self) -> tuple[str, datetime]:
         now = self._clock()
         self._prune(now)
         while len(self._sessions) >= self._capacity:
-            self._sessions.popitem(last=False)
+            oldest = next(iter(self._sessions))
+            self._remove(oldest)
         secret = secrets.token_urlsafe(32)
         expires_at = now + self._ttl
         self._sessions[hash_token(secret)] = expires_at
@@ -73,7 +83,7 @@ class BrowserSessionStore:
     def invalidate(self, secret: str | None) -> bool:
         if not secret:
             return False
-        return self._sessions.pop(hash_token(secret), None) is not None
+        return self._remove(hash_token(secret))
 
     def session_key(self, secret: str | None) -> str | None:
         """Return an authenticated digest suitable for in-memory ownership only."""
@@ -86,6 +96,11 @@ class BrowserSessionStore:
     def live_count(self) -> int:
         self._prune(self._clock())
         return len(self._sessions)
+
+    def prune_expired(self) -> None:
+        """Revoke expired sessions even when no new browser request arrives."""
+
+        self._prune(self._clock())
 
 
 def browser_cookie_policy(settings: Settings) -> BrowserCookiePolicy:

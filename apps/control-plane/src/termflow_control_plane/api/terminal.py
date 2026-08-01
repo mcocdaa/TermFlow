@@ -51,6 +51,7 @@ router = APIRouter(prefix="/api/v1/terms", tags=["terminal"])
 
 _ERROR_MESSAGES = {
     "backpressure": "The terminal connection could not keep up.",
+    "capability_unavailable": "The Term does not support full terminal access.",
     "frame_too_large": "The terminal frame exceeds the configured limit.",
     "input_rate_exceeded": "The terminal input rate limit was exceeded.",
     "instance_offline": "The Term is offline.",

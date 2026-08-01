@@ -63,7 +63,12 @@ class PayloadModel(BaseModel):
 class BridgeHelloPayload(PayloadModel):
     protocol_version: Literal[1] = 1
     name: str = Field(min_length=1, max_length=128)
-    capabilities: tuple[str, ...] = ("plain_text_input", "topology", "pane_output")
+    capabilities: tuple[str, ...] = (
+        "plain_text_input",
+        "topology",
+        "pane_output",
+        "full_terminal",
+    )
 
 
 class BridgeHeartbeatPayload(PayloadModel):

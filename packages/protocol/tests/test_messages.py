@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 from termflow_protocol import (
+    BridgeHelloPayload,
     PaneOutputPayload,
     PaneSnapshot,
     TerminalActionPayload,
@@ -16,6 +17,10 @@ from termflow_protocol import (
     WireMessage,
     parse_payload,
 )
+
+
+def test_bridge_advertises_full_terminal_capability_by_default() -> None:
+    assert "full_terminal" in BridgeHelloPayload(name="term").capabilities
 
 
 def test_output_bytes_round_trip_as_base64() -> None:

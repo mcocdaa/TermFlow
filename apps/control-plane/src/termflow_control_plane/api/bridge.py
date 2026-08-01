@@ -70,12 +70,15 @@ async def _receive_messages(
 
         payload = parse_payload(message.type, message.payload)
         if message.type is MessageType.BRIDGE_HELLO:
-            cast(BridgeHelloPayload, payload)
+            hello = cast(BridgeHelloPayload, payload)
+            connection.capabilities = frozenset(hello.capabilities)
             connection.last_heartbeat = datetime.now(UTC)
             await repositories.instances.touch(
                 connection.instance_id,
                 now=connection.last_heartbeat,
             )
+            await terminal_router.bridge_connected(connection.instance_id)
+            connection.hello_ready.set()
         elif message.type is MessageType.BRIDGE_HEARTBEAT:
             cast(BridgeHeartbeatPayload, payload)
             connection.last_heartbeat = datetime.now(UTC)
@@ -170,7 +173,6 @@ async def connect_bridge(websocket: WebSocket) -> None:
 
     await websocket.accept()
     connection = await registry.register(instance.id)
-    await terminal_router.bridge_connected(instance.id)
     await event_hub.publish(_presence_message(connection, "online"))
     tasks = {
         asyncio.create_task(_send_messages(websocket, connection)),

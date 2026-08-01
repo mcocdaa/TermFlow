@@ -35,6 +35,7 @@ from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.database import Database
 from termflow_control_plane.persistence.repositories import RepositoryBundle
 from termflow_control_plane.routing.router import CommandRouter
+from termflow_control_plane.routing.terminal_audit import TerminalAuditWriter
 from termflow_control_plane.routing.terminal_router import TerminalRouter
 from termflow_control_plane.web import install_web_hosting
 
@@ -79,6 +80,12 @@ async def _heartbeat_expiry_loop(
         )
 
 
+async def _browser_session_expiry_loop(store: BrowserSessionStore) -> None:
+    while True:
+        await asyncio.sleep(1)
+        store.prune_expired()
+
+
 def create_app(*, settings: Settings, database: Database | None = None) -> FastAPI:
     active_database = database or Database(settings.database_url)
 
@@ -91,22 +98,34 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
             audit=app.state.repositories.audit,
             settings=settings,
         )
+        app.state.terminal_audit = TerminalAuditWriter(app.state.repositories.audit)
+        app.state.terminal_audit.start()
         app.state.terminal_router = TerminalRouter(
             registry=app.state.registry,
             hub=app.state.terminal_hub,
-            audit=app.state.repositories.audit,
+            audit=app.state.terminal_audit,
+            capability_wait_seconds=settings.command_timeout_seconds,
             resume_grace_seconds=settings.terminal_resume_grace_seconds,
         )
         expiry_task = asyncio.create_task(
             _heartbeat_expiry_loop(app.state.registry, app.state.event_hub, settings)
         )
+        session_expiry_task = asyncio.create_task(
+            _browser_session_expiry_loop(app.state.browser_sessions)
+        )
         try:
             yield
         finally:
             expiry_task.cancel()
+            session_expiry_task.cancel()
             with suppress(asyncio.CancelledError):
                 await expiry_task
-            await active_database.dispose()
+            with suppress(asyncio.CancelledError):
+                await session_expiry_task
+            try:
+                await app.state.terminal_audit.close()
+            finally:
+                await active_database.dispose()
 
     app = FastAPI(title="TermFlow Control Plane", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
@@ -115,13 +134,14 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         queue_max_bytes=settings.terminal_queue_max_bytes,
     )
     app.state.event_hub = EventHub(queue_size=settings.event_queue_size)
-    app.state.browser_sessions = BrowserSessionStore(
-        ttl=timedelta(seconds=settings.browser_session_ttl_seconds),
-        capacity=settings.browser_session_capacity,
-    )
     app.state.terminal_hub = TerminalHub(
         queue_max_messages=settings.terminal_queue_max_messages,
         queue_max_bytes=settings.terminal_queue_max_bytes,
+    )
+    app.state.browser_sessions = BrowserSessionStore(
+        ttl=timedelta(seconds=settings.browser_session_ttl_seconds),
+        capacity=settings.browser_session_capacity,
+        on_revoke=app.state.terminal_hub.terminate_session_nowait,
     )
 
     @app.middleware("http")
