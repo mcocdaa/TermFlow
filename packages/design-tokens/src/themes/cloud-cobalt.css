@@ -1,0 +1,30 @@
+@layer tokens {
+  :root[data-theme='cloud-cobalt'] {
+    color-scheme: light;
+    --color-page: #eef4fb;
+    --color-panel: #ffffff;
+    --color-elevated: #e2ebf7;
+    --color-terminal: #07182f;
+    --color-border: #b3c3d8;
+    --color-text-primary: #10243e;
+    --color-text-secondary: #3c5775;
+    --color-text-muted: #687f99;
+    --color-accent: #185adb;
+    --color-accent-contrast: #ffffff;
+    --color-focus: #003ca6;
+    --color-online: #087f5b;
+    --color-warning: #a95f00;
+    --color-danger: #c92a3a;
+    --shadow-panel: 0 18px 55px #17365d24;
+    --radius-sm: 0.35rem;
+    --radius-md: 0.65rem;
+    --radius-lg: 1rem;
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-5: 1.5rem;
+    --font-ui: Inter, ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  }
+}

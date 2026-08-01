@@ -1,0 +1,10 @@
+@layer reset {
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body, #app { min-height: 100%; margin: 0; }
+  body { min-width: 20rem; }
+  button, input, textarea { color: inherit; font: inherit; }
+  button, a { -webkit-tap-highlight-color: transparent; }
+  button { cursor: pointer; }
+  a { color: inherit; }
+  :focus-visible { outline: 0.18rem solid var(--color-focus); outline-offset: 0.18rem; }
+}
