@@ -14,8 +14,8 @@
     "packages/client-ui"
   ],
   "scripts": {
-    "contracts:generate": "python scripts/generate-client-contracts/generate.py",
-    "contracts:check": "python scripts/generate-client-contracts/generate.py --check",
+    "contracts:generate": "uv run --no-cache --frozen --package termflow-protocol python scripts/generate-client-contracts/generate.py",
+    "contracts:check": "uv run --no-cache --frozen --package termflow-protocol python scripts/generate-client-contracts/generate.py --check",
     "test:run": "npm run test:run --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "build:web": "npm run build --workspace @termflow/web-client"

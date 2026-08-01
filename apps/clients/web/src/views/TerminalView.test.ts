@@ -114,7 +114,7 @@ describe('TerminalView', () => {
     expect(wrapper.get('[data-term-name]').text()).toBe('新名字')
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/terms/term-1', expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ name: '新名字' }) }))
 
-    canvas.vm.$emit('action-result', { type: 'terminal.action_result', terminal_id: 'terminal-1', action_id: 'action-1', ok: true })
+    canvas.vm.$emit('action-result', { type: 'terminal.action_result', terminal_id: 'terminal-1', action_id: 'action-1', ok: true, error_code: null })
     await flushPromises()
     expect(fetchMock.mock.calls.filter(([url]) => url === '/api/v1/instances/term-1/topology')).toHaveLength(2)
 

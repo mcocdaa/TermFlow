@@ -27,7 +27,7 @@ describe('TerminalCanvas', () => {
     expect(wrapper.get('.terminal-frame').attributes('data-focused-pane')).toBe('%1')
     callbacks.onOutput(new Uint8Array([1, 2]))
     callbacks.onSize({ rows: 50, cols: 170 })
-    callbacks.onActionResult({ type: 'terminal.action_result', terminal_id: 't1', action_id: 'a1', ok: true })
+    callbacks.onActionResult({ type: 'terminal.action_result', terminal_id: 't1', action_id: 'a1', ok: true, error_code: null })
     await wrapper.vm.$nextTick()
     expect(wrapper.emitted('action-result')).toEqual([[expect.objectContaining({ action_id: 'a1', ok: true })]])
     input('ls\r')
