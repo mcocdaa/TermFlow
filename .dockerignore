@@ -1,6 +1,7 @@
 .git
 .github
 .venv
+.worktrees
 **/__pycache__
 **/.pytest_cache
 **/.mypy_cache
@@ -11,6 +12,8 @@
 **/*.db-wal
 .env
 dist
+**/dist
+**/node_modules
 docs/superpowers
 tests
 apps/**/tests
