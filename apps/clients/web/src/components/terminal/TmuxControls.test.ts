@@ -1,6 +1,7 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import ClosePaneDialog from './ClosePaneDialog.vue'
+import PaneFocusMenu from './PaneFocusMenu.vue'
 import TmuxActionMenu from './TmuxActionMenu.vue'
 
 const bindings = {
@@ -16,6 +17,28 @@ const bindings = {
 }
 
 describe('tmux controls', () => {
+  it('opens desktop action and Pane focus menus only after a click', async () => {
+    const wrapper = mount(TmuxActionMenu, { props: { bindings, activePaneId: '%3' } })
+    const trigger = wrapper.get('[data-action="toggle-tmux-menu"]')
+    await trigger.trigger('mouseenter')
+    expect(wrapper.find('[role="menu"]').exists()).toBe(false)
+    expect(trigger.attributes('aria-expanded')).toBe('false')
+    await trigger.trigger('click')
+    expect(wrapper.get('[role="menu"]')).toBeTruthy()
+    expect(trigger.attributes('aria-expanded')).toBe('true')
+    expect(trigger.find('svg').exists()).toBe(true)
+
+    const panes = [{ pane_id: '%3', window_id: '@1', index: 0, title: 'shell', current_command: 'zsh', active: true, dead: false, left: 0, top: 0, width: 80, height: 24 }]
+    const focus = mount(PaneFocusMenu, { props: { panes } })
+    const focusTrigger = focus.get('[data-action="toggle-pane-focus-menu"]')
+    await focusTrigger.trigger('mouseenter')
+    expect(focus.find('[role="menu"]').exists()).toBe(false)
+    await focusTrigger.trigger('click')
+    expect(focus.get('[role="menu"]')).toBeTruthy()
+    expect(focusTrigger.attributes('aria-expanded')).toBe('true')
+    expect(focusTrigger.find('svg').exists()).toBe(true)
+  })
+
   it('shows server-reported bindings, sends semantic actions, and keeps the mobile drawer hidden initially', async () => {
     const wrapper = mount(TmuxActionMenu, { props: { bindings, activePaneId: '%3' } })
     expect(wrapper.find('[data-mobile-drawer]').exists()).toBe(false)

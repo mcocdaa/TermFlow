@@ -59,10 +59,20 @@ describe('TerminalView', () => {
     expect(wrapper.find('.side-nav').exists()).toBe(false)
     expect(wrapper.find('.mobile-nav').exists()).toBe(false)
     expect(wrapper.get('[data-action="back-dashboard"]').attributes('href')).toBe('/')
+    expect(wrapper.get('[data-action="back-dashboard"]').text()).toBe('')
+    expect(wrapper.get('[data-action="back-dashboard"]').find('svg').exists()).toBe(true)
     expect(wrapper.get('[data-computer-name]').text()).toBe('设计工作站')
     expect(wrapper.get('[data-connection-status]').text()).toContain('正在连接')
     expect(wrapper.get('[data-term-name]').text()).toBe('产品开发')
     expect(wrapper.get('.terminal-frame').attributes('data-display-mode')).toBe('font-100')
+
+    const canvas = wrapper.findComponent(TerminalCanvas)
+    canvas.vm.restoreViewport({ scale: 1.5, panX: -20, panY: -10, focusedPaneId: '%1' })
+    await wrapper.get('[data-action="toggle-display-menu"]').trigger('click')
+    await wrapper.get('[role="menuitemradio"][aria-label="适应窗口"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.terminal-frame').attributes('data-display-mode')).toBe('fit')
+    expect(canvas.vm.captureViewport()).toEqual({ scale: 1, panX: 0, panY: 0, focusedPaneId: null })
 
     Object.defineProperties(window, { innerWidth: { value: 800, configurable: true }, innerHeight: { value: 360, configurable: true } })
     window.dispatchEvent(new Event('resize'))
@@ -72,7 +82,7 @@ describe('TerminalView', () => {
     Object.defineProperties(window, { innerWidth: { value: 360, configurable: true }, innerHeight: { value: 800, configurable: true } })
     window.dispatchEvent(new Event('resize'))
     await flushPromises()
-    expect(wrapper.get('.terminal-frame').attributes('data-display-mode')).toBe('font-100')
+    expect(wrapper.get('.terminal-frame').attributes('data-display-mode')).toBe('fit')
 
     await wrapper.get('[data-action="edit-term-name"]').trigger('click')
     await wrapper.get('[data-term-name-input]').setValue('新名字')
@@ -81,7 +91,7 @@ describe('TerminalView', () => {
     expect(wrapper.get('[data-term-name]').text()).toBe('新名字')
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/terms/term-1', expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ name: '新名字' }) }))
 
-    wrapper.findComponent(TerminalCanvas).vm.$emit('action-result', { type: 'terminal.action_result', terminal_id: 'terminal-1', action_id: 'action-1', ok: true })
+    canvas.vm.$emit('action-result', { type: 'terminal.action_result', terminal_id: 'terminal-1', action_id: 'action-1', ok: true })
     await flushPromises()
     expect(fetchMock.mock.calls.filter(([url]) => url === '/api/v1/instances/term-1/topology')).toHaveLength(2)
 

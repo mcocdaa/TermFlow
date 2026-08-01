@@ -1,6 +1,6 @@
 <template>
   <header class="terminal-titlebar">
-    <RouterLink data-action="back-dashboard" class="terminal-back" to="/" aria-label="返回控制中心">←</RouterLink>
+    <RouterLink data-action="back-dashboard" class="terminal-back" to="/" aria-label="返回控制中心"><ArrowLeft :size="19" aria-hidden="true" /></RouterLink>
     <div class="terminal-identity">
       <span class="terminal-light" :data-status="status" aria-hidden="true" />
       <div class="terminal-metadata">
@@ -24,6 +24,7 @@
 </template>
 
 <script setup lang="ts">
+import { ArrowLeft } from '@lucide/vue'
 import { computed, nextTick, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import type { DisplayMode } from '../../terminal/viewport'

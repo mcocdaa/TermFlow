@@ -49,7 +49,9 @@ describe('accessibility contracts', () => {
     const css = `${readFileSync(resolve(process.cwd(), 'src/styles/reset.css'), 'utf8')}\n${readFileSync(resolve(process.cwd(), 'src/styles/app.css'), 'utf8')}`
     expect(css).toContain(':focus-visible')
     expect(css).toContain('prefers-reduced-motion: no-preference')
-    expect(mount(StatusPill, { props: { online: true } }).text()).toContain('在线')
+    const online = mount(StatusPill, { props: { online: true } })
+    expect(online.text()).toContain('在线')
+    expect(online.get('[aria-hidden="true"]').text()).toBe('')
     expect(mount(StatusPill, { props: { online: false } }).text()).toContain('离线')
   })
 })

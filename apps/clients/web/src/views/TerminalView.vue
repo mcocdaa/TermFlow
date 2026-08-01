@@ -40,7 +40,10 @@ const orientation = ref(orientationFor(window.innerWidth, window.innerHeight))
 const orientationViews = reactive(createOrientationViewState())
 const displayMode = computed<DisplayMode>({
   get: () => orientationViews[orientation.value].displayMode,
-  set: (value) => { orientationViews[orientation.value].displayMode = value },
+  set: (value) => {
+    orientationViews[orientation.value].displayMode = value
+    if (value === 'fit') void nextTick(() => terminalCanvas.value?.resetViewport())
+  },
 })
 const termName = ref(`Term · ${termId.value}`)
 const computerName = ref('Computer 未报告')
