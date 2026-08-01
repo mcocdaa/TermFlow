@@ -18,7 +18,7 @@ curl -fsS -X POST "$TERMFLOW_URL/api/v1/enrollment-tokens" \
 浏览器等同源 C 先交换 HttpOnly 会话 Cookie。示例 cookie jar 只用于演示，不应提交：
 
 ```bash
-curl -fsS -c /tmp/termflow-cookie -X POST "$TERMFLOW_URL/api/v1/session" \
+curl -fsS -c /tmp/termflow-cookie -X POST "$TERMFLOW_URL/api/v1/admin/sessions" \
   -H 'Content-Type: application/json' \
   --data "{\"admin_token\":\"$TERMFLOW_ADMIN_TOKEN\"}"
 curl -fsS -b /tmp/termflow-cookie "$TERMFLOW_URL/api/v1/dashboard"

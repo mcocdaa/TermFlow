@@ -24,7 +24,8 @@ Bridge 与 B 的 JSON 消息均使用版本 1：
 | --- | --- | --- | --- |
 | `GET` | `/healthz` | 无 | 健康检查 |
 | `POST` | `/api/v1/enrollment-tokens` | Admin | 创建一次性注册码 |
-| `POST/DELETE` | `/api/v1/session` | Admin/Cookie | 创建或删除 Web C 会话 |
+| `POST` | `/api/v1/admin/sessions` | Admin | 创建 Web C 会话 |
+| `GET/DELETE` | `/api/v1/admin/session` | Cookie | 检查或删除当前 Web C 会话 |
 | `POST` | `/api/v1/installations/enroll` | 注册码 | 换取 Installation Credential |
 | `POST` | `/api/v1/instances/register` | Installation | 注册/轮换该 Installation 所属 Instance |
 | `GET` | `/api/v1/instances` | Admin | 列出 Instance 与在线状态 |

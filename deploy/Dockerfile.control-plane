@@ -29,10 +29,10 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY packages ./packages
 COPY apps ./apps
-COPY --from=web /workspace/apps/clients/web/dist /app/web
+COPY --from=web /workspace/apps/clients/web/dist /app/frontend-dist
 
 RUN uv sync --frozen --no-dev --package termflow-control-plane \
-    && mkdir -p /app/data /app/web \
+    && mkdir -p /app/data /app/frontend-dist \
     && chown -R termflow:termflow /app
 
 USER termflow

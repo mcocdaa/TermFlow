@@ -29,6 +29,8 @@ def test_docs_explain_computer_term_and_full_terminal_contracts() -> None:
     for phrase in (
         "Computer",
         "Term",
+        "/api/v1/admin/sessions",
+        "/api/v1/admin/session",
         "/api/v1/terms/{instance_id}/terminal",
         "A 权威",
         "HttpOnly",
