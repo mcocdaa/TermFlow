@@ -1,21 +1,38 @@
 <template>
   <div v-if="open" class="dialog-backdrop" @click.self="close">
     <section ref="panel" class="dialog-panel" role="dialog" aria-modal="true" aria-labelledby="enrollment-title" @keydown="onDialogKeydown">
-      <header><div><p class="eyebrow">一次性注册</p><h2 id="enrollment-title">添加 Computer</h2></div><button data-action="close-enrollment" class="icon-button" type="button" aria-label="关闭" @click="close">关闭</button></header>
-      <p>一次 <code>termflow login</code> 代表一台 Computer；随后运行 <code>termflow new --name NAME</code> 可创建相互独立的 Terms。</p>
+      <header>
+        <div><p class="eyebrow">一次性注册</p><h2 id="enrollment-title">添加 Computer</h2></div>
+        <button data-action="close-enrollment" class="icon-button icon-only" type="button" aria-label="关闭" @click="close"><X :size="18" aria-hidden="true" /></button>
+      </header>
       <p v-if="message" role="alert" class="form-error">{{ message }}</p>
-      <button v-if="!code" data-action="create-code" class="primary-button" type="button" :disabled="busy" @click="create">{{ busy ? '正在创建…' : '创建一次性注册码' }}</button>
+      <button v-if="!code" data-action="create-code" class="primary-button" type="button" :disabled="busy" @click="create()">{{ busy ? '正在创建…' : '创建一次性注册码' }}</button>
       <div v-else class="enrollment-secret">
-        <p class="warning-text">此注册码只显示一次，将在 {{ secondsRemaining }} 秒后过期。</p>
-        <output class="registration-code" aria-label="一次性注册码">{{ code }}</output>
-        <code class="login-command">{{ command }}</code>
-        <button data-action="copy-command" class="primary-button" type="button" @click="copy">{{ copied ? '已复制' : '复制登录命令' }}</button>
+        <p class="warning-text">此注册码只显示一次，将在 {{ secondsRemaining }} 秒后过期并自动刷新。</p>
+        <section data-enrollment-field="code" class="enrollment-field">
+          <h3>注册码</h3>
+          <output class="registration-code" aria-label="一次性注册码">{{ code }}</output>
+        </section>
+        <section data-enrollment-field="command" class="enrollment-field">
+          <div class="enrollment-field-heading">
+            <h3>终端执行命令</h3>
+            <span class="help-tooltip">
+              <button data-help="login-command" class="icon-button icon-only" type="button" aria-label="终端执行命令说明" aria-describedby="login-command-help" title="复制到安装有 TermFlow 的电脑上，在终端中执行">
+                <CircleHelp :size="17" aria-hidden="true" />
+              </button>
+              <span id="login-command-help" role="tooltip">复制到安装有 TermFlow 的电脑上，在终端中执行。</span>
+            </span>
+          </div>
+          <code class="login-command">{{ command }}</code>
+        </section>
+        <button data-action="copy-command" class="primary-button enrollment-copy-button" type="button" @click="copy"><Copy :size="17" aria-hidden="true" />{{ copied ? '已复制' : '复制命令' }}</button>
       </div>
     </section>
   </div>
 </template>
 
 <script setup lang="ts">
+import { CircleHelp, Copy, X } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { createEnrollmentCode } from '../../api/computers'
 import { ApiError } from '../../api/http'
@@ -35,7 +52,8 @@ let timer: ReturnType<typeof setInterval> | null = null
 const secondsRemaining = computed(() => expiresAt.value === null ? 0 : Math.max(0, Math.ceil((expiresAt.value - now.value) / 1000)))
 const command = computed(() => code.value ? `termflow login --server ${window.location.origin} --code ${code.value}` : '')
 
-function clearSecret() { code.value = null; expiresAt.value = null; copied.value = false; if (timer !== null) clearInterval(timer); timer = null }
+function stopTimer() { if (timer !== null) clearInterval(timer); timer = null }
+function clearSecret() { code.value = null; expiresAt.value = null; copied.value = false; stopTimer() }
 function close() {
   clearSecret()
   open.value = false
@@ -57,19 +75,28 @@ function onDialogKeydown(event: KeyboardEvent) {
     ;(event.shiftKey ? last : first)?.focus()
   }
 }
-async function create() {
+function startTimer() {
+  stopTimer()
+  timer = setInterval(() => {
+    now.value = Date.now()
+    if (secondsRemaining.value > 0) return
+    clearSecret()
+    if (open.value) void create(true)
+  }, 250)
+}
+async function create(automatic = false) {
+  if (busy.value || !open.value) return
   busy.value = true
   message.value = ''
   try {
     const enrollment = await createEnrollmentCode()
+    if (!open.value) return
     code.value = enrollment.token
     expiresAt.value = new Date(enrollment.expires_at).getTime()
     now.value = Date.now()
-    timer = setInterval(() => {
-      now.value = Date.now()
-      if (secondsRemaining.value <= 0) clearSecret()
-    }, 250)
-  } catch (error) { message.value = error instanceof ApiError ? error.message : '无法创建注册码。' }
+    copied.value = false
+    startTimer()
+  } catch (error) { message.value = error instanceof ApiError ? error.message : automatic ? '注册码刷新失败，请手动重试。' : '无法创建注册码。' }
   finally { busy.value = false }
 }
 async function copy() { if (!command.value) return; await navigator.clipboard.writeText(command.value); copied.value = true }

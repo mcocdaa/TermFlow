@@ -91,7 +91,7 @@ git commit -m "feat(control-plane): expire enrollment codes after sixty seconds"
 Run from `apps/clients/web`:
 
 ```bash
-npm install lucide-vue-next
+npm install @lucide/vue
 ```
 
 Confirm the lockfile records the installed version and its transitive graph.

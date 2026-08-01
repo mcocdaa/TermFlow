@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from termflow_control_plane.auth.tokens import hash_token
 
 
@@ -8,10 +10,13 @@ def test_health_does_not_require_authentication(client) -> None:
 
 
 def test_admin_creates_and_installation_consumes_enrollment(client, admin_headers) -> None:
+    issued_after = datetime.now(UTC)
     issued = client.post("/api/v1/enrollment-tokens", headers=admin_headers)
     assert issued.status_code == 201
     raw = issued.json()["token"]
     assert len(raw) >= 43
+    expires_at = datetime.fromisoformat(issued.json()["expires_at"])
+    assert 59 <= (expires_at - issued_after).total_seconds() <= 61
 
     enrolled = client.post(
         "/api/v1/installations/enroll",

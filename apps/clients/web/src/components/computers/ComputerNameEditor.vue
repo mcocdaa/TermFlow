@@ -6,7 +6,7 @@
       <button data-action="save-name" class="primary-button compact" type="button" :disabled="busy" @click="save">保存</button>
       <button class="text-button compact" type="button" @click="cancel">取消</button>
     </template>
-    <template v-else><strong>{{ currentName }}</strong><button data-action="edit-name" class="icon-button" type="button" aria-label="编辑显示名称" @click="begin">编辑</button></template>
+    <button v-else data-action="edit-name" class="name-edit-trigger" type="button" :aria-label="`修改 Computer 名称：${currentName}`" title="点击修改 Computer 名称" @click="begin"><strong>{{ currentName }}</strong></button>
     <p v-if="message" role="alert" class="form-error">{{ message }}</p>
   </div>
 </template>

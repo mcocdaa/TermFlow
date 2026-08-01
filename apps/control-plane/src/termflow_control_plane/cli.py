@@ -31,7 +31,8 @@ async def _issue_enrollment(settings: Settings) -> str:
         raw_token = issue_token()
         await repositories.enrollments.create(
             hash_token(raw_token),
-            datetime.now(UTC) + timedelta(minutes=10),
+            datetime.now(UTC)
+            + timedelta(seconds=settings.enrollment_token_ttl_seconds),
         )
         return raw_token
     finally:
@@ -40,7 +41,7 @@ async def _issue_enrollment(settings: Settings) -> str:
 
 @enrollment_app.command("create")
 def create_enrollment() -> None:
-    """Create a ten-minute, single-use Installation enrollment token."""
+    """Create a short-lived, single-use Installation enrollment token."""
 
     typer.echo(asyncio.run(_issue_enrollment(_settings())))
 

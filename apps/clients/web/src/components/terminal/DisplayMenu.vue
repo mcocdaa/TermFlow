@@ -1,15 +1,16 @@
 <template>
   <div class="titlebar-menu">
-    <button ref="trigger" data-action="toggle-display-menu" class="titlebar-button" type="button" aria-haspopup="menu" :aria-expanded="open" @click="toggleMenu">显示 <span aria-hidden="true">▾</span></button>
+    <button ref="trigger" data-action="toggle-display-menu" class="titlebar-button" :class="{ 'is-open': open }" type="button" aria-haspopup="menu" :aria-expanded="open" @click="toggleMenu"><MonitorCog :size="16" aria-hidden="true" /><span>显示</span><ChevronDown class="menu-chevron" :size="15" aria-hidden="true" /></button>
     <div v-if="open" class="floating-menu display-menu" role="menu" aria-label="终端显示比例" @keydown.esc.prevent="closeAndFocus" @keydown.down.prevent="moveFocus(1)" @keydown.up.prevent="moveFocus(-1)">
-      <button v-for="choice in choices" ref="choiceButtons" :key="choice.id" type="button" role="menuitemradio" :aria-checked="modelValue === choice.id" @click="select(choice.id)">
-        <span aria-hidden="true">{{ modelValue === choice.id ? '●' : '○' }}</span> {{ choice.label }}
+      <button v-for="choice in choices" ref="choiceButtons" :key="choice.id" type="button" role="menuitemradio" :aria-label="choice.label" :aria-checked="modelValue === choice.id" @click="select(choice.id)">
+        <CircleDot v-if="modelValue === choice.id" :size="16" aria-hidden="true" /><Circle v-else :size="16" aria-hidden="true" /><span>{{ choice.label }}</span>
       </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ChevronDown, Circle, CircleDot, MonitorCog } from '@lucide/vue'
 import { nextTick, ref } from 'vue'
 import type { DisplayMode } from '../../terminal/viewport'
 const props = defineProps<{ modelValue: DisplayMode }>()

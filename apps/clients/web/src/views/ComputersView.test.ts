@@ -26,10 +26,15 @@ describe('ComputersView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('devbox')
+    expect(wrapper.text()).toContain('操作系统')
+    expect(wrapper.text()).not.toContain('平台')
     expect(wrapper.text()).toContain('Linux x86_64')
     expect(wrapper.text()).toContain('1.4.2')
     expect(wrapper.text()).toContain('3 个在线 Term')
-    await wrapper.get('[data-action="edit-name"]').trigger('click')
+    const nameTrigger = wrapper.get('[data-action="edit-name"]')
+    expect(nameTrigger.text()).toBe('主工作站')
+    expect(nameTrigger.attributes('aria-label')).toBe('修改 Computer 名称：主工作站')
+    await nameTrigger.trigger('click')
     await wrapper.get('input[name="display-name"]').setValue('构建主机')
     await wrapper.get('[data-action="save-name"]').trigger('click')
     await flushPromises()
@@ -50,5 +55,30 @@ describe('ComputersView', () => {
     await wrapper.get('[data-action="save-name"]').trigger('click')
     expect(wrapper.get('[role="alert"]').text()).toContain('1 至 128')
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('omits absent identity metadata and explains B-recorded local time', async () => {
+    const sparseComputer = {
+      ...computer,
+      installation_id: 'machine-sparse',
+      display_name: 'Computer',
+      hostname: null,
+      platform: null,
+      client_version: null,
+      terms: [],
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ computers: [sparseComputer] }), { status: 200, headers: { 'content-type': 'application/json' } })))
+    const router = createAppRouter({ sessionStatus: async () => ({ authenticated: true }), history: createMemoryHistory() })
+    await router.push('/computers')
+    await router.isReady()
+    const wrapper = mount(App, { global: { plugins: [router] } })
+    await flushPromises()
+
+    const row = wrapper.get('[data-computer-id="machine-sparse"]')
+    expect(row.text()).not.toContain('未报告 hostname')
+    expect(row.text()).not.toContain('TermFlow null')
+    expect(row.text()).not.toContain('·')
+    expect(wrapper.text()).toContain('由 B 记录，按当前设备时区显示')
+    expect(row.get('time').text()).toMatch(/UTC|GMT|CST/)
   })
 })

@@ -1,19 +1,19 @@
 <template>
   <header class="terminal-titlebar">
-    <RouterLink data-action="back-dashboard" class="terminal-back" to="/" aria-label="返回控制中心">←</RouterLink>
+    <RouterLink data-action="back-dashboard" class="terminal-back" to="/" aria-label="返回控制中心"><ArrowLeft :size="19" aria-hidden="true" /></RouterLink>
     <div class="terminal-identity">
       <span class="terminal-light" :data-status="status" aria-hidden="true" />
       <div class="terminal-metadata">
         <form v-if="editing" class="terminal-name-form" @submit.prevent="save">
           <label class="sr-only" for="terminal-name-input">Term 名称</label>
           <input id="terminal-name-input" ref="nameInput" v-model="draft" data-term-name-input maxlength="128" required @keydown.escape.prevent="cancel" />
-          <button data-action="save-term-name" class="icon-button compact" type="submit">保存</button>
-          <button class="icon-button compact" type="button" @click="cancel">取消</button>
+          <button data-action="save-term-name" class="icon-button icon-only compact" type="submit" aria-label="保存 Term 名称" title="保存"><Check :size="16" aria-hidden="true" /></button>
+          <button class="icon-button icon-only compact" type="button" aria-label="取消修改 Term 名称" title="取消" @click="cancel"><X :size="16" aria-hidden="true" /></button>
           <span v-if="validationError" class="form-error" role="alert">{{ validationError }}</span>
         </form>
         <div v-else class="terminal-name-row">
           <strong data-term-name>{{ title }}</strong>
-          <button data-action="edit-term-name" class="icon-button compact" type="button" aria-label="编辑 Term 名称" @click="startEditing">编辑</button>
+          <button data-action="edit-term-name" class="icon-button icon-only compact" type="button" aria-label="编辑 Term 名称" title="编辑 Term 名称" @click="startEditing"><Pencil :size="15" aria-hidden="true" /></button>
         </div>
         <small data-computer-name>{{ computerName }}</small>
       </div>
@@ -24,6 +24,7 @@
 </template>
 
 <script setup lang="ts">
+import { ArrowLeft, Check, Pencil, X } from '@lucide/vue'
 import { computed, nextTick, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import type { DisplayMode } from '../../terminal/viewport'
