@@ -5,6 +5,7 @@
       <RouterLink class="brand" to="/" aria-label="TermFlow 控制中心">TermFlow</RouterLink>
       <span class="header-context">远程终端控制</span>
       <ThemePicker />
+      <button v-if="sessionState.authenticated" class="text-button" type="button" @click="logout">退出</button>
     </header>
     <aside class="side-nav" aria-label="主导航">
       <RouterLink to="/">控制中心</RouterLink>
@@ -20,5 +21,13 @@
 
 <script setup lang="ts">
 import { RouterLink, RouterView } from 'vue-router'
+import { useRouter } from 'vue-router'
 import ThemePicker from './components/settings/ThemePicker.vue'
+import { logoutSession, sessionState } from './stores/session'
+
+const router = useRouter()
+async function logout() {
+  await logoutSession()
+  await router.replace('/login')
+}
 </script>

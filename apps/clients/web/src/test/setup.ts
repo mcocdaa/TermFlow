@@ -38,4 +38,5 @@ afterEach(() => {
   sessionStorage.clear()
   document.documentElement.removeAttribute('data-theme')
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })

@@ -5,14 +5,12 @@ import './styles/app.css'
 import App from './App.vue'
 import { createAppRouter } from './router'
 import { applyInitialTheme } from './stores/theme'
+import { refreshSession } from './stores/session'
 
 applyInitialTheme()
 
 const router = createAppRouter({
-  sessionStatus: async () => {
-    const response = await fetch('/api/v1/session', { credentials: 'same-origin' })
-    return { authenticated: response.ok }
-  },
+  sessionStatus: refreshSession,
 })
 
 createApp(App).use(router).mount('#app')
