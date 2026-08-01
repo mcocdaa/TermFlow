@@ -46,8 +46,11 @@ onMounted(() => {
 })
 onBeforeUnmount(() => observer?.disconnect())
 watchEffect(() => {
-  if (!presentation.value) return
-  pointer.updateGeometry(frame.value, { width: presentation.value.gridWidth * presentation.value.scale, height: presentation.value.gridHeight * presentation.value.scale })
+  if (!renderedGrid.value) return
+  pointer.updateGeometry(frame.value, {
+    width: renderedGrid.value.width / pointer.state.scale,
+    height: renderedGrid.value.height / pointer.state.scale,
+  })
 })
 watchEffect(() => {
   const size = dimensions.value
@@ -56,16 +59,23 @@ watchEffect(() => {
   let rendered = session.setVisualScale(requested)
   if (!rendered) return
   let applied = requested
-  const renderedWidth = size.cols * rendered.width
-  const renderedHeight = size.rows * rendered.height
-  if (
-    props.displayMode === 'fit'
-    && pointer.state.scale === 1
-    && (renderedWidth > frame.value.width + 1 || renderedHeight > frame.value.height + 1)
-  ) {
+  let fitAttempts = 0
+  while (props.displayMode === 'fit' && pointer.state.scale === 1 && fitAttempts < 8) {
+    const renderedWidth = size.cols * rendered.width
+    const renderedHeight = size.rows * rendered.height
+    if (renderedWidth <= frame.value.width + 1 && renderedHeight <= frame.value.height + 1) break
     const correction = Math.min(1, frame.value.width / renderedWidth, frame.value.height / renderedHeight)
-    applied = requested * correction * 0.999
-    rendered = session.setVisualScale(applied) ?? rendered
+    applied *= correction * 0.999
+    const corrected = session.setVisualScale(applied)
+    if (!corrected) break
+    rendered = corrected
+    const widthStalled = renderedWidth > frame.value.width + 1 && size.cols * rendered.width >= renderedWidth - 0.01
+    const heightStalled = renderedHeight > frame.value.height + 1 && size.rows * rendered.height >= renderedHeight - 0.01
+    if (widthStalled || heightStalled) {
+      applied *= 0.99
+      rendered = session.setVisualScale(applied) ?? rendered
+    }
+    fitAttempts += 1
   }
   appliedVisualScale.value = applied
   renderedCellMetrics.value = rendered

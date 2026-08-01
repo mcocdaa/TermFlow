@@ -64,8 +64,8 @@ async function terminalPoint(page: Page, column: number, row: number) {
 }
 
 async function clickPaneCenter(page: Page, pane: PaneGeometry) {
-  const column = pane.left + pane.width / 2
-  const row = pane.top + pane.height / 2
+  const column = Math.floor(pane.left + pane.width / 2)
+  const row = Math.floor(pane.top + pane.height / 2)
   const point = await terminalPoint(page, column, row)
   await page.mouse.click(point.x, point.y)
   return point
@@ -82,7 +82,7 @@ async function expectWordSelection(
   const secondWord = `RIGHT${suffix}`
   await page.locator('.terminal-host textarea').focus()
   if (exitCopyMode) await page.keyboard.press('q')
-  await page.keyboard.type(String.raw`printf '\033[2J\033[H${firstWord}    ${secondWord}'`)
+  await page.keyboard.type(String.raw`printf '\033[2J\033[HLEFT%s    RIGHT%s' ${suffix} ${suffix}`)
   const outputStart = terminalOutputFrames.length
   await page.keyboard.press('Enter')
   await expect.poll(() => Buffer.concat(terminalOutputFrames.slice(outputStart)).toString('utf8')).toContain(secondWord)
@@ -313,6 +313,9 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
     const documentElement = document.documentElement
     const view = document.querySelector<HTMLElement>('.terminal-view')!
     const frame = document.querySelector<HTMLElement>('.terminal-frame')!
+    const content = document.querySelector<HTMLElement>('.terminal-viewport-content')!
+    const grid = document.querySelector<HTMLElement>('.terminal-grid')!
+    const screen = document.querySelector<HTMLElement>('.xterm-screen')!
     const xtermViewport = document.querySelector<HTMLElement>('.xterm-viewport')!
     const titlebar = document.querySelector<HTMLElement>('.terminal-titlebar')!
     return {
@@ -320,13 +323,21 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
       viewOverflow: view.scrollHeight - view.clientHeight,
       frameOverflow: frame.scrollHeight - frame.clientHeight,
       frameOverflowY: getComputedStyle(frame).overflowY,
+      frameClientHeight: frame.clientHeight,
+      frameScrollHeight: frame.scrollHeight,
+      contentHeight: content.getBoundingClientRect().height,
+      gridHeight: grid.getBoundingClientRect().height,
+      gridTransform: getComputedStyle(grid).transform,
+      screenHeight: screen.getBoundingClientRect().height,
+      visualScale: frame.dataset.visualScale,
+      cellHeight: frame.dataset.cellHeight,
       xtermOverflowY: getComputedStyle(xtermViewport).overflowY,
       titlebarJustify: getComputedStyle(titlebar).justifyContent,
     }
   })
   expect(layout.documentOverflow).toBeLessThanOrEqual(1)
   expect(layout.viewOverflow).toBeLessThanOrEqual(1)
-  expect(layout.frameOverflow).toBeLessThanOrEqual(1)
+  expect(layout.frameOverflow, JSON.stringify(layout)).toBeLessThanOrEqual(1)
   expect(layout.frameOverflowY).toBe('hidden')
   expect(layout.xtermOverflowY).toBe('hidden')
   expect(layout.titlebarJustify).toBe('flex-start')

@@ -37,6 +37,34 @@ describe('TerminalCanvas', () => {
     expect(adapter.setVisualScale).toHaveBeenLastCalledWith(0.5)
   })
 
+  it('keeps correcting fit mode until quantized xterm cell geometry fits', async () => {
+    const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(900)
+    const height = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(715)
+    let callbacks!: TerminalSocketCallbacks
+    const socket: TerminalSocketLike = { connect: vi.fn(), sendInput: vi.fn(), sendAction: vi.fn(), dispose: vi.fn() }
+    const adapter: TerminalAdapter = {
+      write: vi.fn(), resize: vi.fn(), reset: vi.fn(), focus: vi.fn(), refreshTheme: vi.fn(), setInputEnabled: vi.fn(),
+      measureCell: vi.fn(() => ({ width: 10, height: 20 })),
+      setVisualScale: vi.fn((scale: number) => ({ width: 10 * scale, height: scale >= 0.70 ? 18 : 17.5 })),
+      canClientPan: vi.fn(() => false), dispose: vi.fn(),
+    }
+    const createSocket = vi.fn((_id: string, nextCallbacks: TerminalSocketCallbacks) => { callbacks = nextCallbacks; return socket })
+    const createAdapter: TerminalAdapterFactory = vi.fn(() => adapter)
+    const wrapper = mount(TerminalCanvas, { props: { termId: 'term-fit-quantized', displayMode: 'fit', createSocket, createAdapter } })
+
+    callbacks.onReady({ type: 'terminal.ready', terminal_id: 't1', stream_id: 's1', rows: 40, cols: 120 })
+    await flushPromises()
+
+    expect(adapter.setVisualScale).toHaveBeenCalledTimes(9)
+    expect(wrapper.get('.terminal-grid').attributes('style')).toContain('height: 700px')
+    expect(wrapper.get('.terminal-grid').attributes('style')).toContain(', 7.5px)')
+    expect(Number(wrapper.get('.terminal-frame').attributes('data-visual-scale'))).toBeLessThan(0.70)
+
+    wrapper.unmount()
+    width.mockRestore()
+    height.mockRestore()
+  })
+
   it('creates xterm only from terminal.ready, applies only server sizes, streams bytes, and disposes everything', async () => {
     let callbacks!: TerminalSocketCallbacks
     let input!: (value: string | Uint8Array) => void
