@@ -3,10 +3,25 @@
 
 export type TerminalAction = "split_left_right" | "split_top_bottom" | "new_window" | "select_left" | "select_right" | "select_up" | "select_down" | "toggle_zoom" | "copy_mode" | "close_pane"
 export type TerminalCloseReason = "client_closed" | "replaced" | "grace_expired" | "stream_gap" | "instance_offline" | "internal_error"
+export const PROTOCOL_VERSION = 1 as const
+
+export interface ErrorDetail {
+  code: string
+  message: string
+  request_id: string
+}
+
+export interface ErrorEnvelope {
+  error: ErrorDetail
+}
 
 export interface BrowserSessionResponse {
   authenticated: boolean
   expires_at: string
+}
+
+export interface BrowserSessionDeleteResponse {
+  ok: boolean
 }
 
 export interface DashboardMetrics {

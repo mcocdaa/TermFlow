@@ -1,6 +1,8 @@
 import subprocess
 import sys
+from enum import Enum
 from pathlib import Path
+from runpy import run_path
 
 ROOT = Path(__file__).resolve().parents[2]
 GENERATOR = ROOT / "scripts/generate-client-contracts/generate.py"
@@ -25,6 +27,10 @@ def test_checked_in_client_contracts_match_python_models(tmp_path: Path) -> None
     rendered = rendered_path.read_text()
     assert rendered == GENERATED.read_text()
     assert "export interface BrowserSessionResponse" in rendered
+    assert "export interface BrowserSessionDeleteResponse" in rendered
+    assert "export interface ErrorEnvelope" in rendered
+    assert "export interface ErrorDetail" in rendered
+    assert "export const PROTOCOL_VERSION = 1 as const" in rendered
     assert "expires_at: string" in rendered
     assert "expires_at?: string" not in rendered
     assert "export type TerminalAction =" in rendered
@@ -32,3 +38,18 @@ def test_checked_in_client_contracts_match_python_models(tmp_path: Path) -> None
 
     checked = _run_generator("--check")
     assert checked.returncode == 0, checked.stderr
+
+
+def test_annotation_renderer_supports_string_and_number_enums() -> None:
+    render_type = run_path(str(GENERATOR))["_render_type"]
+
+    class ExampleString(Enum):
+        FIRST = "first"
+        SECOND = "second"
+
+    class ExampleNumber(Enum):
+        FIRST = 1
+        SECOND = 2
+
+    assert render_type(ExampleString) == '"first" | "second"'
+    assert render_type(ExampleNumber) == "1 | 2"

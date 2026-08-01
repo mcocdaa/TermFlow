@@ -8,18 +8,23 @@ import json
 import sys
 import types
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Annotated, Literal, TypeAliasType, Union, get_args, get_origin
 from uuid import UUID
 
 from pydantic import BaseModel
 from termflow_protocol import (
+    PROTOCOL_VERSION,
+    BrowserSessionDeleteResponse,
     BrowserSessionResponse,
     ComputerListResponse,
     ComputerSummary,
     DashboardMetrics,
     DashboardResponse,
     EnrollmentCreateResponse,
+    ErrorDetail,
+    ErrorEnvelope,
     PaneSnapshot,
     TerminalAction,
     TerminalActionResultFrame,
@@ -40,8 +45,12 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = ROOT / "packages/client-contracts/src/generated.ts"
 
 TYPE_ALIASES: tuple[TypeAliasType, ...] = (TerminalAction, TerminalCloseReason)
+CONSTANTS: tuple[tuple[str, object], ...] = (("PROTOCOL_VERSION", PROTOCOL_VERSION),)
 MODELS: tuple[type[BaseModel], ...] = (
+    ErrorDetail,
+    ErrorEnvelope,
     BrowserSessionResponse,
+    BrowserSessionDeleteResponse,
     DashboardMetrics,
     TermSummary,
     ComputerSummary,
@@ -102,6 +111,8 @@ def _render_type(annotation: object) -> str:
         return f"{_render_type(arguments[0])}[]"
     if origin in (types.UnionType, Union):
         return " | ".join(_render_type(argument) for argument in arguments)
+    if isinstance(annotation, type) and issubclass(annotation, Enum):
+        return " | ".join(_literal(member.value) for member in annotation)
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
         return annotation.__name__
     raise TypeError(f"unsupported contract annotation: {annotation!r}")
@@ -115,6 +126,8 @@ def render() -> str:
     ]
     for alias in TYPE_ALIASES:
         lines.append(f"export type {alias.__name__} = {_render_type(alias.__value__)}")
+    for name, value in CONSTANTS:
+        lines.append(f"export const {name} = {_literal(value)} as const")
     lines.append("")
     for model in MODELS:
         lines.append(f"export interface {model.__name__} {{")
