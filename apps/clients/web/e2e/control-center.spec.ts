@@ -7,13 +7,16 @@ if (!adminToken || !termId || !termName) throw new Error('TermFlow browser fixtu
 
 async function login(page: Page) {
   await page.goto('/login')
+  await expect(page.locator('.app-header')).toHaveCount(0)
+  await expect(page.locator('.side-nav')).toHaveCount(0)
+  await expect(page.locator('.mobile-nav')).toHaveCount(0)
   await page.getByLabel('管理员令牌').fill(adminToken)
   const sessionCreated = page.waitForResponse((response) =>
     response.request().method() === 'POST'
     && response.url().endsWith('/api/v1/admin/sessions')
     && response.ok(),
   )
-  await page.getByRole('button', { name: '创建会话' }).click()
+  await page.getByRole('button', { name: '登录', exact: true }).click()
   await sessionCreated
   await expect(page.getByRole('heading', { name: '控制中心' })).toBeVisible()
 }
@@ -24,7 +27,16 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
   await expect(termRow).toBeVisible()
   await expect(termRow.getByText(termName, { exact: true })).toBeVisible()
   await expect(termRow.getByText(/\d+ Panes/)).toBeVisible()
+  expect(await termRow.evaluate((element) => parseFloat(getComputedStyle(element).borderRadius))).toBeGreaterThan(0)
+  await expect(page.locator('.side-nav a[href="/"] svg')).toHaveCount(1)
+  await expect(page.locator('.side-nav a[href="/computers"] svg')).toHaveCount(1)
   if (testInfo.project.name === 'desktop') {
+    const onlineMetric = page.locator('.metric-card').filter({ hasText: '在线 Terms' })
+    const metricBackgroundBeforeHover = await onlineMetric.evaluate((element) => getComputedStyle(element).backgroundColor)
+    await onlineMetric.hover()
+    await expect(onlineMetric.getByRole('tooltip')).toBeVisible()
+    const metricBackgroundAfterHover = await onlineMetric.evaluate((element) => getComputedStyle(element).backgroundColor)
+    expect(metricBackgroundAfterHover).not.toBe(metricBackgroundBeforeHover)
     const backgroundBeforeHover = await termRow.evaluate((element) => getComputedStyle(element).backgroundColor)
     await termRow.hover()
     const backgroundAfterHover = await termRow.evaluate((element) => getComputedStyle(element).backgroundColor)
@@ -32,20 +44,52 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
   }
 
   await page.getByRole('link', { name: '电脑管理' }).first().click()
+  await expect(page.locator('.computer-table-head [role="columnheader"]')).toHaveText(['名称', '终端', '最近在线', '注册时间'])
+  const computerRow = page.locator('.computer-table-row').first()
+  await expect(computerRow.locator('.status-pill')).toHaveCount(1)
+  await expect(computerRow.locator('.status-pill')).toContainText(/在线 \(\d+\)|离线 \(0\)/)
+  for (const cell of await computerRow.locator('[role="cell"]').all()) {
+    expect(await cell.evaluate((element) => getComputedStyle(element).justifyContent)).toBe('center')
+  }
+  const renderedTimes = await computerRow.locator('time').allTextContents()
+  expect(renderedTimes.join(' ')).not.toMatch(/GMT|UTC|CST/i)
+  if (testInfo.project.name === 'mobile-portrait') {
+    await expect(page.locator('.mobile-nav a[href="/"] svg')).toBeVisible()
+    await expect(page.locator('.mobile-nav a[href="/computers"] svg')).toBeVisible()
+  }
+  if (testInfo.project.name === 'mobile-landscape') {
+    await expect(page.locator('.side-nav a[href="/"] svg')).toBeVisible()
+    await expect(page.locator('.side-nav a[href="/computers"] svg')).toBeVisible()
+  }
+  if (testInfo.project.name !== 'desktop') {
+    await expect(computerRow.locator('[role="cell"]').nth(0)).toHaveAttribute('data-label', '名称')
+    await expect(computerRow.locator('[role="cell"]').nth(1)).toHaveAttribute('data-label', '终端')
+  }
   await page.getByRole('button', { name: '添加电脑' }).click()
+  const enrollmentDialog = page.getByRole('dialog', { name: '添加电脑' })
+  await expect(enrollmentDialog.getByLabel('电脑名称')).toHaveAttribute('placeholder', '输入电脑名称')
+  await enrollmentDialog.getByLabel('电脑名称').fill(`浏览器测试电脑-${testInfo.project.name}`)
   const enrollmentCreated = page.waitForResponse((response) =>
     response.request().method() === 'POST'
     && response.url().endsWith('/api/v1/enrollment-tokens')
     && response.ok(),
   )
-  await page.getByRole('button', { name: '创建一次性注册码' }).click()
+  await enrollmentDialog.getByRole('button', { name: '创建', exact: true }).click()
   const enrollmentResponse = await enrollmentCreated
+  expect(enrollmentResponse.request().postDataJSON()).toEqual({ display_name: `浏览器测试电脑-${testInfo.project.name}` })
   const enrollment = await enrollmentResponse.json() as { expires_at: string }
   expect(new Date(enrollment.expires_at).getTime() - Date.now()).toBeLessThanOrEqual(61_000)
   await expect(page.getByRole('heading', { name: '注册码' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: '终端执行命令' })).toBeVisible()
-  await page.getByRole('button', { name: '终端执行命令说明' }).hover()
-  await expect(page.getByRole('tooltip')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '终端执行', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '终端执行说明' }).hover()
+  const enrollmentTooltip = enrollmentDialog.getByRole('tooltip')
+  await expect(enrollmentTooltip).toBeVisible()
+  const dialogBox = await enrollmentDialog.boundingBox()
+  const tooltipBox = await enrollmentTooltip.boundingBox()
+  expect(dialogBox).not.toBeNull()
+  expect(tooltipBox).not.toBeNull()
+  expect(tooltipBox!.x).toBeGreaterThanOrEqual(dialogBox!.x)
+  expect(tooltipBox!.x + tooltipBox!.width).toBeLessThanOrEqual(dialogBox!.x + dialogBox!.width)
   await expect(page.getByRole('button', { name: '复制命令' })).toBeVisible()
   const screenshotDir = process.env.TERMFLOW_E2E_SCREENSHOT_DIR
   if (screenshotDir) await page.screenshot({ path: `${screenshotDir}/enrollment-${testInfo.project.name}.png` })

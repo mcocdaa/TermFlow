@@ -11,7 +11,11 @@ def test_health_does_not_require_authentication(client) -> None:
 
 def test_admin_creates_and_installation_consumes_enrollment(client, admin_headers) -> None:
     issued_after = datetime.now(UTC)
-    issued = client.post("/api/v1/enrollment-tokens", headers=admin_headers)
+    issued = client.post(
+        "/api/v1/enrollment-tokens",
+        headers=admin_headers,
+        json={"display_name": "跑步工作站"},
+    )
     assert issued.status_code == 201
     raw = issued.json()["token"]
     assert len(raw) >= 43
@@ -43,9 +47,22 @@ def test_admin_creates_and_installation_consumes_enrollment(client, admin_header
         hash_token(installation_token),
     )
     assert installation.hostname == "devbox"
-    assert installation.display_name == "devbox"
+    assert installation.display_name == "跑步工作站"
     assert installation.platform == "Linux"
     assert installation.client_version == "0.1.0"
+
+    legacy = client.post("/api/v1/enrollment-tokens", headers=admin_headers)
+    assert legacy.status_code == 201
+    legacy_enrolled = client.post(
+        "/api/v1/installations/enroll",
+        json={"enrollment_token": legacy.json()["token"], "hostname": "legacy-host"},
+    )
+    assert legacy_enrolled.status_code == 201
+    legacy_installation = client.portal.call(
+        client.app.state.repositories.installations.get_by_token_hash,
+        hash_token(legacy_enrolled.json()["installation_token"]),
+    )
+    assert legacy_installation.display_name == "legacy-host"
 
 
 def test_admin_route_rejects_missing_or_wrong_token(client) -> None:

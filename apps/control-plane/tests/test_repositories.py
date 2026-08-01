@@ -29,9 +29,14 @@ async def repositories(tmp_path) -> RepositoryBundle:
 async def test_enrollment_is_consumed_once(repositories: RepositoryBundle) -> None:
     raw = "x" * 43
     enrollment = await repositories.enrollments.create(
-        hash_token(raw), datetime.now(UTC) + timedelta(minutes=10)
+        hash_token(raw),
+        datetime.now(UTC) + timedelta(minutes=10),
+        display_name="跑步工作站",
     )
-    assert await repositories.enrollments.consume(hash_token(raw)) == enrollment.id
+    consumed = await repositories.enrollments.consume(hash_token(raw))
+    assert consumed is not None
+    assert consumed.id == enrollment.id
+    assert consumed.display_name == "跑步工作站"
     assert await repositories.enrollments.consume(hash_token(raw)) is None
 
 
@@ -41,7 +46,9 @@ async def test_concurrent_enrollment_consumption_has_exactly_one_winner(
 ) -> None:
     raw = "concurrent-" + "z" * 43
     enrollment = await repositories.enrollments.create(
-        hash_token(raw), datetime.now(UTC) + timedelta(minutes=10)
+        hash_token(raw),
+        datetime.now(UTC) + timedelta(minutes=10),
+        display_name="并发工作站",
     )
 
     results = await asyncio.gather(
@@ -49,7 +56,10 @@ async def test_concurrent_enrollment_consumption_has_exactly_one_winner(
         repositories.enrollments.consume(hash_token(raw)),
     )
 
-    assert results.count(enrollment.id) == 1
+    winners = [result for result in results if result is not None]
+    assert len(winners) == 1
+    assert winners[0].id == enrollment.id
+    assert winners[0].display_name == "并发工作站"
     assert results.count(None) == 1
 
 
@@ -125,6 +135,13 @@ async def test_initialize_idempotently_upgrades_a_v1_sqlite_database(tmp_path) -
     with sqlite3.connect(path) as connection:
         connection.executescript(
             """
+            CREATE TABLE enrollment_tokens (
+              id CHAR(32) PRIMARY KEY,
+              token_hash VARCHAR(64) NOT NULL,
+              expires_at DATETIME NOT NULL,
+              used_at DATETIME,
+              created_at DATETIME NOT NULL
+            );
             CREATE TABLE installations (
               id CHAR(32) PRIMARY KEY,
               token_hash VARCHAR(64) NOT NULL,
@@ -147,10 +164,15 @@ async def test_initialize_idempotently_upgrades_a_v1_sqlite_database(tmp_path) -
     await database.initialize()
     try:
         async with database.engine.connect() as connection:
+            enrollment_rows = await connection.execute(
+                text("PRAGMA table_info(enrollment_tokens)")
+            )
             installation_rows = await connection.execute(text("PRAGMA table_info(installations)"))
             instance_rows = await connection.execute(text("PRAGMA table_info(instances)"))
+        enrollment_columns = {row[1] for row in enrollment_rows}
         installation_columns = {row[1] for row in installation_rows}
         instance_columns = {row[1] for row in instance_rows}
+        assert "display_name" in enrollment_columns
         assert {
             "hostname",
             "display_name",

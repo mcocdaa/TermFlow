@@ -11,6 +11,7 @@ from termflow_protocol import (
     ComputerRenameRequest,
     DashboardMetrics,
     DashboardResponse,
+    EnrollmentCreateRequest,
     EnrollmentMetadataResponse,
     InstallationEnrollResponse,
     PaneInputRequest,
@@ -88,6 +89,17 @@ def test_editable_names_have_one_shared_safe_contract(
 ) -> None:
     with pytest.raises(ValidationError):
         model(**{field: value})  # type: ignore[operator]
+
+
+def test_enrollment_creation_accepts_an_optional_validated_display_name() -> None:
+    assert EnrollmentCreateRequest().display_name is None
+    assert EnrollmentCreateRequest(display_name="跑步工作站").display_name == "跑步工作站"
+
+
+@pytest.mark.parametrize("value", ["", "x" * 129, "bad\x00name", "bad\x85name"])
+def test_enrollment_creation_rejects_unsafe_display_names(value: str) -> None:
+    with pytest.raises(ValidationError):
+        EnrollmentCreateRequest(display_name=value)
 
 
 def test_dashboard_and_computer_dtos_group_terms_without_terminal_content() -> None:

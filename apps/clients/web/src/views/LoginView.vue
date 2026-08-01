@@ -1,14 +1,12 @@
 <template>
   <section class="login-view">
     <div class="auth-card">
-      <p class="eyebrow">安全会话</p>
       <h1>登录</h1>
-      <p class="muted">管理员令牌只用于本次提交。浏览器不会保存它。</p>
       <form @submit.prevent="submit">
         <label for="admin-token">管理员令牌</label>
         <input id="admin-token" v-model="adminToken" type="password" autocomplete="off" required />
         <p v-if="message" role="alert" class="form-error">{{ message }}</p>
-        <button class="primary-button" type="submit" :disabled="busy">{{ busy ? '正在登录…' : '创建会话' }}</button>
+        <button class="primary-button" type="submit" :disabled="busy">{{ busy ? '正在登录…' : '登录' }}</button>
       </form>
     </div>
   </section>

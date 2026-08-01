@@ -48,6 +48,15 @@ class ErrorEnvelope(HttpModel):
     error: ErrorDetail
 
 
+class EnrollmentCreateRequest(HttpModel):
+    display_name: str | None = None
+
+    @field_validator("display_name")
+    @classmethod
+    def safe_display_name(cls, value: str | None) -> str | None:
+        return validate_editable_name(value) if value is not None else None
+
+
 class EnrollmentCreateResponse(HttpModel):
     token: str = Field(repr=False, min_length=32)
     expires_at: datetime

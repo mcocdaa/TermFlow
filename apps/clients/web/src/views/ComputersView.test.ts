@@ -14,7 +14,7 @@ const computer = {
 }
 
 describe('ComputersView', () => {
-  it('lists complete metadata and saves a validated display name', async () => {
+  it('renders four Chinese columns, one online Term pill, and saves a validated display name', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ computers: [computer] }), { status: 200, headers: { 'content-type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ ...computer, display_name: '构建主机' }), { status: 200, headers: { 'content-type': 'application/json' } }))
@@ -25,12 +25,16 @@ describe('ComputersView', () => {
     const wrapper = mount(App, { global: { plugins: [router] } })
     await flushPromises()
 
+    expect(wrapper.findAll('[role="columnheader"]').map((header) => header.text())).toEqual([
+      '名称', '终端', '最近在线', '注册时间',
+    ])
     expect(wrapper.text()).toContain('devbox')
-    expect(wrapper.text()).toContain('操作系统')
-    expect(wrapper.text()).not.toContain('平台')
-    expect(wrapper.text()).toContain('Linux x86_64')
-    expect(wrapper.text()).toContain('1.4.2')
-    expect(wrapper.text()).toContain('3 个在线 Term')
+    expect(wrapper.text()).not.toContain('操作系统')
+    expect(wrapper.text()).not.toContain('Linux x86_64')
+    expect(wrapper.text()).not.toContain('1.4.2')
+    const row = wrapper.get('[data-computer-id="machine-1"]')
+    expect(row.findAll('.status-pill')).toHaveLength(1)
+    expect(row.get('.status-pill').text()).toBe('在线 (3)')
     const nameTrigger = wrapper.get('[data-action="edit-name"]')
     expect(nameTrigger.text()).toBe('主工作站')
     expect(nameTrigger.attributes('aria-label')).toBe('修改 Computer 名称：主工作站')
@@ -57,7 +61,7 @@ describe('ComputersView', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it('omits absent identity metadata and explains B-recorded local time', async () => {
+  it('omits absent identity metadata, the old time note, and timezone suffixes', async () => {
     const sparseComputer = {
       ...computer,
       installation_id: 'machine-sparse',
@@ -78,7 +82,7 @@ describe('ComputersView', () => {
     expect(row.text()).not.toContain('未报告 hostname')
     expect(row.text()).not.toContain('TermFlow null')
     expect(row.text()).not.toContain('·')
-    expect(wrapper.text()).toContain('由 B 记录，按当前设备时区显示')
-    expect(row.get('time').text()).toMatch(/UTC|GMT|CST/)
+    expect(wrapper.text()).not.toContain('由 B 记录，按当前设备时区显示')
+    expect(row.get('time').text()).not.toMatch(/UTC|GMT|CST/)
   })
 })

@@ -3,8 +3,9 @@
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Body, Depends, Response, status
 from termflow_protocol import (
+    EnrollmentCreateRequest,
     EnrollmentCreateResponse,
     InstallationEnrollRequest,
     InstallationEnrollResponse,
@@ -30,12 +31,17 @@ async def create_enrollment_token(
     response: Response,
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
     settings: Annotated[Settings, Depends(get_settings)],
+    request: Annotated[EnrollmentCreateRequest | None, Body()] = None,
 ) -> EnrollmentCreateResponse:
     raw_token = issue_token()
     expires_at = datetime.now(UTC) + timedelta(
         seconds=settings.enrollment_token_ttl_seconds
     )
-    await repositories.enrollments.create(hash_token(raw_token), expires_at)
+    await repositories.enrollments.create(
+        hash_token(raw_token),
+        expires_at,
+        display_name=request.display_name if request is not None else None,
+    )
     response.headers["Cache-Control"] = "no-store"
     return EnrollmentCreateResponse(token=raw_token, expires_at=expires_at)
 
@@ -51,8 +57,8 @@ async def enroll_installation(
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
 ) -> InstallationEnrollResponse:
     enrollment_token = request.enrollment_token.get_secret_value()
-    enrollment_id = await repositories.enrollments.consume(hash_token(enrollment_token))
-    if enrollment_id is None:
+    enrollment = await repositories.enrollments.consume(hash_token(enrollment_token))
+    if enrollment is None:
         raise TermFlowError(
             "invalid_enrollment_token",
             401,
@@ -62,7 +68,7 @@ async def enroll_installation(
     installation = await repositories.installations.create(
         hash_token(raw_installation_token),
         hostname=request.hostname,
-        display_name=request.hostname,
+        display_name=enrollment.display_name or request.hostname,
         platform=request.platform,
         client_version=request.client_version,
     )

@@ -29,4 +29,21 @@ describe('application routes', () => {
     await router.isReady()
     expect(router.currentRoute.value.fullPath).toBe('/login?redirect=/terms/term-7')
   })
+
+  it('uses a bare shell for login and Lucide icons for application navigation', async () => {
+    const login = await renderAt('/login')
+    expect(login.find('.app-header').exists()).toBe(false)
+    expect(login.find('.side-nav').exists()).toBe(false)
+    expect(login.find('.mobile-nav').exists()).toBe(false)
+
+    const dashboard = await renderAt('/')
+    const dashboardLink = dashboard.get('.side-nav a[href="/"]')
+    const computersLink = dashboard.get('.side-nav a[href="/computers"]')
+    expect(dashboardLink.text()).toBe('控制中心')
+    expect(computersLink.text()).toBe('电脑管理')
+    expect(dashboardLink.find('svg').exists()).toBe(true)
+    expect(computersLink.find('svg').exists()).toBe(true)
+    expect(dashboard.get('.mobile-nav a[href="/"]').find('svg').exists()).toBe(true)
+    expect(dashboard.get('.mobile-nav a[href="/computers"]').find('svg').exists()).toBe(true)
+  })
 })
