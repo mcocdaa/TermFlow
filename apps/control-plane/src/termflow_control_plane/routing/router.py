@@ -10,6 +10,8 @@ from termflow_protocol import (
     CommandResultPayload,
     MessageType,
     PaneInputPayload,
+    TermRenamePayload,
+    TermRenameResultPayload,
     WireMessage,
 )
 
@@ -192,6 +194,90 @@ class CommandRouter:
         result: CommandResultPayload,
     ) -> bool:
         future = connection.pending.pop(result.command_id, None)
+        if future is None or future.done():
+            return False
+        future.set_result(result)
+        return True
+
+    async def rename_term(self, instance_id: UUID, name: str) -> TermRenameResultPayload:
+        try:
+            connection = await self._registry.get(instance_id)
+        except InstanceOffline as exc:
+            await self._audit.record(
+                "term.rename",
+                instance_id,
+                None,
+                None,
+                "rejected",
+                "instance_offline",
+            )
+            raise TermFlowError(
+                "instance_offline",
+                409,
+                "The Instance is not connected.",
+            ) from exc
+
+        command_id = uuid4()
+        payload = TermRenamePayload(command_id=command_id, name=name)
+        message = WireMessage(
+            type=MessageType.TERM_RENAME,
+            instance_id=instance_id,
+            payload=payload.model_dump(mode="json"),
+        )
+        future: asyncio.Future[TermRenameResultPayload] = (
+            asyncio.get_running_loop().create_future()
+        )
+        connection.pending_renames[command_id] = future
+        try:
+            try:
+                await self._registry.enqueue(instance_id, message)
+            except ConnectionBackpressure as exc:
+                await self._audit.record(
+                    "term.rename", instance_id, None, None, "rejected", "backpressure"
+                )
+                raise TermFlowError(
+                    "backpressure",
+                    429,
+                    "The Instance command queue is full.",
+                ) from exc
+            try:
+                async with asyncio.timeout(self._timeout):
+                    result = await future
+            except TimeoutError as exc:
+                await self._audit.record(
+                    "term.rename", instance_id, None, None, "unknown", "command_timeout"
+                )
+                raise TermFlowError(
+                    "command_timeout",
+                    504,
+                    "The Bridge did not confirm the rename.",
+                ) from exc
+            except InstanceOffline as exc:
+                await self._audit.record(
+                    "term.rename", instance_id, None, None, "unknown", "outcome_unknown"
+                )
+                raise TermFlowError(
+                    "outcome_unknown",
+                    409,
+                    "The connection was lost before rename confirmation.",
+                ) from exc
+            if not result.ok:
+                error_code = result.error_code or "rename_failed"
+                await self._audit.record(
+                    "term.rename", instance_id, None, None, "failed", error_code
+                )
+                raise TermFlowError(error_code, 409, "The Bridge rejected the rename.")
+            await self._audit.record("term.rename", instance_id, None, None, "ok", None)
+            return result
+        finally:
+            connection.pending_renames.pop(command_id, None)
+
+    @staticmethod
+    def resolve_rename(
+        connection: LiveConnection,
+        result: TermRenameResultPayload,
+    ) -> bool:
+        future = connection.pending_renames.pop(result.command_id, None)
         if future is None or future.done():
             return False
         future.set_result(result)

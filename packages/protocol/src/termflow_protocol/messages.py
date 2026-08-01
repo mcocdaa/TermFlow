@@ -290,6 +290,34 @@ class TerminalClosedPayload(TerminalPayload):
     error_code: str | None = None
 
 
+class TermRenamePayload(PayloadModel):
+    command_id: UUID
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def valid_name(cls, value: str) -> str:
+        if not 1 <= len(value) <= 128:
+            raise ValueError("name must contain between 1 and 128 characters")
+        if any(ord(character) < 32 or 127 <= ord(character) <= 159 for character in value):
+            raise ValueError("name contains unsupported control characters")
+        return value
+
+
+class TermRenameResultPayload(PayloadModel):
+    command_id: UUID
+    ok: bool
+    error_code: str | None = None
+
+    @model_validator(mode="after")
+    def result_is_consistent(self) -> TermRenameResultPayload:
+        if self.ok and self.error_code is not None:
+            raise ValueError("successful results cannot contain error_code")
+        if not self.ok and not self.error_code:
+            raise ValueError("failed results require error_code")
+        return self
+
+
 PAYLOAD_MODELS: dict[str, type[PayloadModel]] = {
     "bridge.hello": BridgeHelloPayload,
     "bridge.heartbeat": BridgeHeartbeatPayload,
@@ -312,6 +340,8 @@ PAYLOAD_MODELS: dict[str, type[PayloadModel]] = {
     "terminal.action_result": TerminalActionResultPayload,
     "terminal.close": TerminalClosePayload,
     "terminal.closed": TerminalClosedPayload,
+    "term.rename": TermRenamePayload,
+    "term.rename_result": TermRenameResultPayload,
 }
 
 

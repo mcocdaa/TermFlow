@@ -38,6 +38,8 @@ class MessageType(StrEnum):
     TERMINAL_ACTION_RESULT = "terminal.action_result"
     TERMINAL_CLOSE = "terminal.close"
     TERMINAL_CLOSED = "terminal.closed"
+    TERM_RENAME = "term.rename"
+    TERM_RENAME_RESULT = "term.rename_result"
 
 
 class WireMessage(BaseModel):

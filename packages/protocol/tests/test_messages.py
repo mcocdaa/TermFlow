@@ -9,6 +9,8 @@ from termflow_protocol import (
     TerminalActionPayload,
     TerminalInputPayload,
     TerminalOutputPayload,
+    TermRenamePayload,
+    TermRenameResultPayload,
     TopologySnapshot,
     WindowSnapshot,
     WireMessage,
@@ -266,3 +268,25 @@ def test_close_pane_requires_explicit_confirmation() -> None:
             target_pane_id="%1",
             confirmed=False,
         )
+
+
+def test_term_rename_command_and_result_are_strongly_typed() -> None:
+    command_id = uuid4()
+    command = parse_payload(
+        "term.rename",
+        {"command_id": command_id, "name": "工作区"},
+    )
+    result = parse_payload(
+        "term.rename_result",
+        {"command_id": command_id, "ok": True, "error_code": None},
+    )
+    assert isinstance(command, TermRenamePayload)
+    assert command.name == "工作区"
+    assert isinstance(result, TermRenameResultPayload)
+    assert result.ok is True
+
+
+@pytest.mark.parametrize("name", ["", "x" * 129, "bad\x00name", "bad\x85name"])
+def test_term_rename_command_validates_display_name(name: str) -> None:
+    with pytest.raises(ValidationError):
+        TermRenamePayload(command_id=uuid4(), name=name)

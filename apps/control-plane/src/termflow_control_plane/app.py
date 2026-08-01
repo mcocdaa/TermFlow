@@ -18,10 +18,13 @@ from termflow_protocol import (
 )
 
 from termflow_control_plane.api.bridge import router as bridge_router
+from termflow_control_plane.api.computers import router as computers_router
+from termflow_control_plane.api.dashboard import router as dashboard_router
 from termflow_control_plane.api.enrollment import router as enrollment_router
 from termflow_control_plane.api.events import router as events_router
 from termflow_control_plane.api.instances import router as instances_router
 from termflow_control_plane.api.sessions import router as sessions_router
+from termflow_control_plane.api.terms import router as terms_router
 from termflow_control_plane.auth.sessions import BrowserSessionStore
 from termflow_control_plane.config import Settings
 from termflow_control_plane.connections.event_hub import EventHub
@@ -132,6 +135,9 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
 
     app.include_router(enrollment_router)
     app.include_router(sessions_router)
+    app.include_router(dashboard_router)
+    app.include_router(computers_router)
+    app.include_router(terms_router)
     app.include_router(instances_router)
     app.include_router(bridge_router)
     app.include_router(events_router)

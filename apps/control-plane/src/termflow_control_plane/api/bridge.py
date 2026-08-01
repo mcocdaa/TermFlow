@@ -16,6 +16,7 @@ from termflow_protocol import (
     CommandResultPayload,
     InstancePresencePayload,
     MessageType,
+    TermRenameResultPayload,
     TopologyChangedPayload,
     TopologySnapshotPayload,
     WireMessage,
@@ -78,11 +79,20 @@ async def _receive_messages(
             )
             connection.topology = topology_payload.topology
             connection.topology_ready.set()
+            await repositories.instances.update_from_topology(
+                connection.instance_id,
+                topology_payload.topology.session_name,
+            )
         elif message.type is MessageType.COMMAND_RESULT:
             result = cast(CommandResultPayload, payload)
             future = connection.pending.pop(result.command_id, None)
             if future is not None and not future.done():
                 future.set_result(result)
+        elif message.type is MessageType.TERM_RENAME_RESULT:
+            rename_result = cast(TermRenameResultPayload, payload)
+            rename_future = connection.pending_renames.pop(rename_result.command_id, None)
+            if rename_future is not None and not rename_future.done():
+                rename_future.set_result(rename_result)
         elif message.type in {MessageType.PANE_OUTPUT, MessageType.STREAM_GAP}:
             await event_hub.publish(message)
 

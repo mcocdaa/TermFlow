@@ -7,7 +7,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from termflow_protocol import CommandResultPayload, TopologySnapshot, WireMessage
+from termflow_protocol import (
+    CommandResultPayload,
+    TermRenameResultPayload,
+    TopologySnapshot,
+    WireMessage,
+)
 
 
 class InstanceOffline(LookupError):
@@ -27,6 +32,9 @@ class LiveConnection:
     topology_ready: asyncio.Event = field(default_factory=asyncio.Event)
     last_heartbeat: datetime = field(default_factory=lambda: datetime.now(UTC))
     pending: dict[UUID, asyncio.Future[CommandResultPayload]] = field(default_factory=dict)
+    pending_renames: dict[UUID, asyncio.Future[TermRenameResultPayload]] = field(
+        default_factory=dict
+    )
     replaced: asyncio.Event = field(default_factory=asyncio.Event)
 
 
@@ -100,3 +108,7 @@ class LiveInstanceRegistry:
             if not future.done():
                 future.set_exception(exc)
         connection.pending.clear()
+        for rename_future in tuple(connection.pending_renames.values()):
+            if not rename_future.done():
+                rename_future.set_exception(exc)
+        connection.pending_renames.clear()
