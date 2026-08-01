@@ -37,7 +37,12 @@ class ClientSizeResolver:
         candidates = [
             client
             for client in self._runner.list_clients(self._session_id)
-            if client.tty not in proxy_ttys and not client.control_mode
+            if (
+                client.tty not in proxy_ttys
+                and not client.control_mode
+                and client.rows > 0
+                and client.cols > 0
+            )
         ]
         if candidates:
             latest = max(candidates, key=lambda client: client.activity)

@@ -188,13 +188,19 @@ class TmuxRunner:
         for line in result.stdout.splitlines():
             fields = line.split("\t")
             if len(fields) != 6:
-                raise TmuxCommandError(self._argv("list-clients"), 1)
+                continue
+            try:
+                activity = int(fields[1] or "0")
+                cols = int(fields[2] or "0")
+                rows = int(fields[3] or "0")
+            except ValueError:
+                continue
             clients.append(
                 TmuxClient(
                     tty=fields[0],
-                    activity=int(fields[1]),
-                    cols=int(fields[2]),
-                    rows=int(fields[3]),
+                    activity=activity,
+                    cols=cols,
+                    rows=rows,
                     control_mode=fields[4] == "1",
                     termname=fields[5],
                 )

@@ -109,3 +109,28 @@ def test_list_clients_parses_raw_tmux_client_fields(tmp_path) -> None:
     assert clients[0].rows == 40
     assert clients[0].control_mode is False
     assert clients[0].termname == "xterm-256color"
+
+
+def test_list_clients_tolerates_control_mode_client_without_a_grid(tmp_path) -> None:
+    class ClientRun(FakeRun):
+        def __call__(self, argv, **kwargs):
+            self.calls.append(argv)
+            if argv == ["tmux", "-V"]:
+                return CompletedProcess(argv, 0, stdout="tmux 3.4\n", stderr="")
+            return CompletedProcess(
+                argv,
+                0,
+                stdout=(
+                    "/dev/pts/control\t123\t\t\t1\t\n"
+                    "/dev/pts/local\t124\t100\t30\t0\txterm-256color\n"
+                ),
+                stderr="",
+            )
+
+    runner = TmuxRunner((tmp_path / "tmux.sock").absolute(), run=ClientRun())
+
+    clients = runner.list_clients("$0")
+
+    assert clients[0].control_mode is True
+    assert (clients[0].rows, clients[0].cols) == (0, 0)
+    assert (clients[1].rows, clients[1].cols) == (30, 100)

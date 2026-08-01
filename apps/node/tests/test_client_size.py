@@ -53,3 +53,10 @@ def test_size_falls_back_to_creation_size_then_80_by_24() -> None:
         creation_size=TerminalSize(32, 90),
     ).resolve(proxy_ttys=set()) == TerminalSize(32, 90)
     assert ClientSizeResolver(runner, "$0").resolve(proxy_ttys=set()) == TerminalSize(24, 80)
+
+
+def test_size_ignores_non_control_clients_until_they_report_a_positive_grid() -> None:
+    runner = ClientRunner([_client("/dev/pts/pending", 10, 0, 0)])
+    resolver = ClientSizeResolver(runner, "$0", creation_size=TerminalSize(24, 80))
+
+    assert resolver.resolve(proxy_ttys=set()) == TerminalSize(24, 80)
