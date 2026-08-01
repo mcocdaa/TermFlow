@@ -1,7 +1,7 @@
 <template>
   <section class="terminal-view" aria-labelledby="terminal-title">
     <h1 id="terminal-title" class="sr-only">远程终端</h1>
-    <TerminalTitlebar :title="termName" :computer-name="computerName" :status="connectionStatus" :display-menu-open="openMenu === 'display'" v-model:display-mode="displayMode" @update:display-menu-open="setMenuOpen('display', $event)" @rename="updateTermName">
+    <TerminalTitlebar :title="termName" :computer-name="computerName" :status="connectionStatus" :display-menu-open="openMenu === 'display'" v-model:display-mode="displayMode" v-model:touch-control-locked="touchControlLocked" @update:display-menu-open="setMenuOpen('display', $event)" @rename="updateTermName">
       <PaneFocusMenu :panes="panes" :open="openMenu === 'pane'" @update:open="setMenuOpen('pane', $event)" @focus="terminalCanvas?.focusPane($event)" @reset="terminalCanvas?.resetViewport()" />
       <TmuxActionMenu :bindings="bindings" :active-pane-id="activePane?.pane_id ?? null" :disabled="connectionStatus !== 'connected'" :open="openMenu === 'tmux'" @update:open="setMenuOpen('tmux', $event)" @action="runAction" @request-close="requestClose" />
     </TerminalTitlebar>
@@ -50,6 +50,7 @@ const computerName = ref('Computer 未报告')
 const connectionStatus = ref<TerminalConnectionStatus>('connecting')
 type DesktopMenu = 'display' | 'tmux' | 'pane'
 const openMenu = ref<DesktopMenu | null>(null)
+const touchControlLocked = ref(false)
 const renameError = ref('')
 const panes = ref<PaneTopologyDto[]>([])
 const terminalCanvas = ref<InstanceType<typeof TerminalCanvas> | null>(null)

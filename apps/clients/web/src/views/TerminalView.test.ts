@@ -68,6 +68,21 @@ describe('TerminalView', () => {
     expect(wrapper.get('[data-term-name]').attributes('data-action')).toBe('edit-term-name')
     expect(wrapper.get('[data-term-name]').attributes('aria-label')).toContain('产品开发')
     expect(wrapper.get('[data-action="edit-term-name"]').find('svg').exists()).toBe(false)
+    for (const action of [
+      'toggle-display-menu',
+      'toggle-pane-focus-menu',
+      'toggle-tmux-menu',
+      'toggle-touch-lock',
+    ]) {
+      expect(wrapper.get(`[data-action="${action}"]`).find('svg').exists()).toBe(true)
+    }
+    const lock = wrapper.get('[data-action="toggle-touch-lock"]')
+    expect(lock.attributes('aria-label')).toBe('锁定画布')
+    expect(lock.attributes('aria-pressed')).toBe('false')
+    await lock.trigger('click')
+    expect(lock.attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('[data-action="toggle-mobile-drawer"]').exists()).toBe(false)
+    expect(wrapper.find('[data-mobile-drawer]').exists()).toBe(false)
     const identifiers = wrapper.get('[data-terminal-identifiers]')
     expect(identifiers.get('[data-term-name]').text()).toBe('产品开发')
     expect(identifiers.get('[data-computer-name]').text()).toBe('设计工作站')
@@ -101,6 +116,7 @@ describe('TerminalView', () => {
     window.dispatchEvent(new Event('resize'))
     await flushPromises()
     expect(wrapper.get('.terminal-frame').attributes('data-display-mode')).toBe('fit')
+    expect(wrapper.get('[data-action="toggle-touch-lock"]').attributes('aria-pressed')).toBe('true')
 
     Object.defineProperties(window, { innerWidth: { value: 360, configurable: true }, innerHeight: { value: 800, configurable: true } })
     window.dispatchEvent(new Event('resize'))
@@ -123,5 +139,11 @@ describe('TerminalView', () => {
     expect(router.currentRoute.value.fullPath).toBe('/login?redirect=/terms/term-1')
 
     wrapper.unmount()
+    await router.push('/terms/term-1')
+    await flushPromises()
+    const remounted = mount(App, { attachTo: document.body, global: { plugins: [router] } })
+    await flushPromises()
+    expect(remounted.get('[data-action="toggle-touch-lock"]').attributes('aria-pressed')).toBe('false')
+    remounted.unmount()
   })
 })
