@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
@@ -18,7 +19,7 @@ from platformdirs import user_runtime_path
 from termflow_node.tmux.runner import TmuxRunner
 
 from .models import InstanceLifecycle, LocalInstance
-from .store import InstanceStore
+from .store import InstanceListResult, InstanceStore
 
 
 class BridgeLauncher(Protocol):
@@ -71,9 +72,11 @@ class InstanceManager:
         store: InstanceStore,
         *,
         bridge_launcher: BridgeLauncher | None = None,
+        runner_factory: Callable[[Path], TmuxRunner] | None = None,
     ) -> None:
         self._store = store
         self._bridge_launcher = bridge_launcher or self._launch_bridge
+        self._runner_factory = runner_factory or TmuxRunner
 
     def _launch_bridge(self, instance: LocalInstance) -> int:
         return launch_bridge(
@@ -100,23 +103,34 @@ class InstanceManager:
         record = LocalInstance(
             instance_id=instance_id,
             name=name,
+            session_name=name,
             socket_path=self._prepare_socket_path(instance_id),
             created_at=datetime.now(UTC),
             lifecycle=InstanceLifecycle.STARTING,
         )
         self._store.save(record)
-        runner = TmuxRunner(record.socket_path)
+        runner = self._runner_factory(record.socket_path)
         try:
-            runner.create_session(record.session_name, name)
-            bridge_pid = self._bridge_launcher(record)
-            running = record.model_copy(
+            runner.create_session(name, name)
+            identity = runner.session_identity(name)
+            identified = record.model_copy(
+                update={
+                    "schema_version": 2,
+                    "session_id": identity.session_id,
+                    "session_name": identity.session_name,
+                    "name": identity.session_name,
+                }
+            )
+            self._store.save(identified)
+            bridge_pid = self._bridge_launcher(identified)
+            running = identified.model_copy(
                 update={
                     "bridge_pid": bridge_pid,
                     "lifecycle": InstanceLifecycle.RUNNING,
                 }
             )
             self._store.save(running)
-            return running, runner.attach_argv(running.session_name)
+            return running, runner.attach_argv(identity.session_id)
         except BaseException:
             runner.kill_server()
             if record.socket_path.exists():
@@ -124,12 +138,49 @@ class InstanceManager:
             self._store.remove_new(instance_id)
             raise
 
+    def current(self, instance_id: UUID) -> LocalInstance:
+        record = self._store.load(instance_id)
+        runner = self._runner_factory(record.socket_path)
+        target = record.session_id if record.schema_version == 2 else None
+        identity = runner.session_identity(target)
+        resolved_name = identity.session_name
+        if record.schema_version == 1 and identity.session_name == "main":
+            resolved_name = record.name
+            if identity.session_name != resolved_name:
+                runner.rename_session(identity.session_id, resolved_name)
+        current = record.model_copy(
+            update={
+                "schema_version": 2,
+                "session_id": identity.session_id,
+                "session_name": resolved_name,
+                "name": resolved_name,
+            }
+        )
+        if current != record:
+            self._store.save(current)
+        return current
+
+    def _current_if_available(self, record: LocalInstance) -> LocalInstance:
+        try:
+            return self.current(record.instance_id)
+        except (OSError, RuntimeError, ValueError):
+            return record
+
+    def list_current(self) -> InstanceListResult:
+        listing = self._store.list()
+        return InstanceListResult(
+            instances=[self._current_if_available(record) for record in listing.instances],
+            diagnostics=listing.diagnostics,
+        )
+
     def resolve(self, identifier: str) -> LocalInstance:
         try:
             instance_id = UUID(identifier)
         except ValueError:
             matches = [
-                instance for instance in self._store.list().instances if instance.name == identifier
+                current
+                for instance in self.list_current().instances
+                if (current := self._current_if_available(instance)).name == identifier
             ]
             if not matches:
                 raise InstanceResolutionError(f"No Instance named {identifier!r}") from None
@@ -139,12 +190,13 @@ class InstanceManager:
                     f"Instance name {identifier!r} is ambiguous; candidates: {candidates}"
                 ) from None
             return matches[0]
-        return self._store.load(instance_id)
+        return self.current(instance_id)
 
     def attach(self, identifier: str) -> tuple[LocalInstance, list[str]]:
         record = self.resolve(identifier)
-        runner = TmuxRunner(record.socket_path)
-        if not runner.is_alive(record.session_name):
+        runner = self._runner_factory(record.socket_path)
+        session_id = record.session_id
+        if session_id is None or not runner.is_alive(session_id):
             raise InstanceResolutionError(
                 f"Instance {record.instance_id} tmux server is not running"
             )
@@ -154,10 +206,10 @@ class InstanceManager:
         ):
             record = record.model_copy(update={"bridge_pid": self._bridge_launcher(record)})
             self._store.save(record)
-        return record, runner.attach_argv(record.session_name)
+        return record, runner.attach_argv(session_id)
 
     def kill(self, instance_id: UUID) -> LocalInstance:
-        record = self._store.load(instance_id)
+        record = self.current(instance_id)
         if record.bridge_pid is not None and self._is_expected_bridge(
             record.bridge_pid,
             instance_id,
@@ -169,7 +221,9 @@ class InstanceManager:
                 instance_id,
             ):
                 time.sleep(0.05)
-        TmuxRunner(record.socket_path).kill_server()
+        if record.session_id is None:
+            raise InstanceResolutionError(f"Instance {instance_id} has no stable tmux identity")
+        self._runner_factory(record.socket_path).kill_session(record.session_id)
         stopped = record.model_copy(
             update={"bridge_pid": None, "lifecycle": InstanceLifecycle.STOPPED}
         )

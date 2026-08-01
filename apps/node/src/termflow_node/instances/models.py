@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, SecretStr
+from pydantic import BaseModel, ConfigDict, SecretStr, model_validator
 
 
 class InstanceLifecycle(StrEnum):
@@ -19,11 +19,23 @@ class InstanceLifecycle(StrEnum):
 class LocalInstance(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    schema_version: Literal[1, 2] = 1
     instance_id: UUID
     name: str
-    session_name: Literal["main"] = "main"
+    session_id: str | None = None
+    session_name: str = "main"
     socket_path: Path
     created_at: datetime
     bridge_pid: int | None = None
     instance_token: SecretStr | None = None
     lifecycle: InstanceLifecycle
+
+    @model_validator(mode="after")
+    def stable_identity_matches_schema(self) -> "LocalInstance":
+        if self.session_id is not None and not (
+            self.session_id.startswith("$") and self.session_id[1:].isdigit()
+        ):
+            raise ValueError("session_id must be a stable tmux Session ID")
+        if self.schema_version == 2 and self.session_id is None:
+            raise ValueError("schema version 2 requires session_id")
+        return self

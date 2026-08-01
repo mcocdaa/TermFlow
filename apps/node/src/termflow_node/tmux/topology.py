@@ -37,14 +37,18 @@ _PANE_FORMAT = " ".join(
         "#{pane_dead}",
         "#{pane_width}",
         "#{pane_height}",
+        "#{pane_left}",
+        "#{pane_top}",
+        "#{q:pane_current_command}",
         "#{q:pane_title}",
     )
 )
 
 
 class TopologyReader:
-    def __init__(self, runner: QueryRunner) -> None:
+    def __init__(self, runner: QueryRunner, session_id: str | None = None) -> None:
         self._runner = runner
+        self._session_id = session_id
         self._current: TopologySnapshot | None = None
 
     @staticmethod
@@ -60,10 +64,16 @@ class TopologyReader:
         return fields
 
     def read(self) -> TopologySnapshot:
-        window_result = self._runner.run_command("list-windows", "-F", _WINDOW_FORMAT)
-        pane_result = self._runner.run_command("list-panes", "-a", "-F", _PANE_FORMAT)
+        target = ("-t", self._session_id) if self._session_id is not None else ()
+        window_result = self._runner.run_command(
+            "list-windows", *target, "-F", _WINDOW_FORMAT
+        )
+        pane_arguments = ("list-panes", "-s", *target, "-F", _PANE_FORMAT)
+        if self._session_id is None:
+            pane_arguments = ("list-panes", "-a", "-F", _PANE_FORMAT)
+        pane_result = self._runner.run_command(*pane_arguments)
         window_rows = [self._fields(line, 6) for line in window_result.stdout.splitlines() if line]
-        pane_rows = [self._fields(line, 9) for line in pane_result.stdout.splitlines() if line]
+        pane_rows = [self._fields(line, 12) for line in pane_result.stdout.splitlines() if line]
         if not window_rows:
             raise TopologyQueryError("managed Session has no windows")
         session_ids = {row[0] for row in window_rows} | {row[0] for row in pane_rows}
@@ -85,7 +95,10 @@ class TopologyReader:
                     dead=row[5] == "1",
                     width=int(row[6]),
                     height=int(row[7]),
-                    title=row[8],
+                    left=int(row[8]),
+                    top=int(row[9]),
+                    current_command=row[10] or None,
+                    title=row[11],
                 )
             )
         windows = [

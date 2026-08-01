@@ -108,7 +108,10 @@ def list_instances(
 ) -> None:
     """List local Instances without contacting the Control Plane."""
 
-    payloads = [_status_payload(record) for record in InstanceStore.default().list().instances]
+    store = InstanceStore.default()
+    payloads = [
+        _status_payload(record) for record in InstanceManager(store).list_current().instances
+    ]
     if json_output:
         typer.echo(json.dumps(payloads, separators=(",", ":")))
         return
@@ -165,10 +168,12 @@ async def _run_bridge(instance_id: UUID) -> None:
 
     installation = ConfigStore.default().load()
     store = InstanceStore.default()
-    instance = store.load(instance_id)
+    instance = InstanceManager(store).current(instance_id)
     runner = TmuxRunner(instance.socket_path)
-    topology = TopologyReader(runner)
-    control = TmuxControlClient(instance.socket_path, instance.session_name)
+    if instance.session_id is None:
+        raise RuntimeError("Instance has no stable tmux Session ID")
+    topology = TopologyReader(runner, instance.session_id)
+    control = TmuxControlClient(instance.socket_path, instance.session_id)
     buffers = OutputBuffers(max_bytes_per_pane=1024 * 1024)
     input_handler = InputHandler(
         topology_provider=topology.read,
