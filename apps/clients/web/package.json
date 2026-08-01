@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
+    "e2e": "playwright test",
     "typecheck": "vue-tsc -b",
     "test": "vitest",
     "test:run": "vitest run"
@@ -20,8 +21,9 @@
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^5.2.0",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^22.10.0",
+    "@vitejs/plugin-vue": "^5.2.0",
     "@vue/test-utils": "^2.4.6",
     "jsdom": "^25.0.1",
     "typescript": "^5.7.0",
