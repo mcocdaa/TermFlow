@@ -35,7 +35,12 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
   await expect(page.locator('[data-connection-status]')).toHaveText('已连接', { timeout: 10_000 })
   await expect(page.locator('.terminal-host .xterm')).toBeVisible()
 
-  const marker = `WEB_E2E_${testInfo.project.name.replaceAll('-', '_')}`
+  const projectCode = testInfo.project.name
+    .split('-')
+    .map((part) => part[0])
+    .join('')
+    .toUpperCase()
+  const marker = `TF${projectCode}${Date.now().toString(36).slice(-4)}`
   await page.locator('.terminal-host textarea').focus()
   await page.keyboard.type(`printf '${marker}\\n'`)
   await page.keyboard.press('Enter')
