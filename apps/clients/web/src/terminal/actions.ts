@@ -1,4 +1,5 @@
-export interface TmuxActionDefinition { id: string; label: string; destructive?: boolean }
+import type { TerminalActionId } from '../api/types'
+export interface TmuxActionDefinition { id: TerminalActionId; label: string; destructive?: boolean }
 
 export const tmuxActions: readonly TmuxActionDefinition[] = [
   { id: 'split_left_right', label: '左右切分 Pane' },
@@ -9,8 +10,6 @@ export const tmuxActions: readonly TmuxActionDefinition[] = [
   { id: 'select_up', label: '选择上方 Pane' },
   { id: 'select_down', label: '选择下方 Pane' },
   { id: 'toggle_zoom', label: '切换 tmux Zoom' },
-  { id: 'enter_copy_mode', label: '进入 Copy Mode' },
-  { id: 'next_window', label: '下一个 Window' },
-  { id: 'previous_window', label: '上一个 Window' },
+  { id: 'copy_mode', label: '进入 Copy Mode' },
   { id: 'close_pane', label: '关闭 Pane', destructive: true },
 ]

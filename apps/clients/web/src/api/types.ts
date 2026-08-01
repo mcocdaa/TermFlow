@@ -11,25 +11,24 @@ export interface DashboardMetricsDto {
 }
 
 export interface TermSummaryDto {
-  term_id: string
-  computer_id: string
+  instance_id: string
   name: string
   online: boolean
   window_count: number
   pane_count: number
-  pane_current_command: string | null
+  active_pane_count: number
+  current_command: string | null
   last_seen_at: string | null
 }
 
 export interface ComputerSummaryDto {
-  computer_id: string
+  installation_id: string
   display_name: string
-  hostname: string
-  platform: string
-  client_version: string
+  hostname: string | null
+  platform: string | null
+  client_version: string | null
   online: boolean
-  online_term_count: number
-  registered_at: string
+  registered_at?: string | null
   last_seen_at: string | null
   terms: TermSummaryDto[]
 }
@@ -43,15 +42,18 @@ export interface ComputerListDto { computers: ComputerSummaryDto[] }
 export interface ComputerDetailDto extends ComputerSummaryDto {}
 
 export interface EnrollmentCodeDto {
-  code: string
+  token: string
   expires_at: string
 }
 
 export interface PaneTopologyDto {
   pane_id: string
+  window_id: string
+  index: number
   title: string
-  current_command: string
+  current_command: string | null
   active: boolean
+  dead: boolean
   left: number
   top: number
   width: number
@@ -60,14 +62,20 @@ export interface PaneTopologyDto {
 
 export interface WindowTopologyDto {
   window_id: string
+  index: number
   name: string
   active: boolean
   panes: PaneTopologyDto[]
 }
 
-export interface TermDetailDto extends TermSummaryDto { windows: WindowTopologyDto[] }
+export interface TopologyDto { session_id: string; session_name: string; revision: number; windows: WindowTopologyDto[] }
+export interface TopologyResponseDto { instance_id: string; topology: TopologyDto }
+
+export type TerminalActionId = 'split_left_right' | 'split_top_bottom' | 'new_window' | 'select_left' | 'select_right' | 'select_up' | 'select_down' | 'toggle_zoom' | 'copy_mode' | 'close_pane'
+export interface TerminalBindingDto { action: TerminalActionId; key: string | null; tooltip: string }
 
 export interface BindingSnapshotDto {
   prefix: string
-  actions: Record<string, string | null>
+  prefix2?: string | null
+  bindings: TerminalBindingDto[]
 }

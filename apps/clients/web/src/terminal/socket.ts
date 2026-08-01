@@ -1,5 +1,6 @@
 import type { TerminalActionResultControl, TerminalBindingControl, TerminalReadyControl } from './protocol'
 import { parseTerminalControl } from './protocol'
+import type { TerminalActionId } from '../api/types'
 
 export type TerminalConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'closed'
 export interface TerminalSocketCallbacks {
@@ -16,7 +17,7 @@ export interface TerminalSocketCallbacks {
 export interface TerminalSocketLike {
   connect(): void
   sendInput(data: string | Uint8Array): void
-  sendAction(actionId: string, options?: { targetPaneId?: string; confirmed?: boolean }): void
+  sendAction(actionId: TerminalActionId, options?: { targetPaneId?: string; confirmed?: boolean }): void
   dispose(): void
 }
 interface TerminalSocketOptions {
@@ -65,7 +66,7 @@ export class TerminalSocket implements TerminalSocketLike {
     if (!control) return
     switch (control.type) {
       case 'terminal.ready':
-        if (this.streamId !== null && this.streamId !== control.stream_id && control.gap === true) this.callbacks.onReset()
+        if (this.streamId !== null && this.streamId !== control.stream_id) this.callbacks.onReset()
         this.streamId = control.stream_id
         this.callbacks.onReady(control)
         break
@@ -74,7 +75,7 @@ export class TerminalSocket implements TerminalSocketLike {
       case 'terminal.error': this.callbacks.onError({ code: control.code, message: control.message }); break
       case 'terminal.action_result': this.callbacks.onActionResult(control); break
       case 'terminal.closed':
-        this.suppressReconnect = control.reason === 'replaced' || control.reason === 'offline' || control.reason === 'unauthorized'
+        this.suppressReconnect = control.reason === 'replaced' || control.reason === 'instance_offline' || control.reason === 'client_closed'
         this.callbacks.onClosed(control.reason)
         this.callbacks.onStatus('closed')
         break
@@ -94,9 +95,9 @@ export class TerminalSocket implements TerminalSocketLike {
     for (let offset = 0; offset < bytes.byteLength; offset += MAX_BINARY_FRAME) this.socket.send(bytes.slice(offset, offset + MAX_BINARY_FRAME))
   }
 
-  sendAction(actionId: string, options: { targetPaneId?: string; confirmed?: boolean } = {}) {
+  sendAction(action: TerminalActionId, options: { targetPaneId?: string; confirmed?: boolean } = {}) {
     if (!this.socket || this.socket.readyState !== 1) return
-    this.socket.send(JSON.stringify({ type: 'terminal.action', request_id: crypto.randomUUID(), action_id: actionId, target_pane_id: options.targetPaneId, confirmed: options.confirmed ?? false }))
+    this.socket.send(JSON.stringify({ type: 'terminal.action', action_id: crypto.randomUUID(), action, target_pane_id: options.targetPaneId, confirmed: options.confirmed ?? false }))
   }
 
   dispose() {

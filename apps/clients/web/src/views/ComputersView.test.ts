@@ -5,8 +5,12 @@ import App from '../App.vue'
 import { createAppRouter } from '../router'
 
 const computer = {
-  computer_id: 'machine-1', display_name: '主工作站', hostname: 'devbox', platform: 'Linux x86_64', client_version: '1.4.2', online: true,
-  online_term_count: 3, registered_at: '2026-07-20T00:00:00Z', last_seen_at: '2026-08-01T01:00:00Z', terms: [],
+  installation_id: 'machine-1', display_name: '主工作站', hostname: 'devbox', platform: 'Linux x86_64', client_version: '1.4.2', online: true,
+  registered_at: '2026-07-20T00:00:00Z', last_seen_at: '2026-08-01T01:00:00Z', terms: [
+    { instance_id: 't1', name: 'one', online: true, window_count: 1, pane_count: 1, active_pane_count: 1, current_command: 'sh', last_seen_at: null },
+    { instance_id: 't2', name: 'two', online: true, window_count: 1, pane_count: 1, active_pane_count: 1, current_command: 'sh', last_seen_at: null },
+    { instance_id: 't3', name: 'three', online: true, window_count: 1, pane_count: 1, active_pane_count: 1, current_command: 'sh', last_seen_at: null },
+  ],
 }
 
 describe('ComputersView', () => {

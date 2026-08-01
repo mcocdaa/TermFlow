@@ -40,7 +40,7 @@ async function create() {
   message.value = ''
   try {
     const enrollment = await createEnrollmentCode()
-    code.value = enrollment.code
+    code.value = enrollment.token
     expiresAt.value = new Date(enrollment.expires_at).getTime()
     now.value = Date.now()
     timer = setInterval(() => {

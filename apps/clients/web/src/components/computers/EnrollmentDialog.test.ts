@@ -5,7 +5,7 @@ import EnrollmentDialog from './EnrollmentDialog.vue'
 describe('EnrollmentDialog', () => {
   it('creates a one-time code only on request, builds the login command, copies it, and clears on close', async () => {
     const code = 'JOIN-7P4W-SECRET'
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code, expires_at: new Date(Date.now() + 600_000).toISOString() }), { status: 201, headers: { 'content-type': 'application/json' } }))
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ token: code, expires_at: new Date(Date.now() + 600_000).toISOString() }), { status: 201, headers: { 'content-type': 'application/json' } }))
     vi.stubGlobal('fetch', fetchMock)
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
@@ -29,7 +29,7 @@ describe('EnrollmentDialog', () => {
   it('clears an expired code from the DOM', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-01T00:00:00Z'))
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 'EXPIRES-NOW', expires_at: '2026-08-01T00:00:01Z' }), { status: 201, headers: { 'content-type': 'application/json' } })))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ token: 'EXPIRES-NOW', expires_at: '2026-08-01T00:00:01Z' }), { status: 201, headers: { 'content-type': 'application/json' } })))
     const wrapper = mount(EnrollmentDialog)
     await wrapper.get('[data-action="create-code"]').trigger('click')
     await flushPromises()

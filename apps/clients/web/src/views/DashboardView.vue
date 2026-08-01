@@ -10,7 +10,7 @@
         <MetricCard label="24 小时交互" :value="snapshot.metrics.interactions_24h" />
         <MetricCard label="Computers" :value="snapshot.metrics.computers" />
       </div>
-      <div class="computer-grid"><ComputerCard v-for="computer in snapshot.computers" :key="computer.computer_id" :computer="computer" /></div>
+      <div class="computer-grid"><ComputerCard v-for="computer in snapshot.computers" :key="computer.installation_id" :computer="computer" /></div>
     </template>
   </section>
 </template>

@@ -63,6 +63,18 @@ describe('TerminalSocket', () => {
     expect(callbacks.onReset).toHaveBeenCalledTimes(1)
   })
 
+  it('uses the public semantic action envelope and binding list', () => {
+    const { terminal, socket, callbacks } = setup()
+    socket.open()
+    socket.message(JSON.stringify({ type: 'terminal.binding_snapshot', terminal_id: 'terminal-1', prefix: 'C-a', prefix2: null, bindings: [{ action: 'copy_mode', key: 'C-a [', tooltip: '进入复制模式' }] }))
+    expect(callbacks.onBindings).toHaveBeenCalledWith(expect.objectContaining({ prefix: 'C-a', bindings: [expect.objectContaining({ action: 'copy_mode' })] }))
+    terminal.sendAction('copy_mode', { targetPaneId: '%1' })
+    const frame = JSON.parse(socket.sent.find((item): item is string => typeof item === 'string')!)
+    expect(frame).toMatchObject({ type: 'terminal.action', action: 'copy_mode', target_pane_id: '%1', confirmed: false })
+    expect(frame.action_id).toMatch(/^[0-9a-f-]{36}$/)
+    expect(frame).not.toHaveProperty('request_id')
+  })
+
   it('reconnects unexpected closes but stops after replacement or explicit disposal', async () => {
     vi.useFakeTimers()
     const { terminal, socket, sockets, callbacks } = setup()

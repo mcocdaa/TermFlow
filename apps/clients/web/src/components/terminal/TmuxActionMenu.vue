@@ -7,8 +7,8 @@
         <button v-for="action in filteredActions" :key="action.id" :data-action-id="action.id" type="button" role="menuitem" :class="{ destructive: action.destructive }" :title="bindingTitle(action.id)" @click="choose(action)">{{ action.label }}<small>{{ bindingLabel(action.id) }}</small></button>
       </div>
     </div>
-    <button data-action="toggle-mobile-drawer" class="mobile-action-trigger" type="button" :aria-expanded="drawerOpen" @click="drawerOpen = !drawerOpen">快捷操作</button>
-    <aside v-if="drawerOpen" data-mobile-drawer class="mobile-action-drawer" aria-label="移动端 Tmux 操作">
+    <button ref="mobileTrigger" data-action="toggle-mobile-drawer" class="mobile-action-trigger" type="button" :aria-expanded="drawerOpen" @click="drawerOpen = !drawerOpen">快捷操作</button>
+    <aside v-if="drawerOpen" data-mobile-drawer class="mobile-action-drawer" aria-label="移动端 Tmux 操作" @keydown.esc.prevent.stop="closeDrawer">
       <header><strong>Tmux 操作</strong><button class="icon-button" type="button" @click="drawerOpen = false">收起</button></header>
       <div class="mobile-action-grid"><button v-for="action in tmuxActions" :key="action.id" type="button" :title="bindingTitle(action.id)" @click="choose(action)">{{ action.label }}</button></div>
     </aside>
@@ -16,23 +16,27 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import type { BindingSnapshotDto } from '../../api/types'
+import type { TerminalActionId } from '../../api/types'
 import { tmuxActions, type TmuxActionDefinition } from '../../terminal/actions'
 const props = defineProps<{ bindings: BindingSnapshotDto; activePaneId: string | null }>()
-const emit = defineEmits<{ action: [actionId: string, paneId: string | null]; 'request-close': [paneId: string | null] }>()
+const emit = defineEmits<{ action: [actionId: TerminalActionId, paneId: string | null]; 'request-close': [paneId: string | null] }>()
 const pinned = ref(false)
 const preview = ref(false)
 const drawerOpen = ref(false)
+const mobileTrigger = ref<HTMLButtonElement | null>(null)
 const query = ref('')
 const menuOpen = computed(() => pinned.value || preview.value)
 const filteredActions = computed(() => tmuxActions.filter((action) => action.label.toLocaleLowerCase().includes(query.value.trim().toLocaleLowerCase())))
-const bindingLabel = (id: string) => props.bindings.actions[id] || '未绑定'
-const bindingTitle = (id: string) => `实际绑定：${bindingLabel(id)}`
+const binding = (id: TerminalActionId) => props.bindings.bindings.find((item) => item.action === id)
+const bindingLabel = (id: TerminalActionId) => binding(id)?.key || '未绑定'
+const bindingTitle = (id: TerminalActionId) => binding(id) ? `${binding(id)!.tooltip}；实际绑定：${bindingLabel(id)}` : '实际绑定：未绑定'
 function choose(action: TmuxActionDefinition) {
   pinned.value = false
   drawerOpen.value = false
   if (action.destructive) emit('request-close', props.activePaneId)
   else emit('action', action.id, props.activePaneId)
 }
+async function closeDrawer() { drawerOpen.value = false; await nextTick(); mobileTrigger.value?.focus() }
 </script>

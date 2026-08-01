@@ -5,7 +5,14 @@ import TmuxActionMenu from './TmuxActionMenu.vue'
 
 const bindings = {
   prefix: 'C-a',
-  actions: { split_left_right: 'C-a %', split_top_bottom: null, new_window: 'C-a c', select_left: 'C-a h', toggle_zoom: 'C-a z', enter_copy_mode: 'C-a [' },
+  bindings: [
+    { action: 'split_left_right' as const, key: 'C-a %', tooltip: '左右切分' },
+    { action: 'split_top_bottom' as const, key: null, tooltip: '上下切分' },
+    { action: 'new_window' as const, key: 'C-a c', tooltip: '新建窗口' },
+    { action: 'select_left' as const, key: 'C-a h', tooltip: '向左' },
+    { action: 'toggle_zoom' as const, key: 'C-a z', tooltip: '缩放' },
+    { action: 'copy_mode' as const, key: 'C-a [', tooltip: '复制模式' },
+  ],
 }
 
 describe('tmux controls', () => {

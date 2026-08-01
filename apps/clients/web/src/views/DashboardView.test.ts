@@ -9,17 +9,17 @@ const dashboard: DashboardDto = {
   metrics: { online_terms: 2, active_panes: 5, interactions_24h: 37, computers: 2 },
   computers: [
     {
-      computer_id: 'computer-1', display_name: '设计工作站', hostname: 'studio.local', platform: 'macOS', client_version: '1.2.0', online: true,
-      online_term_count: 1, registered_at: '2026-07-30T10:00:00Z', last_seen_at: '2026-08-01T05:00:00Z',
+      installation_id: 'computer-1', display_name: '设计工作站', hostname: 'studio.local', platform: 'macOS', client_version: '1.2.0', online: true,
+      registered_at: '2026-07-30T10:00:00Z', last_seen_at: '2026-08-01T05:00:00Z',
       terms: [
-        { term_id: 'term-1', computer_id: 'computer-1', name: '产品开发', online: true, window_count: 2, pane_count: 4, pane_current_command: 'python3', last_seen_at: '2026-08-01T05:00:00Z' },
-        { term_id: 'term-2', computer_id: 'computer-1', name: '离线维护', online: false, window_count: 1, pane_count: 1, pane_current_command: 'zsh', last_seen_at: '2026-07-31T02:00:00Z' },
+        { instance_id: 'term-1', name: '产品开发', online: true, window_count: 2, pane_count: 4, active_pane_count: 1, current_command: 'python3', last_seen_at: '2026-08-01T05:00:00Z' },
+        { instance_id: 'term-2', name: '离线维护', online: false, window_count: 1, pane_count: 1, active_pane_count: 0, current_command: 'zsh', last_seen_at: '2026-07-31T02:00:00Z' },
       ],
     },
     {
-      computer_id: 'computer-2', display_name: '实验机', hostname: 'lab-box', platform: 'Linux', client_version: '1.2.0', online: true,
-      online_term_count: 1, registered_at: '2026-07-29T10:00:00Z', last_seen_at: '2026-08-01T05:10:00Z',
-      terms: [{ term_id: 'term-3', computer_id: 'computer-2', name: '数据任务', online: true, window_count: 1, pane_count: 1, pane_current_command: 'make', last_seen_at: '2026-08-01T05:10:00Z' }],
+      installation_id: 'computer-2', display_name: '实验机', hostname: 'lab-box', platform: 'Linux', client_version: '1.2.0', online: true,
+      registered_at: '2026-07-29T10:00:00Z', last_seen_at: '2026-08-01T05:10:00Z',
+      terms: [{ instance_id: 'term-3', name: '数据任务', online: true, window_count: 1, pane_count: 1, active_pane_count: 1, current_command: 'make', last_seen_at: '2026-08-01T05:10:00Z' }],
     },
   ],
 }

@@ -9,7 +9,7 @@ describe('TerminalCanvas', () => {
     let callbacks!: TerminalSocketCallbacks
     let input!: (value: string | Uint8Array) => void
     const socket: TerminalSocketLike = { connect: vi.fn(), sendInput: vi.fn(), sendAction: vi.fn(), dispose: vi.fn() }
-    const adapter: TerminalAdapter = { write: vi.fn(), resize: vi.fn(), reset: vi.fn(), focus: vi.fn(), dispose: vi.fn() }
+    const adapter: TerminalAdapter = { write: vi.fn(), resize: vi.fn(), reset: vi.fn(), focus: vi.fn(), canClientPan: vi.fn(() => false), dispose: vi.fn() }
     const createSocket = vi.fn((_id: string, nextCallbacks: TerminalSocketCallbacks) => { callbacks = nextCallbacks; return socket })
     const createAdapter: TerminalAdapterFactory = vi.fn((_host, _size, onInput) => { input = onInput; return adapter })
     const wrapper = mount(TerminalCanvas, { props: { termId: 'term-9', createSocket, createAdapter } })
@@ -21,9 +21,12 @@ describe('TerminalCanvas', () => {
     callbacks.onOutput(new Uint8Array([1, 2]))
     callbacks.onSize({ rows: 50, cols: 170 })
     input('ls\r')
+    await wrapper.get('.terminal-frame').trigger('pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 200, clientY: 200 })
+    await wrapper.get('.terminal-frame').trigger('pointermove', { pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 200 })
     expect(adapter.write).toHaveBeenCalledWith(new Uint8Array([1, 2]))
     expect(adapter.resize).toHaveBeenCalledWith(170, 50)
     expect(socket.sendInput).toHaveBeenCalledWith('ls\r')
+    expect(adapter.canClientPan).toHaveBeenCalled()
 
     wrapper.unmount()
     expect(adapter.dispose).toHaveBeenCalled()

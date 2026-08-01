@@ -18,14 +18,14 @@ import { displayPresentation, type DisplayMode } from '../../terminal/viewport'
 import { createPointerViewport } from '../../composables/usePointerViewport'
 
 const props = withDefaults(defineProps<{ termId: string; displayMode?: DisplayMode; selectionActive?: boolean; mouseReportingActive?: boolean; transformInput?: (value: string | Uint8Array) => string | Uint8Array; createSocket?: TerminalSocketFactory; createAdapter?: TerminalAdapterFactory }>(), { displayMode: 'font-100', selectionActive: false, mouseReportingActive: false })
-const emit = defineEmits<{ bindings: [value: { prefix: string; actions: Record<string, string | null> }]; 'reset-input': [key: number] }>()
+const emit = defineEmits<{ bindings: [value: { prefix: string; prefix2?: string | null; bindings: Array<{ action: import('../../api/types').TerminalActionId; key: string | null; tooltip: string }> }]; 'reset-input': [key: number] }>()
 const host = ref<HTMLElement | null>(null)
 const frameElement = ref<HTMLElement | null>(null)
 const frame = ref({ width: 1, height: 1 })
 const session = useTerminalSession(props.termId, host, props.createSocket, props.createAdapter, props.transformInput)
 const { status, dimensions, bindings, terminalError, lastActionResult, resetKey } = session
 const presentation = computed(() => dimensions.value ? displayPresentation(props.displayMode, dimensions.value, frame.value, { cellWidth: 9, cellHeight: 18 }) : null)
-const pointer = createPointerViewport({ viewport: frame.value, content: frame.value, canPan: () => !props.selectionActive && !props.mouseReportingActive })
+const pointer = createPointerViewport({ viewport: frame.value, content: frame.value, canPan: () => !props.selectionActive && !props.mouseReportingActive && session.canClientPan() })
 const totalScale = computed(() => (presentation.value?.scale ?? 1) * pointer.state.scale)
 const contentStyle = computed(() => presentation.value ? { width: `${presentation.value.gridWidth * totalScale.value}px`, height: `${presentation.value.gridHeight * totalScale.value}px` } : {})
 const gridStyle = computed(() => presentation.value ? { width: `${presentation.value.gridWidth}px`, height: `${presentation.value.gridHeight}px`, transform: `translate(${pointer.state.panX}px, ${pointer.state.panY}px) scale(${totalScale.value})` } : {})
@@ -46,9 +46,9 @@ watchEffect(() => {
 watch(bindings, (value) => emit('bindings', value), { deep: true, immediate: true })
 watch(resetKey, (value) => emit('reset-input', value))
 function point(event: PointerEvent) { return { pointerId: event.pointerId, x: event.clientX, y: event.clientY } }
-function onPointerDown(event: PointerEvent) { frameElement.value?.setPointerCapture?.(event.pointerId); pointer.pointerDown(point(event)) }
-function onPointerMove(event: PointerEvent) { pointer.pointerMove(point(event)) }
-function onPointerUp(event: PointerEvent) { pointer.pointerUp(event.pointerId); frameElement.value?.releasePointerCapture?.(event.pointerId) }
+function onPointerDown(event: PointerEvent) { if (event.pointerType === 'mouse') return; frameElement.value?.setPointerCapture?.(event.pointerId); pointer.pointerDown(point(event)) }
+function onPointerMove(event: PointerEvent) { if (event.pointerType !== 'mouse') pointer.pointerMove(point(event)) }
+function onPointerUp(event: PointerEvent) { if (event.pointerType === 'mouse') return; pointer.pointerUp(event.pointerId); frameElement.value?.releasePointerCapture?.(event.pointerId) }
 function focusPane(pane: PaneTopologyDto) { pointer.focusPane(pane, { cellWidth: 9 * (presentation.value?.scale ?? 1), cellHeight: 18 * (presentation.value?.scale ?? 1) }) }
 defineExpose({ dimensions, bindings, lastActionResult, sendAction: session.sendAction, sendInput: session.sendInput, focus: session.focus, focusPane, resetViewport: pointer.reset })
 </script>

@@ -5,6 +5,7 @@ export interface TerminalAdapter {
   resize(cols: number, rows: number): void
   reset(): void
   focus(): void
+  canClientPan(): boolean
   dispose(): void
 }
 export type TerminalAdapterFactory = (host: HTMLElement, size: { rows: number; cols: number }, onInput: (value: string | Uint8Array) => void) => TerminalAdapter
@@ -40,6 +41,7 @@ export const createXtermAdapter: TerminalAdapterFactory = (host, size, onInput) 
     resize: (cols, rows) => terminal.resize(cols, rows),
     reset: () => terminal.reset(),
     focus: () => terminal.focus(),
+    canClientPan: () => !terminal.hasSelection() && terminal.modes.mouseTrackingMode === 'none',
     dispose: () => { dataDisposable.dispose(); binaryDisposable.dispose(); terminal.dispose() },
   }
 }

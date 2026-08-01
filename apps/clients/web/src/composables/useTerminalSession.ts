@@ -1,5 +1,6 @@
 import { onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import type { BindingSnapshotDto } from '../api/types'
+import type { TerminalActionId } from '../api/types'
 import type { TerminalAdapter, TerminalAdapterFactory } from '../terminal/terminalAdapter'
 import { createXtermAdapter } from '../terminal/terminalAdapter'
 import type { TerminalActionResultControl } from '../terminal/protocol'
@@ -11,7 +12,7 @@ export type TerminalSocketFactory = (termId: string, callbacks: TerminalSocketCa
 export function useTerminalSession(termId: string, host: Ref<HTMLElement | null>, socketFactory: TerminalSocketFactory = createTerminalSocket, adapterFactory: TerminalAdapterFactory = createXtermAdapter, transformInput?: (value: string | Uint8Array) => string | Uint8Array) {
   const status = ref<TerminalConnectionStatus>('connecting')
   const dimensions = ref<{ rows: number; cols: number } | null>(null)
-  const bindings = ref<BindingSnapshotDto>({ prefix: '未报告', actions: {} })
+  const bindings = ref<BindingSnapshotDto>({ prefix: '未报告', bindings: [] })
   const terminalError = ref('')
   const lastActionResult = ref<TerminalActionResultControl | null>(null)
   const resetKey = ref(0)
@@ -30,11 +31,11 @@ export function useTerminalSession(termId: string, host: Ref<HTMLElement | null>
     },
     onOutput: (bytes) => { if (adapter) adapter.write(bytes); else pendingOutput.push(bytes) },
     onSize: (size) => { dimensions.value = size; adapter?.resize(size.cols, size.rows) },
-    onBindings: (control) => { bindings.value = { prefix: control.prefix, actions: control.actions } },
+    onBindings: (control) => { bindings.value = { prefix: control.prefix, prefix2: control.prefix2, bindings: control.bindings } },
     onError: (error) => { terminalError.value = error.message || `终端错误：${error.code}` },
     onClosed: (reason) => { terminalError.value = reason === 'replaced' ? '此终端已被另一个已认证连接接管。' : '终端连接已关闭。'; resetKey.value += 1 },
     onReset: () => { adapter?.reset(); resetKey.value += 1 },
-    onActionResult: (result) => { lastActionResult.value = result; if (!result.ok) terminalError.value = result.error || '操作未完成。' },
+    onActionResult: (result) => { lastActionResult.value = result; if (!result.ok) terminalError.value = result.error_code ? `操作未完成：${result.error_code}` : '操作未完成。' },
   }
   const socket = socketFactory(termId, callbacks)
   onMounted(() => socket.connect())
@@ -42,8 +43,9 @@ export function useTerminalSession(termId: string, host: Ref<HTMLElement | null>
 
   return {
     status, dimensions, bindings, terminalError, lastActionResult, resetKey,
-    sendAction: (actionId: string, options?: { targetPaneId?: string; confirmed?: boolean }) => socket.sendAction(actionId, options),
+    sendAction: (actionId: TerminalActionId, options?: { targetPaneId?: string; confirmed?: boolean }) => socket.sendAction(actionId, options),
     sendInput: (value: string | Uint8Array) => socket.sendInput(value),
     focus: () => adapter?.focus(),
+    canClientPan: () => adapter?.canClientPan() ?? false,
   }
 }

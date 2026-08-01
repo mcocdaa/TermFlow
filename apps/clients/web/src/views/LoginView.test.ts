@@ -23,9 +23,9 @@ describe('browser login privacy', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/session')
-    expect(fetchMock.mock.calls[0][1]).toMatchObject({ credentials: 'same-origin', method: 'POST' })
+    const sessionCalls = fetchMock.mock.calls.filter(([url]) => url === '/api/v1/session')
+    expect(sessionCalls).toHaveLength(1)
+    expect(sessionCalls[0][1]).toMatchObject({ credentials: 'same-origin', method: 'POST' })
     expect(router.currentRoute.value.fullPath).toBe('/computers')
     expect(wrapper.html()).not.toContain(secret)
     expect(localStorage.getItem(secret)).toBeNull()
