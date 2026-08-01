@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
 from uuid import UUID
@@ -98,7 +98,6 @@ class _CurrentTerminal:
     size: TerminalSize
     size_task: asyncio.Task[None] | None = None
     opened_announced: bool = False
-    startup_output: list[RemoteOutputChunk] = field(default_factory=list)
 
 
 class TerminalManager:
@@ -194,7 +193,6 @@ class TerminalManager:
         ):
             return
         if not current.opened_announced:
-            current.startup_output.append(chunk)
             return
         self._publish_output(chunk)
 
@@ -262,9 +260,13 @@ class TerminalManager:
             raise
         self._send_opened_and_bindings(current)
         current.opened_announced = True
-        for chunk in current.startup_output:
+        try:
+            startup_output = remote.replay_after(0)
+        except ReplayGap:
+            await self._close_current("stream_gap")
+            return
+        for chunk in startup_output:
             self._publish_output(chunk)
-        current.startup_output.clear()
         current.size_task = asyncio.create_task(self._size_loop(current))
 
     def _send_opened_and_bindings(self, current: _CurrentTerminal) -> None:
