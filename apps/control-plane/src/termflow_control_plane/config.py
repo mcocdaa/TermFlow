@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     terminal_input_rate_bytes_per_second: int = Field(default=256 * 1024, ge=1)
     terminal_queue_max_messages: int = Field(default=256, ge=1)
     terminal_queue_max_bytes: int = Field(default=1024 * 1024, ge=1)
+    terminal_resume_grace_seconds: float = Field(default=30.0, ge=1.0, le=300.0)
     heartbeat_interval_seconds: int = 15
     offline_after_seconds: int = 45
     command_timeout_seconds: float = 5.0

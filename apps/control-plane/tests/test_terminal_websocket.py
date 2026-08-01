@@ -139,6 +139,14 @@ def test_browser_terminal_routes_binary_and_semantic_control_frames(
                     ),
                 )
             )
+            action_result = terminal.receive_json()
+            assert action_result == {
+                "type": "terminal.action_result",
+                "terminal_id": str(terminal_id),
+                "action_id": str(action_id),
+                "ok": False,
+                "error_code": "target_not_found",
+            }
             assert terminal.receive_json()["code"] == "target_not_found"
 
             bridge.send_text(
@@ -167,6 +175,91 @@ def test_browser_terminal_routes_binary_and_semantic_control_frames(
             closing = WireMessage.model_validate(bridge.receive_json())
             assert closing.type is MessageType.TERMINAL_CLOSE
             assert closing.payload["reason"] == "client_closed"
+
+
+def test_browser_terminal_resumes_same_stream_after_transport_disconnect(
+    client,
+    admin_headers,
+) -> None:
+    instance_id, instance_token = _provision(client, admin_headers)
+    _login(client)
+    base_url = f"/api/v1/terms/{instance_id}/terminal"
+    with client.websocket_connect(
+        "/api/v1/bridge/connect",
+        headers={"Authorization": f"Bearer {instance_token}"},
+    ) as bridge:
+        with client.websocket_connect(base_url, headers={"Origin": ORIGIN}) as first:
+            opened_request = WireMessage.model_validate(bridge.receive_json())
+            terminal_id = UUID(str(opened_request.payload["terminal_id"]))
+            stream_id = uuid4()
+            bridge.send_text(
+                _bridge_message(
+                    instance_id,
+                    MessageType.TERMINAL_OPENED,
+                    TerminalOpenedPayload(
+                        terminal_id=terminal_id,
+                        stream_id=stream_id,
+                        rows=24,
+                        cols=80,
+                    ),
+                )
+            )
+            assert first.receive_json()["type"] == "terminal.ready"
+            bridge.send_text(
+                _bridge_message(
+                    instance_id,
+                    MessageType.TERMINAL_OUTPUT,
+                    TerminalOutputPayload.from_bytes(
+                        terminal_id,
+                        stream_id,
+                        1,
+                        b"first",
+                    ),
+                )
+            )
+            assert first.receive_bytes() == b"first"
+
+        resume_url = (
+            f"{base_url}?terminal_id={terminal_id}"
+            f"&stream_id={stream_id}&after_seq=1"
+        )
+        with client.websocket_connect(resume_url, headers={"Origin": ORIGIN}) as resumed:
+            resume_request = WireMessage.model_validate(bridge.receive_json())
+            assert resume_request.type is MessageType.TERMINAL_OPEN
+            assert resume_request.payload == {
+                "terminal_id": str(terminal_id),
+                "resume_stream_id": str(stream_id),
+                "after_seq": 1,
+            }
+            bridge.send_text(
+                _bridge_message(
+                    instance_id,
+                    MessageType.TERMINAL_OPENED,
+                    TerminalOpenedPayload(
+                        terminal_id=terminal_id,
+                        stream_id=stream_id,
+                        rows=24,
+                        cols=80,
+                    ),
+                )
+            )
+            assert resumed.receive_json()["stream_id"] == str(stream_id)
+            bridge.send_text(
+                _bridge_message(
+                    instance_id,
+                    MessageType.TERMINAL_OUTPUT,
+                    TerminalOutputPayload.from_bytes(
+                        terminal_id,
+                        stream_id,
+                        2,
+                        b"second",
+                    ),
+                )
+            )
+            assert resumed.receive_bytes() == b"second"
+            resumed.send_json({"type": "terminal.close", "reason": "client_closed"})
+            closing = WireMessage.model_validate(bridge.receive_json())
+            assert closing.type is MessageType.TERMINAL_CLOSE
 
 
 def test_terminal_auth_origin_offline_and_native_bearer(client, admin_headers) -> None:

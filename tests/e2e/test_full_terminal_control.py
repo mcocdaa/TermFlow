@@ -21,9 +21,22 @@ def _browser_cookie(system) -> str:
         return "; ".join(f"{name}={value}" for name, value in browser.cookies.items())
 
 
-def _terminal(system, instance_id: UUID, cookie: str):
+def _terminal(
+    system,
+    instance_id: UUID,
+    cookie: str,
+    *,
+    resume: tuple[str, str, int] | None = None,
+):
+    url = f"ws://127.0.0.1:{system.port}/api/v1/terms/{instance_id}/terminal"
+    if resume is not None:
+        terminal_id, stream_id, after_seq = resume
+        url += (
+            f"?terminal_id={terminal_id}&stream_id={stream_id}"
+            f"&after_seq={after_seq}"
+        )
     return connect(
-        f"ws://127.0.0.1:{system.port}/api/v1/terms/{instance_id}/terminal",
+        url,
         origin=system.base_url,
         additional_headers={"Cookie": cookie},
         ping_interval=None,
@@ -33,13 +46,15 @@ def _terminal(system, instance_id: UUID, cookie: str):
     )
 
 
-def _wait_ready_and_redraw(connection, timeout: float = 8) -> tuple[dict, bytes]:
+def _wait_ready_and_redraw(connection, timeout: float = 8) -> tuple[dict, bytes, int]:
     deadline = time.monotonic() + timeout
     ready: dict | None = None
     redraw = bytearray()
+    sequence = 0
     while time.monotonic() < deadline and (ready is None or not redraw):
         raw = connection.recv(timeout=max(0.05, deadline - time.monotonic()))
         if isinstance(raw, bytes):
+            sequence += 1
             redraw.extend(raw)
         else:
             control = json.loads(raw)
@@ -48,7 +63,7 @@ def _wait_ready_and_redraw(connection, timeout: float = 8) -> tuple[dict, bytes]
     assert ready is not None
     assert ready["rows"] >= 1 and ready["cols"] >= 1
     assert redraw
-    return ready, bytes(redraw)
+    return ready, bytes(redraw), sequence
 
 
 def _wait_for_output(connection, marker: bytes, timeout: float = 8) -> bytes:
@@ -97,7 +112,7 @@ def test_browser_cookie_controls_a_real_tmux_client_without_resizing_a(
     marker = f"FULL_TMUX_{uuid4().hex}".encode()
 
     with _terminal(termflow_system, instance.instance_id, cookie) as terminal:
-        ready, redraw = _wait_ready_and_redraw(terminal)
+        ready, redraw, _ = _wait_ready_and_redraw(terminal)
         assert b"\x1b[" in redraw
         original_size = (ready["rows"], ready["cols"])
 
@@ -122,7 +137,7 @@ def test_browser_cookie_controls_a_real_tmux_client_without_resizing_a(
         with _terminal(termflow_system, instance.instance_id, cookie) as replacement:
             replaced = _wait_for_control(terminal, "terminal.closed")
             assert replaced["reason"] == "replaced"
-            replacement_ready, _ = _wait_ready_and_redraw(replacement)
+            replacement_ready, _, _ = _wait_ready_and_redraw(replacement)
             assert (replacement_ready["rows"], replacement_ready["cols"]) == original_size
 
     assert termflow_system.local_tmux_is_alive(instance)
@@ -137,3 +152,31 @@ def test_browser_cookie_controls_a_real_tmux_client_without_resizing_a(
         if path.is_file() and not path.name.endswith(".sock")
     ]
     assert all(marker not in path.read_bytes() for path in inspected)
+
+
+@pytest.mark.e2e
+@pytest.mark.tmux
+def test_terminal_stream_resumes_within_browser_disconnect_grace(termflow_system) -> None:
+    termflow_system.login(termflow_system.create_enrollment())
+    instance = termflow_system.new_and_detach("resume-terminal")
+    assert termflow_system.wait_until_online(instance.instance_id)
+    cookie = _browser_cookie(termflow_system)
+
+    first = _terminal(termflow_system, instance.instance_id, cookie)
+    ready, _, after_seq = _wait_ready_and_redraw(first)
+    first.close()
+
+    with _terminal(
+        termflow_system,
+        instance.instance_id,
+        cookie,
+        resume=(ready["terminal_id"], ready["stream_id"], after_seq),
+    ) as resumed:
+        resumed_ready = _wait_for_control(resumed, "terminal.ready")
+        assert resumed_ready["terminal_id"] == ready["terminal_id"]
+        assert resumed_ready["stream_id"] == ready["stream_id"]
+        marker = f"RESUMED_{uuid4().hex}".encode()
+        resumed.send(b"printf '" + marker + b"\\n'\r")
+        assert marker in _wait_for_output(resumed, marker)
+
+    assert termflow_system.local_tmux_is_alive(instance)

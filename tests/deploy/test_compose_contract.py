@@ -25,6 +25,7 @@ def test_compose_configures_same_origin_web_control_limits() -> None:
     assert "TERMFLOW_TERMINAL_INPUT_RATE_BYTES_PER_SECOND" in environment
     assert "TERMFLOW_TERMINAL_QUEUE_MAX_MESSAGES" in environment
     assert "TERMFLOW_TERMINAL_QUEUE_MAX_BYTES" in environment
+    assert "TERMFLOW_TERMINAL_RESUME_GRACE_SECONDS" in environment
 
 
 def test_control_plane_image_builds_web_without_shipping_node() -> None:

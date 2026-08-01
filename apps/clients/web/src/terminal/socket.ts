@@ -38,6 +38,7 @@ export class TerminalSocket implements TerminalSocketLike {
   private reconnectAttempt = 0
   private terminalId: string | null = null
   private streamId: string | null = null
+  private lastSeq = 0
   private readonly baseUrl: URL
   private readonly createWebSocket: (url: string) => WebSocket
   private readonly reconnectDelayMs: number
@@ -53,6 +54,11 @@ export class TerminalSocket implements TerminalSocketLike {
     this.callbacks.onStatus(this.streamId ? 'reconnecting' : 'connecting')
     const url = new URL(`/api/v1/terms/${encodeURIComponent(this.termId)}/terminal`, this.baseUrl)
     url.protocol = this.baseUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+    if (this.terminalId && this.streamId) {
+      url.searchParams.set('terminal_id', this.terminalId)
+      url.searchParams.set('stream_id', this.streamId)
+      url.searchParams.set('after_seq', String(this.lastSeq))
+    }
     const socket = this.createWebSocket(url.toString())
     this.socket = socket
     this.ready = false
@@ -64,15 +70,18 @@ export class TerminalSocket implements TerminalSocketLike {
   }
 
   private handleMessage(data: unknown) {
-    if (data instanceof ArrayBuffer) { if (this.ready) this.callbacks.onOutput(new Uint8Array(data)); return }
-    if (ArrayBuffer.isView(data)) { if (this.ready) this.callbacks.onOutput(new Uint8Array(data.buffer, data.byteOffset, data.byteLength)); return }
+    if (data instanceof ArrayBuffer) { if (this.ready) { this.lastSeq += 1; this.callbacks.onOutput(new Uint8Array(data)) }; return }
+    if (ArrayBuffer.isView(data)) { if (this.ready) { this.lastSeq += 1; this.callbacks.onOutput(new Uint8Array(data.buffer, data.byteOffset, data.byteLength)) }; return }
     if (typeof data !== 'string') return
     const control = parseTerminalControl(data)
     if (!control) return
     if (control.type !== 'terminal.ready' && (!this.ready || control.terminal_id !== this.terminalId)) return
     switch (control.type) {
       case 'terminal.ready':
-        if (this.streamId !== null && this.streamId !== control.stream_id) this.callbacks.onReset()
+        if (this.streamId !== null && this.streamId !== control.stream_id) {
+          this.lastSeq = 0
+          this.callbacks.onReset()
+        }
         this.streamId = control.stream_id
         this.terminalId = control.terminal_id
         this.ready = true
@@ -124,10 +133,11 @@ export class TerminalSocket implements TerminalSocketLike {
 
   dispose() {
     this.disposed = true
-    this.ready = false
     if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer)
     this.reconnectTimer = null
     const socket = this.socket
+    if (socket?.readyState === 1 && this.ready) socket.send(JSON.stringify({ type: 'terminal.close', reason: 'client_closed' }))
+    this.ready = false
     this.socket = null
     socket?.close(1000, 'route_leave')
   }

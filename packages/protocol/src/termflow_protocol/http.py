@@ -215,6 +215,14 @@ class TerminalClosedFrame(HttpModel):
     reason: TerminalCloseReason
 
 
+class TerminalActionResultFrame(HttpModel):
+    type: Literal["terminal.action_result"] = "terminal.action_result"
+    terminal_id: UUID
+    action_id: UUID
+    ok: bool
+    error_code: str | None = None
+
+
 class TerminalActionFrame(HttpModel):
     type: Literal["terminal.action"] = "terminal.action"
     action_id: UUID

@@ -95,8 +95,9 @@ class BrowserTerminal:
             await self._available.wait()
 
     def observe_opened(self, opened: TerminalOpenedPayload) -> None:
-        self._stream_id = opened.stream_id
-        self._last_seq = 0
+        if self._stream_id != opened.stream_id:
+            self._stream_id = opened.stream_id
+            self._last_seq = 0
 
     def accepts_output(self, output: TerminalOutputPayload) -> bool:
         return (
@@ -106,6 +107,21 @@ class BrowserTerminal:
 
     def observe_output(self, output: TerminalOutputPayload) -> None:
         self._last_seq = output.seq
+
+    def prepare_resume(self, stream_id: UUID, after_seq: int) -> bool:
+        if (
+            self.terminated
+            or self.remote_closed
+            or self._stream_id != stream_id
+            or after_seq < 0
+            or after_seq > self._last_seq
+        ):
+            return False
+        self._queue.clear()
+        self._queued_bytes = 0
+        self._available.clear()
+        self._last_seq = after_seq
+        return True
 
 
 class TerminalHub:
@@ -142,6 +158,26 @@ class TerminalHub:
                 return False
             del self._current[terminal.instance_id]
             return True
+
+    async def resume(
+        self,
+        instance_id: UUID,
+        *,
+        session_key: str | None,
+        terminal_id: UUID,
+        stream_id: UUID,
+        after_seq: int,
+    ) -> BrowserTerminal | None:
+        async with self._lock:
+            terminal = self._current.get(instance_id)
+            if (
+                terminal is None
+                or terminal.terminal_id != terminal_id
+                or terminal.session_key != session_key
+                or not terminal.prepare_resume(stream_id, after_seq)
+            ):
+                return None
+            return terminal
 
     def abandon(self, terminal: BrowserTerminal) -> bool:
         """Cancellation-safe cleanup for a WebSocket task's synchronous finally block."""

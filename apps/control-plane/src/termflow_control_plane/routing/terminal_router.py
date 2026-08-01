@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Protocol
 from uuid import UUID
 
@@ -50,10 +51,18 @@ class TerminalRouter:
         registry: LiveInstanceRegistry,
         hub: TerminalHub,
         audit: AuditWriter,
+        resume_grace_seconds: float = 30.0,
     ) -> None:
         self._registry = registry
         self._hub = hub
         self._audit = audit
+        self._resume_grace_seconds = resume_grace_seconds
+        self._suspended: dict[UUID, asyncio.Task[None]] = {}
+
+    def _cancel_suspension(self, terminal_id: UUID) -> None:
+        task = self._suspended.pop(terminal_id, None)
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
 
     @staticmethod
     def _message(
@@ -122,6 +131,40 @@ class TerminalRouter:
                 error_code=exc.code,
             )
             raise
+        return terminal
+
+    async def resume(
+        self,
+        instance_id: UUID,
+        *,
+        session_key: str | None,
+        terminal_id: UUID,
+        stream_id: UUID,
+        after_seq: int,
+    ) -> BrowserTerminal | None:
+        terminal = await self._hub.resume(
+            instance_id,
+            session_key=session_key,
+            terminal_id=terminal_id,
+            stream_id=stream_id,
+            after_seq=after_seq,
+        )
+        if terminal is None:
+            return None
+        self._cancel_suspension(terminal.terminal_id)
+        request = TerminalOpenPayload(
+            terminal_id=terminal.terminal_id,
+            resume_stream_id=stream_id,
+            after_seq=after_seq,
+        )
+        try:
+            await self._enqueue(
+                terminal,
+                self._message(terminal, MessageType.TERMINAL_OPEN, request),
+            )
+        except TerminalRouteError:
+            terminal.terminate("instance_offline", error_code="reconnect_failed")
+            return None
         return terminal
 
     async def bridge_connected(self, instance_id: UUID) -> None:
@@ -208,6 +251,7 @@ class TerminalRouter:
         terminal: BrowserTerminal,
         reason: TerminalCloseReason,
     ) -> None:
+        self._cancel_suspension(terminal.terminal_id)
         if terminal.close_requested:
             return
         terminal.close_requested = True
@@ -239,12 +283,34 @@ class TerminalRouter:
                 error_code=error_code,
             )
 
+    def suspend(self, terminal: BrowserTerminal) -> None:
+        """Retain a disconnected browser cursor briefly without persisting bytes."""
+
+        if terminal.close_requested or terminal.remote_closed or terminal.terminated:
+            self._hub.abandon(terminal)
+            return
+        if terminal.terminal_id in self._suspended:
+            return
+
+        async def expire() -> None:
+            try:
+                await asyncio.sleep(self._resume_grace_seconds)
+                self._suspended.pop(terminal.terminal_id, None)
+                await self.request_close(terminal, "grace_expired")
+                terminal.terminate("grace_expired")
+            except asyncio.CancelledError:
+                raise
+
+        self._suspended[terminal.terminal_id] = asyncio.create_task(expire())
+
     def abandon(self, terminal: BrowserTerminal) -> None:
         """Detach on ASGI cancellation without starting database cleanup work."""
 
         if terminal.close_requested or terminal.remote_closed:
+            self._cancel_suspension(terminal.terminal_id)
             self._hub.abandon(terminal)
             return
+        self._cancel_suspension(terminal.terminal_id)
         terminal.close_requested = True
         payload = TerminalClosePayload(
             terminal_id=terminal.terminal_id,

@@ -113,6 +113,33 @@ describe('TerminalSocket', () => {
     vi.useRealTimers()
   })
 
+  it('resumes the exact terminal stream and output sequence after an unexpected close', async () => {
+    vi.useFakeTimers()
+    const { socket, sockets } = setup()
+    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: '11111111-1111-4111-8111-111111111111', rows: 24, cols: 80, stream_id: '22222222-2222-4222-8222-222222222222' }))
+    socket.message(new Uint8Array([1]).buffer)
+    socket.message(new Uint8Array([2]).buffer)
+
+    socket.closed()
+    await vi.advanceTimersByTimeAsync(25)
+
+    expect(sockets).toHaveLength(2)
+    const resumed = new URL(sockets[1].url)
+    expect(resumed.searchParams.get('terminal_id')).toBe('11111111-1111-4111-8111-111111111111')
+    expect(resumed.searchParams.get('stream_id')).toBe('22222222-2222-4222-8222-222222222222')
+    expect(resumed.searchParams.get('after_seq')).toBe('2')
+    vi.useRealTimers()
+  })
+
+  it('requests an explicit terminal detach when the route is disposed', () => {
+    const { terminal, socket } = setup()
+    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: '11111111-1111-4111-8111-111111111111', rows: 24, cols: 80, stream_id: '22222222-2222-4222-8222-222222222222' }))
+
+    terminal.dispose()
+
+    expect(JSON.parse(socket.sent[0] as string)).toEqual({ type: 'terminal.close', reason: 'client_closed' })
+  })
+
   it('stops reconnecting for rejected browser sessions and distinguishes authentication from Origin rejection', async () => {
     vi.useFakeTimers()
     const expired = setup()

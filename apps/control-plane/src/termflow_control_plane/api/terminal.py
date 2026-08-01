@@ -16,6 +16,7 @@ from starlette.websockets import WebSocketDisconnect
 from termflow_protocol import (
     MessageType,
     TerminalActionFrame,
+    TerminalActionResultFrame,
     TerminalActionResultPayload,
     TerminalBindingSnapshotFrame,
     TerminalBindingsPayload,
@@ -156,6 +157,15 @@ async def _send_terminal_events(
             )
         elif event.type is MessageType.TERMINAL_ACTION_RESULT:
             result = TerminalActionResultPayload.model_validate(event.payload)
+            await _send_text_model(
+                websocket,
+                TerminalActionResultFrame(
+                    terminal_id=result.terminal_id,
+                    action_id=result.action_id,
+                    ok=result.ok,
+                    error_code=result.error_code,
+                ),
+            )
             if not result.ok:
                 await _send_text_model(
                     websocket,
@@ -248,8 +258,28 @@ async def connect_terminal(websocket: WebSocket, instance_id: UUID) -> None:
 
     session_key = websocket_browser_session_key(websocket, settings, sessions)
     await websocket.accept()
+    raw_terminal_id = websocket.query_params.get("terminal_id")
+    raw_stream_id = websocket.query_params.get("stream_id")
+    raw_after_seq = websocket.query_params.get("after_seq")
+    resume_values = (raw_terminal_id, raw_stream_id, raw_after_seq)
+    terminal: BrowserTerminal | None = None
+    if any(value is not None for value in resume_values):
+        try:
+            if not all(value is not None for value in resume_values):
+                raise ValueError
+            terminal = await terminal_router.resume(
+                instance_id,
+                session_key=session_key,
+                terminal_id=UUID(str(raw_terminal_id)),
+                stream_id=UUID(str(raw_stream_id)),
+                after_seq=int(str(raw_after_seq)),
+            )
+        except (TypeError, ValueError):
+            await websocket.close(code=4400, reason="Invalid terminal resume cursor")
+            return
     try:
-        terminal = await terminal_router.open(instance_id, session_key=session_key)
+        if terminal is None:
+            terminal = await terminal_router.open(instance_id, session_key=session_key)
     except TerminalRouteError as exc:
         temporary_id = UUID(int=0)
         await _send_text_model(websocket, _error_frame(temporary_id, exc.code))
@@ -281,4 +311,4 @@ async def connect_terminal(websocket: WebSocket, instance_id: UUID) -> None:
     finally:
         for task in tasks:
             task.cancel()
-        terminal_router.abandon(terminal)
+        terminal_router.suspend(terminal)

@@ -95,6 +95,7 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
             registry=app.state.registry,
             hub=app.state.terminal_hub,
             audit=app.state.repositories.audit,
+            resume_grace_seconds=settings.terminal_resume_grace_seconds,
         )
         expiry_task = asyncio.create_task(
             _heartbeat_expiry_loop(app.state.registry, app.state.event_hub, settings)

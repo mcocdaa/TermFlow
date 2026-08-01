@@ -95,3 +95,45 @@ async def test_logout_terminates_only_terminals_owned_by_that_hashed_session() -
     assert isinstance(event, LocalTerminalClose)
     assert event.reason == "client_closed"
     assert not second.terminated
+
+
+@pytest.mark.asyncio
+async def test_exact_browser_cursor_resumes_the_same_terminal_and_rejects_mismatch() -> None:
+    hub = TerminalHub(queue_max_messages=8, queue_max_bytes=1024)
+    instance_id = uuid4()
+    terminal = await hub.register(instance_id, session_key="browser-session")
+    stream_id = uuid4()
+    terminal.observe_opened(
+        TerminalOpenedPayload(
+            terminal_id=terminal.terminal_id,
+            stream_id=stream_id,
+            rows=24,
+            cols=80,
+        )
+    )
+    terminal.observe_output(
+        TerminalOutputPayload.from_bytes(
+            terminal.terminal_id,
+            stream_id,
+            1,
+            b"already delivered",
+        )
+    )
+
+    resumed = await hub.resume(
+        instance_id,
+        session_key="browser-session",
+        terminal_id=terminal.terminal_id,
+        stream_id=stream_id,
+        after_seq=1,
+    )
+
+    assert resumed is terminal
+    assert resumed.resume_cursor == (stream_id, 1)
+    assert await hub.resume(
+        instance_id,
+        session_key="different-session",
+        terminal_id=terminal.terminal_id,
+        stream_id=stream_id,
+        after_seq=1,
+    ) is None
