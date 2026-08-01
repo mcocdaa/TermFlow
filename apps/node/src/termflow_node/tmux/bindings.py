@@ -51,8 +51,8 @@ def _semantic_action(command: list[str]) -> TerminalAction | None:
     if executable == "split-window":
         if "-h" in arguments:
             return "split_left_right"
-        if "-v" in arguments:
-            return "split_top_bottom"
+        # tmux's default vertical-split binding invokes bare `split-window`.
+        return "split_top_bottom"
     if executable == "new-window":
         return "new_window"
     if executable == "select-pane":
