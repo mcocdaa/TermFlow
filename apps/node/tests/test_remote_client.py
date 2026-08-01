@@ -5,10 +5,45 @@ from uuid import uuid4
 import pytest
 from termflow_node.tmux.remote_client import (
     ByteOutputRing,
+    PosixPtyAdapter,
     RemoteOutputChunk,
     RemoteTmuxClient,
     ReplayGap,
 )
+
+
+@pytest.mark.asyncio
+async def test_posix_adapter_removes_inherited_tmux_environment(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class SpawnedProcess:
+        returncode = None
+
+    async def fake_subprocess(*args, **kwargs):
+        del args
+        environment = kwargs["env"]
+        captured["has_tmux"] = "TMUX" in environment
+        captured["proxy"] = environment.get("TERMFLOW_PROXY_CLIENT")
+        captured["term"] = environment.get("TERM")
+        return SpawnedProcess()
+
+    monkeypatch.setenv("TMUX", "/tmp/parent.sock,123,0")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_subprocess)
+    adapter = PosixPtyAdapter()
+
+    process = await adapter.spawn(tmp_path / "target.sock", "$0", 24, 80)
+
+    try:
+        assert captured == {
+            "has_tmux": False,
+            "proxy": "1",
+            "term": "xterm-256color",
+        }
+    finally:
+        adapter.close_master(process)
 
 
 class FakeProcess:

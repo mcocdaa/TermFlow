@@ -140,6 +140,7 @@ class PosixPtyAdapter:
             _set_winsize(slave_fd, rows, cols)
             slave_tty = os.ttyname(slave_fd)
             environment = os.environ.copy()
+            environment.pop("TMUX", None)
             environment["TERMFLOW_PROXY_CLIENT"] = "1"
             environment["TERM"] = "xterm-256color"
             process = await asyncio.create_subprocess_exec(
