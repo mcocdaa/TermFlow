@@ -16,6 +16,7 @@ def test_compose_configures_same_origin_web_control_limits() -> None:
     compose = yaml.safe_load(Path("deploy/compose.yaml").read_text())
     environment = compose["services"]["control-plane"]["environment"]
     assert environment["TERMFLOW_STATIC_DIR"] == "/app/frontend-dist"
+    assert environment["TERMFLOW_ALLOW_INSECURE_LOOPBACK"] == "${TERMFLOW_ALLOW_INSECURE_LOOPBACK:-true}"
     assert "TERMFLOW_PUBLIC_BASE_URL" in environment
     assert "TERMFLOW_TRUSTED_WEB_ORIGINS" in environment
     assert "TERMFLOW_BROWSER_SESSION_TTL_SECONDS" in environment
