@@ -37,3 +37,25 @@ def test_client_workspace_has_one_lock_and_fixed_dependency_direction() -> None:
         "vue-router",
     }
     assert set(web["dependencies"]) >= {"@termflow/client-core", "@termflow/client-ui"}
+
+
+def test_registry_packages_are_pinned_with_integrity() -> None:
+    lock = _manifest("package-lock.json")
+    workspace_paths = {
+        "apps/clients/web",
+        "packages/design-tokens",
+        "packages/client-contracts",
+        "packages/client-core",
+        "packages/client-ui",
+    }
+    registry_packages = {
+        path: metadata
+        for path, metadata in lock["packages"].items()
+        if path and path not in workspace_paths and not metadata.get("link", False)
+    }
+    missing = [
+        path
+        for path, metadata in registry_packages.items()
+        if not metadata.get("resolved") or not metadata.get("integrity")
+    ]
+    assert missing == []

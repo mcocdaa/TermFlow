@@ -43,6 +43,8 @@ const TERMINAL_CLOSE_REASONS = new Set<TerminalCloseReason>([
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 const nonEmptyString = (value: unknown): value is string => typeof value === 'string' && value.length > 0
+const uuid = (value: unknown): value is string =>
+  typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
 const nullableString = (value: unknown): value is string | null => value === null || typeof value === 'string'
 const positiveInteger = (value: unknown): value is number => Number.isInteger(value) && Number(value) > 0
 const hasOwn = (value: Record<string, unknown>, key: string) => Object.prototype.hasOwnProperty.call(value, key)
@@ -63,11 +65,11 @@ export function parseTerminalControl(text: string): TerminalControl | null {
   } catch {
     return null
   }
-  if (!record(value) || typeof value.type !== 'string' || !nonEmptyString(value.terminal_id)) return null
+  if (!record(value) || typeof value.type !== 'string' || !uuid(value.terminal_id)) return null
 
   switch (value.type) {
     case 'terminal.ready':
-      return nonEmptyString(value.stream_id) && positiveInteger(value.rows) && positiveInteger(value.cols)
+      return uuid(value.stream_id) && positiveInteger(value.rows) && positiveInteger(value.cols)
         ? { type: value.type, terminal_id: value.terminal_id, stream_id: value.stream_id, rows: value.rows, cols: value.cols }
         : null
     case 'terminal.size':
@@ -90,7 +92,7 @@ export function parseTerminalControl(text: string): TerminalControl | null {
         ? { type: value.type, terminal_id: value.terminal_id, reason: value.reason }
         : null
     case 'terminal.action_result':
-      return nonEmptyString(value.action_id) && typeof value.ok === 'boolean' && hasOwn(value, 'error_code') && nullableString(value.error_code)
+      return uuid(value.action_id) && typeof value.ok === 'boolean' && hasOwn(value, 'error_code') && nullableString(value.error_code)
         ? { type: value.type, terminal_id: value.terminal_id, action_id: value.action_id, ok: value.ok, error_code: value.error_code }
         : null
     default:

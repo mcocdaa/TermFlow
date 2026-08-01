@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { TerminalSocket, type TerminalSocketCallbacks } from './socket'
 
+const TERMINAL_1 = '11111111-1111-4111-8111-111111111111'
+const STREAM_1 = '22222222-2222-4222-8222-222222222222'
+const TERMINAL_2 = '33333333-3333-4333-8333-333333333333'
+const STREAM_2 = '44444444-4444-4444-8444-444444444444'
+const TERMINAL_OLD = '55555555-5555-4555-8555-555555555555'
+
 class FakeWebSocket {
   static readonly OPEN = 1
   binaryType = ''
@@ -38,8 +44,8 @@ describe('TerminalSocket', () => {
     expect(socket.url).toBe('wss://control.example/api/v1/terms/term%20%2F7/terminal')
     expect(socket.binaryType).toBe('arraybuffer')
     socket.open()
-    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: 'terminal-1', rows: 42, cols: 132, stream_id: 'stream-1' }))
-    socket.message(JSON.stringify({ type: 'terminal.size', terminal_id: 'terminal-1', rows: 48, cols: 160 }))
+    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: TERMINAL_1, rows: 42, cols: 132, stream_id: STREAM_1 }))
+    socket.message(JSON.stringify({ type: 'terminal.size', terminal_id: TERMINAL_1, rows: 48, cols: 160 }))
     socket.message(new Uint8Array([27, 91, 72]).buffer)
     expect(callbacks.onReady).toHaveBeenCalledWith(expect.objectContaining({ rows: 42, cols: 132 }))
     expect(callbacks.onSize).toHaveBeenCalledWith({ rows: 48, cols: 160 })
@@ -49,7 +55,7 @@ describe('TerminalSocket', () => {
   it('chunks UTF-8 input and paste into binary frames no larger than 65536 bytes', () => {
     const { terminal, socket } = setup()
     socket.open()
-    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: 'terminal-1', rows: 24, cols: 80, stream_id: 'stream-1' }))
+    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: TERMINAL_1, rows: 24, cols: 80, stream_id: STREAM_1 }))
     terminal.sendInput('界'.repeat(50_000))
     const frames = socket.sent.filter((frame): frame is Uint8Array => ArrayBuffer.isView(frame))
     expect(frames.length).toBeGreaterThan(1)
@@ -59,16 +65,16 @@ describe('TerminalSocket', () => {
 
   it('resets before output when B reports a gap on a replacement stream', () => {
     const { socket, callbacks } = setup()
-    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: 'terminal-1', rows: 24, cols: 80, stream_id: 'stream-1' }))
-    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: 'terminal-2', rows: 24, cols: 80, stream_id: 'stream-2', gap: true }))
+    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: TERMINAL_1, rows: 24, cols: 80, stream_id: STREAM_1 }))
+    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: TERMINAL_2, rows: 24, cols: 80, stream_id: STREAM_2, gap: true }))
     expect(callbacks.onReset).toHaveBeenCalledTimes(1)
   })
 
   it('uses the public semantic action envelope and binding list', () => {
     const { terminal, socket, callbacks } = setup()
     socket.open()
-    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: 'terminal-1', rows: 24, cols: 80, stream_id: 'stream-1' }))
-    socket.message(JSON.stringify({ type: 'terminal.binding_snapshot', terminal_id: 'terminal-1', prefix: 'C-a', prefix2: null, bindings: [{ action: 'copy_mode', key: 'C-a [', tooltip: '进入复制模式' }] }))
+    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: TERMINAL_1, rows: 24, cols: 80, stream_id: STREAM_1 }))
+    socket.message(JSON.stringify({ type: 'terminal.binding_snapshot', terminal_id: TERMINAL_1, prefix: 'C-a', prefix2: null, bindings: [{ action: 'copy_mode', key: 'C-a [', tooltip: '进入复制模式' }] }))
     expect(callbacks.onBindings).toHaveBeenCalledWith(expect.objectContaining({ prefix: 'C-a', bindings: [expect.objectContaining({ action: 'copy_mode' })] }))
     terminal.sendAction('copy_mode', { targetPaneId: '%1' })
     const frame = JSON.parse(socket.sent.find((item): item is string => typeof item === 'string')!)
@@ -83,10 +89,10 @@ describe('TerminalSocket', () => {
     terminal.sendInput('before-ready')
     terminal.sendAction('new_window')
     expect(socket.sent).toHaveLength(0)
-    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: 'terminal-1', rows: 24, cols: 80, stream_id: 'stream-1' }))
+    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: TERMINAL_1, rows: 24, cols: 80, stream_id: STREAM_1 }))
     terminal.sendInput('ready')
     expect(socket.sent).toHaveLength(1)
-    socket.message(JSON.stringify({ type: 'terminal.closed', terminal_id: 'terminal-1', reason: 'stream_gap' }))
+    socket.message(JSON.stringify({ type: 'terminal.closed', terminal_id: TERMINAL_1, reason: 'stream_gap' }))
     terminal.sendInput('after-close')
     expect(socket.sent).toHaveLength(1)
   })
@@ -103,8 +109,8 @@ describe('TerminalSocket', () => {
     expect(sockets).toHaveLength(2)
     await vi.advanceTimersByTimeAsync(1)
     expect(sockets).toHaveLength(3)
-    sockets[2].message(JSON.stringify({ type: 'terminal.ready', terminal_id: 'terminal-2', rows: 24, cols: 80, stream_id: 'stream-2' }))
-    sockets[2].message(JSON.stringify({ type: 'terminal.closed', terminal_id: 'terminal-2', reason: 'replaced' }))
+    sockets[2].message(JSON.stringify({ type: 'terminal.ready', terminal_id: TERMINAL_2, rows: 24, cols: 80, stream_id: STREAM_2 }))
+    sockets[2].message(JSON.stringify({ type: 'terminal.closed', terminal_id: TERMINAL_2, reason: 'replaced' }))
     sockets[2].closed(1000)
     await vi.advanceTimersByTimeAsync(100)
     expect(sockets).toHaveLength(3)
@@ -175,11 +181,11 @@ describe('TerminalSocket', () => {
 
   it('ignores controls for a stale or not-yet-ready terminal identity', () => {
     const { socket, callbacks } = setup()
-    socket.message(JSON.stringify({ type: 'terminal.size', terminal_id: 'terminal-1', rows: 1, cols: 1 }))
-    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: 'terminal-1', rows: 24, cols: 80, stream_id: 'stream-1' }))
-    socket.message(JSON.stringify({ type: 'terminal.size', terminal_id: 'terminal-old', rows: 2, cols: 2 }))
-    socket.message(JSON.stringify({ type: 'terminal.error', terminal_id: 'terminal-old', code: 'bad', message: 'stale' }))
-    socket.message(JSON.stringify({ type: 'terminal.closed', terminal_id: 'terminal-old', reason: 'replaced' }))
+    socket.message(JSON.stringify({ type: 'terminal.size', terminal_id: TERMINAL_1, rows: 1, cols: 1 }))
+    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: TERMINAL_1, rows: 24, cols: 80, stream_id: STREAM_1 }))
+    socket.message(JSON.stringify({ type: 'terminal.size', terminal_id: TERMINAL_OLD, rows: 2, cols: 2 }))
+    socket.message(JSON.stringify({ type: 'terminal.error', terminal_id: TERMINAL_OLD, code: 'bad', message: 'stale' }))
+    socket.message(JSON.stringify({ type: 'terminal.closed', terminal_id: TERMINAL_OLD, reason: 'replaced' }))
     expect(callbacks.onSize).not.toHaveBeenCalled()
     expect(callbacks.onError).not.toHaveBeenCalled()
     expect(callbacks.onClosed).not.toHaveBeenCalled()
