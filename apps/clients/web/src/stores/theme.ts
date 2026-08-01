@@ -1,22 +1,25 @@
+import { createThemeState, THEME_STORAGE_KEY } from '@termflow/client-ui'
+import type { ThemeId } from '@termflow/design-tokens'
 import { ref } from 'vue'
-import { themeIds, type ThemeId } from '@termflow/design-tokens'
+import { createBrowserThemePreferences, createBrowserThemeTarget } from '../adapters/browserThemePreferences'
 
-export const THEME_STORAGE_KEY = 'termflow.theme'
+export { THEME_STORAGE_KEY }
 export const activeTheme = ref<ThemeId>('graphite-signal')
 
-function isThemeId(value: string | null): value is ThemeId {
-  return value !== null && (themeIds as readonly string[]).includes(value)
-}
+let selectCurrentTheme: ((theme: ThemeId) => void) | null = null
 
-export function applyInitialTheme(storage: Pick<Storage, 'getItem'> = localStorage): ThemeId {
-  const stored = storage.getItem(THEME_STORAGE_KEY)
-  activeTheme.value = isThemeId(stored) ? stored : 'graphite-signal'
-  document.documentElement.dataset.theme = activeTheme.value
+export function applyInitialTheme(storage?: Pick<Storage, 'getItem' | 'setItem'>): ThemeId {
+  const preferences = storage === undefined ? createBrowserThemePreferences() : createBrowserThemePreferences(storage)
+  const state = createThemeState(preferences, createBrowserThemeTarget())
+  activeTheme.value = state.active.value
+  selectCurrentTheme = (theme) => {
+    state.select(theme)
+    activeTheme.value = state.active.value
+  }
   return activeTheme.value
 }
 
-export function selectTheme(theme: ThemeId, storage: Pick<Storage, 'setItem'> = localStorage) {
-  activeTheme.value = theme
-  document.documentElement.dataset.theme = theme
-  storage.setItem(THEME_STORAGE_KEY, theme)
+export function selectTheme(theme: ThemeId): void {
+  if (selectCurrentTheme === null) applyInitialTheme()
+  selectCurrentTheme?.(theme)
 }

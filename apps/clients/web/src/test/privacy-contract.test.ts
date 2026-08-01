@@ -15,7 +15,7 @@ describe('privacy contracts', () => {
   it('allows browser persistence only for the theme identifier', () => {
     const files = productionFiles(resolve(process.cwd(), 'src'))
     const persistence = files.filter((file) => /localStorage|sessionStorage|indexedDB/.test(readFileSync(file, 'utf8')))
-    expect(persistence.map((file) => file.replace(`${process.cwd()}/`, ''))).toEqual(['src/stores/theme.ts'])
+    expect(persistence.map((file) => file.replace(`${process.cwd()}/`, ''))).toEqual(['src/adapters/browserThemePreferences.ts'])
   })
 
   it('keeps terminal output out of storage, URL, console, and telemetry-shaped globals', () => {
