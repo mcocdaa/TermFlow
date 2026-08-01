@@ -2,7 +2,7 @@
   @media (max-width: 47.99rem), (pointer: coarse) {
     .terminal-view { height: 100dvh; grid-template-rows: auto minmax(0, 1fr) auto; }
     .terminal-titlebar { gap: var(--space-1); padding-inline: max(var(--space-2), env(safe-area-inset-left)) max(var(--space-2), env(safe-area-inset-right)); }
-    .terminal-frame { touch-action: none; }
+    .terminal-frame { grid-row: 2; min-height: 0; touch-action: none; }
     .terminal-identity { flex: 1 1 auto; gap: var(--space-1); }
     .terminal-titlebar-actions { flex: 0 0 auto; gap: var(--space-1); }
     .control-label, .menu-chevron, [data-computer-name] { display: none; }
@@ -12,7 +12,7 @@
     .pane-focus-menu { display: block; }
     .terminal-overlay { max-width: calc(100% - 2 * var(--space-4)); white-space: nowrap; }
     .desktop-action-menu { display: block; }
-    .mobile-keybar { position: fixed; z-index: 40; inset-inline: 0; inset-block-end: env(safe-area-inset-bottom); display: flex; gap: var(--space-1); overflow-x: auto; padding: var(--space-2) max(var(--space-2), env(safe-area-inset-right)) var(--space-2) max(var(--space-2), env(safe-area-inset-left)); border-block-start: 1px solid var(--color-border); background: var(--color-panel); }
+    .mobile-keybar { position: static; grid-row: 3; z-index: 40; min-width: 0; display: flex; gap: var(--space-1); overflow-x: auto; padding: var(--space-2) max(var(--space-2), env(safe-area-inset-right)) var(--space-2) max(var(--space-2), env(safe-area-inset-left)); padding-block-end: max(var(--space-2), env(safe-area-inset-bottom)); border-block-start: 1px solid var(--color-border); background: var(--color-panel); }
     .mobile-keybar button { flex: 1 0 auto; min-width: 3.25rem; min-height: 2.6rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-elevated); }
     .mobile-keybar button[aria-pressed='true'] { border-color: var(--color-accent); background: var(--color-accent); color: var(--color-accent-contrast); }
   }
