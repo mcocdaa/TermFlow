@@ -19,8 +19,13 @@ describe('ThemePicker', () => {
   })
 
   it('supports arrow-key selection', async () => {
-    const wrapper = mount(ThemePicker)
+    const wrapper = mount(ThemePicker, { attachTo: document.body })
+    const radios = wrapper.findAll('[role="radio"]')
+    ;(radios[0].element as HTMLButtonElement).focus()
     await wrapper.get('[role="radiogroup"]').trigger('keydown', { key: 'ArrowRight' })
-    expect(wrapper.findAll('[role="radio"]')[1].attributes('aria-checked')).toBe('true')
+    expect(radios[1].attributes('aria-checked')).toBe('true')
+    expect(radios[1].attributes('aria-label')).toBe('云端钴蓝')
+    expect(document.activeElement).toBe(radios[1].element)
+    wrapper.unmount()
   })
 })

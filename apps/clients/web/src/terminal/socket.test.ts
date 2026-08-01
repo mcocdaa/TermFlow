@@ -21,7 +21,7 @@ class FakeWebSocket {
 function setup() {
   const sockets: FakeWebSocket[] = []
   const callbacks: TerminalSocketCallbacks = {
-    onStatus: vi.fn(), onReady: vi.fn(), onOutput: vi.fn(), onSize: vi.fn(), onBindings: vi.fn(), onError: vi.fn(), onClosed: vi.fn(), onReset: vi.fn(), onActionResult: vi.fn(),
+    onStatus: vi.fn(), onReady: vi.fn(), onOutput: vi.fn(), onSize: vi.fn(), onBindings: vi.fn(), onError: vi.fn(), onClosed: vi.fn(), onReset: vi.fn(), onActionResult: vi.fn(), onAuthenticationRequired: vi.fn(),
   }
   const terminal = new TerminalSocket('term /7', callbacks, {
     baseUrl: new URL('https://control.example/app'),
@@ -39,7 +39,7 @@ describe('TerminalSocket', () => {
     expect(socket.binaryType).toBe('arraybuffer')
     socket.open()
     socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: 'terminal-1', rows: 42, cols: 132, stream_id: 'stream-1' }))
-    socket.message(JSON.stringify({ type: 'terminal.size', rows: 48, cols: 160 }))
+    socket.message(JSON.stringify({ type: 'terminal.size', terminal_id: 'terminal-1', rows: 48, cols: 160 }))
     socket.message(new Uint8Array([27, 91, 72]).buffer)
     expect(callbacks.onReady).toHaveBeenCalledWith(expect.objectContaining({ rows: 42, cols: 132 }))
     expect(callbacks.onSize).toHaveBeenCalledWith({ rows: 48, cols: 160 })
@@ -103,6 +103,7 @@ describe('TerminalSocket', () => {
     expect(sockets).toHaveLength(2)
     await vi.advanceTimersByTimeAsync(1)
     expect(sockets).toHaveLength(3)
+    sockets[2].message(JSON.stringify({ type: 'terminal.ready', terminal_id: 'terminal-2', rows: 24, cols: 80, stream_id: 'stream-2' }))
     sockets[2].message(JSON.stringify({ type: 'terminal.closed', terminal_id: 'terminal-2', reason: 'replaced' }))
     sockets[2].closed(1000)
     await vi.advanceTimersByTimeAsync(100)
@@ -112,12 +113,48 @@ describe('TerminalSocket', () => {
     vi.useRealTimers()
   })
 
+  it('stops reconnecting for rejected browser sessions and distinguishes authentication from Origin rejection', async () => {
+    vi.useFakeTimers()
+    const expired = setup()
+    expired.socket.closed(4401)
+    expect(expired.callbacks.onAuthenticationRequired).toHaveBeenCalledTimes(1)
+    expect(expired.callbacks.onStatus).toHaveBeenCalledWith('closed')
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(expired.sockets).toHaveLength(1)
+
+    const forbidden = setup()
+    forbidden.socket.closed(4403)
+    expect(forbidden.callbacks.onAuthenticationRequired).not.toHaveBeenCalled()
+    expect(forbidden.callbacks.onError).toHaveBeenCalledWith({ code: 'origin_rejected' })
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(forbidden.sockets).toHaveLength(1)
+    vi.useRealTimers()
+  })
+
   it('ignores malformed and unknown text controls without echoing or logging them', () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const { socket, callbacks } = setup()
     socket.message('{token-output')
     socket.message(JSON.stringify({ type: 'terminal.unknown', secret: 'do-not-log' }))
+    socket.message(JSON.stringify({ type: 'terminal.size', rows: 1, cols: 1 }))
+    socket.message(JSON.stringify({ type: 'terminal.error', code: 'bad', message: 'missing terminal' }))
+    socket.message(JSON.stringify({ type: 'terminal.closed', reason: 'replaced' }))
     expect(callbacks.onOutput).not.toHaveBeenCalled()
+    expect(callbacks.onSize).not.toHaveBeenCalled()
+    expect(callbacks.onError).not.toHaveBeenCalled()
+    expect(callbacks.onClosed).not.toHaveBeenCalled()
     expect(log).not.toHaveBeenCalled()
+  })
+
+  it('ignores controls for a stale or not-yet-ready terminal identity', () => {
+    const { socket, callbacks } = setup()
+    socket.message(JSON.stringify({ type: 'terminal.size', terminal_id: 'terminal-1', rows: 1, cols: 1 }))
+    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: 'terminal-1', rows: 24, cols: 80, stream_id: 'stream-1' }))
+    socket.message(JSON.stringify({ type: 'terminal.size', terminal_id: 'terminal-old', rows: 2, cols: 2 }))
+    socket.message(JSON.stringify({ type: 'terminal.error', terminal_id: 'terminal-old', code: 'bad', message: 'stale' }))
+    socket.message(JSON.stringify({ type: 'terminal.closed', terminal_id: 'terminal-old', reason: 'replaced' }))
+    expect(callbacks.onSize).not.toHaveBeenCalled()
+    expect(callbacks.onError).not.toHaveBeenCalled()
+    expect(callbacks.onClosed).not.toHaveBeenCalled()
   })
 })

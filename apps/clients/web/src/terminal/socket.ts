@@ -13,6 +13,7 @@ export interface TerminalSocketCallbacks {
   onClosed: (reason: string) => void
   onReset: () => void
   onActionResult: (result: TerminalActionResultControl) => void
+  onAuthenticationRequired: () => void
 }
 export interface TerminalSocketLike {
   connect(): void
@@ -35,6 +36,7 @@ export class TerminalSocket implements TerminalSocketLike {
   private suppressReconnect = false
   private ready = false
   private reconnectAttempt = 0
+  private terminalId: string | null = null
   private streamId: string | null = null
   private readonly baseUrl: URL
   private readonly createWebSocket: (url: string) => WebSocket
@@ -58,19 +60,21 @@ export class TerminalSocket implements TerminalSocketLike {
     socket.onopen = () => { /* terminal.ready, not the TCP/WebSocket handshake, enables input */ }
     socket.onmessage = (event) => this.handleMessage(event.data)
     socket.onerror = () => { /* close drives the single reconnect path */ }
-    socket.onclose = () => this.handleClose()
+    socket.onclose = (event) => this.handleClose(event)
   }
 
   private handleMessage(data: unknown) {
-    if (data instanceof ArrayBuffer) { this.callbacks.onOutput(new Uint8Array(data)); return }
-    if (ArrayBuffer.isView(data)) { this.callbacks.onOutput(new Uint8Array(data.buffer, data.byteOffset, data.byteLength)); return }
+    if (data instanceof ArrayBuffer) { if (this.ready) this.callbacks.onOutput(new Uint8Array(data)); return }
+    if (ArrayBuffer.isView(data)) { if (this.ready) this.callbacks.onOutput(new Uint8Array(data.buffer, data.byteOffset, data.byteLength)); return }
     if (typeof data !== 'string') return
     const control = parseTerminalControl(data)
     if (!control) return
+    if (control.type !== 'terminal.ready' && (!this.ready || control.terminal_id !== this.terminalId)) return
     switch (control.type) {
       case 'terminal.ready':
         if (this.streamId !== null && this.streamId !== control.stream_id) this.callbacks.onReset()
         this.streamId = control.stream_id
+        this.terminalId = control.terminal_id
         this.ready = true
         this.reconnectAttempt = 0
         this.callbacks.onStatus('connected')
@@ -90,9 +94,16 @@ export class TerminalSocket implements TerminalSocketLike {
     }
   }
 
-  private handleClose() {
+  private handleClose(event: CloseEvent) {
     this.socket = null
     this.ready = false
+    if (event.code === 4401 || event.code === 4403) {
+      this.suppressReconnect = true
+      this.callbacks.onStatus('closed')
+      if (event.code === 4401) this.callbacks.onAuthenticationRequired()
+      else this.callbacks.onError({ code: 'origin_rejected' })
+      return
+    }
     if (this.disposed || this.suppressReconnect) return
     this.callbacks.onStatus('reconnecting')
     const delay = Math.min(10_000, this.reconnectDelayMs * 2 ** this.reconnectAttempt)

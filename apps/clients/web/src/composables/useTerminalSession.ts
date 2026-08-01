@@ -29,15 +29,17 @@ export function useTerminalSession(termId: string, host: Ref<HTMLElement | null>
   const terminalError = ref('')
   const lastActionResult = ref<TerminalActionResultControl | null>(null)
   const resetKey = ref(0)
+  const authenticationRequired = ref(0)
   const pendingOutput: Uint8Array[] = []
   let adapter: TerminalAdapter | null = null
 
   const callbacks: TerminalSocketCallbacks = {
-    onStatus: (value) => { status.value = value },
+    onStatus: (value) => { status.value = value; adapter?.setInputEnabled(value === 'connected') },
     onReady: (control) => {
       dimensions.value = { rows: control.rows, cols: control.cols }
       if (!adapter && host.value) {
         adapter = adapterFactory(host.value, dimensions.value, (data) => socket.sendInput(transformInput ? transformInput(data) : data))
+        adapter.setInputEnabled(true)
         for (const bytes of pendingOutput.splice(0)) adapter.write(bytes)
         adapter.focus()
       } else adapter?.resize(control.cols, control.rows)
@@ -49,17 +51,19 @@ export function useTerminalSession(termId: string, host: Ref<HTMLElement | null>
     onClosed: (reason) => { terminalError.value = reason === 'replaced' ? '此终端已被另一个已认证连接接管。' : '终端连接已关闭。'; resetKey.value += 1 },
     onReset: () => { adapter?.reset(); resetKey.value += 1 },
     onActionResult: (result) => { lastActionResult.value = result; if (!result.ok) terminalError.value = userFacingTerminalError(result.error_code) },
+    onAuthenticationRequired: () => { authenticationRequired.value += 1 },
   }
   const socket = socketFactory(termId, callbacks)
   onMounted(() => socket.connect())
   onBeforeUnmount(() => { adapter?.dispose(); adapter = null; pendingOutput.length = 0; socket.dispose() })
 
   return {
-    status, dimensions, bindings, terminalError, lastActionResult, resetKey,
+    status, dimensions, bindings, terminalError, lastActionResult, resetKey, authenticationRequired,
     sendAction: (actionId: TerminalActionId, options?: { targetPaneId?: string; confirmed?: boolean }) => socket.sendAction(actionId, options),
     sendInput: (value: string | Uint8Array) => socket.sendInput(value),
     focus: () => adapter?.focus(),
     refreshTheme: () => adapter?.refreshTheme(),
+    measureCell: () => adapter?.measureCell() ?? null,
     canClientPan: () => adapter?.canClientPan() ?? false,
   }
 }

@@ -1,4 +1,4 @@
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import TerminalCanvas from './TerminalCanvas.vue'
 import type { TerminalSocketCallbacks, TerminalSocketLike } from '../../terminal/socket'
@@ -10,17 +10,26 @@ describe('TerminalCanvas', () => {
     let callbacks!: TerminalSocketCallbacks
     let input!: (value: string | Uint8Array) => void
     const socket: TerminalSocketLike = { connect: vi.fn(), sendInput: vi.fn(), sendAction: vi.fn(), dispose: vi.fn() }
-    const adapter: TerminalAdapter = { write: vi.fn(), resize: vi.fn(), reset: vi.fn(), focus: vi.fn(), refreshTheme: vi.fn(), canClientPan: vi.fn(() => false), dispose: vi.fn() }
+    const adapter: TerminalAdapter = { write: vi.fn(), resize: vi.fn(), reset: vi.fn(), focus: vi.fn(), refreshTheme: vi.fn(), setInputEnabled: vi.fn(), measureCell: vi.fn(() => ({ width: 10, height: 20 })), canClientPan: vi.fn(() => false), dispose: vi.fn() }
     const createSocket = vi.fn((_id: string, nextCallbacks: TerminalSocketCallbacks) => { callbacks = nextCallbacks; return socket })
     const createAdapter: TerminalAdapterFactory = vi.fn((_host, _size, onInput) => { input = onInput; return adapter })
     const wrapper = mount(TerminalCanvas, { props: { termId: 'term-9', createSocket, createAdapter } })
 
     expect(socket.connect).toHaveBeenCalled()
     expect(createAdapter).not.toHaveBeenCalled()
+    wrapper.vm.focusPane({ pane_id: '%1', window_id: '@1', index: 0, title: 'shell', current_command: 'zsh', active: true, dead: false, left: 0, top: 0, width: 40, height: 20 })
     callbacks.onReady({ type: 'terminal.ready', terminal_id: 't1', stream_id: 's1', rows: 44, cols: 150 })
+    await flushPromises()
     expect(createAdapter).toHaveBeenCalledWith(expect.any(HTMLElement), { rows: 44, cols: 150 }, expect.any(Function))
+    expect(adapter.setInputEnabled).toHaveBeenCalledWith(true)
+    expect(wrapper.get('.terminal-frame').attributes('data-cell-width')).toBe('10')
+    expect(wrapper.get('.terminal-frame').attributes('data-cell-height')).toBe('20')
+    expect(wrapper.get('.terminal-frame').attributes('data-focused-pane')).toBe('%1')
     callbacks.onOutput(new Uint8Array([1, 2]))
     callbacks.onSize({ rows: 50, cols: 170 })
+    callbacks.onActionResult({ type: 'terminal.action_result', terminal_id: 't1', action_id: 'a1', ok: true })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('action-result')).toEqual([[expect.objectContaining({ action_id: 'a1', ok: true })]])
     input('ls\r')
     await wrapper.get('.terminal-frame').trigger('pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 200, clientY: 200 })
     await wrapper.get('.terminal-frame').trigger('pointermove', { pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 200 })
@@ -28,6 +37,8 @@ describe('TerminalCanvas', () => {
     expect(adapter.resize).toHaveBeenCalledWith(170, 50)
     expect(socket.sendInput).toHaveBeenCalledWith('ls\r')
     expect(adapter.canClientPan).toHaveBeenCalled()
+    callbacks.onStatus('reconnecting')
+    expect(adapter.setInputEnabled).toHaveBeenLastCalledWith(false)
     expect(typeof wrapper.vm.captureViewport).toBe('function')
     expect(typeof wrapper.vm.restoreViewport).toBe('function')
     wrapper.vm.restoreViewport({ scale: 1.5, panX: -20, panY: -10, focusedPaneId: '%1' })

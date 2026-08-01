@@ -6,6 +6,8 @@ export interface TerminalAdapter {
   reset(): void
   focus(): void
   refreshTheme(): void
+  setInputEnabled(enabled: boolean): void
+  measureCell(): { width: number; height: number } | null
   canClientPan(): boolean
   dispose(): void
 }
@@ -45,6 +47,7 @@ export const createXtermAdapter: TerminalAdapterFactory = (host, size, onInput) 
     cols: size.cols,
     allowTransparency: false,
     cursorBlink: true,
+    disableStdin: true,
     scrollback: 5_000,
     fontFamily: style.getPropertyValue('--font-mono').trim(),
     fontSize: 14,
@@ -59,6 +62,16 @@ export const createXtermAdapter: TerminalAdapterFactory = (host, size, onInput) 
     reset: () => terminal.reset(),
     focus: () => terminal.focus(),
     refreshTheme: () => { terminal.options.theme = semanticTheme(host) },
+    setInputEnabled: (enabled) => { terminal.options.disableStdin = !enabled },
+    measureCell: () => {
+      const screen = terminal.element?.querySelector<HTMLElement>('.xterm-screen')
+      if (!screen || terminal.cols <= 0 || terminal.rows <= 0) return null
+      const style = getComputedStyle(screen)
+      const width = Number.parseFloat(style.width)
+      const height = Number.parseFloat(style.height)
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null
+      return { width: width / terminal.cols, height: height / terminal.rows }
+    },
     canClientPan: () => !terminal.hasSelection() && terminal.modes.mouseTrackingMode === 'none',
     dispose: () => { dataDisposable.dispose(); binaryDisposable.dispose(); terminal.dispose() },
   }

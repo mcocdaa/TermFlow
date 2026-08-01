@@ -23,7 +23,7 @@ describe('browser login privacy', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    const sessionCalls = fetchMock.mock.calls.filter(([url]) => url === '/api/v1/session')
+    const sessionCalls = fetchMock.mock.calls.filter(([url]) => url === '/api/v1/admin/sessions')
     expect(sessionCalls).toHaveLength(1)
     expect(sessionCalls[0][1]).toMatchObject({ credentials: 'same-origin', method: 'POST' })
     expect(router.currentRoute.value.fullPath).toBe('/computers')

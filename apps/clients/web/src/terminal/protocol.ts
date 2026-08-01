@@ -8,7 +8,7 @@ export interface TerminalReadyControl {
   cols: number
   gap?: boolean
 }
-export interface TerminalSizeControl { type: 'terminal.size'; rows: number; cols: number }
+export interface TerminalSizeControl { type: 'terminal.size'; terminal_id: string; rows: number; cols: number }
 export interface TerminalBindingControl extends BindingSnapshotDto { type: 'terminal.binding_snapshot'; terminal_id: string }
 export interface TerminalErrorControl { type: 'terminal.error'; terminal_id: string; code: string; message: string }
 export interface TerminalClosedControl { type: 'terminal.closed'; terminal_id: string; reason: string }
@@ -27,13 +27,13 @@ export function parseTerminalControl(value: string): TerminalControl | null {
       return typeof control.terminal_id === 'string' && typeof control.stream_id === 'string' && positiveInteger(control.rows) && positiveInteger(control.cols)
         ? control as unknown as TerminalReadyControl : null
     case 'terminal.size':
-      return positiveInteger(control.rows) && positiveInteger(control.cols) ? control as unknown as TerminalSizeControl : null
+      return typeof control.terminal_id === 'string' && positiveInteger(control.rows) && positiveInteger(control.cols) ? control as unknown as TerminalSizeControl : null
     case 'terminal.binding_snapshot':
       return typeof control.terminal_id === 'string' && typeof control.prefix === 'string' && Array.isArray(control.bindings) ? control as unknown as TerminalBindingControl : null
     case 'terminal.error':
-      return typeof control.code === 'string' ? control as unknown as TerminalErrorControl : null
+      return typeof control.terminal_id === 'string' && typeof control.code === 'string' && typeof control.message === 'string' ? control as unknown as TerminalErrorControl : null
     case 'terminal.closed':
-      return typeof control.reason === 'string' ? control as unknown as TerminalClosedControl : null
+      return typeof control.terminal_id === 'string' && typeof control.reason === 'string' ? control as unknown as TerminalClosedControl : null
     case 'terminal.action_result':
       return typeof control.terminal_id === 'string' && typeof control.action_id === 'string' && typeof control.ok === 'boolean' ? control as unknown as TerminalActionResultControl : null
     default: return null
