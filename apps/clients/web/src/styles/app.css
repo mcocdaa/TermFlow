@@ -79,13 +79,14 @@
   .dialog-panel { width: min(100%, 40rem); max-height: 90dvh; overflow: auto; padding: var(--space-5); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-panel); box-shadow: var(--shadow-panel); }
   .dialog-panel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
   .dialog-panel h2 { margin: 0; }
+  .enrollment-create-form { display: grid; gap: var(--space-3); margin-block-start: var(--space-5); }
   .enrollment-secret { display: grid; gap: var(--space-3); }
   .enrollment-field { display: grid; gap: var(--space-2); }
   .enrollment-field h3 { margin: 0; font-size: 0.88rem; color: var(--color-text-secondary); }
-  .enrollment-field-heading { display: flex; align-items: center; gap: var(--space-1); }
-  .help-tooltip { position: relative; display: inline-flex; }
-  .help-tooltip [role='tooltip'] { position: absolute; z-index: 3; inset-block-end: calc(100% + var(--space-2)); inset-inline-start: 50%; width: max-content; max-width: min(18rem, 75vw); padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-elevated); color: var(--color-text-secondary); box-shadow: var(--shadow-panel); font-size: 0.78rem; line-height: 1.5; opacity: 0; pointer-events: none; translate: -50% var(--space-1); transition: opacity 120ms ease, translate 120ms ease; }
-  .help-tooltip:hover [role='tooltip'], .help-tooltip:focus-within [role='tooltip'] { opacity: 1; translate: -50% 0; }
+  .enrollment-field-heading { position: relative; width: 100%; display: flex; align-items: center; gap: var(--space-1); }
+  .help-tooltip { position: static; display: inline-flex; }
+  .help-tooltip [role='tooltip'] { position: absolute; z-index: 3; inset-block-start: calc(100% + var(--space-1)); inset-inline-start: 0; width: min(18rem, 100%); padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-elevated); color: var(--color-text-secondary); box-shadow: var(--shadow-panel); font-size: 0.78rem; line-height: 1.5; opacity: 0; pointer-events: none; translate: 0 calc(-1 * var(--space-1)); transition: opacity 120ms ease, translate 120ms ease; }
+  .help-tooltip:hover [role='tooltip'], .help-tooltip:focus-within [role='tooltip'] { opacity: 1; translate: 0 0; }
   .enrollment-copy-button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); }
   .warning-text { color: var(--color-warning); }
   .registration-code, .login-command { display: block; overflow-wrap: anywhere; padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-terminal); color: var(--color-terminal-foreground); font-family: var(--font-mono); }
