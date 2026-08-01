@@ -115,3 +115,20 @@ def test_terminal_body_and_raw_credentials_never_reach_sqlite_or_logs(
     database_bytes = database_path.read_bytes()
     assert SENTINEL.encode() not in database_bytes
     assert all(token.encode() not in database_bytes for token in raw_tokens)
+
+
+def test_browser_session_secret_is_absent_from_logs_responses_and_store_repr(
+    client,
+    caplog,
+) -> None:
+    response = client.post(
+        "/api/v1/session",
+        headers={"Origin": "http://127.0.0.1:8000"},
+        json={"admin_token": "admin-token-that-is-long-enough-for-tests"},
+    )
+    raw_cookie = response.cookies.get("termflow_session")
+    assert raw_cookie
+    status = client.get("/api/v1/session")
+    assert raw_cookie not in status.text
+    assert raw_cookie not in caplog.text
+    assert raw_cookie not in repr(client.app.state.browser_sessions)

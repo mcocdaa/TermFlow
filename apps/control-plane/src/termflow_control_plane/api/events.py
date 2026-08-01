@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hmac
 from contextlib import suppress
 from typing import cast
 from uuid import UUID
@@ -11,6 +10,10 @@ from uuid import UUID
 from fastapi import APIRouter, WebSocket
 from termflow_protocol import MessageType, PaneReplayRequestPayload, WireMessage
 
+from termflow_control_plane.auth.sessions import (
+    BrowserSessionStore,
+    websocket_admin_close_code,
+)
 from termflow_control_plane.config import Settings
 from termflow_control_plane.connections.event_hub import EventHub, EventSubscriber
 from termflow_control_plane.connections.registry import (
@@ -21,17 +24,6 @@ from termflow_control_plane.connections.registry import (
 from termflow_control_plane.persistence.repositories import RepositoryBundle
 
 router = APIRouter(tags=["events"])
-
-
-def _admin_authenticated(websocket: WebSocket, settings: Settings) -> bool:
-    authorization = websocket.headers.get("authorization", "")
-    scheme, separator, token = authorization.partition(" ")
-    return bool(
-        separator
-        and scheme.lower() == "bearer"
-        and token
-        and hmac.compare_digest(token, settings.admin_token.get_secret_value())
-    )
 
 
 async def _send_subscription(websocket: WebSocket, subscriber: EventSubscriber) -> None:
@@ -62,11 +54,14 @@ async def subscribe_events(
     after_seq: int | None = None,
 ) -> None:
     settings = cast(Settings, websocket.app.state.settings)
+    sessions = cast(BrowserSessionStore, websocket.app.state.browser_sessions)
     repositories = cast(RepositoryBundle, websocket.app.state.repositories)
     registry = cast(LiveInstanceRegistry, websocket.app.state.registry)
     hub = cast(EventHub, websocket.app.state.event_hub)
-    if not _admin_authenticated(websocket, settings):
-        await websocket.close(code=4401, reason="Authentication required")
+    auth_close_code = websocket_admin_close_code(websocket, settings, sessions)
+    if auth_close_code is not None:
+        reason = "Origin not allowed" if auth_close_code == 4403 else "Authentication required"
+        await websocket.close(code=auth_close_code, reason=reason)
         return
     if await repositories.instances.get(instance_id) is None:
         await websocket.close(code=4404, reason="Instance not found")

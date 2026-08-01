@@ -6,6 +6,11 @@ from typing import Annotated, cast
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from termflow_control_plane.auth.sessions import (
+    BrowserSessionStore,
+    origin_allowed,
+    request_cookie_session,
+)
 from termflow_control_plane.auth.tokens import hash_token
 from termflow_control_plane.config import Settings
 from termflow_control_plane.connections.registry import LiveInstanceRegistry
@@ -25,6 +30,10 @@ def get_repositories(request: Request) -> RepositoryBundle:
     return cast(RepositoryBundle, request.app.state.repositories)
 
 
+def get_browser_sessions(request: Request) -> BrowserSessionStore:
+    return cast(BrowserSessionStore, request.app.state.browser_sessions)
+
+
 def get_registry(request: Request) -> LiveInstanceRegistry:
     return cast(LiveInstanceRegistry, request.app.state.registry)
 
@@ -40,13 +49,24 @@ def _raw_bearer(credentials: HTTPAuthorizationCredentials | None) -> str:
 
 
 async def require_admin(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
     settings: Annotated[Settings, Depends(get_settings)],
+    sessions: Annotated[BrowserSessionStore, Depends(get_browser_sessions)],
 ) -> None:
-    supplied = _raw_bearer(credentials)
     expected = settings.admin_token.get_secret_value()
-    if not hmac.compare_digest(supplied, expected):
+    if credentials is not None:
+        supplied = _raw_bearer(credentials)
+        if hmac.compare_digest(supplied, expected):
+            return
         raise TermFlowError("unauthorized", 401, "Authentication is required.")
+    if request_cookie_session(request, settings, sessions) is None:
+        raise TermFlowError("unauthorized", 401, "Authentication is required.")
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not origin_allowed(
+        request.headers.get("origin"),
+        settings,
+    ):
+        raise TermFlowError("origin_not_allowed", 403, "The browser Origin is not allowed.")
 
 
 async def require_installation(

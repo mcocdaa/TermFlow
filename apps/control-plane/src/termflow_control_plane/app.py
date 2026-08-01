@@ -21,6 +21,8 @@ from termflow_control_plane.api.bridge import router as bridge_router
 from termflow_control_plane.api.enrollment import router as enrollment_router
 from termflow_control_plane.api.events import router as events_router
 from termflow_control_plane.api.instances import router as instances_router
+from termflow_control_plane.api.sessions import router as sessions_router
+from termflow_control_plane.auth.sessions import BrowserSessionStore
 from termflow_control_plane.config import Settings
 from termflow_control_plane.connections.event_hub import EventHub
 from termflow_control_plane.connections.registry import LiveConnection, LiveInstanceRegistry
@@ -97,6 +99,10 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
     app.state.settings = settings
     app.state.registry = LiveInstanceRegistry(queue_size=settings.connection_queue_size)
     app.state.event_hub = EventHub(queue_size=settings.event_queue_size)
+    app.state.browser_sessions = BrowserSessionStore(
+        ttl=timedelta(seconds=settings.browser_session_ttl_seconds),
+        capacity=settings.browser_session_capacity,
+    )
 
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
@@ -125,6 +131,7 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         return HealthResponse()
 
     app.include_router(enrollment_router)
+    app.include_router(sessions_router)
     app.include_router(instances_router)
     app.include_router(bridge_router)
     app.include_router(events_router)

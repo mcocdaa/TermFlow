@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from termflow_protocol import (
     EnrollmentCreateResponse,
     InstallationEnrollRequest,
@@ -26,11 +26,13 @@ router = APIRouter(prefix="/api/v1")
     dependencies=[Depends(require_admin)],
 )
 async def create_enrollment_token(
+    response: Response,
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
 ) -> EnrollmentCreateResponse:
     raw_token = issue_token()
     expires_at = datetime.now(UTC) + timedelta(minutes=10)
     await repositories.enrollments.create(hash_token(raw_token), expires_at)
+    response.headers["Cache-Control"] = "no-store"
     return EnrollmentCreateResponse(token=raw_token, expires_at=expires_at)
 
 
@@ -41,6 +43,7 @@ async def create_enrollment_token(
 )
 async def enroll_installation(
     request: InstallationEnrollRequest,
+    response: Response,
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
 ) -> InstallationEnrollResponse:
     enrollment_token = request.enrollment_token.get_secret_value()
@@ -59,6 +62,7 @@ async def enroll_installation(
         platform=request.platform,
         client_version=request.client_version,
     )
+    response.headers["Cache-Control"] = "no-store"
     return InstallationEnrollResponse(
         installation_id=installation.id,
         installation_token=raw_installation_token,
