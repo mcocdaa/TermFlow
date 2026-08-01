@@ -58,13 +58,16 @@ async def _subject(*, queue_size: int = 4):
 
 @pytest.mark.asyncio
 async def test_open_rejects_bridge_without_full_terminal_capability() -> None:
-    router, connection, _ = await _subject()
+    router, connection, audit = await _subject()
     connection.capabilities = frozenset({"topology"})
 
     with pytest.raises(TerminalRouteError, match="capability_unavailable"):
         await router.open(connection.instance_id, session_key=None)
 
     assert connection.outbound.empty()
+    assert len(audit.records) == 1
+    assert audit.records[0]["result"] == "rejected"
+    assert audit.records[0]["error_code"] == "capability_unavailable"
 
 
 @pytest.mark.asyncio

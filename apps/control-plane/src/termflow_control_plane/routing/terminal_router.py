@@ -100,6 +100,16 @@ class TerminalRouter:
         except ConnectionBackpressure as exc:
             raise TerminalRouteError("backpressure") from exc
 
+    def _record_open_rejection(self, instance_id: UUID, error_code: str) -> None:
+        self._audit.record_nowait(
+            "terminal.open",
+            instance_id,
+            None,
+            None,
+            "rejected",
+            error_code,
+        )
+
     async def open(
         self,
         instance_id: UUID,
@@ -109,13 +119,16 @@ class TerminalRouter:
         try:
             connection = await self._registry.get(instance_id)
         except InstanceOffline as exc:
+            self._record_open_rejection(instance_id, "instance_offline")
             raise TerminalRouteError("instance_offline") from exc
         try:
             async with asyncio.timeout(self._capability_wait_seconds):
                 await connection.hello_ready.wait()
         except TimeoutError as exc:
+            self._record_open_rejection(instance_id, "capability_unavailable")
             raise TerminalRouteError("capability_unavailable") from exc
         if "full_terminal" not in connection.capabilities:
+            self._record_open_rejection(instance_id, "capability_unavailable")
             raise TerminalRouteError("capability_unavailable")
         terminal = await self._hub.register(instance_id, session_key=session_key)
         request = TerminalOpenPayload(terminal_id=terminal.terminal_id)
