@@ -20,7 +20,11 @@ def test_compose_configures_same_origin_web_control_limits() -> None:
     assert "TERMFLOW_PUBLIC_BASE_URL" in environment
     assert "TERMFLOW_TRUSTED_WEB_ORIGINS" in environment
     assert "TERMFLOW_BROWSER_SESSION_TTL_SECONDS" in environment
+    assert "TERMFLOW_BROWSER_SESSION_CAPACITY" in environment
     assert "TERMFLOW_TERMINAL_MAX_FRAME_BYTES" in environment
+    assert "TERMFLOW_TERMINAL_INPUT_RATE_BYTES_PER_SECOND" in environment
+    assert "TERMFLOW_TERMINAL_QUEUE_MAX_MESSAGES" in environment
+    assert "TERMFLOW_TERMINAL_QUEUE_MAX_BYTES" in environment
 
 
 def test_control_plane_image_builds_web_without_shipping_node() -> None:
