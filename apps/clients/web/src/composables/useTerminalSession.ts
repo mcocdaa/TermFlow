@@ -1,7 +1,7 @@
 import { onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import type { BindingSnapshotDto } from '../api/types'
 import type { TerminalActionId } from '../api/types'
-import type { TerminalAdapter, TerminalAdapterFactory } from '../terminal/terminalAdapter'
+import type { TerminalAdapter, TerminalAdapterFactory, TerminalMouseDispatch } from '../terminal/terminalAdapter'
 import { createXtermAdapter } from '../terminal/terminalAdapter'
 import type { TerminalActionResultControl } from '../terminal/protocol'
 import type { TerminalConnectionStatus, TerminalSocketCallbacks, TerminalSocketLike } from '../terminal/socket'
@@ -66,5 +66,6 @@ export function useTerminalSession(termId: string, host: Ref<HTMLElement | null>
     measureCell: () => adapter?.measureCell() ?? null,
     setVisualScale: (scale: number) => adapter?.setVisualScale(scale) ?? null,
     canClientPan: () => adapter?.canClientPan() ?? false,
+    dispatchMouse: (event: TerminalMouseDispatch) => adapter?.dispatchMouse(event),
   }
 }

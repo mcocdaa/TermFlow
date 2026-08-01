@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { visualFontSize } from './terminalAdapter'
+import { forceSelectionModifiers, visualFontSize } from './terminalAdapter'
 
 describe('xterm visual font scaling', () => {
+  it('uses the same force-selection modifier that xterm expects on each platform', () => {
+    expect(forceSelectionModifiers('Linux x86_64', true)).toEqual({ shiftKey: true })
+    expect(forceSelectionModifiers('iPhone', true)).toEqual({ shiftKey: true })
+    expect(forceSelectionModifiers('MacIntel', true)).toEqual({ altKey: true })
+    expect(forceSelectionModifiers('MacIntel', false)).toEqual({})
+  })
+
   it('always derives from the 100% base instead of accumulating scale', () => {
     expect(visualFontSize(14, 0.5)).toBe(7)
     expect(visualFontSize(14, 0.75)).toBe(10.5)

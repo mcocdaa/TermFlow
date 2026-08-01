@@ -7,6 +7,25 @@ export interface TerminalCellMetrics {
   height: number
 }
 
+export type TerminalMouseEventType = 'mousedown' | 'mousemove' | 'mouseup'
+
+export interface TerminalMouseDispatch {
+  type: TerminalMouseEventType
+  clientX: number
+  clientY: number
+  buttons: 0 | 1
+  button: 0
+  detail?: 1 | 2
+  forceSelection?: boolean
+}
+
+const MAC_PLATFORMS = new Set(['Macintosh', 'MacIntel', 'MacPPC', 'Mac68K'])
+
+export function forceSelectionModifiers(platform: string, mouseTrackingActive: boolean): Pick<MouseEventInit, 'altKey' | 'shiftKey'> {
+  if (!mouseTrackingActive) return {}
+  return MAC_PLATFORMS.has(platform) ? { altKey: true } : { shiftKey: true }
+}
+
 export function visualFontSize(baseFontSize: number, scale: number): number {
   const normalizedScale = Number.isFinite(scale) && scale > 0 ? scale : 1
   return baseFontSize * normalizedScale
@@ -22,6 +41,7 @@ export interface TerminalAdapter {
   measureCell(): TerminalCellMetrics | null
   setVisualScale(scale: number): TerminalCellMetrics | null
   canClientPan(): boolean
+  dispatchMouse(event: TerminalMouseDispatch): void
   dispose(): void
 }
 export type TerminalAdapterFactory = (host: HTMLElement, size: { rows: number; cols: number }, onInput: (value: string | Uint8Array) => void) => TerminalAdapter
@@ -61,6 +81,7 @@ export const createXtermAdapter: TerminalAdapterFactory = (host, size, onInput) 
     allowTransparency: false,
     cursorBlink: true,
     disableStdin: true,
+    macOptionClickForcesSelection: true,
     scrollback: 5_000,
     fontFamily: style.getPropertyValue('--font-mono').trim(),
     fontSize: BASE_FONT_SIZE,
@@ -90,7 +111,26 @@ export const createXtermAdapter: TerminalAdapterFactory = (host, size, onInput) 
       terminal.options.fontSize = visualFontSize(BASE_FONT_SIZE, scale)
       return measureCell()
     },
-    canClientPan: () => !terminal.hasSelection() && terminal.modes.mouseTrackingMode === 'none',
+    canClientPan: () => !terminal.hasSelection(),
+    dispatchMouse: (event) => {
+      const element = terminal.element
+      if (!element) return
+      const mouseTrackingActive = terminal.modes.mouseTrackingMode !== 'none'
+      const modifiers = event.forceSelection
+        ? forceSelectionModifiers(navigator.platform, mouseTrackingActive)
+        : {}
+      const target: EventTarget = event.type === 'mousedown' ? element : element.ownerDocument
+      target.dispatchEvent(new MouseEvent(event.type, {
+        bubbles: true,
+        cancelable: true,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        buttons: event.buttons,
+        button: event.button,
+        detail: event.detail ?? 1,
+        ...modifiers,
+      }))
+    },
     dispose: () => { dataDisposable.dispose(); binaryDisposable.dispose(); terminal.dispose() },
   }
 }
