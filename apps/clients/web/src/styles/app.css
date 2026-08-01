@@ -129,9 +129,9 @@
   .action-menu { width: min(26rem, 80vw); max-height: min(35rem, 70dvh); overflow: visible; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-1); }
   .action-search { grid-column: 1 / -1; }
   .action-menu button { position: relative; display: flex; align-items: center; justify-content: flex-start; overflow: visible; }
-  .action-binding-tooltip { position: absolute; z-index: 4; inset-block-end: calc(100% + var(--space-1)); inset-inline-start: 50%; width: max-content; max-width: min(20rem, 80vw); padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-elevated); color: var(--color-text-secondary); box-shadow: var(--shadow-panel); font-size: 0.76rem; line-height: 1.4; opacity: 0; pointer-events: none; translate: -50% var(--space-1); transition: opacity 120ms ease, translate 120ms ease; }
-  .action-binding-tooltip code { color: var(--color-accent); font-family: var(--font-mono); }
-  .action-menu button:hover .action-binding-tooltip, .action-menu button:focus-visible .action-binding-tooltip { opacity: 1; translate: -50% 0; }
+  .action-binding-tooltip { position: absolute; z-index: 4; inset: 0; display: flex; align-items: center; justify-content: center; gap: var(--space-1); padding: var(--space-2); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-accent) 16%, var(--color-elevated)); color: var(--color-text-secondary); font-size: 0.76rem; line-height: 1.4; opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
+  .action-binding-tooltip code { padding: 0 var(--space-1); border: 1px solid color-mix(in srgb, var(--color-accent) 38%, var(--color-border)); border-radius: 0.25rem; background: var(--color-terminal); color: var(--color-accent); font-family: var(--font-mono); }
+  .action-menu button:hover .action-binding-tooltip, .action-menu button:focus-visible .action-binding-tooltip { opacity: 1; }
   .action-menu .destructive { color: var(--color-danger); }
   .mobile-action-trigger, .mobile-action-drawer, .mobile-keybar { display: none; }
   .danger-button { min-height: 2.75rem; border: 1px solid var(--color-danger); border-radius: var(--radius-md); padding: var(--space-2) var(--space-4); background: var(--color-danger); color: var(--color-panel); font-weight: 750; }
