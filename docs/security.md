@@ -11,7 +11,9 @@
 - Installation Credential：只能为本机注册 Instance；
 - Instance Credential：只能连接并上报一个指定 Instance。
 
-B 只存 token 的 SHA-256 哈希；注册码最多成功使用一次且默认 60 秒过期。关闭生成
+B 只存 token 的 SHA-256 哈希；Web C 创建注册码时还可以随哈希保存用户指定的非机密
+Computer 显示名。注册码最多成功使用一次且默认 60 秒过期；B 在同一次原子消费中取得
+显示名，随后才创建 Installation，因此过期或未使用的注册码不会产生 Computer。关闭生成
 注册码的 Web 页面不会撤销已经复制出去的码；它仍会在首次成功使用或 B 记录的到期点
 失效。A 必须保存可用的 Installation/Instance 原始凭据，因此它们只写入本机明确的
 `0600` 文件；父目录为 `0700`，普通模型 repr、stdout 和日志保持遮蔽。
@@ -23,7 +25,8 @@ Web C 的登录页把 Admin Token 交换为 8 小时内存会话。浏览器只�
 
 Computer 的注册时间由 B 创建 Installation 时记录，最近在线时间由 B 收到 A 的注册、
 心跳或拓扑更新时记录；两者都以 UTC 存储和传输，不依赖 A 的本地时钟。Web C 按当前
-访问设备的时区显示，并带时区标识。
+访问设备的本地时区显示，不附加 GMT、UTC 或其他时区缩写。不同 C 设备看到的当地钟表
+时间可以不同，但对应同一个 B 记录的时间点。
 
 ## 本地边界
 
