@@ -10,7 +10,7 @@ describe('TerminalCanvas', () => {
     let callbacks!: TerminalSocketCallbacks
     let input!: (value: string | Uint8Array) => void
     const socket: TerminalSocketLike = { connect: vi.fn(), sendInput: vi.fn(), sendAction: vi.fn(), dispose: vi.fn() }
-    const adapter: TerminalAdapter = { write: vi.fn(), resize: vi.fn(), reset: vi.fn(), focus: vi.fn(), refreshTheme: vi.fn(), setInputEnabled: vi.fn(), measureCell: vi.fn(() => ({ width: 10, height: 20 })), canClientPan: vi.fn(() => false), dispose: vi.fn() }
+    const adapter: TerminalAdapter = { write: vi.fn(), resize: vi.fn(), reset: vi.fn(), focus: vi.fn(), refreshTheme: vi.fn(), setInputEnabled: vi.fn(), measureCell: vi.fn(() => ({ width: 10, height: 20 })), setVisualScale: vi.fn(() => ({ width: 10, height: 20 })), canClientPan: vi.fn(() => false), dispose: vi.fn() }
     const createSocket = vi.fn((_id: string, nextCallbacks: TerminalSocketCallbacks) => { callbacks = nextCallbacks; return socket })
     const createAdapter: TerminalAdapterFactory = vi.fn((_host, _size, onInput) => { input = onInput; return adapter })
     const wrapper = mount(TerminalCanvas, { props: { termId: 'term-9', createSocket, createAdapter } })

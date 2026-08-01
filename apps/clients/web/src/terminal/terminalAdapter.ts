@@ -1,5 +1,17 @@
 import { Terminal } from '@xterm/xterm'
 
+const BASE_FONT_SIZE = 14
+
+export interface TerminalCellMetrics {
+  width: number
+  height: number
+}
+
+export function visualFontSize(baseFontSize: number, scale: number): number {
+  const normalizedScale = Number.isFinite(scale) && scale > 0 ? scale : 1
+  return baseFontSize * normalizedScale
+}
+
 export interface TerminalAdapter {
   write(bytes: Uint8Array): void
   resize(cols: number, rows: number): void
@@ -7,7 +19,8 @@ export interface TerminalAdapter {
   focus(): void
   refreshTheme(): void
   setInputEnabled(enabled: boolean): void
-  measureCell(): { width: number; height: number } | null
+  measureCell(): TerminalCellMetrics | null
+  setVisualScale(scale: number): TerminalCellMetrics | null
   canClientPan(): boolean
   dispose(): void
 }
@@ -50,12 +63,21 @@ export const createXtermAdapter: TerminalAdapterFactory = (host, size, onInput) 
     disableStdin: true,
     scrollback: 5_000,
     fontFamily: style.getPropertyValue('--font-mono').trim(),
-    fontSize: 14,
+    fontSize: BASE_FONT_SIZE,
     theme: semanticTheme(host),
   })
   terminal.open(host)
   const dataDisposable = terminal.onData(onInput)
   const binaryDisposable = terminal.onBinary((value) => onInput(Uint8Array.from(value, (character) => character.charCodeAt(0))))
+  const measureCell = (): TerminalCellMetrics | null => {
+    const screen = terminal.element?.querySelector<HTMLElement>('.xterm-screen')
+    if (!screen || terminal.cols <= 0 || terminal.rows <= 0) return null
+    const style = getComputedStyle(screen)
+    const width = Number.parseFloat(style.width)
+    const height = Number.parseFloat(style.height)
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null
+    return { width: width / terminal.cols, height: height / terminal.rows }
+  }
   return {
     write: (bytes) => terminal.write(bytes),
     resize: (cols, rows) => terminal.resize(cols, rows),
@@ -63,14 +85,10 @@ export const createXtermAdapter: TerminalAdapterFactory = (host, size, onInput) 
     focus: () => terminal.focus(),
     refreshTheme: () => { terminal.options.theme = semanticTheme(host) },
     setInputEnabled: (enabled) => { terminal.options.disableStdin = !enabled },
-    measureCell: () => {
-      const screen = terminal.element?.querySelector<HTMLElement>('.xterm-screen')
-      if (!screen || terminal.cols <= 0 || terminal.rows <= 0) return null
-      const style = getComputedStyle(screen)
-      const width = Number.parseFloat(style.width)
-      const height = Number.parseFloat(style.height)
-      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null
-      return { width: width / terminal.cols, height: height / terminal.rows }
+    measureCell,
+    setVisualScale: (scale) => {
+      terminal.options.fontSize = visualFontSize(BASE_FONT_SIZE, scale)
+      return measureCell()
     },
     canClientPan: () => !terminal.hasSelection() && terminal.modes.mouseTrackingMode === 'none',
     dispose: () => { dataDisposable.dispose(); binaryDisposable.dispose(); terminal.dispose() },
