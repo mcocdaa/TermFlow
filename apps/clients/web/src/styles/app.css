@@ -67,6 +67,11 @@
   .enrollment-secret { display: grid; gap: var(--space-3); }
   .warning-text { color: var(--color-warning); }
   .registration-code, .login-command { display: block; overflow-wrap: anywhere; padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-terminal); color: var(--color-text-primary); font-family: var(--font-mono); }
+  .terminal-view { max-width: none; height: calc(100dvh - 8rem); }
+  .terminal-frame { position: relative; width: 100%; height: 100%; min-height: 18rem; overflow: auto; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-terminal); box-shadow: var(--shadow-panel); }
+  .terminal-host { width: max-content; min-width: 100%; height: max-content; min-height: 100%; padding: var(--space-2); background: var(--color-terminal); font-family: var(--font-mono); }
+  .terminal-overlay { position: absolute; z-index: 5; inset-block-start: var(--space-3); inset-inline-start: 50%; translate: -50% 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-elevated); color: var(--color-text-secondary); box-shadow: var(--shadow-panel); pointer-events: none; }
+  .terminal-error { position: absolute; z-index: 6; inset-inline: var(--space-3); inset-block-end: var(--space-3); margin: 0; padding: var(--space-3); border: 1px solid var(--color-danger); border-radius: var(--radius-md); background: var(--color-panel); color: var(--color-danger); }
   @media (max-width: 64rem) {
     .metrics-grid { grid-template-columns: repeat(2, 1fr); }
     .term-row { grid-template-columns: minmax(0, 1fr) auto auto; }
