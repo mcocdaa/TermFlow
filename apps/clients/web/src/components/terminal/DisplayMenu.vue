@@ -11,26 +11,25 @@
 
 <script setup lang="ts">
 import { ChevronDown, Circle, CircleDot, MonitorCog } from '@lucide/vue'
-import { nextTick, ref } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import type { DisplayMode } from '../../terminal/viewport'
-const props = defineProps<{ modelValue: DisplayMode }>()
-const emit = defineEmits<{ 'update:modelValue': [mode: DisplayMode] }>()
-const open = ref(false)
+const props = withDefaults(defineProps<{ modelValue: DisplayMode; open?: boolean }>(), { open: false })
+const emit = defineEmits<{ 'update:modelValue': [mode: DisplayMode]; 'update:open': [open: boolean] }>()
 const trigger = ref<HTMLButtonElement | null>(null)
 const choiceButtons = ref<HTMLButtonElement[]>([])
 const choices: Array<{ id: DisplayMode; label: string }> = [
   { id: 'scale-50', label: '50%' }, { id: 'scale-75', label: '75%' }, { id: 'font-100', label: '100% 实际字号' }, { id: 'fit', label: '适应窗口' },
 ]
-async function toggleMenu() {
-  open.value = !open.value
-  if (!open.value) return
+function toggleMenu() { emit('update:open', !props.open) }
+watch(() => props.open, async (open) => {
+  if (!open) return
   await nextTick()
   choiceButtons.value[choices.findIndex((choice) => choice.id === props.modelValue)]?.focus()
-}
-async function select(mode: DisplayMode) { emit('update:modelValue', mode); open.value = false; await nextTick(); trigger.value?.focus() }
+})
+async function select(mode: DisplayMode) { emit('update:modelValue', mode); emit('update:open', false); await nextTick(); trigger.value?.focus() }
 function moveFocus(offset: number) {
   const current = choiceButtons.value.findIndex((button) => button === document.activeElement)
   choiceButtons.value[(current + offset + choiceButtons.value.length) % choiceButtons.value.length]?.focus()
 }
-async function closeAndFocus() { open.value = false; await nextTick(); trigger.value?.focus() }
+async function closeAndFocus() { emit('update:open', false); await nextTick(); trigger.value?.focus() }
 </script>
