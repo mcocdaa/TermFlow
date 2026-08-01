@@ -19,6 +19,13 @@ describe('browser login privacy', () => {
     await router.isReady()
     const wrapper = mount(App, { global: { plugins: [router] } })
 
+    expect(wrapper.get('h1').text()).toBe('登录')
+    expect(wrapper.get('label[for="admin-token"]').text()).toBe('管理员令牌')
+    expect(wrapper.get('button[type="submit"]').text()).toBe('登录')
+    expect(wrapper.text()).not.toContain('安全会话')
+    expect(wrapper.text()).not.toContain('浏览器不会保存')
+    expect(wrapper.text()).not.toContain('创建会话')
+
     await wrapper.get('input[type="password"]').setValue(secret)
     await wrapper.get('form').trigger('submit')
     await flushPromises()

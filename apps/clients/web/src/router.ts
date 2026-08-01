@@ -14,7 +14,7 @@ export function createAppRouter(dependencies: RouterDependencies) {
   const router = createRouter({
     history: dependencies.history ?? (import.meta.env.VITEST ? createMemoryHistory() : createWebHistory()),
     routes: [
-      { path: '/login', component: LoginView },
+      { path: '/login', component: LoginView, meta: { bare: true } },
       { path: '/', component: DashboardView, meta: { requiresAuth: true } },
       { path: '/computers', component: ComputersView, meta: { requiresAuth: true } },
       { path: '/terms/:termId', component: TerminalView, meta: { requiresAuth: true, terminal: true } },
