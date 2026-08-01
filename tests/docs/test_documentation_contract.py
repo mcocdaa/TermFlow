@@ -18,6 +18,32 @@ def test_readme_links_every_operator_document() -> None:
         "protocol.md",
         "security.md",
         "api-examples.md",
+        "web-client.md",
         "troubleshooting.md",
     ):
         assert name in readme
+
+
+def test_docs_explain_computer_term_and_full_terminal_contracts() -> None:
+    all_docs = "\n".join(path.read_text() for path in Path("docs").glob("*.md"))
+    for phrase in (
+        "Computer",
+        "Term",
+        "/api/v1/terms/{instance_id}/terminal",
+        "A 权威",
+        "HttpOnly",
+        "Origin",
+        "graphite-signal",
+        "cloud-cobalt",
+        "midnight-indigo",
+    ):
+        assert phrase in all_docs
+    assert "Web C 是 B 的内部页面" not in all_docs
+
+
+def test_docs_keep_terminal_content_and_disconnect_boundaries_explicit() -> None:
+    security = Path("docs/security.md").read_text()
+    architecture = Path("docs/architecture.md").read_text()
+    assert "B 不持久化终端" in security
+    assert "C 不能改变" in architecture
+    assert "继续运行" in architecture

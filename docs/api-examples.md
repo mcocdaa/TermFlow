@@ -4,7 +4,7 @@
 `echo "$TERMFLOW_ADMIN_TOKEN"`。
 
 ```bash
-export TERMFLOW_URL='http://127.0.0.1:8000'
+export TERMFLOW_URL='http://127.0.0.1:8765'
 export TERMFLOW_ADMIN_TOKEN='<admin-token>'
 ```
 
@@ -13,6 +13,15 @@ export TERMFLOW_ADMIN_TOKEN='<admin-token>'
 ```bash
 curl -fsS -X POST "$TERMFLOW_URL/api/v1/enrollment-tokens" \
   -H "Authorization: Bearer $TERMFLOW_ADMIN_TOKEN"
+```
+
+浏览器等同源 C 先交换 HttpOnly 会话 Cookie。示例 cookie jar 只用于演示，不应提交：
+
+```bash
+curl -fsS -c /tmp/termflow-cookie -X POST "$TERMFLOW_URL/api/v1/session" \
+  -H 'Content-Type: application/json' \
+  --data "{\"admin_token\":\"$TERMFLOW_ADMIN_TOKEN\"}"
+curl -fsS -b /tmp/termflow-cookie "$TERMFLOW_URL/api/v1/dashboard"
 ```
 
 列出 Instance 并读取在线拓扑：
@@ -49,7 +58,7 @@ from websockets.asyncio.client import connect
 
 async def main() -> None:
     instance_id = os.environ["INSTANCE_ID"]
-    url = f"ws://127.0.0.1:8000/api/v1/events?instance_id={instance_id}"
+    url = f"ws://127.0.0.1:8765/api/v1/events?instance_id={instance_id}"
     headers = {"Authorization": f"Bearer {os.environ['TERMFLOW_ADMIN_TOKEN']}"}
     async with connect(url, additional_headers=headers, ping_interval=None) as websocket:
         while True:
@@ -61,3 +70,8 @@ async def main() -> None:
 
 asyncio.run(main())
 ```
+
+完整 tmux 控制台使用 `/api/v1/terms/{instance_id}/terminal`：二进制帧是原始终端输入/输出，
+JSON 文本帧是 ready、size、bindings、action、error、closed 等控制事件。非浏览器客户端
+可继续在握手中发送 Bearer Header；浏览器 Web C 使用同源 HttpOnly Cookie 和 Origin
+校验。该通道的 A 权威 rows/cols 是只读的，客户端不得发送 resize。
