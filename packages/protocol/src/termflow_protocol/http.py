@@ -156,6 +156,7 @@ class ComputerSummary(HttpModel):
     display_name: str
     platform: str | None = None
     client_version: str | None = None
+    registered_at: datetime | None = None
     last_seen_at: datetime | None = None
     online: bool
     terms: list[TermSummary]

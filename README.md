@@ -38,12 +38,12 @@ uv run --package termflow-control-plane termflow-control serve --host 127.0.0.1 
 uv run --package termflow-control-plane termflow-control enrollment create
 ```
 
-在电脑 A 登录，然后创建并附着一个 Instance：
+在电脑 A 登录，然后创建并附着一个 Term：
 
 ```bash
 uv run --package termflow-node termflow login \
   --server http://127.0.0.1:8000 \
-  --enrollment-token '<一次性注册码>'
+  --code '<一次性注册码>'
 uv run --package termflow-node termflow new --name project-a
 ```
 

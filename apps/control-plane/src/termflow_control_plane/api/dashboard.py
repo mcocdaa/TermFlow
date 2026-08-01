@@ -80,6 +80,7 @@ def _computer_summary(
         display_name=installation.display_name or installation.hostname or "Computer",
         platform=installation.platform,
         client_version=installation.client_version,
+        registered_at=installation.created_at,
         last_seen_at=installation.last_seen_at,
         online=any(term.online for term in terms),
         terms=terms,

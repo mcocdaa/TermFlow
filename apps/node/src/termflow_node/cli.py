@@ -32,10 +32,11 @@ def login(
     server: str = typer.Option(..., "--server", help="Control Plane base URL."),
     enrollment_token: str = typer.Option(
         ...,
+        "--code",
         "--enrollment-token",
         prompt=True,
         hide_input=True,
-        help="Single-use enrollment token.",
+        help="Single-use Computer registration code.",
     ),
     force: bool = typer.Option(False, "--force", help="Replace an existing Installation login."),
 ) -> None:

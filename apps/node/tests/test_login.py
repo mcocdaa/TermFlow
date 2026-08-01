@@ -87,3 +87,30 @@ def test_login_saves_private_config_without_printing_tokens(tmp_path, monkeypatc
     )
     assert refused.exit_code != 0
     assert "--force" in refused.output
+
+
+def test_login_accepts_public_registration_code_flag(tmp_path, monkeypatch) -> None:
+    store = ConfigStore(tmp_path / "config.json")
+
+    async def fake_enroll(self, server_url: str, enrollment_token: str):
+        assert enrollment_token == "single-use-code"
+        return InstallationEnrollResponse(
+            installation_id=uuid4(),
+            installation_token="installation-secret-token-that-is-long-enough",
+        )
+
+    monkeypatch.setattr(ConfigStore, "default", classmethod(lambda cls: store))
+    monkeypatch.setattr(ControlPlaneClient, "enroll", fake_enroll)
+    result = CliRunner().invoke(
+        app,
+        [
+            "login",
+            "--server",
+            "https://termflow.example.com",
+            "--code",
+            "single-use-code",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert store.exists()

@@ -118,6 +118,7 @@ def test_dashboard_groups_terms_and_reports_live_metrics(client, admin_headers) 
         }
         computer = body["computers"][0]
         assert computer["installation_id"] == installation["installation_id"]
+        assert computer["registered_at"] is not None
         assert computer["online"] is True
         term = computer["terms"][0]
         assert term["name"] == "local-name"
