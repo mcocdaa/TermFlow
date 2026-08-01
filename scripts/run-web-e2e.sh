@@ -34,6 +34,7 @@ PORT=$(
 )
 export TERMFLOW_E2E_BASE_URL="http://127.0.0.1:$PORT"
 export TERMFLOW_E2E_ADMIN_TOKEN="browser-e2e-admin-token-that-is-disposable"
+export TERMFLOW_E2E_TERM_NAME="resume-terminal"
 export TERMFLOW_E2E_ARTIFACT_DIR="$RUN_DIR/playwright"
 export TERMFLOW_E2E_SCREENSHOT_DIR="$RUN_DIR/screenshots"
 export TERMFLOW_ADMIN_TOKEN="$TERMFLOW_E2E_ADMIN_TOKEN"

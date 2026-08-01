@@ -2,7 +2,8 @@ import { expect, test, type Page } from '@playwright/test'
 
 const adminToken = process.env.TERMFLOW_E2E_ADMIN_TOKEN
 const termId = process.env.TERMFLOW_E2E_TERM_ID
-if (!adminToken || !termId) throw new Error('TermFlow browser fixture variables are required')
+const termName = process.env.TERMFLOW_E2E_TERM_NAME
+if (!adminToken || !termId || !termName) throw new Error('TermFlow browser fixture variables are required')
 
 async function login(page: Page) {
   await page.goto('/login')
@@ -19,9 +20,10 @@ async function login(page: Page) {
 
 test('uses the real dashboard, themes, terminal transport, and responsive controls', async ({ page }, testInfo) => {
   await login(page)
-  await expect(page.locator(`[data-term-id="${termId}"]`)).toBeVisible()
-  await expect(page.getByText('resume-terminal', { exact: true })).toBeVisible()
-  await expect(page.getByText(/\d+ Panes/)).toBeVisible()
+  const termRow = page.locator(`[data-term-id="${termId}"]`)
+  await expect(termRow).toBeVisible()
+  await expect(termRow.getByText(termName, { exact: true })).toBeVisible()
+  await expect(termRow.getByText(/\d+ Panes/)).toBeVisible()
 
   await page.getByRole('radio', { name: '云端钴蓝' }).click()
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'cloud-cobalt')
