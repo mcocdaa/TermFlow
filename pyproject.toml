@@ -1,0 +1,22 @@
+[tool.uv.workspace]
+members = ["packages/protocol", "apps/control-plane", "apps/node"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = ["--import-mode=importlib"]
+testpaths = ["packages/protocol/tests", "apps/control-plane/tests", "apps/node/tests", "tests"]
+markers = [
+  "tmux: requires a real tmux binary",
+  "e2e: full cross-process test",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true

@@ -1,0 +1,2 @@
+"""Ephemeral live connection state."""
+

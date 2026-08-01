@@ -1,0 +1,17 @@
+.git
+.github
+.venv
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/*.pyc
+**/*.db
+**/*.db-shm
+**/*.db-wal
+.env
+dist
+docs/superpowers
+tests
+apps/**/tests
+packages/**/tests

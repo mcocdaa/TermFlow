@@ -1,0 +1,36 @@
+services:
+  control-plane:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.control-plane
+    command:
+      - uv
+      - run
+      - --frozen
+      - --no-dev
+      - --package
+      - termflow-control-plane
+      - termflow-control
+      - serve
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    environment:
+      TERMFLOW_ADMIN_TOKEN: ${TERMFLOW_ADMIN_TOKEN:?set TERMFLOW_ADMIN_TOKEN}
+      TERMFLOW_DATABASE_URL: sqlite+aiosqlite:////app/data/termflow.db
+      TERMFLOW_ALLOW_INSECURE_LOOPBACK: "false"
+    ports:
+      - 127.0.0.1:8000:8000
+    volumes:
+      - termflow-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  termflow-data:

@@ -1,0 +1,111 @@
+"""Read-only WebSocket subscriptions for ephemeral Instance events."""
+
+from __future__ import annotations
+
+import asyncio
+import hmac
+from contextlib import suppress
+from typing import cast
+from uuid import UUID
+
+from fastapi import APIRouter, WebSocket
+from termflow_protocol import MessageType, PaneReplayRequestPayload, WireMessage
+
+from termflow_control_plane.config import Settings
+from termflow_control_plane.connections.event_hub import EventHub, EventSubscriber
+from termflow_control_plane.connections.registry import (
+    ConnectionBackpressure,
+    InstanceOffline,
+    LiveInstanceRegistry,
+)
+from termflow_control_plane.persistence.repositories import RepositoryBundle
+
+router = APIRouter(tags=["events"])
+
+
+def _admin_authenticated(websocket: WebSocket, settings: Settings) -> bool:
+    authorization = websocket.headers.get("authorization", "")
+    scheme, separator, token = authorization.partition(" ")
+    return bool(
+        separator
+        and scheme.lower() == "bearer"
+        and token
+        and hmac.compare_digest(token, settings.admin_token.get_secret_value())
+    )
+
+
+async def _send_subscription(websocket: WebSocket, subscriber: EventSubscriber) -> None:
+    while True:
+        next_event = asyncio.create_task(subscriber.queue.get())
+        closed = asyncio.create_task(subscriber.closed.wait())
+        done, pending = await asyncio.wait(
+            {next_event, closed},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        for task in pending:
+            with suppress(asyncio.CancelledError):
+                await task
+        if closed in done:
+            await websocket.close(code=4410, reason="Subscriber too slow")
+            return
+        await websocket.send_text(next_event.result().model_dump_json())
+
+
+@router.websocket("/api/v1/events")
+async def subscribe_events(
+    websocket: WebSocket,
+    instance_id: UUID,
+    pane_id: str | None = None,
+    stream_id: UUID | None = None,
+    after_seq: int | None = None,
+) -> None:
+    settings = cast(Settings, websocket.app.state.settings)
+    repositories = cast(RepositoryBundle, websocket.app.state.repositories)
+    registry = cast(LiveInstanceRegistry, websocket.app.state.registry)
+    hub = cast(EventHub, websocket.app.state.event_hub)
+    if not _admin_authenticated(websocket, settings):
+        await websocket.close(code=4401, reason="Authentication required")
+        return
+    if await repositories.instances.get(instance_id) is None:
+        await websocket.close(code=4404, reason="Instance not found")
+        return
+
+    cursor = (pane_id, stream_id, after_seq)
+    if any(value is not None for value in cursor) and not all(
+        value is not None for value in cursor
+    ):
+        await websocket.close(code=4400, reason="Replay cursor is incomplete")
+        return
+    if after_seq is not None and after_seq < 0:
+        await websocket.close(code=4400, reason="Replay cursor is invalid")
+        return
+
+    subscriber = await hub.subscribe(instance_id)
+    await websocket.accept()
+    try:
+        if pane_id is not None and stream_id is not None and after_seq is not None:
+            payload = PaneReplayRequestPayload(
+                pane_id=pane_id,
+                stream_id=stream_id,
+                after_seq=after_seq,
+            )
+            try:
+                await registry.enqueue(
+                    instance_id,
+                    WireMessage(
+                        type=MessageType.PANE_REPLAY_REQUEST,
+                        instance_id=instance_id,
+                        payload=payload.model_dump(mode="json"),
+                    ),
+                )
+            except InstanceOffline:
+                await websocket.close(code=4409, reason="Instance offline")
+                return
+            except ConnectionBackpressure:
+                await websocket.close(code=4429, reason="Bridge queue full")
+                return
+        await _send_subscription(websocket, subscriber)
+    finally:
+        await hub.unsubscribe(subscriber)
