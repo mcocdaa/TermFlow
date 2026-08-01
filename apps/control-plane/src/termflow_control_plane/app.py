@@ -28,6 +28,7 @@ from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.database import Database
 from termflow_control_plane.persistence.repositories import RepositoryBundle
 from termflow_control_plane.routing.router import CommandRouter
+from termflow_control_plane.web import install_web_hosting
 
 
 def _request_id(request: Request) -> UUID:
@@ -128,4 +129,5 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
     app.include_router(instances_router)
     app.include_router(bridge_router)
     app.include_router(events_router)
+    install_web_hosting(app, settings.static_dir)
     return app
