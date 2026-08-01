@@ -9,7 +9,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import type { TerminalAdapterFactory } from '../../terminal/terminalAdapter'
 import type { PaneTopologyDto } from '../../api/types'
 import type { TerminalSocketFactory } from '../../composables/useTerminalSession'
@@ -17,12 +17,13 @@ import { useTerminalSession } from '../../composables/useTerminalSession'
 import { displayPresentation, type DisplayMode } from '../../terminal/viewport'
 import { createPointerViewport } from '../../composables/usePointerViewport'
 
-const props = withDefaults(defineProps<{ termId: string; displayMode?: DisplayMode; selectionActive?: boolean; mouseReportingActive?: boolean; createSocket?: TerminalSocketFactory; createAdapter?: TerminalAdapterFactory }>(), { displayMode: 'font-100', selectionActive: false, mouseReportingActive: false })
+const props = withDefaults(defineProps<{ termId: string; displayMode?: DisplayMode; selectionActive?: boolean; mouseReportingActive?: boolean; transformInput?: (value: string | Uint8Array) => string | Uint8Array; createSocket?: TerminalSocketFactory; createAdapter?: TerminalAdapterFactory }>(), { displayMode: 'font-100', selectionActive: false, mouseReportingActive: false })
+const emit = defineEmits<{ bindings: [value: { prefix: string; actions: Record<string, string | null> }]; 'reset-input': [key: number] }>()
 const host = ref<HTMLElement | null>(null)
 const frameElement = ref<HTMLElement | null>(null)
 const frame = ref({ width: 1, height: 1 })
-const session = useTerminalSession(props.termId, host, props.createSocket, props.createAdapter)
-const { status, dimensions, bindings, terminalError, lastActionResult } = session
+const session = useTerminalSession(props.termId, host, props.createSocket, props.createAdapter, props.transformInput)
+const { status, dimensions, bindings, terminalError, lastActionResult, resetKey } = session
 const presentation = computed(() => dimensions.value ? displayPresentation(props.displayMode, dimensions.value, frame.value, { cellWidth: 9, cellHeight: 18 }) : null)
 const pointer = createPointerViewport({ viewport: frame.value, content: frame.value, canPan: () => !props.selectionActive && !props.mouseReportingActive })
 const totalScale = computed(() => (presentation.value?.scale ?? 1) * pointer.state.scale)
@@ -42,10 +43,12 @@ watchEffect(() => {
   if (!presentation.value) return
   pointer.updateGeometry(frame.value, { width: presentation.value.gridWidth * presentation.value.scale, height: presentation.value.gridHeight * presentation.value.scale })
 })
+watch(bindings, (value) => emit('bindings', value), { deep: true, immediate: true })
+watch(resetKey, (value) => emit('reset-input', value))
 function point(event: PointerEvent) { return { pointerId: event.pointerId, x: event.clientX, y: event.clientY } }
 function onPointerDown(event: PointerEvent) { frameElement.value?.setPointerCapture?.(event.pointerId); pointer.pointerDown(point(event)) }
 function onPointerMove(event: PointerEvent) { pointer.pointerMove(point(event)) }
 function onPointerUp(event: PointerEvent) { pointer.pointerUp(event.pointerId); frameElement.value?.releasePointerCapture?.(event.pointerId) }
 function focusPane(pane: PaneTopologyDto) { pointer.focusPane(pane, { cellWidth: 9 * (presentation.value?.scale ?? 1), cellHeight: 18 * (presentation.value?.scale ?? 1) }) }
-defineExpose({ dimensions, bindings, lastActionResult, sendAction: session.sendAction, focus: session.focus, focusPane, resetViewport: pointer.reset })
+defineExpose({ dimensions, bindings, lastActionResult, sendAction: session.sendAction, sendInput: session.sendInput, focus: session.focus, focusPane, resetViewport: pointer.reset })
 </script>
