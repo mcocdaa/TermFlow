@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import (
 from .models import Base
 
 _SQLITE_V2_COLUMNS: dict[str, dict[str, str]] = {
+    "enrollment_tokens": {"display_name": "VARCHAR(128)"},
     "installations": {
         "hostname": "VARCHAR(255)",
         "display_name": "VARCHAR(128)",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -15,21 +16,42 @@ class InstanceOwnershipError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class ConsumedEnrollment:
+    id: UUID
+    display_name: str | None
+
+
 class EnrollmentRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
-    async def create(self, token_hash: str, expires_at: datetime) -> EnrollmentToken:
+    async def create(
+        self,
+        token_hash: str,
+        expires_at: datetime,
+        *,
+        display_name: str | None = None,
+    ) -> EnrollmentToken:
         async with self._sessions() as session:
-            enrollment = EnrollmentToken(token_hash=token_hash, expires_at=expires_at)
+            enrollment = EnrollmentToken(
+                token_hash=token_hash,
+                display_name=display_name,
+                expires_at=expires_at,
+            )
             session.add(enrollment)
             await session.commit()
             return enrollment
 
-    async def consume(self, token_hash: str, *, now: datetime | None = None) -> UUID | None:
+    async def consume(
+        self,
+        token_hash: str,
+        *,
+        now: datetime | None = None,
+    ) -> ConsumedEnrollment | None:
         observed_at = now or datetime.now(UTC)
         async with self._sessions() as session:
-            enrollment_id = await session.scalar(
+            result = await session.execute(
                 update(EnrollmentToken)
                 .where(
                     EnrollmentToken.token_hash == token_hash,
@@ -37,10 +59,13 @@ class EnrollmentRepository:
                     EnrollmentToken.expires_at > observed_at,
                 )
                 .values(used_at=observed_at)
-                .returning(EnrollmentToken.id)
+                .returning(EnrollmentToken.id, EnrollmentToken.display_name)
             )
+            consumed = result.one_or_none()
             await session.commit()
-            return enrollment_id
+            if consumed is None:
+                return None
+            return ConsumedEnrollment(id=consumed[0], display_name=consumed[1])
 
 
 class InstallationRepository:
