@@ -21,7 +21,68 @@ async function login(page: Page) {
   await expect(page.getByRole('heading', { name: '控制中心' })).toBeVisible()
 }
 
+interface PaneGeometry {
+  pane_id: string
+  active: boolean
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+async function panesForTerm(page: Page): Promise<PaneGeometry[]> {
+  const response = await page.request.get(`/api/v1/instances/${termId}/topology`)
+  expect(response.ok()).toBe(true)
+  const body = await response.json() as { topology: { windows: Array<{ panes: PaneGeometry[] }> } }
+  return body.topology.windows.flatMap((window) => window.panes)
+}
+
+async function selectLeftPaneWithKeyboard(page: Page): Promise<[PaneGeometry, PaneGeometry]> {
+  const panes = (await panesForTerm(page)).toSorted((left, right) => left.left - right.left)
+  expect(panes).toHaveLength(2)
+  const [leftPane, rightPane] = panes
+  await page.locator('.terminal-host textarea').focus()
+  await page.keyboard.press('Control+b')
+  await page.keyboard.press('ArrowLeft')
+  await expect.poll(async () => (await panesForTerm(page)).find((pane) => pane.active)?.pane_id).toBe(leftPane.pane_id)
+  return [leftPane, rightPane]
+}
+
+async function terminalPoint(page: Page, column: number, row: number) {
+  const screen = page.locator('.xterm-screen')
+  const box = await screen.boundingBox()
+  expect(box).not.toBeNull()
+  const panes = await panesForTerm(page)
+  const cols = Math.max(...panes.map((candidate) => candidate.left + candidate.width))
+  const rows = Math.max(...panes.map((candidate) => candidate.top + candidate.height)) + 1
+  return {
+    x: box!.x + (column + 0.5) / cols * box!.width,
+    y: box!.y + (row + 0.5) / rows * box!.height,
+    col: Math.floor(column) + 1,
+    row: Math.floor(row) + 1,
+  }
+}
+
+async function clickPaneCenter(page: Page, pane: PaneGeometry) {
+  const column = pane.left + pane.width / 2
+  const row = pane.top + pane.height / 2
+  const point = await terminalPoint(page, column, row)
+  await page.mouse.click(point.x, point.y)
+  return point
+}
+
 test('uses the real dashboard, themes, terminal transport, and responsive controls', async ({ page }, testInfo) => {
+  const terminalFrames: Buffer[] = []
+  const terminalOutputFrames: Buffer[] = []
+  page.on('websocket', (socket) => {
+    if (!socket.url().includes('/terminal')) return
+    socket.on('framesent', ({ payload }) => {
+      if (Buffer.isBuffer(payload)) terminalFrames.push(payload)
+    })
+    socket.on('framereceived', ({ payload }) => {
+      if (Buffer.isBuffer(payload)) terminalOutputFrames.push(payload)
+    })
+  })
   await login(page)
   const termRow = page.locator(`[data-term-id="${termId}"]`)
   await expect(termRow).toBeVisible()
@@ -202,6 +263,9 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
       const body = await response.json()
       return body.topology.windows.flatMap((window: { panes: unknown[] }) => window.panes).length
     }).toBeGreaterThanOrEqual(2)
+    const [, rightPane] = await selectLeftPaneWithKeyboard(page)
+    await clickPaneCenter(page, rightPane)
+    await expect.poll(async () => (await panesForTerm(page)).find((pane) => pane.active)?.pane_id).toBe(rightPane.pane_id)
   } else {
     await page.getByRole('button', { name: '快捷操作' }).click()
     await expect(page.getByLabel('移动端 Tmux 操作')).toBeVisible()
@@ -235,6 +299,48 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
   expect(layout.frameOverflowY).toBe('hidden')
   expect(layout.xtermOverflowY).toBe('hidden')
   expect(layout.titlebarJustify).toBe('flex-start')
+
+  if (testInfo.project.name === 'desktop') {
+    const [, rightPane] = await selectLeftPaneWithKeyboard(page)
+    const target = await clickPaneCenter(page, rightPane)
+    await expect.poll(async () => (await panesForTerm(page)).find((pane) => pane.active)?.pane_id).toBe(rightPane.pane_id)
+
+    const frame = page.locator('.terminal-frame')
+    const scrollBefore = await frame.evaluate((element) => ({ left: element.scrollLeft, top: element.scrollTop }))
+    const frameStart = terminalFrames.length
+    await page.mouse.move(target.x, target.y)
+    await page.mouse.wheel(0, -120)
+    await expect.poll(() => {
+      for (const payload of terminalFrames.slice(frameStart)) {
+        const match = /\x1b\[<(?:64|65);(\d+);(\d+)M/.exec(payload.toString('latin1'))
+        if (match) return { col: Number(match[1]), row: Number(match[2]) }
+      }
+      return null
+    }).toEqual({ col: target.col, row: target.row })
+    expect(await frame.evaluate((element) => ({ left: element.scrollLeft, top: element.scrollTop }))).toEqual(scrollBefore)
+
+    const firstWord = 'LEFTWORD'
+    const secondWord = 'RIGHTWORD'
+    await page.locator('.terminal-host textarea').focus()
+    await page.keyboard.press('q')
+    await page.keyboard.type(String.raw`printf '\033[2J\033[H${firstWord}    ${secondWord}'`)
+    const outputStart = terminalOutputFrames.length
+    await page.keyboard.press('Enter')
+    await expect.poll(() => Buffer.concat(terminalOutputFrames.slice(outputStart)).toString('utf8')).toContain(secondWord)
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    await expect(page.locator('.xterm')).toHaveClass(/enable-mouse-events/)
+    const secondWordColumn = rightPane.left + firstWord.length + 4 + Math.floor(secondWord.length / 2)
+    const selectionTarget = await terminalPoint(page, secondWordColumn, rightPane.top)
+    await page.keyboard.down('Shift')
+    await page.mouse.dblclick(selectionTarget.x, selectionTarget.y)
+    await page.keyboard.up('Shift')
+    const copied = await page.locator('.xterm').evaluate((element) => {
+      const clipboard = new DataTransfer()
+      element.dispatchEvent(new ClipboardEvent('copy', { bubbles: true, cancelable: true, clipboardData: clipboard }))
+      return clipboard.getData('text/plain')
+    })
+    expect(copied).toBe(secondWord)
+  }
 
   if (screenshotDir) await page.screenshot({ path: `${screenshotDir}/${testInfo.project.name}.png` })
 })

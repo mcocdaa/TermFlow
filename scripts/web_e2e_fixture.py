@@ -11,6 +11,7 @@ from pathlib import Path
 import httpx
 import pexpect  # type: ignore[import-untyped]
 from termflow_node.instances.store import InstanceStore
+from termflow_node.tmux.runner import TmuxRunner
 
 
 def main() -> None:
@@ -48,6 +49,7 @@ def main() -> None:
         ["new", "--name", "resume-terminal"],
         timeout=8,
         encoding=None,
+        dimensions=(60, 200),
     )
     deadline = time.monotonic() + 8
     instance = None
@@ -64,6 +66,7 @@ def main() -> None:
         raise TimeoutError("disposable Term did not become ready")
     child.send(b"\x02d")
     child.expect(pexpect.EOF, timeout=5)
+    TmuxRunner(instance.socket_path).run_command("set-option", "-g", "mouse", "on")
     print(instance.instance_id, flush=True)
 
 
