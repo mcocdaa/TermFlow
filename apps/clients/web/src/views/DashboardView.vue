@@ -5,8 +5,8 @@
     <p v-if="loading && !snapshot" class="muted" aria-live="polite">正在读取状态…</p>
     <template v-if="snapshot">
       <div class="metrics-grid" aria-label="关键指标">
-        <MetricCard label="在线 Terms" :value="snapshot.metrics.online_terms" :detail="`共 ${snapshot.metrics.total_terms} Terms`" />
-        <MetricCard label="活动 Panes" :value="snapshot.metrics.active_panes" />
+        <MetricCard label="在线 Terms" :value="snapshot.metrics.online_terms" :detail="`共 ${snapshot.metrics.total_terms} Terms`" :help="`当前在线并可远程控制的 Term，共 ${snapshot.metrics.total_terms} 个 Term。`" />
+        <MetricCard label="活动 Panes" :value="snapshot.metrics.active_panes" help="在线 Term 中当前处于活动状态的 Pane 数量。" />
         <MetricCard label="24 小时交互" :value="snapshot.metrics.interactions_24h" />
         <MetricCard label="Computers" :value="snapshot.metrics.computers" />
       </div>

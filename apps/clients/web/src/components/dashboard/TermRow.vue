@@ -1,5 +1,5 @@
 <template>
-  <component :is="term.online ? RouterLink : 'article'" class="term-row" :class="{ 'term-row-link': term.online, 'term-row-offline': !term.online }" :data-term-id="term.instance_id" :to="term.online ? route : undefined" :aria-label="term.online ? `打开终端：${term.name}` : undefined" :aria-disabled="term.online ? undefined : 'true'">
+  <component :is="term.online ? RouterLink : 'article'" class="term-row term-card" :class="{ 'term-row-link': term.online, 'term-row-offline': !term.online }" :data-term-id="term.instance_id" :to="term.online ? route : undefined" :aria-label="term.online ? `打开终端：${term.name}` : undefined" :aria-disabled="term.online ? undefined : 'true'">
     <div class="term-primary">
       <strong>{{ term.name }}</strong>
       <code>{{ term.current_command || '—' }}</code>
