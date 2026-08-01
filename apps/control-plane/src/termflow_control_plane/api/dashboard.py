@@ -27,6 +27,14 @@ from termflow_control_plane.persistence.repositories import RepositoryBundle
 router = APIRouter(prefix="/api/v1", tags=["dashboard"])
 
 
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 def _topology_counts(topology: TopologySnapshot | None) -> tuple[int, int, int, str | None]:
     if topology is None:
         return 0, 0, 0, None
@@ -47,7 +55,7 @@ def term_summary(instance: Instance, connection: LiveConnection | None) -> TermS
         pane_count=pane_count,
         active_pane_count=active_count,
         current_command=current_command,
-        last_seen_at=instance.last_seen_at,
+        last_seen_at=_as_utc(instance.last_seen_at),
     )
 
 
@@ -80,8 +88,8 @@ def _computer_summary(
         display_name=installation.display_name or installation.hostname or "Computer",
         platform=installation.platform,
         client_version=installation.client_version,
-        registered_at=installation.created_at,
-        last_seen_at=installation.last_seen_at,
+        registered_at=_as_utc(installation.created_at),
+        last_seen_at=_as_utc(installation.last_seen_at),
         online=any(term.online for term in terms),
         terms=terms,
     )

@@ -25,6 +25,7 @@ def test_list_get_and_rename_computer(client, admin_headers) -> None:
     assert listed.status_code == 200
     assert listed.json()["computers"][0]["hostname"] == "devbox"
     assert listed.json()["computers"][0]["display_name"] == "devbox"
+    assert listed.json()["computers"][0]["registered_at"].endswith("Z")
 
     renamed = client.patch(
         f"/api/v1/computers/{installation_id}",

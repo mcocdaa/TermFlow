@@ -118,13 +118,15 @@ def test_dashboard_groups_terms_and_reports_live_metrics(client, admin_headers) 
         }
         computer = body["computers"][0]
         assert computer["installation_id"] == installation["installation_id"]
-        assert computer["registered_at"] is not None
+        assert computer["registered_at"].endswith("Z")
+        assert computer["last_seen_at"].endswith("Z")
         assert computer["online"] is True
         term = computer["terms"][0]
         assert term["name"] == "local-name"
         assert term["window_count"] == 1
         assert term["pane_count"] == 2
         assert term["current_command"] == "python"
+        assert term["last_seen_at"].endswith("Z")
 
     offline = client.get("/api/v1/dashboard", headers=admin_headers).json()
     assert offline["computers"][0]["terms"][0]["name"] == "local-name"
