@@ -84,6 +84,32 @@ class FakeWebSocket:
         raise RuntimeError("closed")
 
 
+class SerialCheckingWebSocket(FakeWebSocket):
+    def __init__(self) -> None:
+        super().__init__()
+        self.in_send = False
+        self.max_concurrent = 0
+
+    async def send(self, value: str) -> None:
+        assert self.in_send is False
+        self.in_send = True
+        self.max_concurrent = max(self.max_concurrent, 1)
+        await asyncio.sleep(0)
+        self.sent.append(value)
+        self.in_send = False
+
+
+class ConnectionListener:
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    def bridge_connected(self) -> None:
+        self.events.append("connected")
+
+    def bridge_disconnected(self) -> None:
+        self.events.append("disconnected")
+
+
 @pytest.mark.asyncio
 async def test_transport_sends_hello_then_full_topology_and_stops(tmp_path) -> None:
     websocket = FakeWebSocket()
@@ -131,3 +157,56 @@ async def test_transport_sends_hello_then_full_topology_and_stops(tmp_path) -> N
     assert connection_arguments["additional_headers"] == {
         "Authorization": "Bearer instance-secret-token"
     }
+
+
+@pytest.mark.asyncio
+async def test_all_producers_share_one_serial_send_queue_and_lifecycle(tmp_path) -> None:
+    websocket = SerialCheckingWebSocket()
+
+    @asynccontextmanager
+    async def connect(uri: str, **kwargs):
+        yield websocket
+
+    instance = _instance(tmp_path, token="instance-secret-token")
+    store = InstanceStore(tmp_path / "instances")
+    store.save(instance)
+    topology = TopologySnapshot(
+        session_id="$0",
+        session_name="main",
+        revision=1,
+        windows=[],
+    )
+    listener = ConnectionListener()
+    transport = BridgeTransport(
+        installation=_installation(),
+        instance=instance,
+        store=store,
+        control_plane=ControlPlaneClient(),
+        topology_provider=lambda: topology,
+        connect=connect,
+        heartbeat_interval=0.01,
+        backoff=ReconnectBackoff(base=0, cap=0),
+    )
+    transport.set_connection_listener(listener)
+    shutdown = asyncio.Event()
+    task = asyncio.create_task(transport.run(lambda message: asyncio.sleep(0), shutdown))
+    for _ in range(100):
+        if listener.events == ["connected"]:
+            break
+        await asyncio.sleep(0.001)
+    for index in range(20):
+        assert transport.enqueue_nowait(
+            WireMessage(
+                type=MessageType.TERMINAL_SIZE,
+                instance_id=instance.instance_id,
+                payload={"terminal_id": str(uuid4()), "rows": 24, "cols": 80 + index},
+            )
+        )
+    for _ in range(100):
+        if len(websocket.sent) >= 22:
+            break
+        await asyncio.sleep(0.005)
+    shutdown.set()
+    await asyncio.wait_for(task, timeout=1)
+    assert websocket.max_concurrent == 1
+    assert listener.events == ["connected", "disconnected"]

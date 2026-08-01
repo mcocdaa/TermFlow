@@ -82,7 +82,7 @@ It must not edit `apps/clients/web/`, `packages/design-tokens/`, Docker files, o
 - Modify: `apps/control-plane/tests/test_config.py`
 - Modify: `apps/control-plane/tests/test_privacy.py`
 
-- [ ] Add failing tests for `POST /api/v1/session` with the admin token, `DELETE /api/v1/session`, expired sessions, invalid tokens, and access to an existing admin endpoint through the cookie.
+- [ ] Add failing tests for `POST /api/v1/admin/sessions` with the admin token, `GET/DELETE /api/v1/admin/session`, expired sessions, invalid tokens, and access to an existing admin endpoint through the cookie.
 - [ ] Implement a process-local random session store with 8-hour expiry. Store only a SHA-256 digest of the random session secret, cap the number of live sessions, prune expired entries, and invalidate on logout.
 - [ ] Set an `HttpOnly`, `SameSite=Strict`, path `/` cookie. Use `__Host-termflow_session` and `Secure` when `public_base_url` is HTTPS; allow a non-prefixed non-Secure cookie only for configured loopback development.
 - [ ] Preserve `Authorization: Bearer` authentication for curl and native clients. API dependencies accept either a valid bearer token or browser session; never accept the admin token in query parameters, local storage, or WebSocket URLs.

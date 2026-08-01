@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import platform
+import socket
 from urllib.parse import urlsplit
 
 import httpx
 from pydantic import SecretStr
 from termflow_protocol import InstallationEnrollResponse, InstanceRegisterResponse
 
+from termflow_node import __version__
 from termflow_node.config.models import InstallationConfig
 from termflow_node.instances.models import LocalInstance
 from termflow_node.instances.store import InstanceStore
@@ -41,7 +44,12 @@ class ControlPlaneClient:
         async with httpx.AsyncClient(transport=self._transport, timeout=10.0) as client:
             response = await client.post(
                 f"{base_url}/api/v1/installations/enroll",
-                json={"enrollment_token": enrollment_token},
+                json={
+                    "enrollment_token": enrollment_token,
+                    "hostname": socket.gethostname(),
+                    "platform": platform.system(),
+                    "client_version": __version__,
+                },
             )
             response.raise_for_status()
             return InstallationEnrollResponse.model_validate(response.json())

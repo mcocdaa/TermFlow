@@ -93,7 +93,7 @@ It must not edit Python, protocol, Docker, Compose, or root deployment files. Th
 
 - [ ] Define explicit TypeScript DTOs matching the public B JSON contract. Do not share generated or imported Python models and do not add fields inferred from B internals.
 - [ ] Build one fetch wrapper using relative `/api/v1` URLs, `credentials: "same-origin"`, JSON content negotiation, request abort support, and typed structured errors. Never append credentials to a URL.
-- [ ] Login accepts the B admin token only in component memory long enough to POST `/api/v1/session`, then clears the input and state. Logout deletes the server session and resets client stores.
+- [ ] Login accepts the B admin token only in component memory long enough to POST `/api/v1/admin/sessions`, then clears the input and state. Session status and logout use `/api/v1/admin/session`.
 - [ ] Add tests proving the token is absent from localStorage/sessionStorage, URL/history, emitted events, console output, and rendered DOM after successful login.
 - [ ] Display actionable offline, authentication, validation, and rate-limit errors without displaying raw server exception text.
 - [ ] Run `npm run test:run -- src/api/http.test.ts src/views/LoginView.test.ts && npm run typecheck`; expected: all pass.

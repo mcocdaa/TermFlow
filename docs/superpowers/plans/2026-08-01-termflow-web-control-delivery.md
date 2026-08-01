@@ -53,7 +53,7 @@ This delivery plan owns root/deployment/docs/cross-system files. It may make nar
 - [ ] Expand the Compose contract test to assert one B worker, no Kafka/NATS dependency, Web C build stage, non-root runtime, healthcheck, persistent data, and no published A port.
 - [ ] Run `docker compose -f deploy/compose.yaml config --quiet`; expected: exit 0 with required environment supplied.
 - [ ] Run `docker build -f deploy/Dockerfile.control-plane -t termflow-control-plane:web .`; expected: image builds successfully.
-- [ ] Inspect the image with `docker run --rm --entrypoint sh termflow-control-plane:web -c 'test -f /app/web/index.html && ! command -v node && ! command -v npm'`; expected: exit 0.
+- [ ] Inspect the image with `docker run --rm --entrypoint sh termflow-control-plane:web -c 'test -f /app/frontend-dist/index.html && ! command -v node && ! command -v npm'`; expected: exit 0.
 - [ ] Commit with `git commit -m "build: package web c with the control plane"`.
 
 ## Task 3: Add a real cross-process terminal integration test

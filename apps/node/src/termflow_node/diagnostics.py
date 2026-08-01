@@ -25,7 +25,7 @@ class DiagnosticCheck:
 def probe_instance_health(record: LocalInstance) -> tuple[bool, bool]:
     try:
         tmux_alive = record.socket_path.exists() and TmuxRunner(record.socket_path).is_alive(
-            record.session_name
+            record.session_id or record.session_name
         )
     except (OSError, RuntimeError, ValueError):
         tmux_alive = False

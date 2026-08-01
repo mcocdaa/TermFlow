@@ -83,3 +83,34 @@ def test_replay_cursor_enqueues_request_to_bridge(client, admin_headers) -> None
                 "after_seq": 7,
             }
             assert UUID(str(request.instance_id)) == instance_id
+
+
+def test_browser_cookie_requires_exact_origin_for_event_websocket(
+    client,
+    admin_headers,
+) -> None:
+    instance_id, _ = _provision_instance(client, admin_headers)
+    login = client.post(
+        "/api/v1/admin/sessions",
+        headers={"Origin": "http://127.0.0.1:8000"},
+        json={"admin_token": "admin-token-that-is-long-enough-for-tests"},
+    )
+    assert login.status_code == 201
+
+    with client.websocket_connect(
+        f"/api/v1/events?instance_id={instance_id}",
+        headers={"Origin": "http://127.0.0.1:8000"},
+    ):
+        pass
+
+    for headers, expected_code in (
+        ({}, 4401),
+        ({"Origin": "https://evil.example"}, 4403),
+    ):
+        with pytest.raises(WebSocketDisconnect) as caught:
+            with client.websocket_connect(
+                f"/api/v1/events?instance_id={instance_id}",
+                headers=headers,
+            ):
+                pass
+        assert caught.value.code == expected_code

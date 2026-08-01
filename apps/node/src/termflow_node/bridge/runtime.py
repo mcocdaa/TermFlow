@@ -29,6 +29,7 @@ from termflow_node.tmux.control_parser import (
 )
 
 from .buffer import OutputBuffers, OutputChunk, ReplayGap
+from .terminal_manager import TerminalManager, is_terminal_runtime_message
 
 
 class RuntimeControl(Protocol):
@@ -78,6 +79,7 @@ class BridgeRuntime:
         buffers: OutputBuffers,
         input_handler: RuntimeInputHandler,
         topology_debounce_seconds: float = 0.05,
+        terminal_manager: TerminalManager | None = None,
     ) -> None:
         self.instance_id = instance_id
         self.control = control
@@ -87,6 +89,7 @@ class BridgeRuntime:
         self.input_handler = input_handler
         self._topology_debounce = topology_debounce_seconds
         self._topology: TopologySnapshot | None = None
+        self.terminal_manager = terminal_manager
 
     def _message(self, message_type: MessageType, payload: dict[str, object]) -> WireMessage:
         return WireMessage(
@@ -149,6 +152,9 @@ class BridgeRuntime:
         )
 
     async def handle_message(self, message: WireMessage) -> None:
+        if self.terminal_manager is not None and is_terminal_runtime_message(message.type):
+            await self.terminal_manager.handle_wire_message(message)
+            return
         payload = parse_payload(message.type, message.payload)
         if message.type is MessageType.PANE_INPUT:
             result = await self.input_handler.handle(cast(PaneInputPayload, payload))
@@ -219,4 +225,6 @@ class BridgeRuntime:
         finally:
             for task in tasks:
                 task.cancel()
+            if self.terminal_manager is not None:
+                await self.terminal_manager.close()
             await self.control.close()

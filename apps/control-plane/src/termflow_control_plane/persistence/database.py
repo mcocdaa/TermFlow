@@ -12,6 +12,17 @@ from sqlalchemy.ext.asyncio import (
 
 from .models import Base
 
+_SQLITE_V2_COLUMNS: dict[str, dict[str, str]] = {
+    "installations": {
+        "hostname": "VARCHAR(255)",
+        "display_name": "VARCHAR(128)",
+        "platform": "VARCHAR(128)",
+        "client_version": "VARCHAR(64)",
+        "last_seen_at": "DATETIME",
+    },
+    "instances": {"last_seen_at": "DATETIME"},
+}
+
 
 class Database:
     def __init__(self, url: str) -> None:
@@ -32,6 +43,19 @@ class Database:
                 await connection.execute(text("PRAGMA journal_mode=WAL"))
                 await connection.execute(text("PRAGMA foreign_keys=ON"))
             await connection.run_sync(Base.metadata.create_all)
+            if self.engine.url.get_backend_name() == "sqlite":
+                await self._migrate_sqlite_v2(connection)
+
+    @staticmethod
+    async def _migrate_sqlite_v2(connection) -> None:  # type: ignore[no-untyped-def]
+        for table, columns in _SQLITE_V2_COLUMNS.items():
+            result = await connection.execute(text(f"PRAGMA table_info({table})"))
+            existing = {row[1] for row in result}
+            for column, sql_type in columns.items():
+                if column not in existing:
+                    await connection.execute(
+                        text(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}")
+                    )
 
     async def dispose(self) -> None:
         await self.engine.dispose()

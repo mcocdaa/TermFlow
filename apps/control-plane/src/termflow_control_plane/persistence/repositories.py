@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .models import AuditEvent, EnrollmentToken, Installation, Instance
@@ -29,30 +29,48 @@ class EnrollmentRepository:
     async def consume(self, token_hash: str, *, now: datetime | None = None) -> UUID | None:
         observed_at = now or datetime.now(UTC)
         async with self._sessions() as session:
-            enrollment = await session.scalar(
-                select(EnrollmentToken).where(
+            enrollment_id = await session.scalar(
+                update(EnrollmentToken)
+                .where(
                     EnrollmentToken.token_hash == token_hash,
                     EnrollmentToken.used_at.is_(None),
                     EnrollmentToken.expires_at > observed_at,
                 )
+                .values(used_at=observed_at)
+                .returning(EnrollmentToken.id)
             )
-            if enrollment is None:
-                return None
-            enrollment.used_at = observed_at
             await session.commit()
-            return enrollment.id
+            return enrollment_id
 
 
 class InstallationRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
-    async def create(self, token_hash: str) -> Installation:
+    async def create(
+        self,
+        token_hash: str,
+        *,
+        hostname: str | None = None,
+        display_name: str | None = None,
+        platform: str | None = None,
+        client_version: str | None = None,
+    ) -> Installation:
         async with self._sessions() as session:
-            installation = Installation(token_hash=token_hash)
+            installation = Installation(
+                token_hash=token_hash,
+                hostname=hostname,
+                display_name=display_name or hostname or "Computer",
+                platform=platform,
+                client_version=client_version,
+            )
             session.add(installation)
             await session.commit()
             return installation
+
+    async def get(self, installation_id: UUID) -> Installation | None:
+        async with self._sessions() as session:
+            return await session.get(Installation, installation_id)
 
     async def get_by_token_hash(self, token_hash: str) -> Installation | None:
         async with self._sessions() as session:
@@ -62,6 +80,20 @@ class InstallationRepository:
                     Installation.revoked_at.is_(None),
                 )
             )
+            return installation
+
+    async def list_all(self) -> list[Installation]:
+        async with self._sessions() as session:
+            result = await session.scalars(select(Installation).order_by(Installation.created_at))
+            return list(result)
+
+    async def rename(self, installation_id: UUID, display_name: str) -> Installation | None:
+        async with self._sessions() as session:
+            installation = await session.get(Installation, installation_id)
+            if installation is None:
+                return None
+            installation.display_name = display_name
+            await session.commit()
             return installation
 
 
@@ -76,6 +108,7 @@ class InstanceRepository:
         name: str,
         token_hash: str,
     ) -> Instance:
+        observed_at = datetime.now(UTC)
         async with self._sessions() as session:
             instance = await session.get(Instance, instance_id)
             if instance is None:
@@ -84,6 +117,7 @@ class InstanceRepository:
                     installation_id=installation_id,
                     name=name,
                     token_hash=token_hash,
+                    last_seen_at=observed_at,
                 )
                 session.add(instance)
             elif instance.installation_id != installation_id:
@@ -92,8 +126,28 @@ class InstanceRepository:
                 instance.name = name
                 instance.token_hash = token_hash
                 instance.revoked_at = None
+                instance.last_seen_at = observed_at
+            await session.execute(
+                update(Installation)
+                .where(Installation.id == installation_id)
+                .values(last_seen_at=observed_at)
+            )
             await session.commit()
             return instance
+
+    async def touch(self, instance_id: UUID, *, now: datetime | None = None) -> None:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            instance = await session.get(Instance, instance_id)
+            if instance is None:
+                return
+            instance.last_seen_at = observed_at
+            await session.execute(
+                update(Installation)
+                .where(Installation.id == instance.installation_id)
+                .values(last_seen_at=observed_at)
+            )
+            await session.commit()
 
     async def get(self, instance_id: UUID) -> Instance | None:
         async with self._sessions() as session:
@@ -113,6 +167,37 @@ class InstanceRepository:
         async with self._sessions() as session:
             result = await session.scalars(select(Instance).order_by(Instance.created_at))
             return list(result)
+
+    async def rename(self, instance_id: UUID, name: str) -> Instance | None:
+        async with self._sessions() as session:
+            instance = await session.get(Instance, instance_id)
+            if instance is None:
+                return None
+            instance.name = name
+            instance.last_seen_at = datetime.now(UTC)
+            await session.commit()
+            return instance
+
+    async def update_from_topology(
+        self,
+        instance_id: UUID,
+        session_name: str,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            instance = await session.get(Instance, instance_id)
+            if instance is None:
+                return
+            instance.name = session_name
+            instance.last_seen_at = observed_at
+            await session.execute(
+                update(Installation)
+                .where(Installation.id == instance.installation_id)
+                .values(last_seen_at=observed_at)
+            )
+            await session.commit()
 
 
 class AuditRepository:
@@ -145,6 +230,13 @@ class AuditRepository:
         async with self._sessions() as session:
             result = await session.scalars(select(AuditEvent).order_by(AuditEvent.created_at))
             return list(result)
+
+    async def count_since(self, since: datetime) -> int:
+        async with self._sessions() as session:
+            count = await session.scalar(
+                select(func.count(AuditEvent.id)).where(AuditEvent.created_at >= since)
+            )
+            return int(count or 0)
 
 
 class RepositoryBundle:

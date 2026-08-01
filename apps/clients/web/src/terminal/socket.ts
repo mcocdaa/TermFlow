@@ -1,0 +1,146 @@
+import type { TerminalActionResultControl, TerminalBindingControl, TerminalReadyControl } from './protocol'
+import { parseTerminalControl } from './protocol'
+import type { TerminalActionId } from '../api/types'
+
+export type TerminalConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'closed'
+export interface TerminalSocketCallbacks {
+  onStatus: (status: TerminalConnectionStatus) => void
+  onReady: (control: TerminalReadyControl) => void
+  onOutput: (bytes: Uint8Array) => void
+  onSize: (size: { rows: number; cols: number }) => void
+  onBindings: (control: TerminalBindingControl) => void
+  onError: (error: { code: string; message?: string }) => void
+  onClosed: (reason: string) => void
+  onReset: () => void
+  onActionResult: (result: TerminalActionResultControl) => void
+  onAuthenticationRequired: () => void
+}
+export interface TerminalSocketLike {
+  connect(): void
+  sendInput(data: string | Uint8Array): void
+  sendAction(actionId: TerminalActionId, options?: { targetPaneId?: string; confirmed?: boolean }): void
+  dispose(): void
+}
+interface TerminalSocketOptions {
+  baseUrl?: URL
+  createWebSocket?: (url: string) => WebSocket
+  reconnectDelayMs?: number
+}
+
+const MAX_BINARY_FRAME = 65_536
+
+export class TerminalSocket implements TerminalSocketLike {
+  private socket: WebSocket | null = null
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private disposed = false
+  private suppressReconnect = false
+  private ready = false
+  private reconnectAttempt = 0
+  private terminalId: string | null = null
+  private streamId: string | null = null
+  private lastSeq = 0
+  private readonly baseUrl: URL
+  private readonly createWebSocket: (url: string) => WebSocket
+  private readonly reconnectDelayMs: number
+
+  constructor(private readonly termId: string, private readonly callbacks: TerminalSocketCallbacks, options: TerminalSocketOptions = {}) {
+    this.baseUrl = options.baseUrl ?? new URL(window.location.href)
+    this.createWebSocket = options.createWebSocket ?? ((url) => new WebSocket(url))
+    this.reconnectDelayMs = options.reconnectDelayMs ?? 1_000
+  }
+
+  connect() {
+    if (this.disposed) return
+    this.callbacks.onStatus(this.streamId ? 'reconnecting' : 'connecting')
+    const url = new URL(`/api/v1/terms/${encodeURIComponent(this.termId)}/terminal`, this.baseUrl)
+    url.protocol = this.baseUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+    if (this.terminalId && this.streamId) {
+      url.searchParams.set('terminal_id', this.terminalId)
+      url.searchParams.set('stream_id', this.streamId)
+      url.searchParams.set('after_seq', String(this.lastSeq))
+    }
+    const socket = this.createWebSocket(url.toString())
+    this.socket = socket
+    this.ready = false
+    socket.binaryType = 'arraybuffer'
+    socket.onopen = () => { /* terminal.ready, not the TCP/WebSocket handshake, enables input */ }
+    socket.onmessage = (event) => this.handleMessage(event.data)
+    socket.onerror = () => { /* close drives the single reconnect path */ }
+    socket.onclose = (event) => this.handleClose(event)
+  }
+
+  private handleMessage(data: unknown) {
+    if (data instanceof ArrayBuffer) { if (this.ready) { this.lastSeq += 1; this.callbacks.onOutput(new Uint8Array(data)) }; return }
+    if (ArrayBuffer.isView(data)) { if (this.ready) { this.lastSeq += 1; this.callbacks.onOutput(new Uint8Array(data.buffer, data.byteOffset, data.byteLength)) }; return }
+    if (typeof data !== 'string') return
+    const control = parseTerminalControl(data)
+    if (!control) return
+    if (control.type !== 'terminal.ready' && (!this.ready || control.terminal_id !== this.terminalId)) return
+    switch (control.type) {
+      case 'terminal.ready':
+        if (this.streamId !== null && this.streamId !== control.stream_id) {
+          this.lastSeq = 0
+          this.callbacks.onReset()
+        }
+        this.streamId = control.stream_id
+        this.terminalId = control.terminal_id
+        this.ready = true
+        this.reconnectAttempt = 0
+        this.callbacks.onStatus('connected')
+        this.callbacks.onReady(control)
+        break
+      case 'terminal.size': this.callbacks.onSize({ rows: control.rows, cols: control.cols }); break
+      case 'terminal.binding_snapshot': this.callbacks.onBindings(control); break
+      case 'terminal.error': this.callbacks.onError({ code: control.code, message: control.message }); break
+      case 'terminal.action_result': this.callbacks.onActionResult(control); break
+      case 'terminal.closed':
+        this.ready = false
+        this.suppressReconnect = control.reason === 'replaced' || control.reason === 'instance_offline' || control.reason === 'client_closed'
+        this.callbacks.onClosed(control.reason)
+        this.callbacks.onStatus('closed')
+        this.socket?.close(1000, control.reason)
+        break
+    }
+  }
+
+  private handleClose(event: CloseEvent) {
+    this.socket = null
+    this.ready = false
+    if (event.code === 4401 || event.code === 4403) {
+      this.suppressReconnect = true
+      this.callbacks.onStatus('closed')
+      if (event.code === 4401) this.callbacks.onAuthenticationRequired()
+      else this.callbacks.onError({ code: 'origin_rejected' })
+      return
+    }
+    if (this.disposed || this.suppressReconnect) return
+    this.callbacks.onStatus('reconnecting')
+    const delay = Math.min(10_000, this.reconnectDelayMs * 2 ** this.reconnectAttempt)
+    this.reconnectAttempt += 1
+    this.reconnectTimer = setTimeout(() => { this.reconnectTimer = null; this.connect() }, delay)
+  }
+
+  sendInput(data: string | Uint8Array) {
+    if (!this.socket || this.socket.readyState !== 1 || !this.ready) return
+    const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
+    for (let offset = 0; offset < bytes.byteLength; offset += MAX_BINARY_FRAME) this.socket.send(bytes.slice(offset, offset + MAX_BINARY_FRAME))
+  }
+
+  sendAction(action: TerminalActionId, options: { targetPaneId?: string; confirmed?: boolean } = {}) {
+    if (!this.socket || this.socket.readyState !== 1 || !this.ready) return
+    this.socket.send(JSON.stringify({ type: 'terminal.action', action_id: crypto.randomUUID(), action, target_pane_id: options.targetPaneId, confirmed: options.confirmed ?? false }))
+  }
+
+  dispose() {
+    this.disposed = true
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
+    const socket = this.socket
+    if (socket?.readyState === 1 && this.ready) socket.send(JSON.stringify({ type: 'terminal.close', reason: 'client_closed' }))
+    this.ready = false
+    this.socket = null
+    socket?.close(1000, 'route_leave')
+  }
+}
+
+export const createTerminalSocket = (termId: string, callbacks: TerminalSocketCallbacks): TerminalSocketLike => new TerminalSocket(termId, callbacks)
