@@ -1,10 +1,8 @@
 import type { SessionStatusDto } from './types'
-import { apiRequest } from './http'
+import { browserApiClient } from './http'
 
-export const getSessionStatus = (signal?: AbortSignal) => apiRequest<SessionStatusDto>('/admin/session', { signal })
-export const createSession = (adminToken: string, signal?: AbortSignal) => apiRequest<SessionStatusDto>('/admin/sessions', {
-  method: 'POST',
-  signal,
-  body: { admin_token: adminToken },
-})
-export const deleteSession = (signal?: AbortSignal) => apiRequest<void>('/admin/session', { method: 'DELETE', signal })
+export const getSessionStatus = (signal?: AbortSignal): Promise<SessionStatusDto> => browserApiClient.sessions.status(signal)
+export const createSession = (adminToken: string, signal?: AbortSignal): Promise<SessionStatusDto> => browserApiClient.sessions.login(adminToken, signal)
+export const deleteSession = async (signal?: AbortSignal): Promise<void> => {
+  await browserApiClient.sessions.logout(signal)
+}

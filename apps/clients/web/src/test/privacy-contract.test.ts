@@ -29,7 +29,13 @@ describe('privacy contracts', () => {
     const fakeSocket = { binaryType: '', readyState: 1, send: vi.fn(), close: vi.fn(), onmessage: null as ((event: MessageEvent) => void) | null, onopen: null, onclose: null, onerror: null }
     const socket = new TerminalSocket('term-privacy', callbacks, { createWebSocket: () => fakeSocket as unknown as WebSocket })
     socket.connect()
-    fakeSocket.onmessage?.({ data: JSON.stringify({ type: 'terminal.ready', terminal_id: 'terminal-privacy', stream_id: 'stream-1', rows: 24, cols: 80 }) } as MessageEvent)
+    fakeSocket.onmessage?.({ data: JSON.stringify({
+      type: 'terminal.ready',
+      terminal_id: '11111111-1111-4111-8111-111111111111',
+      stream_id: '22222222-2222-4222-8222-222222222222',
+      rows: 24,
+      cols: 80,
+    }) } as MessageEvent)
     fakeSocket.onmessage?.({ data: new TextEncoder().encode(outputSample) } as MessageEvent)
     expect(received).toEqual([outputSample])
     expect(JSON.stringify([...Array(localStorage.length)].map((_, index) => localStorage.getItem(localStorage.key(index)!)))).not.toContain(outputSample)
