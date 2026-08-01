@@ -132,22 +132,35 @@ Tauri 2 的桌面安装包由对应 OS 的 CI runner 构建；iOS/Android 由各
 Integrity 可以作为官方发行版的附加信号，但不能成为 B 的基础授权条件，也不能阻止用户
 授权兼容的第三方 C。
 
-### 5.3 mTLS
+### 5.3 外部部署边界
 
-生产 Web C 可以由用户部署的反向代理执行 mTLS。Control Plane 容器继续默认只绑定宿主机
-loopback；若代理向 B 转发客户端证书身份，B 只接受来自受信代理网络并由代理清洗后的固定
-header。原生 App/EXE 不要求自己实现 mTLS；它们把用户授权交给受 mTLS 保护的系统浏览器。
+域名、DNS、反向代理、TLS 终止，以及可选的 mTLS 证书签发、校验和轮换都属于部署者的入口
+设施，不属于 TermFlow。仓库不提供或管理 Nginx/Caddy、CA、服务端证书或客户端证书，B 也不
+读取代理转发的客户端证书 header，任何应用认证流程都不能依赖 mTLS 才安全。
+
+Control Plane Compose 继续只提供一个默认绑定宿主机 loopback 的 HTTP 服务。部署者可以按需
+在其前面接入反向代理；`TERMFLOW_PUBLIC_BASE_URL` 只描述用户实际访问 B 的 canonical URL，
+不代表 B 自己终止 TLS。TermFlow 不增加第二个管理域名，也不把反向代理打包进 Control Plane
+镜像或默认 Compose。
 
 ## 6. B 地址发现与客户端身份
 
-原生 C 首次连接 B 有两条入口：
+B 的 canonical URL 由部署者通过 `TERMFLOW_PUBLIC_BASE_URL` 配置，而不是由 Web 管理员在
+运行时修改。开发环境默认是 `http://127.0.0.1:8765`；生产部署者把它设置为经自己的入口设施
+公开的 HTTPS 地址，例如 `https://termflow.example.com`。B 只用该配置生成 issuer、授权链接、
+回调和二维码，不根据请求的 `Host`、`Forwarded` 或 `X-Forwarded-*` header 猜测公开地址。
+`TERMFLOW_TRUSTED_WEB_ORIGINS` 同样是部署配置，不是管理页设置。
+
+Web C 从同源 metadata 的 `issuer` 读取并只读展示该地址，提供复制和生成连接二维码，不提供
+修改入口。原生 C 首次连接 B 有两条入口：
 
 1. 用户手工输入 HTTPS B 地址；
 2. 用户在已认证 Web C 中生成连接二维码并扫描。
 
-二维码可以包含 B base URL、一次性授权事务标识和服务器显示信息，但绝不包含管理员 Token、
-TOTP Secret、access token 或 refresh token。C 使用标准 TLS 服务器证书验证 B，并从固定的
-公开 metadata endpoint 读取协议版本、授权端点和能力。
+二维码可以包含 canonical URL、一次性授权事务标识和服务器显示信息，但绝不包含管理员
+Token、TOTP Secret、access token 或 refresh token。C 从该 URL 下固定的公开 metadata
+endpoint 读取 issuer、协议版本、授权端点和能力。域名如何解析、HTTPS 在哪里终止以及部署者
+是否额外启用 mTLS，不进入 C/B 协议。
 
 B 不接受“我是官方 C”作为授权证明。任何原生 C 都被视为不能保守静态 client secret 的
 公开客户端。B 信任的是：管理员在系统浏览器明确批准了某个客户端实例的公钥，且后续请求
@@ -172,13 +185,12 @@ B 不接受“我是官方 C”作为授权证明。任何原生 C 都被视为�
 
 Web 登录保留“管理员 Token 只输入一次并换取 HttpOnly Cookie”的既有体验，并增加统一防护：
 
-1. 入口代理先执行 TLS，可选执行 mTLS；
-2. Web C 提交管理员 Token；
-3. B 只有在 Token 正确时才透露需要 TOTP，并返回短期、不透明登录 challenge；
-4. TOTP 关闭时直接创建 session；启用时进入 6 位验证码页；
-5. challenge 与验证码通过后创建 session，立即清空页面内主凭据和验证码；
-6. Cookie 不进入 localStorage、sessionStorage、IndexedDB、URL 或应用日志；
-7. 状态变更和 WebSocket 继续校验精确 Origin。
+1. Web C 向同源 B 提交管理员 Token；
+2. B 只有在 Token 正确时才透露需要 TOTP，并返回短期、不透明登录 challenge；
+3. TOTP 关闭时直接创建 session；启用时进入 6 位验证码页；
+4. challenge 与验证码通过后创建 session，立即清空页面内主凭据和验证码；
+5. Cookie 不进入 localStorage、sessionStorage、IndexedDB、URL 或应用日志；
+6. 状态变更和 WebSocket 继续校验精确 Origin。
 
 登录失败使用统一错误，不通过状态码、正文或明显时序暴露管理员 Token 是否正确或 TOTP 是否
 启用。B 重启仍可以使进程内 Web session 失效；以后若扩展多 B，再把 session/revocation
@@ -224,7 +236,7 @@ Cookie。安全存储接口优先使用 Keychain/Keystore/TPM 等 OS 能力；�
 高熵管理员 Token 必须由密码学安全随机源生成，部署校验拒绝明显过短的值。限速仍作为资源
 保护、误配置保护和 TOTP 防猜的一部分：
 
-- 反向代理和 B 都对登录、authorization、token 与 WebSocket 握手实施限制；
+- B 对登录、authorization、token 与 WebSocket 握手实施限制；
 - 每个来源默认允许突发 5 次，之后按每分钟 1 次恢复；
 - 连续失败使用从 1 秒递增到最长 300 秒的等待；
 - 单个登录、授权或 TOTP challenge 最多允许 5 次错误，超过后立即作废；
@@ -290,8 +302,8 @@ docker compose exec control-plane termflow-control auth totp reset
 - TOTP setup 响应使用 `Cache-Control: no-store`，Secret 只在未确认的 setup 事务中展示；
 - 授权码过期、PKCE 失败、回调被取消和 TOTP challenge 作废都返回可重试的结构化错误；
 - 原生 C 离线时继续展示已缓存的非敏感 UI 状态，但不能伪造登录成功或发送终端输入；
-- TOTP 是短时 OTP，但人工输入不具备抗实时钓鱼能力；mTLS、TLS server identity 和正确 B
-  地址仍是必要边界，Passkey/WebAuthn 可作为以后新增的抗钓鱼认证器。
+- TOTP 是短时 OTP，但人工输入不具备抗实时钓鱼能力；生产环境的 HTTPS server identity 和
+  正确 B 地址仍是必要边界，Passkey/WebAuthn 可作为以后新增的抗钓鱼认证器。
 
 ## 14. API 与持久化边界
 
@@ -373,5 +385,6 @@ challenge 和 auth epoch。B 只保存 token digest 或加密后的必要 Secret
 6. 创建一个 Tauri 2 工程，先验证桌面壳，再复用到 iOS/Android；
 7. 完成签名、安装包、移动生命周期和跨平台真实设备验收。
 
-本设计不包含：自建账号系统、邮件/短信恢复、TermFlow 推送审批、云端 TOTP 服务、强制
-Apple/Google attestation、B 持久化终端内容、C 修改 A 终端尺寸或本阶段引入多 B 消息总线。
+本设计不包含：反向代理的选择、配置或打包，域名/DNS 管理，TLS/mTLS 证书生命周期，自建账号
+系统、邮件/短信恢复、TermFlow 推送审批、云端 TOTP 服务、强制 Apple/Google attestation、
+B 持久化终端内容、C 修改 A 终端尺寸或本阶段引入多 B 消息总线。
