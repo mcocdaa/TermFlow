@@ -1,0 +1,23 @@
+{
+  "name": "@termflow/workspace",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "npm@10.9.8",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "workspaces": [
+    "apps/clients/*",
+    "packages/design-tokens",
+    "packages/client-contracts",
+    "packages/client-core",
+    "packages/client-ui"
+  ],
+  "scripts": {
+    "contracts:generate": "python scripts/generate-client-contracts/generate.py",
+    "contracts:check": "python scripts/generate-client-contracts/generate.py --check",
+    "test:run": "npm run test:run --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build:web": "npm run build --workspace @termflow/web-client"
+  }
+}
