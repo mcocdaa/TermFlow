@@ -161,7 +161,11 @@ async def _run_bridge(instance_id: UUID) -> None:
     from termflow_node.bridge.buffer import OutputBuffers
     from termflow_node.bridge.input_handler import AsyncTmuxInput, InputHandler
     from termflow_node.bridge.runtime import BridgeRuntime
+    from termflow_node.bridge.terminal_manager import TerminalManager
     from termflow_node.bridge.transport import BridgeTransport
+    from termflow_node.tmux.actions import TermRenamer, TmuxActionExecutor
+    from termflow_node.tmux.bindings import TmuxBindingReader
+    from termflow_node.tmux.client_size import TerminalSize
     from termflow_node.tmux.control_client import TmuxControlClient
     from termflow_node.tmux.runner import TmuxRunner
     from termflow_node.tmux.topology import TopologyReader
@@ -186,6 +190,34 @@ async def _run_bridge(instance_id: UUID) -> None:
         control_plane=ControlPlaneClient(),
         topology_provider=topology.read,
     )
+    initial_topology = topology.read()
+    initial_panes = [pane for window in initial_topology.windows for pane in window.panes]
+    creation_size = TerminalSize(
+        rows=max((pane.top + pane.height for pane in initial_panes), default=23) + 1,
+        cols=max((pane.left + pane.width for pane in initial_panes), default=80),
+    )
+    terminal_manager = TerminalManager(
+        instance_id=instance_id,
+        socket_path=instance.socket_path,
+        session_id=instance.session_id,
+        runner=runner,
+        topology_provider=topology.read,
+        publish=transport.enqueue_nowait,
+        action_executor=TmuxActionExecutor(
+            runner,
+            instance.session_id,
+            topology_provider=topology.read,
+        ),
+        binding_reader=TmuxBindingReader(runner, instance.session_id),
+        renamer=TermRenamer(
+            runner=runner,
+            store=store,
+            instance_id=instance_id,
+            topology_provider=topology.read,
+        ),
+        creation_size=creation_size,
+    )
+    transport.set_connection_listener(terminal_manager)
     runtime = BridgeRuntime(
         instance_id=instance_id,
         control=control,
@@ -193,6 +225,7 @@ async def _run_bridge(instance_id: UUID) -> None:
         transport=transport,
         buffers=buffers,
         input_handler=input_handler,
+        terminal_manager=terminal_manager,
     )
     shutdown = asyncio.Event()
     loop = asyncio.get_running_loop()

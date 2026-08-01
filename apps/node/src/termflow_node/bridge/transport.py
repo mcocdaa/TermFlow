@@ -42,6 +42,12 @@ class ConnectWebSocket(Protocol):
     ) -> AbstractAsyncContextManager[WebSocketLike]: ...
 
 
+class ConnectionListener(Protocol):
+    def bridge_connected(self) -> None: ...
+
+    def bridge_disconnected(self) -> None: ...
+
+
 def _connect_websocket(
     uri: str,
     *,
@@ -89,6 +95,7 @@ class BridgeTransport:
         self._outbound: asyncio.Queue[WireMessage] = asyncio.Queue(maxsize=queue_size)
         self._backoff = backoff or ReconnectBackoff()
         self._sleep = sleep
+        self._connection_listener: ConnectionListener | None = None
 
     @property
     def instance(self) -> LocalInstance:
@@ -100,6 +107,18 @@ class BridgeTransport:
         except asyncio.QueueFull:
             return False
         return True
+
+    def set_connection_listener(self, listener: ConnectionListener) -> None:
+        self._connection_listener = listener
+
+    def _discard_terminal_outbound(self) -> None:
+        retained: list[WireMessage] = []
+        while not self._outbound.empty():
+            message = self._outbound.get_nowait()
+            if not message.type.value.startswith("terminal."):
+                retained.append(message)
+        for message in retained:
+            self._outbound.put_nowait(message)
 
     async def run(
         self,
@@ -137,36 +156,50 @@ class BridgeTransport:
             },
             ping_interval=None,
         ) as websocket:
-            await websocket.send(
-                WireMessage(
-                    type=MessageType.BRIDGE_HELLO,
-                    instance_id=self._instance.instance_id,
-                    payload=BridgeHelloPayload(name=self._instance.name).model_dump(mode="json"),
-                ).model_dump_json()
-            )
-            topology = self._topology_provider()
-            await websocket.send(
-                WireMessage(
-                    type=MessageType.TOPOLOGY_SNAPSHOT,
-                    instance_id=self._instance.instance_id,
-                    payload=TopologySnapshotPayload(topology=topology).model_dump(mode="json"),
-                ).model_dump_json()
-            )
-            self._backoff.reset()
-            tasks = {
-                asyncio.create_task(self._send_loop(websocket)),
-                asyncio.create_task(self._receive_loop(websocket, handler)),
-                asyncio.create_task(self._heartbeat_loop()),
-                asyncio.create_task(shutdown.wait()),
-            }
-            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            for task in pending:
-                task.cancel()
-            for task in pending:
-                with suppress(asyncio.CancelledError):
-                    await task
-            for task in done:
-                task.result()
+            if self._connection_listener is not None:
+                self._connection_listener.bridge_connected()
+            try:
+                await websocket.send(
+                    WireMessage(
+                        type=MessageType.BRIDGE_HELLO,
+                        instance_id=self._instance.instance_id,
+                        payload=BridgeHelloPayload(name=self._instance.name).model_dump(
+                            mode="json"
+                        ),
+                    ).model_dump_json()
+                )
+                topology = self._topology_provider()
+                await websocket.send(
+                    WireMessage(
+                        type=MessageType.TOPOLOGY_SNAPSHOT,
+                        instance_id=self._instance.instance_id,
+                        payload=TopologySnapshotPayload(topology=topology).model_dump(
+                            mode="json"
+                        ),
+                    ).model_dump_json()
+                )
+                self._backoff.reset()
+                tasks = {
+                    asyncio.create_task(self._send_loop(websocket)),
+                    asyncio.create_task(self._receive_loop(websocket, handler)),
+                    asyncio.create_task(self._heartbeat_loop()),
+                    asyncio.create_task(shutdown.wait()),
+                }
+                done, pending = await asyncio.wait(
+                    tasks,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in pending:
+                    task.cancel()
+                for task in pending:
+                    with suppress(asyncio.CancelledError):
+                        await task
+                for task in done:
+                    task.result()
+            finally:
+                if self._connection_listener is not None:
+                    self._connection_listener.bridge_disconnected()
+                self._discard_terminal_outbound()
 
     async def _send_loop(self, websocket: WebSocketLike) -> None:
         while True:
