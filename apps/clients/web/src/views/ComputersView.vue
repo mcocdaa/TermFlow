@@ -1,6 +1,7 @@
 <template>
   <section class="computers-view" aria-labelledby="computers-title">
     <header class="page-heading"><div><p class="eyebrow">设备与注册</p><h1 id="computers-title">电脑管理</h1></div><button class="primary-button" type="button" @click="showEnrollment = true">添加电脑</button></header>
+    <p class="time-source-note">注册和最近在线时间由 B 记录，按当前设备时区显示。</p>
     <p v-if="message" role="alert" class="form-error">{{ message }}</p>
     <p v-if="loading" class="muted">正在读取 Computers…</p>
     <ComputerTable v-else :computers="computers" />

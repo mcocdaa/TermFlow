@@ -43,9 +43,36 @@ describe('DashboardView', () => {
     expect(wrapper.text()).toContain('python3')
     expect(wrapper.text()).toContain('2 Windows')
     expect(wrapper.text()).toContain('4 Panes')
-    expect(wrapper.get('a[href="/terms/term-1"]')).toBeTruthy()
+    const onlineTerm = wrapper.get('[data-term-id="term-1"]')
+    expect(onlineTerm.element.tagName).toBe('A')
+    expect(onlineTerm.attributes('href')).toBe('/terms/term-1')
+    expect(onlineTerm.attributes('aria-label')).toContain('产品开发')
+    expect(onlineTerm.text()).not.toContain('打开终端')
     expect(wrapper.find('a[href="/terms/term-2"]').exists()).toBe(false)
-    expect(wrapper.get('[data-term-id="term-2"] button').attributes('disabled')).toBeDefined()
+    const offlineTerm = wrapper.get('[data-term-id="term-2"]')
+    expect(offlineTerm.element.tagName).toBe('ARTICLE')
+    expect(offlineTerm.find('button').exists()).toBe(false)
+    expect(offlineTerm.find('a').exists()).toBe(false)
+  })
+
+  it('does not render an isolated metadata separator for an unnamed host', async () => {
+    const sparseDashboard: DashboardDto = {
+      metrics: { online_terms: 0, total_terms: 0, active_panes: 0, interactions_24h: 0, computers: 1 },
+      computers: [{
+        installation_id: 'computer-sparse', display_name: 'Computer', hostname: null, platform: null, client_version: null, online: false,
+        registered_at: '2026-08-01T00:00:00Z', last_seen_at: null, terms: [],
+      }],
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(sparseDashboard), { status: 200, headers: { 'content-type': 'application/json' } })))
+    const router = createAppRouter({ sessionStatus: async () => ({ authenticated: true }), history: createMemoryHistory() })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(App, { global: { plugins: [router] } })
+    await flushPromises()
+
+    const card = wrapper.get('[data-computer-id="computer-sparse"]')
+    expect(card.text()).not.toContain('·')
+    expect(card.text()).not.toContain('null')
   })
 
   it('cancels stale polling when the document becomes hidden', async () => {

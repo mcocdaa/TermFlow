@@ -1,5 +1,5 @@
 <template>
-  <article class="term-row" :data-term-id="term.instance_id">
+  <component :is="term.online ? RouterLink : 'article'" class="term-row" :class="{ 'term-row-link': term.online, 'term-row-offline': !term.online }" :data-term-id="term.instance_id" :to="term.online ? route : undefined" :aria-label="term.online ? `打开终端：${term.name}` : undefined" :aria-disabled="term.online ? undefined : 'true'">
     <div class="term-primary">
       <strong>{{ term.name }}</strong>
       <code>{{ term.current_command || '—' }}</code>
@@ -8,17 +8,16 @@
     <StatusPill :online="term.online" />
     <time v-if="term.last_seen_at" :datetime="term.last_seen_at">{{ formatTime(term.last_seen_at) }}</time>
     <span v-else class="muted">尚未在线</span>
-    <RouterLink v-if="term.online" class="term-open" :to="`/terms/${encodeURIComponent(term.instance_id)}`">打开终端<span class="sr-only">：{{ term.name }}</span></RouterLink>
-    <button v-else class="term-open" type="button" disabled title="Term 离线，无法打开终端">无法打开</button>
-  </article>
+  </component>
 </template>
 
 <script setup lang="ts">
 import { RouterLink } from 'vue-router'
 import type { TermSummaryDto } from '../../api/types'
+import { formatBRecordedTime } from '../../utils/time'
 import StatusPill from './StatusPill.vue'
 
-defineProps<{ term: TermSummaryDto }>()
-const formatter = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' })
-const formatTime = (value: string) => formatter.format(new Date(value))
+const props = defineProps<{ term: TermSummaryDto }>()
+const route = `/terms/${encodeURIComponent(props.term.instance_id)}`
+const formatTime = formatBRecordedTime
 </script>
