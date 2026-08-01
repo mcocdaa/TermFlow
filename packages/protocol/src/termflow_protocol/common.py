@@ -28,6 +28,16 @@ class MessageType(StrEnum):
     COMMAND_RESULT = "command.result"
     INSTANCE_ONLINE = "instance.online"
     INSTANCE_OFFLINE = "instance.offline"
+    TERMINAL_OPEN = "terminal.open"
+    TERMINAL_OPENED = "terminal.opened"
+    TERMINAL_INPUT = "terminal.input"
+    TERMINAL_OUTPUT = "terminal.output"
+    TERMINAL_SIZE = "terminal.size"
+    TERMINAL_BINDINGS = "terminal.bindings"
+    TERMINAL_ACTION = "terminal.action"
+    TERMINAL_ACTION_RESULT = "terminal.action_result"
+    TERMINAL_CLOSE = "terminal.close"
+    TERMINAL_CLOSED = "terminal.closed"
 
 
 class WireMessage(BaseModel):

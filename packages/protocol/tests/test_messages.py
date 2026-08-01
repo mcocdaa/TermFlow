@@ -6,9 +6,13 @@ from pydantic import ValidationError
 from termflow_protocol import (
     PaneOutputPayload,
     PaneSnapshot,
+    TerminalActionPayload,
+    TerminalInputPayload,
+    TerminalOutputPayload,
     TopologySnapshot,
     WindowSnapshot,
     WireMessage,
+    parse_payload,
 )
 
 
@@ -74,3 +78,191 @@ def test_topology_round_trip_preserves_hierarchy() -> None:
     )
     assert topology.windows[0].panes[0].pane_id == "%1"
 
+
+def test_old_pane_snapshot_payload_gets_compatible_geometry_defaults() -> None:
+    pane = PaneSnapshot.model_validate(
+        {
+            "pane_id": "%1",
+            "window_id": "@2",
+            "index": 0,
+            "title": "shell",
+            "width": 80,
+            "height": 24,
+            "active": True,
+            "dead": False,
+        }
+    )
+
+    assert pane.left == 0
+    assert pane.top == 0
+    assert pane.current_command is None
+
+
+def test_pane_snapshot_serializes_raw_tmux_geometry_and_command() -> None:
+    pane = PaneSnapshot(
+        pane_id="%1",
+        window_id="@2",
+        index=0,
+        title="shell",
+        width=80,
+        height=24,
+        left=7,
+        top=11,
+        current_command="python -m worker",
+        active=True,
+        dead=False,
+    )
+
+    dumped = pane.model_dump()
+    assert dumped["left"] == 7
+    assert dumped["top"] == 11
+    assert dumped["current_command"] == "python -m worker"
+
+
+@pytest.mark.parametrize(
+    ("message_type", "payload"),
+    [
+        (
+            "terminal.open",
+            {
+                "terminal_id": uuid4(),
+                "resume_stream_id": uuid4(),
+                "after_seq": 3,
+            },
+        ),
+        (
+            "terminal.opened",
+            {
+                "terminal_id": uuid4(),
+                "stream_id": uuid4(),
+                "rows": 24,
+                "cols": 80,
+            },
+        ),
+        (
+            "terminal.input",
+            {"terminal_id": uuid4(), "data_base64": "AAE="},
+        ),
+        (
+            "terminal.output",
+            {
+                "terminal_id": uuid4(),
+                "stream_id": uuid4(),
+                "seq": 1,
+                "data_base64": "AP8=",
+            },
+        ),
+        (
+            "terminal.size",
+            {"terminal_id": uuid4(), "rows": 30, "cols": 120},
+        ),
+        (
+            "terminal.bindings",
+            {
+                "terminal_id": uuid4(),
+                "prefix": "C-b",
+                "prefix2": None,
+                "bindings": [
+                    {
+                        "action": "split_left_right",
+                        "key": "C-b %",
+                        "tooltip": "Split left/right",
+                    }
+                ],
+            },
+        ),
+        (
+            "terminal.action",
+            {
+                "terminal_id": uuid4(),
+                "action_id": uuid4(),
+                "action": "toggle_zoom",
+                "target_pane_id": "%4",
+                "confirmed": False,
+            },
+        ),
+        (
+            "terminal.action_result",
+            {
+                "terminal_id": uuid4(),
+                "action_id": uuid4(),
+                "ok": False,
+                "error_code": "pane_not_found",
+            },
+        ),
+        (
+            "terminal.close",
+            {"terminal_id": uuid4(), "reason": "client_closed"},
+        ),
+        (
+            "terminal.closed",
+            {"terminal_id": uuid4(), "reason": "grace_expired"},
+        ),
+    ],
+)
+def test_terminal_wire_payloads_are_strongly_typed(
+    message_type: str,
+    payload: dict[str, object],
+) -> None:
+    parsed = parse_payload(message_type, payload)
+    assert parsed.terminal_id == payload["terminal_id"]
+
+
+@pytest.mark.parametrize("payload_type", [TerminalInputPayload, TerminalOutputPayload])
+def test_terminal_byte_payloads_reject_malformed_base64(payload_type: type[object]) -> None:
+    common: dict[str, object] = {"terminal_id": uuid4(), "data_base64": "not base64!"}
+    if payload_type is TerminalOutputPayload:
+        common.update(stream_id=uuid4(), seq=1)
+    with pytest.raises(ValidationError, match="strict Base64"):
+        payload_type(**common)  # type: ignore[operator]
+
+
+@pytest.mark.parametrize("payload_type", [TerminalInputPayload, TerminalOutputPayload])
+def test_terminal_byte_payloads_reject_decoded_chunks_over_64_kib(
+    payload_type: type[object],
+) -> None:
+    common: dict[str, object] = {
+        "terminal_id": uuid4(),
+        "data_base64": __import__("base64").b64encode(b"x" * 65_537).decode("ascii"),
+    }
+    if payload_type is TerminalOutputPayload:
+        common.update(stream_id=uuid4(), seq=1)
+    with pytest.raises(ValidationError, match="65536"):
+        payload_type(**common)  # type: ignore[operator]
+
+
+def test_terminal_output_round_trips_arbitrary_bytes() -> None:
+    raw = bytes(range(256))
+    payload = TerminalOutputPayload.from_bytes(uuid4(), uuid4(), 1, raw)
+    assert payload.to_bytes() == raw
+
+
+@pytest.mark.parametrize("action", ["open_shell", "ask_agent", "resize"])
+def test_terminal_action_is_a_closed_set(action: str) -> None:
+    with pytest.raises(ValidationError):
+        TerminalActionPayload(
+            terminal_id=uuid4(),
+            action_id=uuid4(),
+            action=action,
+            target_pane_id="%1",
+        )
+
+
+def test_terminal_action_requires_target_for_pane_scoped_action() -> None:
+    with pytest.raises(ValidationError, match="target_pane_id"):
+        TerminalActionPayload(
+            terminal_id=uuid4(),
+            action_id=uuid4(),
+            action="select_left",
+        )
+
+
+def test_close_pane_requires_explicit_confirmation() -> None:
+    with pytest.raises(ValidationError, match="confirmed"):
+        TerminalActionPayload(
+            terminal_id=uuid4(),
+            action_id=uuid4(),
+            action="close_pane",
+            target_pane_id="%1",
+            confirmed=False,
+        )
