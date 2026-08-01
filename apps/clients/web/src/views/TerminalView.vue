@@ -5,7 +5,7 @@
       <PaneFocusMenu :panes="panes" :open="openMenu === 'pane'" @update:open="setMenuOpen('pane', $event)" @focus="terminalCanvas?.focusPane($event)" @reset="terminalCanvas?.resetViewport()" />
       <TmuxActionMenu :bindings="bindings" :active-pane-id="activePane?.pane_id ?? null" :disabled="connectionStatus !== 'connected'" :open="openMenu === 'tmux'" @update:open="setMenuOpen('tmux', $event)" @action="runAction" @request-close="requestClose" />
     </TerminalTitlebar>
-    <TerminalCanvas ref="terminalCanvas" :term-id="termId" :display-mode="displayMode" :transform-input="transformInput" @bindings="bindings = $event" @reset-input="modifierResetKey = $event" @status="connectionStatus = $event" @authentication-required="handleAuthenticationRequired" @action-result="handleActionResult" />
+    <TerminalCanvas ref="terminalCanvas" :term-id="termId" :display-mode="displayMode" :touch-control-locked="touchControlLocked" :transform-input="transformInput" @bindings="bindings = $event" @reset-input="modifierResetKey = $event" @status="connectionStatus = $event" @authentication-required="handleAuthenticationRequired" @action-result="handleActionResult" />
     <p v-if="renameError" class="terminal-error" role="alert">{{ renameError }}</p>
     <MobileKeyBar :prefix="bindings.prefix" :controller="modifiers" :reset-key="modifierResetKey" :disabled="connectionStatus !== 'connected'" @input="terminalCanvas?.sendInput($event)" />
     <ClosePaneDialog v-if="closePane" :pane-id="closePane.pane_id" :pane-name="closePane.title || closePane.pane_id" :return-focus="closeReturnFocus" @cancel="closePaneId = null" @confirm="confirmClose" />

@@ -1,11 +1,96 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import TerminalCanvas from './TerminalCanvas.vue'
 import type { TerminalSocketCallbacks, TerminalSocketLike } from '../../terminal/socket'
 import type { TerminalAdapter, TerminalAdapterFactory } from '../../terminal/terminalAdapter'
 import { selectTheme } from '../../stores/theme'
 
+function mountTouchCanvas(touchControlLocked: boolean) {
+  let callbacks!: TerminalSocketCallbacks
+  const socket: TerminalSocketLike = { connect: vi.fn(), sendInput: vi.fn(), sendAction: vi.fn(), dispose: vi.fn() }
+  const dispatchMouse = vi.fn()
+  const adapter: TerminalAdapter = {
+    write: vi.fn(),
+    resize: vi.fn(),
+    reset: vi.fn(),
+    focus: vi.fn(),
+    refreshTheme: vi.fn(),
+    setInputEnabled: vi.fn(),
+    measureCell: vi.fn(() => ({ width: 10, height: 20 })),
+    setVisualScale: vi.fn((scale: number) => ({ width: 10 * scale, height: 20 * scale })),
+    dispatchMouse,
+    canClientPan: vi.fn(() => true),
+    dispose: vi.fn(),
+  }
+  const createSocket = vi.fn((_id: string, nextCallbacks: TerminalSocketCallbacks) => {
+    callbacks = nextCallbacks
+    return socket
+  })
+  const createAdapter: TerminalAdapterFactory = vi.fn(() => adapter)
+  const wrapper = mount(TerminalCanvas, {
+    props: { termId: 'term-touch', touchControlLocked, createSocket, createAdapter },
+  })
+  const ready = () => callbacks.onReady({
+    type: 'terminal.ready',
+    terminal_id: 't1',
+    stream_id: 's1',
+    rows: 40,
+    cols: 120,
+  })
+  return { wrapper, adapter, dispatchMouse, socket, callbacks, ready }
+}
+
+afterEach(() => vi.useRealTimers())
+
 describe('TerminalCanvas', () => {
+  it('routes unlocked touch only to local pan and pinch', async () => {
+    const { wrapper, dispatchMouse, socket, ready } = mountTouchCanvas(false)
+    ready()
+    await flushPromises()
+    const frame = wrapper.get('.terminal-frame')
+    await frame.trigger('pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 200, clientY: 200 })
+    await frame.trigger('pointermove', { pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 200 })
+    await frame.trigger('pointerup', { pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 200 })
+    expect(dispatchMouse).not.toHaveBeenCalled()
+    expect(socket.sendInput).not.toHaveBeenCalled()
+    expect(wrapper.vm.captureViewport().panX).toBeLessThan(0)
+  })
+
+  it('routes locked touch through xterm and preserves long-press selection', async () => {
+    vi.useFakeTimers()
+    const { wrapper, dispatchMouse, callbacks, ready } = mountTouchCanvas(true)
+    ready()
+    callbacks.onStatus('connected')
+    await flushPromises()
+    const frame = wrapper.get('.terminal-frame')
+
+    await frame.trigger('pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 50, clientY: 60 })
+    await frame.trigger('pointerup', { pointerId: 1, pointerType: 'touch', clientX: 50, clientY: 60 })
+    expect(dispatchMouse).toHaveBeenCalledWith(expect.objectContaining({ type: 'mousedown', forceSelection: false }))
+    expect(dispatchMouse).toHaveBeenCalledWith(expect.objectContaining({ type: 'mouseup', buttons: 0 }))
+
+    dispatchMouse.mockClear()
+    await frame.trigger('pointerdown', { pointerId: 4, pointerType: 'touch', clientX: 60, clientY: 70 })
+    await frame.trigger('pointermove', { pointerId: 4, pointerType: 'touch', clientX: 80, clientY: 70 })
+    await frame.trigger('pointerup', { pointerId: 4, pointerType: 'touch', clientX: 90, clientY: 70 })
+    expect(dispatchMouse.mock.calls.map(([event]) => event.type)).toEqual(['mousedown', 'mousemove', 'mouseup'])
+
+    dispatchMouse.mockClear()
+    await frame.trigger('pointerdown', { pointerId: 2, pointerType: 'touch', clientX: 80, clientY: 90 })
+    vi.advanceTimersByTime(500)
+    expect(dispatchMouse).toHaveBeenCalledWith(expect.objectContaining({ detail: 2, forceSelection: true }))
+    await frame.trigger('pointercancel', { pointerId: 2, pointerType: 'touch', clientX: 80, clientY: 90 })
+    expect(dispatchMouse.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({ type: 'mouseup' }))
+
+    callbacks.onStatus('reconnecting')
+    await flushPromises()
+    dispatchMouse.mockClear()
+    await frame.trigger('pointerdown', { pointerId: 3, pointerType: 'touch', clientX: 100, clientY: 120 })
+    await frame.trigger('pointermove', { pointerId: 3, pointerType: 'touch', clientX: 70, clientY: 120 })
+    expect(dispatchMouse).not.toHaveBeenCalled()
+    expect(wrapper.vm.captureViewport().panX).toBeLessThan(0)
+  })
+
   it('renders scaled modes through xterm geometry without scaling the mouse event surface', async () => {
     let callbacks!: TerminalSocketCallbacks
     const socket: TerminalSocketLike = { connect: vi.fn(), sendInput: vi.fn(), sendAction: vi.fn(), dispose: vi.fn() }
