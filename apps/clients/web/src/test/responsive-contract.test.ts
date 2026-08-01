@@ -5,6 +5,7 @@ import { createMemoryHistory } from 'vue-router'
 import { describe, expect, it } from 'vitest'
 import App from '../App.vue'
 import TerminalTitlebar from '../components/terminal/TerminalTitlebar.vue'
+import TmuxActionMenu from '../components/terminal/TmuxActionMenu.vue'
 import { createAppRouter } from '../router'
 
 const viewports = [[360, 800], [800, 360], [1024, 768], [1440, 900]] as const
@@ -19,9 +20,15 @@ describe('responsive shell contract', () => {
     expect(app.get('main')).toBeTruthy()
     expect(app.get('.side-nav')).toBeTruthy()
     expect(app.get('.mobile-nav')).toBeTruthy()
-    const titlebar = mount(TerminalTitlebar, { props: { title: 'Term', displayMode: 'font-100' } })
+    const titlebar = mount(TerminalTitlebar, {
+      props: { title: 'Term', displayMode: 'font-100' },
+      global: { stubs: { RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } } },
+    })
     expect(titlebar.get('.terminal-titlebar')).toBeTruthy()
     expect(titlebar.get('[data-action="toggle-display-menu"]')).toBeTruthy()
+    const tmux = mount(TmuxActionMenu, { props: { bindings: { prefix: 'C-a', bindings: [] }, activePaneId: '%1' } })
+    expect(tmux.get('[data-action="toggle-mobile-drawer"]')).toBeTruthy()
+    expect(tmux.find('[data-mobile-drawer]').exists()).toBe(false)
   })
 
   it('uses one portrait/landscape logic with coarse-pointer behavior and safe-area insets', () => {
@@ -30,5 +37,7 @@ describe('responsive shell contract', () => {
     expect(css).not.toContain('orientation:')
     expect(css).toContain('safe-area-inset-bottom')
     expect(css).toContain('touch-action: none')
+    const appCss = readFileSync(resolve(process.cwd(), 'src/styles/app.css'), 'utf8')
+    expect(appCss).toContain('height: calc(100% - 3.25rem)')
   })
 })

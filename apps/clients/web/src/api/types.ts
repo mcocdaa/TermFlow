@@ -5,6 +5,7 @@ export interface SessionStatusDto {
 
 export interface DashboardMetricsDto {
   online_terms: number
+  total_terms: number
   active_panes: number
   interactions_24h: number
   computers: number

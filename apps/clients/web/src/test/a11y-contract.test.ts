@@ -1,9 +1,12 @@
 import { mount } from '@vue/test-utils'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { createMemoryHistory } from 'vue-router'
 import { describe, expect, it } from 'vitest'
 import App from '../App.vue'
 import ClosePaneDialog from '../components/terminal/ClosePaneDialog.vue'
 import TmuxActionMenu from '../components/terminal/TmuxActionMenu.vue'
+import StatusPill from '../components/dashboard/StatusPill.vue'
 import { createAppRouter } from '../router'
 
 describe('accessibility contracts', () => {
@@ -40,5 +43,13 @@ describe('accessibility contracts', () => {
     expect(wrapper.find('[data-mobile-drawer]').exists()).toBe(false)
     expect(document.activeElement).toBe(trigger.element)
     wrapper.unmount()
+  })
+
+  it('uses visible focus, reduced-motion guards, and status text independent of color', () => {
+    const css = `${readFileSync(resolve(process.cwd(), 'src/styles/reset.css'), 'utf8')}\n${readFileSync(resolve(process.cwd(), 'src/styles/app.css'), 'utf8')}`
+    expect(css).toContain(':focus-visible')
+    expect(css).toContain('prefers-reduced-motion: no-preference')
+    expect(mount(StatusPill, { props: { online: true } }).text()).toContain('在线')
+    expect(mount(StatusPill, { props: { online: false } }).text()).toContain('离线')
   })
 })

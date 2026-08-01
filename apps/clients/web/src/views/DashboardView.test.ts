@@ -6,7 +6,7 @@ import { createAppRouter } from '../router'
 import type { DashboardDto } from '../api/types'
 
 const dashboard: DashboardDto = {
-  metrics: { online_terms: 2, active_panes: 5, interactions_24h: 37, computers: 2 },
+  metrics: { online_terms: 2, total_terms: 3, active_panes: 5, interactions_24h: 37, computers: 2 },
   computers: [
     {
       installation_id: 'computer-1', display_name: '设计工作站', hostname: 'studio.local', platform: 'macOS', client_version: '1.2.0', online: true,
@@ -34,6 +34,7 @@ describe('DashboardView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('在线 Terms2')
+    expect(wrapper.text()).toContain('共 3 Terms')
     expect(wrapper.text()).toContain('活动 Panes5')
     expect(wrapper.text()).toContain('24 小时交互37')
     expect(wrapper.text()).toContain('Computers2')

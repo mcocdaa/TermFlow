@@ -1,6 +1,6 @@
 @layer app {
   @media (max-width: 47.99rem), (pointer: coarse) {
-    .terminal-view { height: calc(100dvh - 8.5rem - env(safe-area-inset-bottom)); }
+    .terminal-view { height: 100dvh; }
     .terminal-titlebar { padding-inline: max(var(--space-2), env(safe-area-inset-left)) max(var(--space-2), env(safe-area-inset-right)); }
     .terminal-frame { touch-action: none; }
     .terminal-titlebar-actions { gap: var(--space-1); }

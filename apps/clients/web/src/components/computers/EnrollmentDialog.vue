@@ -1,6 +1,6 @@
 <template>
   <div v-if="open" class="dialog-backdrop" @click.self="close">
-    <section class="dialog-panel" role="dialog" aria-modal="true" aria-labelledby="enrollment-title">
+    <section ref="panel" class="dialog-panel" role="dialog" aria-modal="true" aria-labelledby="enrollment-title" @keydown="onDialogKeydown">
       <header><div><p class="eyebrow">一次性注册</p><h2 id="enrollment-title">添加 Computer</h2></div><button data-action="close-enrollment" class="icon-button" type="button" aria-label="关闭" @click="close">关闭</button></header>
       <p>一次 <code>termflow login</code> 代表一台 Computer；随后运行 <code>termflow new --name NAME</code> 可创建相互独立的 Terms。</p>
       <p v-if="message" role="alert" class="form-error">{{ message }}</p>
@@ -16,7 +16,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { createEnrollmentCode } from '../../api/computers'
 import { ApiError } from '../../api/http'
 
@@ -28,13 +28,35 @@ const code = ref<string | null>(null)
 const expiresAt = ref<number | null>(null)
 const now = ref(Date.now())
 const message = ref('')
+const panel = ref<HTMLElement | null>(null)
+const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
 let timer: ReturnType<typeof setInterval> | null = null
 
 const secondsRemaining = computed(() => expiresAt.value === null ? 0 : Math.max(0, Math.ceil((expiresAt.value - now.value) / 1000)))
 const command = computed(() => code.value ? `termflow login --server ${window.location.origin} --code ${code.value}` : '')
 
 function clearSecret() { code.value = null; expiresAt.value = null; copied.value = false; if (timer !== null) clearInterval(timer); timer = null }
-function close() { clearSecret(); open.value = false; emit('closed') }
+function close() {
+  clearSecret()
+  open.value = false
+  emit('closed')
+  void nextTick(() => { if (returnFocus?.isConnected) returnFocus.focus() })
+}
+function focusableElements() {
+  return [...(panel.value?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? [])]
+}
+function onDialogKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') { event.preventDefault(); close(); return }
+  if (event.key !== 'Tab') return
+  const focusable = focusableElements()
+  if (!focusable.length) return
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if ((!event.shiftKey && document.activeElement === last) || (event.shiftKey && document.activeElement === first)) {
+    event.preventDefault()
+    ;(event.shiftKey ? last : first)?.focus()
+  }
+}
 async function create() {
   busy.value = true
   message.value = ''
@@ -51,5 +73,6 @@ async function create() {
   finally { busy.value = false }
 }
 async function copy() { if (!command.value) return; await navigator.clipboard.writeText(command.value); copied.value = true }
-onBeforeUnmount(clearSecret)
+onMounted(() => focusableElements()[0]?.focus())
+onBeforeUnmount(() => { clearSecret(); if (returnFocus?.isConnected) returnFocus.focus() })
 </script>

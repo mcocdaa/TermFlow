@@ -33,6 +33,8 @@ export class TerminalSocket implements TerminalSocketLike {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private disposed = false
   private suppressReconnect = false
+  private ready = false
+  private reconnectAttempt = 0
   private streamId: string | null = null
   private readonly baseUrl: URL
   private readonly createWebSocket: (url: string) => WebSocket
@@ -51,8 +53,9 @@ export class TerminalSocket implements TerminalSocketLike {
     url.protocol = this.baseUrl.protocol === 'https:' ? 'wss:' : 'ws:'
     const socket = this.createWebSocket(url.toString())
     this.socket = socket
+    this.ready = false
     socket.binaryType = 'arraybuffer'
-    socket.onopen = () => this.callbacks.onStatus('connected')
+    socket.onopen = () => { /* terminal.ready, not the TCP/WebSocket handshake, enables input */ }
     socket.onmessage = (event) => this.handleMessage(event.data)
     socket.onerror = () => { /* close drives the single reconnect path */ }
     socket.onclose = () => this.handleClose()
@@ -68,6 +71,9 @@ export class TerminalSocket implements TerminalSocketLike {
       case 'terminal.ready':
         if (this.streamId !== null && this.streamId !== control.stream_id) this.callbacks.onReset()
         this.streamId = control.stream_id
+        this.ready = true
+        this.reconnectAttempt = 0
+        this.callbacks.onStatus('connected')
         this.callbacks.onReady(control)
         break
       case 'terminal.size': this.callbacks.onSize({ rows: control.rows, cols: control.cols }); break
@@ -75,33 +81,39 @@ export class TerminalSocket implements TerminalSocketLike {
       case 'terminal.error': this.callbacks.onError({ code: control.code, message: control.message }); break
       case 'terminal.action_result': this.callbacks.onActionResult(control); break
       case 'terminal.closed':
+        this.ready = false
         this.suppressReconnect = control.reason === 'replaced' || control.reason === 'instance_offline' || control.reason === 'client_closed'
         this.callbacks.onClosed(control.reason)
         this.callbacks.onStatus('closed')
+        this.socket?.close(1000, control.reason)
         break
     }
   }
 
   private handleClose() {
     this.socket = null
+    this.ready = false
     if (this.disposed || this.suppressReconnect) return
     this.callbacks.onStatus('reconnecting')
-    this.reconnectTimer = setTimeout(() => { this.reconnectTimer = null; this.connect() }, this.reconnectDelayMs)
+    const delay = Math.min(10_000, this.reconnectDelayMs * 2 ** this.reconnectAttempt)
+    this.reconnectAttempt += 1
+    this.reconnectTimer = setTimeout(() => { this.reconnectTimer = null; this.connect() }, delay)
   }
 
   sendInput(data: string | Uint8Array) {
-    if (!this.socket || this.socket.readyState !== 1) return
+    if (!this.socket || this.socket.readyState !== 1 || !this.ready) return
     const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
     for (let offset = 0; offset < bytes.byteLength; offset += MAX_BINARY_FRAME) this.socket.send(bytes.slice(offset, offset + MAX_BINARY_FRAME))
   }
 
   sendAction(action: TerminalActionId, options: { targetPaneId?: string; confirmed?: boolean } = {}) {
-    if (!this.socket || this.socket.readyState !== 1) return
+    if (!this.socket || this.socket.readyState !== 1 || !this.ready) return
     this.socket.send(JSON.stringify({ type: 'terminal.action', action_id: crypto.randomUUID(), action, target_pane_id: options.targetPaneId, confirmed: options.confirmed ?? false }))
   }
 
   dispose() {
     this.disposed = true
+    this.ready = false
     if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer)
     this.reconnectTimer = null
     const socket = this.socket

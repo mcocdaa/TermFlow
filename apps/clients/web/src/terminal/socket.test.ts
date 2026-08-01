@@ -49,6 +49,7 @@ describe('TerminalSocket', () => {
   it('chunks UTF-8 input and paste into binary frames no larger than 65536 bytes', () => {
     const { terminal, socket } = setup()
     socket.open()
+    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: 'terminal-1', rows: 24, cols: 80, stream_id: 'stream-1' }))
     terminal.sendInput('界'.repeat(50_000))
     const frames = socket.sent.filter((frame): frame is Uint8Array => ArrayBuffer.isView(frame))
     expect(frames.length).toBeGreaterThan(1)
@@ -66,6 +67,7 @@ describe('TerminalSocket', () => {
   it('uses the public semantic action envelope and binding list', () => {
     const { terminal, socket, callbacks } = setup()
     socket.open()
+    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: 'terminal-1', rows: 24, cols: 80, stream_id: 'stream-1' }))
     socket.message(JSON.stringify({ type: 'terminal.binding_snapshot', terminal_id: 'terminal-1', prefix: 'C-a', prefix2: null, bindings: [{ action: 'copy_mode', key: 'C-a [', tooltip: '进入复制模式' }] }))
     expect(callbacks.onBindings).toHaveBeenCalledWith(expect.objectContaining({ prefix: 'C-a', bindings: [expect.objectContaining({ action: 'copy_mode' })] }))
     terminal.sendAction('copy_mode', { targetPaneId: '%1' })
@@ -75,6 +77,20 @@ describe('TerminalSocket', () => {
     expect(frame).not.toHaveProperty('request_id')
   })
 
+  it('drops input before terminal.ready and immediately after terminal.closed', () => {
+    const { terminal, socket } = setup()
+    socket.open()
+    terminal.sendInput('before-ready')
+    terminal.sendAction('new_window')
+    expect(socket.sent).toHaveLength(0)
+    socket.message(JSON.stringify({ type: 'terminal.ready', terminal_id: 'terminal-1', rows: 24, cols: 80, stream_id: 'stream-1' }))
+    terminal.sendInput('ready')
+    expect(socket.sent).toHaveLength(1)
+    socket.message(JSON.stringify({ type: 'terminal.closed', terminal_id: 'terminal-1', reason: 'stream_gap' }))
+    terminal.sendInput('after-close')
+    expect(socket.sent).toHaveLength(1)
+  })
+
   it('reconnects unexpected closes but stops after replacement or explicit disposal', async () => {
     vi.useFakeTimers()
     const { terminal, socket, sockets, callbacks } = setup()
@@ -82,12 +98,17 @@ describe('TerminalSocket', () => {
     expect(callbacks.onStatus).toHaveBeenCalledWith('reconnecting')
     await vi.advanceTimersByTimeAsync(25)
     expect(sockets).toHaveLength(2)
-    sockets[1].message(JSON.stringify({ type: 'terminal.closed', reason: 'replaced' }))
-    sockets[1].closed(1000)
-    await vi.advanceTimersByTimeAsync(100)
+    sockets[1].closed()
+    await vi.advanceTimersByTimeAsync(49)
     expect(sockets).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(sockets).toHaveLength(3)
+    sockets[2].message(JSON.stringify({ type: 'terminal.closed', terminal_id: 'terminal-2', reason: 'replaced' }))
+    sockets[2].closed(1000)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(sockets).toHaveLength(3)
     terminal.dispose()
-    expect(sockets[1].readyState).toBe(3)
+    expect(sockets[2].readyState).toBe(3)
     vi.useRealTimers()
   })
 

@@ -3,7 +3,12 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const requiredTokens = [
-  'color-page', 'color-panel', 'color-elevated', 'color-terminal', 'color-border',
+  'color-page', 'color-panel', 'color-elevated', 'color-terminal', 'color-terminal-foreground',
+  'color-terminal-selection', 'terminal-black', 'terminal-red', 'terminal-green',
+  'terminal-yellow', 'terminal-blue', 'terminal-magenta', 'terminal-cyan', 'terminal-white',
+  'terminal-bright-black', 'terminal-bright-red', 'terminal-bright-green',
+  'terminal-bright-yellow', 'terminal-bright-blue', 'terminal-bright-magenta',
+  'terminal-bright-cyan', 'terminal-bright-white', 'color-border',
   'color-text-primary', 'color-text-secondary', 'color-text-muted', 'color-accent',
   'color-accent-contrast', 'color-focus', 'color-online', 'color-warning', 'color-danger',
   'shadow-panel', 'radius-sm', 'radius-md', 'radius-lg', 'space-1', 'space-2', 'space-3',

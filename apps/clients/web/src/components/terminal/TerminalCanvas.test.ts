@@ -3,13 +3,14 @@ import { describe, expect, it, vi } from 'vitest'
 import TerminalCanvas from './TerminalCanvas.vue'
 import type { TerminalSocketCallbacks, TerminalSocketLike } from '../../terminal/socket'
 import type { TerminalAdapter, TerminalAdapterFactory } from '../../terminal/terminalAdapter'
+import { selectTheme } from '../../stores/theme'
 
 describe('TerminalCanvas', () => {
   it('creates xterm only from terminal.ready, applies only server sizes, streams bytes, and disposes everything', async () => {
     let callbacks!: TerminalSocketCallbacks
     let input!: (value: string | Uint8Array) => void
     const socket: TerminalSocketLike = { connect: vi.fn(), sendInput: vi.fn(), sendAction: vi.fn(), dispose: vi.fn() }
-    const adapter: TerminalAdapter = { write: vi.fn(), resize: vi.fn(), reset: vi.fn(), focus: vi.fn(), canClientPan: vi.fn(() => false), dispose: vi.fn() }
+    const adapter: TerminalAdapter = { write: vi.fn(), resize: vi.fn(), reset: vi.fn(), focus: vi.fn(), refreshTheme: vi.fn(), canClientPan: vi.fn(() => false), dispose: vi.fn() }
     const createSocket = vi.fn((_id: string, nextCallbacks: TerminalSocketCallbacks) => { callbacks = nextCallbacks; return socket })
     const createAdapter: TerminalAdapterFactory = vi.fn((_host, _size, onInput) => { input = onInput; return adapter })
     const wrapper = mount(TerminalCanvas, { props: { termId: 'term-9', createSocket, createAdapter } })
@@ -27,9 +28,38 @@ describe('TerminalCanvas', () => {
     expect(adapter.resize).toHaveBeenCalledWith(170, 50)
     expect(socket.sendInput).toHaveBeenCalledWith('ls\r')
     expect(adapter.canClientPan).toHaveBeenCalled()
+    expect(typeof wrapper.vm.captureViewport).toBe('function')
+    expect(typeof wrapper.vm.restoreViewport).toBe('function')
+    wrapper.vm.restoreViewport({ scale: 1.5, panX: -20, panY: -10, focusedPaneId: '%1' })
+    expect(wrapper.vm.captureViewport().focusedPaneId).toBe('%1')
+    selectTheme('cloud-cobalt')
+    await wrapper.vm.$nextTick()
+    expect(adapter.refreshTheme).toHaveBeenCalled()
 
     wrapper.unmount()
     expect(adapter.dispose).toHaveBeenCalled()
     expect(socket.dispose).toHaveBeenCalled()
+  })
+
+  it('renders stable localized errors without exposing server messages or error codes', async () => {
+    let callbacks!: TerminalSocketCallbacks
+    const socket: TerminalSocketLike = { connect: vi.fn(), sendInput: vi.fn(), sendAction: vi.fn(), dispose: vi.fn() }
+    const createSocket = vi.fn((_id: string, nextCallbacks: TerminalSocketCallbacks) => { callbacks = nextCallbacks; return socket })
+    const wrapper = mount(TerminalCanvas, { props: { termId: 'term-9', createSocket } })
+
+    callbacks.onError({ code: 'instance_offline', message: 'raw backend stack trace' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('[role="alert"]').text()).toBe('Term 当前离线，无法打开终端。')
+    expect(wrapper.text()).not.toContain('raw backend stack trace')
+
+    callbacks.onActionResult({ type: 'terminal.action_result', terminal_id: 't1', action_id: 'a1', ok: false, error_code: 'target_not_found' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('[role="alert"]').text()).toBe('目标 Pane 已不存在，请刷新状态。')
+    expect(wrapper.text()).not.toContain('target_not_found')
+
+    callbacks.onError({ code: 'unknown_internal', message: 'database password leaked' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('[role="alert"]').text()).toBe('终端发生错误，请稍后重试。')
+    expect(wrapper.text()).not.toContain('unknown_internal')
   })
 })

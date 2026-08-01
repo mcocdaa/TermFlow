@@ -1,4 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
 import EnrollmentDialog from './EnrollmentDialog.vue'
 
@@ -37,5 +38,27 @@ describe('EnrollmentDialog', () => {
     await vi.advanceTimersByTimeAsync(1_100)
     expect(wrapper.html()).not.toContain('EXPIRES-NOW')
     vi.useRealTimers()
+  })
+
+  it('moves focus into the modal, traps Tab, closes with Escape, and restores the invoker', async () => {
+    const invoker = document.createElement('button')
+    document.body.append(invoker)
+    invoker.focus()
+    const wrapper = mount(EnrollmentDialog, { attachTo: document.body })
+    await nextTick()
+
+    const first = wrapper.get('[data-action="close-enrollment"]').element as HTMLButtonElement
+    const last = wrapper.get('[data-action="create-code"]').element as HTMLButtonElement
+    expect(document.activeElement).toBe(first)
+    last.focus()
+    await wrapper.get('[role="dialog"]').trigger('keydown', { key: 'Tab' })
+    expect(document.activeElement).toBe(first)
+    await wrapper.get('[role="dialog"]').trigger('keydown', { key: 'Escape' })
+    await nextTick()
+    expect(wrapper.emitted('closed')).toHaveLength(1)
+    expect(document.activeElement).toBe(invoker)
+
+    wrapper.unmount()
+    invoker.remove()
   })
 })

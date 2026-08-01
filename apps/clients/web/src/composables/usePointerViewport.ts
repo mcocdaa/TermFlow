@@ -3,6 +3,7 @@ import { reactive } from 'vue'
 export interface PointerSample { pointerId: number; x: number; y: number }
 export interface ViewportGeometry { width: number; height: number }
 export interface PaneGeometry { pane_id: string; left: number; top: number; width: number; height: number }
+export interface PointerViewportSnapshot { scale: number; panX: number; panY: number; focusedPaneId: string | null }
 interface PointerViewportOptions {
   viewport: ViewportGeometry
   content: ViewportGeometry
@@ -72,5 +73,15 @@ export function createPointerViewport(options: PointerViewportOptions) {
     clampPan()
   }
   function reset() { state.scale = 1; state.panX = 0; state.panY = 0; state.focusedPaneId = null; clampPan() }
-  return { state, pointerDown, pointerMove, pointerUp, setTransform, updateGeometry, focusPane, reset }
+  function snapshot(): PointerViewportSnapshot { return { scale: state.scale, panX: state.panX, panY: state.panY, focusedPaneId: state.focusedPaneId } }
+  function restore(value: PointerViewportSnapshot) {
+    pointers.clear()
+    pinch = null
+    state.scale = clamp(value.scale, 0.25, 4)
+    state.panX = value.panX
+    state.panY = value.panY
+    state.focusedPaneId = value.focusedPaneId
+    clampPan()
+  }
+  return { state, pointerDown, pointerMove, pointerUp, setTransform, updateGeometry, focusPane, reset, snapshot, restore }
 }

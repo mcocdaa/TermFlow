@@ -15,10 +15,17 @@ describe('DisplayMenu', () => {
   })
 
   it('supports Escape and arrow-key focus without emitting terminal controls', async () => {
-    const wrapper = mount(DisplayMenu, { props: { modelValue: 'fit' } })
+    const wrapper = mount(DisplayMenu, { attachTo: document.body, props: { modelValue: 'fit' } })
     await wrapper.get('button').trigger('click')
+    expect(document.activeElement?.getAttribute('role')).toBe('menuitemradio')
+    expect(document.activeElement?.textContent).toContain('适应窗口')
+    await wrapper.get('[role="menu"]').trigger('keydown', { key: 'ArrowDown' })
+    expect(document.activeElement?.getAttribute('role')).toBe('menuitemradio')
+    expect(document.activeElement?.textContent).toContain('50%')
     await wrapper.get('[role="menu"]').trigger('keydown', { key: 'Escape' })
     expect(wrapper.find('[role="menu"]').exists()).toBe(false)
+    expect(document.activeElement).toBe(wrapper.get('[data-action="toggle-display-menu"]').element)
     expect(wrapper.emitted()).not.toHaveProperty('terminal-control')
+    wrapper.unmount()
   })
 })

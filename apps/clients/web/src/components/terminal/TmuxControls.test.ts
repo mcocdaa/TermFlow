@@ -34,8 +34,21 @@ describe('tmux controls', () => {
     const wrapper = mount(TmuxActionMenu, { props: { bindings, activePaneId: '%3' } })
     await wrapper.get('[data-action="toggle-tmux-menu"]').trigger('click')
     await wrapper.get('[data-action-id="close_pane"]').trigger('click')
-    expect(wrapper.emitted('request-close')).toEqual([['%3']])
+    expect(wrapper.emitted('request-close')?.[0]?.[0]).toBe('%3')
+    expect(wrapper.emitted('request-close')?.[0]?.[1]).toBeInstanceOf(HTMLElement)
     expect(wrapper.emitted('action')).toBeUndefined()
+  })
+
+  it('closes the mobile action drawer with a downward swipe and restores its trigger focus', async () => {
+    const wrapper = mount(TmuxActionMenu, { attachTo: document.body, props: { bindings, activePaneId: '%3' } })
+    const trigger = wrapper.get('[data-action="toggle-mobile-drawer"]')
+    await trigger.trigger('click')
+    const drawer = wrapper.get('[data-mobile-drawer]')
+    await drawer.trigger('pointerdown', { clientY: 100 })
+    await drawer.trigger('pointerup', { clientY: 180 })
+    expect(wrapper.find('[data-mobile-drawer]').exists()).toBe(false)
+    expect(document.activeElement).toBe(trigger.element)
+    wrapper.unmount()
   })
 
   it('names the Pane and emits confirmed=true only after modal confirmation', async () => {

@@ -1,5 +1,5 @@
 <template>
-  <div ref="frameElement" class="terminal-frame" :data-status="status" @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerUp">
+  <div ref="frameElement" class="terminal-frame" :data-status="status" :data-display-mode="displayMode" :data-focused-pane="pointer.state.focusedPaneId ?? undefined" @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerUp">
     <div class="terminal-viewport-content" :style="contentStyle">
       <div class="terminal-grid" :style="gridStyle"><div ref="host" class="terminal-host" role="application" :aria-label="`Term ${termId} 终端`" /></div>
     </div>
@@ -16,9 +16,10 @@ import type { TerminalSocketFactory } from '../../composables/useTerminalSession
 import { useTerminalSession } from '../../composables/useTerminalSession'
 import { displayPresentation, type DisplayMode } from '../../terminal/viewport'
 import { createPointerViewport } from '../../composables/usePointerViewport'
+import { activeTheme } from '../../stores/theme'
 
 const props = withDefaults(defineProps<{ termId: string; displayMode?: DisplayMode; selectionActive?: boolean; mouseReportingActive?: boolean; transformInput?: (value: string | Uint8Array) => string | Uint8Array; createSocket?: TerminalSocketFactory; createAdapter?: TerminalAdapterFactory }>(), { displayMode: 'font-100', selectionActive: false, mouseReportingActive: false })
-const emit = defineEmits<{ bindings: [value: { prefix: string; prefix2?: string | null; bindings: Array<{ action: import('../../api/types').TerminalActionId; key: string | null; tooltip: string }> }]; 'reset-input': [key: number] }>()
+const emit = defineEmits<{ bindings: [value: { prefix: string; prefix2?: string | null; bindings: Array<{ action: import('../../api/types').TerminalActionId; key: string | null; tooltip: string }> }]; 'reset-input': [key: number]; status: [value: import('../../terminal/socket').TerminalConnectionStatus] }>()
 const host = ref<HTMLElement | null>(null)
 const frameElement = ref<HTMLElement | null>(null)
 const frame = ref({ width: 1, height: 1 })
@@ -44,11 +45,13 @@ watchEffect(() => {
   pointer.updateGeometry(frame.value, { width: presentation.value.gridWidth * presentation.value.scale, height: presentation.value.gridHeight * presentation.value.scale })
 })
 watch(bindings, (value) => emit('bindings', value), { deep: true, immediate: true })
+watch(status, (value) => emit('status', value), { immediate: true })
 watch(resetKey, (value) => emit('reset-input', value))
+watch(activeTheme, () => session.refreshTheme())
 function point(event: PointerEvent) { return { pointerId: event.pointerId, x: event.clientX, y: event.clientY } }
 function onPointerDown(event: PointerEvent) { if (event.pointerType === 'mouse') return; frameElement.value?.setPointerCapture?.(event.pointerId); pointer.pointerDown(point(event)) }
 function onPointerMove(event: PointerEvent) { if (event.pointerType !== 'mouse') pointer.pointerMove(point(event)) }
 function onPointerUp(event: PointerEvent) { if (event.pointerType === 'mouse') return; pointer.pointerUp(event.pointerId); frameElement.value?.releasePointerCapture?.(event.pointerId) }
 function focusPane(pane: PaneTopologyDto) { pointer.focusPane(pane, { cellWidth: 9 * (presentation.value?.scale ?? 1), cellHeight: 18 * (presentation.value?.scale ?? 1) }) }
-defineExpose({ dimensions, bindings, lastActionResult, sendAction: session.sendAction, sendInput: session.sendInput, focus: session.focus, focusPane, resetViewport: pointer.reset })
+defineExpose({ dimensions, bindings, lastActionResult, sendAction: session.sendAction, sendInput: session.sendInput, focus: session.focus, focusPane, resetViewport: pointer.reset, captureViewport: pointer.snapshot, restoreViewport: pointer.restore })
 </script>

@@ -10,7 +10,7 @@
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-const props = defineProps<{ paneId: string; paneName: string }>()
+const props = defineProps<{ paneId: string; paneName: string; returnFocus?: HTMLElement | null }>()
 defineEmits<{ confirm: [payload: { paneId: string; confirmed: true }]; cancel: [] }>()
 const panel = ref<HTMLElement | null>(null)
 const cancelButton = ref<HTMLButtonElement | null>(null)
@@ -24,6 +24,6 @@ function trapFocus(event: KeyboardEvent) {
   if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
   else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
 }
-onMounted(async () => { restoreFocus = document.activeElement as HTMLElement | null; await nextTick(); cancelButton.value?.focus() })
-onBeforeUnmount(() => restoreFocus?.focus())
+onMounted(async () => { restoreFocus = props.returnFocus ?? document.activeElement as HTMLElement | null; await nextTick(); cancelButton.value?.focus() })
+onBeforeUnmount(() => { if (restoreFocus?.isConnected) restoreFocus.focus() })
 </script>

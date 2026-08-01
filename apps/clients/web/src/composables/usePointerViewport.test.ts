@@ -43,4 +43,13 @@ describe('mobile pointer viewport', () => {
     expect(viewport.state.panX).toBeGreaterThanOrEqual(800 - 2400)
     expect(viewport.state.panY).toBeGreaterThanOrEqual(360 - 1440)
   })
+
+  it('captures and restores a client-only viewport including Pane focus', () => {
+    const viewport = createPointerViewport({ viewport: { width: 360, height: 800 }, content: { width: 1200, height: 720 } })
+    viewport.focusPane({ pane_id: '%7', left: 20, top: 10, width: 40, height: 20 }, { cellWidth: 10, cellHeight: 18 })
+    const portrait = viewport.snapshot()
+    viewport.reset()
+    viewport.restore(portrait)
+    expect(viewport.snapshot()).toEqual(portrait)
+  })
 })

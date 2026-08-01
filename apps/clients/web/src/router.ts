@@ -17,7 +17,7 @@ export function createAppRouter(dependencies: RouterDependencies) {
       { path: '/login', component: LoginView },
       { path: '/', component: DashboardView, meta: { requiresAuth: true } },
       { path: '/computers', component: ComputersView, meta: { requiresAuth: true } },
-      { path: '/terms/:termId', component: TerminalView, meta: { requiresAuth: true } },
+      { path: '/terms/:termId', component: TerminalView, meta: { requiresAuth: true, terminal: true } },
       { path: '/:pathMatch(.*)*', component: NotFoundView },
     ],
   })
