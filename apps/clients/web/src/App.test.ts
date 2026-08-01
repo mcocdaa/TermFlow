@@ -1,7 +1,8 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import App from './App.vue'
 import { createAppRouter } from './router'
+import { sessionState } from './stores/session'
 
 async function renderAt(path: string) {
   const router = createAppRouter({ sessionStatus: async () => ({ authenticated: true }) })
@@ -11,6 +12,11 @@ async function renderAt(path: string) {
 }
 
 describe('application routes', () => {
+  afterEach(() => {
+    sessionState.authenticated = false
+    sessionState.expiresAt = null
+  })
+
   it.each([
     ['/login', '登录'],
     ['/', '控制中心'],
@@ -36,6 +42,7 @@ describe('application routes', () => {
     expect(login.find('.side-nav').exists()).toBe(false)
     expect(login.find('.mobile-nav').exists()).toBe(false)
 
+    sessionState.authenticated = true
     const dashboard = await renderAt('/')
     const dashboardLink = dashboard.get('.side-nav a[href="/"]')
     const computersLink = dashboard.get('.side-nav a[href="/computers"]')
@@ -45,5 +52,10 @@ describe('application routes', () => {
     expect(computersLink.find('svg').exists()).toBe(true)
     expect(dashboard.get('.mobile-nav a[href="/"]').find('svg').exists()).toBe(true)
     expect(dashboard.get('.mobile-nav a[href="/computers"]').find('svg').exists()).toBe(true)
+    const logout = dashboard.get('[data-action="logout"]')
+    expect(logout.attributes('aria-label')).toBe('退出登录')
+    expect(logout.attributes('title')).toBe('退出登录')
+    expect(logout.find('svg').exists()).toBe(true)
+    expect(logout.get('.logout-label').text()).toBe('退出')
   })
 })
