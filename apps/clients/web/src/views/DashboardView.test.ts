@@ -48,6 +48,7 @@ describe('DashboardView', () => {
     expect(onlineTerm.attributes('href')).toBe('/terms/term-1')
     expect(onlineTerm.attributes('aria-label')).toContain('产品开发')
     expect(onlineTerm.text()).not.toContain('打开终端')
+    expect(onlineTerm.get('.term-last-seen').element.tagName).toBe('TIME')
     expect(wrapper.find('a[href="/terms/term-2"]').exists()).toBe(false)
     const offlineTerm = wrapper.get('[data-term-id="term-2"]')
     expect(offlineTerm.element.tagName).toBe('ARTICLE')

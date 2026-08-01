@@ -6,8 +6,8 @@
     </div>
     <div class="term-counts"><span>{{ term.window_count }} Windows</span><span>{{ term.pane_count }} Panes</span></div>
     <StatusPill :online="term.online" />
-    <time v-if="term.last_seen_at" :datetime="term.last_seen_at">{{ formatTime(term.last_seen_at) }}</time>
-    <span v-else class="muted">尚未在线</span>
+    <time v-if="term.last_seen_at" class="term-last-seen" :datetime="term.last_seen_at">{{ formatTime(term.last_seen_at) }}</time>
+    <span v-else class="muted term-last-seen">尚未在线</span>
   </component>
 </template>
 

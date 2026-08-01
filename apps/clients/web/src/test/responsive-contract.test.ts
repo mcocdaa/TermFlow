@@ -46,5 +46,7 @@ describe('responsive shell contract', () => {
     expect(appCss).toContain('.terminal-view { position: relative; max-width: none; height: 100%; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }')
     expect(appCss).toContain(".terminal-frame[data-display-mode='fit'] { overflow: hidden; }")
     expect(appCss).toContain(".terminal-frame[data-display-mode='fit'] .xterm-viewport { overflow-y: hidden !important; }")
+    expect(appCss).toContain('.term-counts { grid-row: 2; grid-column: 1 / -1; }')
+    expect(appCss).toContain('.term-last-seen { grid-row: 3; grid-column: 1 / -1; }')
   })
 })

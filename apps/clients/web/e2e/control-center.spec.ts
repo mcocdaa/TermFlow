@@ -52,6 +52,13 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
   await page.getByRole('button', { name: '关闭' }).click()
   await page.getByRole('link', { name: '控制中心' }).first().click()
   if (testInfo.project.name === 'desktop') await termRow.hover()
+  if (testInfo.project.name === 'mobile-portrait') {
+    const countsBox = await termRow.locator('.term-counts').boundingBox()
+    const lastSeenBox = await termRow.locator('.term-last-seen').boundingBox()
+    expect(countsBox).not.toBeNull()
+    expect(lastSeenBox).not.toBeNull()
+    expect(countsBox!.y + countsBox!.height).toBeLessThanOrEqual(lastSeenBox!.y)
+  }
   if (screenshotDir) await page.screenshot({ path: `${screenshotDir}/dashboard-${testInfo.project.name}.png` })
 
   await page.getByRole('radio', { name: '云端钴蓝' }).click()
