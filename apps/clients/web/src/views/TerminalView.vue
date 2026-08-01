@@ -3,18 +3,18 @@
     <h1 id="terminal-title" class="sr-only">远程终端</h1>
     <TerminalTitlebar :title="termName" :computer-name="computerName" :status="connectionStatus" v-model:display-mode="displayMode" @rename="updateTermName">
       <PaneFocusMenu :panes="panes" @focus="terminalCanvas?.focusPane($event)" @reset="terminalCanvas?.resetViewport()" />
-      <TmuxActionMenu :bindings="bindings" :active-pane-id="activePane?.pane_id ?? null" @action="runAction" @request-close="requestClose" />
+      <TmuxActionMenu :bindings="bindings" :active-pane-id="activePane?.pane_id ?? null" :disabled="connectionStatus !== 'connected'" @action="runAction" @request-close="requestClose" />
     </TerminalTitlebar>
-    <TerminalCanvas ref="terminalCanvas" :term-id="termId" :display-mode="displayMode" :transform-input="transformInput" @bindings="bindings = $event" @reset-input="modifierResetKey = $event" @status="connectionStatus = $event" />
+    <TerminalCanvas ref="terminalCanvas" :term-id="termId" :display-mode="displayMode" :transform-input="transformInput" @bindings="bindings = $event" @reset-input="modifierResetKey = $event" @status="connectionStatus = $event" @authentication-required="handleAuthenticationRequired" @action-result="handleActionResult" />
     <p v-if="renameError" class="terminal-error" role="alert">{{ renameError }}</p>
-    <MobileKeyBar :prefix="bindings.prefix" :controller="modifiers" :reset-key="modifierResetKey" @input="terminalCanvas?.sendInput($event)" />
+    <MobileKeyBar :prefix="bindings.prefix" :controller="modifiers" :reset-key="modifierResetKey" :disabled="connectionStatus !== 'connected'" @input="terminalCanvas?.sendInput($event)" />
     <ClosePaneDialog v-if="closePane" :pane-id="closePane.pane_id" :pane-name="closePane.title || closePane.pane_id" :return-focus="closeReturnFocus" @cancel="closePaneId = null" @confirm="confirmClose" />
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import TerminalCanvas from '../components/terminal/TerminalCanvas.vue'
 import TerminalTitlebar from '../components/terminal/TerminalTitlebar.vue'
 import type { DisplayMode } from '../terminal/viewport'
@@ -31,7 +31,10 @@ import type { TerminalActionId } from '../api/types'
 import type { TerminalConnectionStatus } from '../terminal/socket'
 import { ApiError } from '../api/http'
 import { createOrientationViewState, orientationFor } from '../terminal/orientation'
+import { sessionState } from '../stores/session'
+import type { TerminalActionResultControl } from '../terminal/protocol'
 const route = useRoute()
+const router = useRouter()
 const termId = computed(() => String(route.params.termId))
 const orientation = ref(orientationFor(window.innerWidth, window.innerHeight))
 const orientationViews = reactive(createOrientationViewState())
@@ -50,6 +53,7 @@ const modifiers = new MobileModifierController()
 const modifierResetKey = ref(0)
 const closePaneId = ref<string | null>(null)
 const closeReturnFocus = ref<HTMLElement | null>(null)
+let topologyGeneration = 0
 const activePane = computed(() => panes.value.find((pane) => pane.active) ?? panes.value[0])
 const closePane = computed(() => panes.value.find((pane) => pane.pane_id === closePaneId.value) ?? (closePaneId.value ? { pane_id: closePaneId.value, title: closePaneId.value } as PaneTopologyDto : null))
 const transformInput = (value: string | Uint8Array) => typeof value === 'string' ? modifiers.consume(value) : value
@@ -76,15 +80,25 @@ function onViewportResize() {
   orientation.value = nextOrientation
   void nextTick(restoreOrientationView)
 }
+function handleAuthenticationRequired() {
+  sessionState.authenticated = false
+  sessionState.expiresAt = null
+  void router.replace({ path: '/login', query: { redirect: route.fullPath } })
+}
+async function refreshTopology() {
+  const generation = ++topologyGeneration
+  try {
+    const response = await getTermTopology(termId.value, controller.signal)
+    if (generation !== topologyGeneration) return
+    termName.value = response.topology.session_name
+    panes.value = response.topology.windows.flatMap((window) => window.panes)
+  } catch { /* terminal channel owns the visible connection error */ }
+}
+function handleActionResult(_result: TerminalActionResultControl) { void refreshTopology() }
 const controller = new AbortController()
 onMounted(async () => {
   window.addEventListener('resize', onViewportResize)
-  const [topologyResult, dashboardResult] = await Promise.allSettled([getTermTopology(termId.value, controller.signal), getDashboard(controller.signal)])
-  if (topologyResult.status === 'fulfilled') {
-    const response = topologyResult.value
-    termName.value = response.topology.session_name
-    panes.value = response.topology.windows.flatMap((window) => window.panes)
-  }
+  const [, dashboardResult] = await Promise.allSettled([refreshTopology(), getDashboard(controller.signal)])
   if (dashboardResult.status === 'fulfilled') {
     const computer = dashboardResult.value.computers.find((candidate) => candidate.terms.some((term) => term.instance_id === termId.value))
     const term = computer?.terms.find((candidate) => candidate.instance_id === termId.value)

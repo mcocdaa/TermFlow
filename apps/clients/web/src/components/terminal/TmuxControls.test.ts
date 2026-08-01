@@ -39,6 +39,12 @@ describe('tmux controls', () => {
     expect(wrapper.emitted('action')).toBeUndefined()
   })
 
+  it('disables server actions while the terminal stream is not ready', async () => {
+    const wrapper = mount(TmuxActionMenu, { props: { bindings, activePaneId: '%3', disabled: true } })
+    expect(wrapper.get('[data-action="toggle-tmux-menu"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-action="toggle-mobile-drawer"]').attributes('disabled')).toBeDefined()
+  })
+
   it('closes the mobile action drawer with a downward swipe and restores its trigger focus', async () => {
     const wrapper = mount(TmuxActionMenu, { attachTo: document.body, props: { bindings, activePaneId: '%3' } })
     const trigger = wrapper.get('[data-action="toggle-mobile-drawer"]')

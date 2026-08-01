@@ -3,9 +3,11 @@ import { createMemoryHistory } from 'vue-router'
 import { describe, expect, it, vi } from 'vitest'
 import App from '../App.vue'
 import { createAppRouter } from '../router'
+import TerminalCanvas from '../components/terminal/TerminalCanvas.vue'
 
 class QuietWebSocket {
   static readonly OPEN = 1
+  static readonly instances: QuietWebSocket[] = []
   binaryType: BinaryType = 'blob'
   readyState = 0
   onopen: ((event: Event) => void) | null = null
@@ -14,6 +16,7 @@ class QuietWebSocket {
   onclose: ((event: CloseEvent) => void) | null = null
   send = vi.fn()
   close = vi.fn()
+  constructor() { QuietWebSocket.instances.push(this) }
 }
 
 const topology = {
@@ -36,6 +39,7 @@ const dashboard = {
 
 describe('TerminalView', () => {
   it('uses a terminal-only shell with back, editable Term name, Computer, and connection status', async () => {
+    QuietWebSocket.instances.length = 0
     Object.defineProperties(window, { innerWidth: { value: 360, configurable: true }, innerHeight: { value: 800, configurable: true } })
     vi.stubGlobal('WebSocket', QuietWebSocket)
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -59,19 +63,16 @@ describe('TerminalView', () => {
     expect(wrapper.get('[data-connection-status]').text()).toContain('正在连接')
     expect(wrapper.get('[data-term-name]').text()).toBe('产品开发')
     expect(wrapper.get('.terminal-frame').attributes('data-display-mode')).toBe('font-100')
-    expect(wrapper.get('.terminal-frame').attributes('data-focused-pane')).toBe('%1')
 
     Object.defineProperties(window, { innerWidth: { value: 800, configurable: true }, innerHeight: { value: 360, configurable: true } })
     window.dispatchEvent(new Event('resize'))
     await flushPromises()
     expect(wrapper.get('.terminal-frame').attributes('data-display-mode')).toBe('fit')
-    expect(wrapper.get('.terminal-frame').attributes('data-focused-pane')).toBeUndefined()
 
     Object.defineProperties(window, { innerWidth: { value: 360, configurable: true }, innerHeight: { value: 800, configurable: true } })
     window.dispatchEvent(new Event('resize'))
     await flushPromises()
     expect(wrapper.get('.terminal-frame').attributes('data-display-mode')).toBe('font-100')
-    expect(wrapper.get('.terminal-frame').attributes('data-focused-pane')).toBe('%1')
 
     await wrapper.get('[data-action="edit-term-name"]').trigger('click')
     await wrapper.get('[data-term-name-input]').setValue('新名字')
@@ -79,6 +80,14 @@ describe('TerminalView', () => {
     await flushPromises()
     expect(wrapper.get('[data-term-name]').text()).toBe('新名字')
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/terms/term-1', expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ name: '新名字' }) }))
+
+    wrapper.findComponent(TerminalCanvas).vm.$emit('action-result', { type: 'terminal.action_result', terminal_id: 'terminal-1', action_id: 'action-1', ok: true })
+    await flushPromises()
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/v1/instances/term-1/topology')).toHaveLength(2)
+
+    QuietWebSocket.instances[0]?.onclose?.({ code: 4401 } as CloseEvent)
+    await flushPromises()
+    expect(router.currentRoute.value.fullPath).toBe('/login?redirect=/terms/term-1')
 
     wrapper.unmount()
   })

@@ -10,10 +10,12 @@
   >
     <button
       v-for="theme in themes"
+      ref="radioButtons"
       :key="theme.id"
       class="theme-option"
       type="button"
       role="radio"
+      :aria-label="theme.label"
       :aria-checked="activeTheme === theme.id"
       :tabindex="activeTheme === theme.id ? 0 : -1"
       @click="choose(theme.id)"
@@ -25,6 +27,7 @@
 </template>
 
 <script setup lang="ts">
+import { nextTick, ref } from 'vue'
 import type { ThemeId } from '@termflow/design-tokens'
 import { activeTheme, selectTheme } from '../../stores/theme'
 
@@ -33,13 +36,17 @@ const themes: ReadonlyArray<{ id: ThemeId; label: string }> = [
   { id: 'cloud-cobalt', label: '云端钴蓝' },
   { id: 'midnight-indigo', label: '午夜靛蓝' },
 ]
+const radioButtons = ref<HTMLButtonElement[]>([])
 
 function choose(id: ThemeId) {
   selectTheme(id)
 }
 
-function move(offset: number) {
+async function move(offset: number) {
   const current = themes.findIndex((theme) => theme.id === activeTheme.value)
-  choose(themes[(current + offset + themes.length) % themes.length].id)
+  const next = (current + offset + themes.length) % themes.length
+  choose(themes[next].id)
+  await nextTick()
+  radioButtons.value[next]?.focus()
 }
 </script>

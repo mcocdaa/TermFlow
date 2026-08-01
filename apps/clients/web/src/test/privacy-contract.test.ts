@@ -24,11 +24,12 @@ describe('privacy contracts', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const callbacks: TerminalSocketCallbacks = {
-      onStatus: vi.fn(), onReady: vi.fn(), onOutput: (bytes) => received.push(new TextDecoder().decode(bytes)), onSize: vi.fn(), onBindings: vi.fn(), onError: vi.fn(), onClosed: vi.fn(), onReset: vi.fn(), onActionResult: vi.fn(),
+      onStatus: vi.fn(), onReady: vi.fn(), onOutput: (bytes) => received.push(new TextDecoder().decode(bytes)), onSize: vi.fn(), onBindings: vi.fn(), onError: vi.fn(), onClosed: vi.fn(), onReset: vi.fn(), onActionResult: vi.fn(), onAuthenticationRequired: vi.fn(),
     }
     const fakeSocket = { binaryType: '', readyState: 1, send: vi.fn(), close: vi.fn(), onmessage: null as ((event: MessageEvent) => void) | null, onopen: null, onclose: null, onerror: null }
     const socket = new TerminalSocket('term-privacy', callbacks, { createWebSocket: () => fakeSocket as unknown as WebSocket })
     socket.connect()
+    fakeSocket.onmessage?.({ data: JSON.stringify({ type: 'terminal.ready', terminal_id: 'terminal-privacy', stream_id: 'stream-1', rows: 24, cols: 80 }) } as MessageEvent)
     fakeSocket.onmessage?.({ data: new TextEncoder().encode(outputSample) } as MessageEvent)
     expect(received).toEqual([outputSample])
     expect(JSON.stringify([...Array(localStorage.length)].map((_, index) => localStorage.getItem(localStorage.key(index)!)))).not.toContain(outputSample)
