@@ -32,7 +32,7 @@ import type { TerminalConnectionStatus } from '../terminal/socket'
 import { ApiError } from '../api/http'
 import { createOrientationViewState, orientationFor } from '../terminal/orientation'
 import { sessionState } from '../stores/session'
-import type { TerminalActionResultControl } from '../terminal/protocol'
+import type { TerminalActionResultFrame as TerminalActionResultControl } from '@termflow/client-contracts'
 const route = useRoute()
 const router = useRouter()
 const termId = computed(() => String(route.params.termId))

@@ -59,3 +59,24 @@ def test_registry_packages_are_pinned_with_integrity() -> None:
         if not metadata.get("resolved") or not metadata.get("integrity")
     ]
     assert missing == []
+
+
+def test_client_core_has_no_platform_runtime_dependencies() -> None:
+    source = "\n".join(
+        path.read_text()
+        for path in (ROOT / "packages/client-core/src").rglob("*.ts")
+        if not path.name.endswith(".test.ts")
+    )
+    for forbidden in (
+        "from 'vue'",
+        'from "vue"',
+        "window.",
+        "document.",
+        "localStorage",
+        "new WebSocket",
+        "@tauri",
+        "fetch(",
+        "crypto.",
+        "setTimeout(",
+    ):
+        assert forbidden not in source

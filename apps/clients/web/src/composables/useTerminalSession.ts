@@ -3,7 +3,7 @@ import type { BindingSnapshotDto } from '../api/types'
 import type { TerminalActionId } from '../api/types'
 import type { TerminalAdapter, TerminalAdapterFactory } from '../terminal/terminalAdapter'
 import { createXtermAdapter } from '../terminal/terminalAdapter'
-import type { TerminalActionResultControl } from '../terminal/protocol'
+import type { TerminalActionResultFrame as TerminalActionResultControl } from '@termflow/client-contracts'
 import type { TerminalConnectionStatus, TerminalSocketCallbacks, TerminalSocketLike } from '../terminal/socket'
 import { createTerminalSocket } from '../terminal/socket'
 

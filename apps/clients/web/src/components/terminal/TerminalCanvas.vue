@@ -19,7 +19,7 @@ import { createPointerViewport, type PointerViewportSnapshot } from '../../compo
 import { activeTheme } from '../../stores/theme'
 
 const props = withDefaults(defineProps<{ termId: string; displayMode?: DisplayMode; selectionActive?: boolean; mouseReportingActive?: boolean; transformInput?: (value: string | Uint8Array) => string | Uint8Array; createSocket?: TerminalSocketFactory; createAdapter?: TerminalAdapterFactory }>(), { displayMode: 'font-100', selectionActive: false, mouseReportingActive: false })
-const emit = defineEmits<{ bindings: [value: { prefix: string; prefix2?: string | null; bindings: Array<{ action: import('../../api/types').TerminalActionId; key: string | null; tooltip: string }> }]; 'reset-input': [key: number]; status: [value: import('../../terminal/socket').TerminalConnectionStatus]; 'authentication-required': []; 'action-result': [value: import('../../terminal/protocol').TerminalActionResultControl] }>()
+const emit = defineEmits<{ bindings: [value: { prefix: string; prefix2?: string | null; bindings: Array<{ action: import('../../api/types').TerminalActionId; key: string | null; tooltip: string }> }]; 'reset-input': [key: number]; status: [value: import('../../terminal/socket').TerminalConnectionStatus]; 'authentication-required': []; 'action-result': [value: import('@termflow/client-contracts').TerminalActionResultFrame] }>()
 const host = ref<HTMLElement | null>(null)
 const frameElement = ref<HTMLElement | null>(null)
 const frame = ref({ width: 1, height: 1 })
