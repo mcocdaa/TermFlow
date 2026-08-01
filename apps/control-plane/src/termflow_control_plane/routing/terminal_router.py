@@ -321,13 +321,12 @@ class TerminalRouter:
     def abandon(self, terminal: BrowserTerminal) -> None:
         """Detach on ASGI cancellation without starting database cleanup work."""
 
-        already_requested = terminal.close_requested
         terminal.close_requested = True
         self._record_input_total(terminal)
         self._record_unresolved(terminal)
         was_current = self._hub.abandon(terminal)
         close_sent = terminal.remote_closed or not was_current
-        if not already_requested and was_current and not terminal.remote_closed:
+        if was_current and not terminal.remote_closed:
             payload = TerminalClosePayload(
                 terminal_id=terminal.terminal_id,
                 reason="client_closed",

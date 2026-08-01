@@ -20,6 +20,7 @@ from termflow_protocol import (
 @dataclass
 class FakeTerminalAudit:
     records: list[dict[str, object]] = field(default_factory=list)
+    fail_flush: bool = False
 
     def record_nowait(
         self,
@@ -42,6 +43,8 @@ class FakeTerminalAudit:
         )
 
     async def flush(self) -> None:
+        if self.fail_flush:
+            raise RuntimeError("audit persistence failed")
         return None
 
 
@@ -158,3 +161,20 @@ async def test_abandon_synchronously_preserves_aggregate_and_unknown_outcomes() 
     assert by_operation["terminal.action"]["result"] == "unknown"
     assert by_operation["terminal.input"]["input_bytes"] == len(b"secret bytes")
     assert by_operation["terminal.close"]["result"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_abandon_still_sends_teardown_when_close_audit_flush_fails() -> None:
+    router, connection, audit = await _subject()
+    terminal = await router.open(connection.instance_id, session_key=None)
+    await connection.outbound.get()
+    audit.fail_flush = True
+
+    with pytest.raises(RuntimeError, match="audit persistence failed"):
+        await router.request_close(terminal, "client_closed")
+    assert connection.outbound.empty()
+
+    router.abandon(terminal)
+
+    assert (await connection.outbound.get()).type is MessageType.TERMINAL_CLOSE
+    assert not connection.replaced.is_set()

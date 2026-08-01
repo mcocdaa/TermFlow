@@ -116,6 +116,8 @@ class BridgeTransport:
         return self._instance
 
     def enqueue_nowait(self, message: WireMessage) -> bool:
+        if message.type is MessageType.TERMINAL_CLOSED:
+            self._discard_queued_terminal_closed()
         queued = self._outbound.qsize()
         if message.type is MessageType.TERMINAL_CLOSED:
             limit = self._normal_queue_size + self._CONTROL_RESERVE + 1
@@ -130,6 +132,17 @@ class BridgeTransport:
         except asyncio.QueueFull:
             return False
         return True
+
+    def _discard_queued_terminal_closed(self) -> None:
+        """Keep only the latest one-owner terminal teardown under stalled I/O."""
+
+        retained: list[WireMessage] = []
+        while not self._outbound.empty():
+            queued = self._outbound.get_nowait()
+            if queued.type is not MessageType.TERMINAL_CLOSED:
+                retained.append(queued)
+        for queued in retained:
+            self._outbound.put_nowait(queued)
 
     def set_connection_listener(self, listener: ConnectionListener) -> None:
         self._connection_listener = listener

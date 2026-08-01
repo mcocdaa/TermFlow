@@ -253,5 +253,17 @@ async def test_terminal_teardown_has_reserved_transport_capacity(tmp_path) -> No
     assert transport.enqueue_nowait(output)
     assert not transport.enqueue_nowait(output)
     assert transport.enqueue_nowait(closed)
+    replacement_id = uuid4()
+    replacement = WireMessage(
+        type=MessageType.TERMINAL_CLOSED,
+        instance_id=instance.instance_id,
+        payload=TerminalClosedPayload(
+            terminal_id=replacement_id, reason="internal_error"
+        ).model_dump(mode="json"),
+    )
+    assert transport.enqueue_nowait(replacement)
     assert (await transport._outbound.get()).type is MessageType.TERMINAL_OUTPUT
-    assert (await transport._outbound.get()).type is MessageType.TERMINAL_CLOSED
+    latest_close = await transport._outbound.get()
+    assert latest_close.type is MessageType.TERMINAL_CLOSED
+    assert latest_close.payload["terminal_id"] == str(replacement_id)
+    assert transport._outbound.empty()
