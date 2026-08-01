@@ -53,10 +53,13 @@ async def enroll_installation(
         )
     raw_installation_token = issue_token()
     installation = await repositories.installations.create(
-        hash_token(raw_installation_token)
+        hash_token(raw_installation_token),
+        hostname=request.hostname,
+        display_name=request.hostname,
+        platform=request.platform,
+        client_version=request.client_version,
     )
     return InstallationEnrollResponse(
         installation_id=installation.id,
         installation_token=raw_installation_token,
     )
-

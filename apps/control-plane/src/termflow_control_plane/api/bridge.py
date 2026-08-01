@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from starlette.websockets import WebSocketDisconnect
 from termflow_protocol import (
     BridgeHeartbeatPayload,
+    BridgeHelloPayload,
     CommandResultPayload,
     InstancePresencePayload,
     MessageType,
@@ -47,6 +48,7 @@ async def _receive_messages(
     websocket: WebSocket,
     connection: LiveConnection,
     event_hub: EventHub,
+    repositories: RepositoryBundle,
 ) -> None:
     while True:
         message = WireMessage.model_validate_json(await websocket.receive_text())
@@ -55,15 +57,27 @@ async def _receive_messages(
             return
 
         payload = parse_payload(message.type, message.payload)
-        if message.type is MessageType.BRIDGE_HEARTBEAT:
+        if message.type is MessageType.BRIDGE_HELLO:
+            cast(BridgeHelloPayload, payload)
+            connection.last_heartbeat = datetime.now(UTC)
+            await repositories.instances.touch(
+                connection.instance_id,
+                now=connection.last_heartbeat,
+            )
+        elif message.type is MessageType.BRIDGE_HEARTBEAT:
             cast(BridgeHeartbeatPayload, payload)
             connection.last_heartbeat = datetime.now(UTC)
+            await repositories.instances.touch(
+                connection.instance_id,
+                now=connection.last_heartbeat,
+            )
         elif message.type in {MessageType.TOPOLOGY_SNAPSHOT, MessageType.TOPOLOGY_CHANGED}:
             topology_payload = cast(
                 TopologySnapshotPayload | TopologyChangedPayload,
                 payload,
             )
             connection.topology = topology_payload.topology
+            connection.topology_ready.set()
         elif message.type is MessageType.COMMAND_RESULT:
             result = cast(CommandResultPayload, payload)
             future = connection.pending.pop(result.command_id, None)
@@ -119,7 +133,7 @@ async def connect_bridge(websocket: WebSocket) -> None:
     await event_hub.publish(_presence_message(connection, "online"))
     tasks = {
         asyncio.create_task(_send_messages(websocket, connection)),
-        asyncio.create_task(_receive_messages(websocket, connection, event_hub)),
+        asyncio.create_task(_receive_messages(websocket, connection, event_hub, repositories)),
         asyncio.create_task(_close_when_replaced(websocket, connection)),
     }
     try:

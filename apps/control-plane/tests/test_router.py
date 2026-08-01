@@ -109,3 +109,59 @@ async def test_offline_instance_is_rejected_without_queueing(routing_subject) ->
     assert caught.value.code == "instance_offline"
     assert audit.records[-1]["input_bytes"] == len(b"never stored")
     assert "text" not in audit.records[-1]
+
+
+@pytest.mark.asyncio
+async def test_input_waits_for_an_inflight_initial_topology() -> None:
+    registry = LiveInstanceRegistry(queue_size=2)
+    connection = await registry.register(uuid4())
+    audit = FakeAudit()
+    router = CommandRouter(
+        registry=registry,
+        audit=audit,
+        settings=Settings(
+            admin_token="admin-token-that-is-long-enough-for-tests",
+            command_timeout_seconds=0.1,
+        ),
+    )
+
+    task = asyncio.create_task(
+        router.send_input(connection.instance_id, "%1", "x", False, uuid4())
+    )
+    await asyncio.sleep(0)
+    assert not task.done()
+
+    connection.topology = TopologySnapshot(
+        session_id="$0",
+        session_name="main",
+        revision=1,
+        windows=[
+            WindowSnapshot(
+                window_id="@0",
+                index=0,
+                name="main",
+                active=True,
+                panes=[
+                    PaneSnapshot(
+                        pane_id="%1",
+                        window_id="@0",
+                        index=0,
+                        title="shell",
+                        width=80,
+                        height=24,
+                        active=True,
+                        dead=False,
+                    )
+                ],
+            )
+        ],
+    )
+    connection.topology_ready.set()
+    message = await connection.outbound.get()
+    result = CommandResultPayload(
+        command_id=UUID(str(message.payload["command_id"])),
+        idempotency_key=UUID(str(message.payload["idempotency_key"])),
+        ok=True,
+    )
+    router.resolve_result(connection, result)
+    assert (await task).ok is True

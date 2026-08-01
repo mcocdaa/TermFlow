@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .models import AuditEvent, EnrollmentToken, Installation, Instance
@@ -29,30 +29,48 @@ class EnrollmentRepository:
     async def consume(self, token_hash: str, *, now: datetime | None = None) -> UUID | None:
         observed_at = now or datetime.now(UTC)
         async with self._sessions() as session:
-            enrollment = await session.scalar(
-                select(EnrollmentToken).where(
+            enrollment_id = await session.scalar(
+                update(EnrollmentToken)
+                .where(
                     EnrollmentToken.token_hash == token_hash,
                     EnrollmentToken.used_at.is_(None),
                     EnrollmentToken.expires_at > observed_at,
                 )
+                .values(used_at=observed_at)
+                .returning(EnrollmentToken.id)
             )
-            if enrollment is None:
-                return None
-            enrollment.used_at = observed_at
             await session.commit()
-            return enrollment.id
+            return enrollment_id
 
 
 class InstallationRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
-    async def create(self, token_hash: str) -> Installation:
+    async def create(
+        self,
+        token_hash: str,
+        *,
+        hostname: str | None = None,
+        display_name: str | None = None,
+        platform: str | None = None,
+        client_version: str | None = None,
+    ) -> Installation:
         async with self._sessions() as session:
-            installation = Installation(token_hash=token_hash)
+            installation = Installation(
+                token_hash=token_hash,
+                hostname=hostname,
+                display_name=display_name or hostname or "Computer",
+                platform=platform,
+                client_version=client_version,
+            )
             session.add(installation)
             await session.commit()
             return installation
+
+    async def get(self, installation_id: UUID) -> Installation | None:
+        async with self._sessions() as session:
+            return await session.get(Installation, installation_id)
 
     async def get_by_token_hash(self, token_hash: str) -> Installation | None:
         async with self._sessions() as session:
@@ -76,6 +94,7 @@ class InstanceRepository:
         name: str,
         token_hash: str,
     ) -> Instance:
+        observed_at = datetime.now(UTC)
         async with self._sessions() as session:
             instance = await session.get(Instance, instance_id)
             if instance is None:
@@ -84,6 +103,7 @@ class InstanceRepository:
                     installation_id=installation_id,
                     name=name,
                     token_hash=token_hash,
+                    last_seen_at=observed_at,
                 )
                 session.add(instance)
             elif instance.installation_id != installation_id:
@@ -92,8 +112,28 @@ class InstanceRepository:
                 instance.name = name
                 instance.token_hash = token_hash
                 instance.revoked_at = None
+                instance.last_seen_at = observed_at
+            await session.execute(
+                update(Installation)
+                .where(Installation.id == installation_id)
+                .values(last_seen_at=observed_at)
+            )
             await session.commit()
             return instance
+
+    async def touch(self, instance_id: UUID, *, now: datetime | None = None) -> None:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            instance = await session.get(Instance, instance_id)
+            if instance is None:
+                return
+            instance.last_seen_at = observed_at
+            await session.execute(
+                update(Installation)
+                .where(Installation.id == instance.installation_id)
+                .values(last_seen_at=observed_at)
+            )
+            await session.commit()
 
     async def get(self, instance_id: UUID) -> Instance | None:
         async with self._sessions() as session:

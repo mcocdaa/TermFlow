@@ -1,9 +1,11 @@
+import asyncio
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 from termflow_control_plane.auth.tokens import hash_token
 from termflow_control_plane.persistence.database import Database
 from termflow_control_plane.persistence.models import AuditEvent
@@ -31,6 +33,24 @@ async def test_enrollment_is_consumed_once(repositories: RepositoryBundle) -> No
     )
     assert await repositories.enrollments.consume(hash_token(raw)) == enrollment.id
     assert await repositories.enrollments.consume(hash_token(raw)) is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_enrollment_consumption_has_exactly_one_winner(
+    repositories: RepositoryBundle,
+) -> None:
+    raw = "concurrent-" + "z" * 43
+    enrollment = await repositories.enrollments.create(
+        hash_token(raw), datetime.now(UTC) + timedelta(minutes=10)
+    )
+
+    results = await asyncio.gather(
+        repositories.enrollments.consume(hash_token(raw)),
+        repositories.enrollments.consume(hash_token(raw)),
+    )
+
+    assert results.count(enrollment.id) == 1
+    assert results.count(None) == 1
 
 
 @pytest.mark.asyncio
@@ -70,6 +90,77 @@ async def test_instance_registration_rotates_only_for_owner(
             "stolen",
             hash_token("bad"),
         )
+
+
+@pytest.mark.asyncio
+async def test_installation_metadata_and_last_seen_are_persisted(
+    repositories: RepositoryBundle,
+) -> None:
+    installation = await repositories.installations.create(
+        hash_token("computer"),
+        hostname="devbox",
+        display_name="devbox",
+        platform="Linux",
+        client_version="0.1.0",
+    )
+    assert installation.hostname == "devbox"
+    assert installation.display_name == "devbox"
+    assert installation.last_seen_at is None
+
+    instance = await repositories.instances.register_or_rotate(
+        uuid4(),
+        installation.id,
+        "alpha",
+        hash_token("instance"),
+    )
+    refreshed = await repositories.installations.get(installation.id)
+    assert instance.last_seen_at is not None
+    assert refreshed is not None
+    assert refreshed.last_seen_at is not None
+
+
+@pytest.mark.asyncio
+async def test_initialize_idempotently_upgrades_a_v1_sqlite_database(tmp_path) -> None:
+    path = tmp_path / "v1.db"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE installations (
+              id CHAR(32) PRIMARY KEY,
+              token_hash VARCHAR(64) NOT NULL,
+              created_at DATETIME NOT NULL,
+              revoked_at DATETIME
+            );
+            CREATE TABLE instances (
+              id CHAR(32) PRIMARY KEY,
+              installation_id CHAR(32) NOT NULL,
+              name VARCHAR(128) NOT NULL,
+              token_hash VARCHAR(64) NOT NULL,
+              created_at DATETIME NOT NULL,
+              revoked_at DATETIME
+            );
+            """
+        )
+
+    database = Database(f"sqlite+aiosqlite:///{path}")
+    await database.initialize()
+    await database.initialize()
+    try:
+        async with database.engine.connect() as connection:
+            installation_rows = await connection.execute(text("PRAGMA table_info(installations)"))
+            instance_rows = await connection.execute(text("PRAGMA table_info(instances)"))
+        installation_columns = {row[1] for row in installation_rows}
+        instance_columns = {row[1] for row in instance_rows}
+        assert {
+            "hostname",
+            "display_name",
+            "platform",
+            "client_version",
+            "last_seen_at",
+        } <= installation_columns
+        assert "last_seen_at" in instance_columns
+    finally:
+        await database.dispose()
 
 
 def test_audit_schema_has_metadata_only_columns() -> None:

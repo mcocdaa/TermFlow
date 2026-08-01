@@ -92,6 +92,12 @@ class CommandRouter:
             ) from exc
 
         if connection.topology is None:
+            try:
+                async with asyncio.timeout(self._timeout):
+                    await connection.topology_ready.wait()
+            except TimeoutError:
+                pass
+        if connection.topology is None:
             await self._record(
                 instance_id,
                 pane_id,

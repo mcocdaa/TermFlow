@@ -24,6 +24,7 @@ class LiveConnection:
     outbound: asyncio.Queue[WireMessage]
     connection_id: UUID = field(default_factory=uuid4)
     topology: TopologySnapshot | None = None
+    topology_ready: asyncio.Event = field(default_factory=asyncio.Event)
     last_heartbeat: datetime = field(default_factory=lambda: datetime.now(UTC))
     pending: dict[UUID, asyncio.Future[CommandResultPayload]] = field(default_factory=dict)
     replaced: asyncio.Event = field(default_factory=asyncio.Event)
