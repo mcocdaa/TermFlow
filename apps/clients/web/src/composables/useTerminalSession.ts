@@ -64,6 +64,7 @@ export function useTerminalSession(termId: string, host: Ref<HTMLElement | null>
     focus: () => adapter?.focus(),
     refreshTheme: () => adapter?.refreshTheme(),
     measureCell: () => adapter?.measureCell() ?? null,
+    setVisualScale: (scale: number) => adapter?.setVisualScale(scale) ?? null,
     canClientPan: () => adapter?.canClientPan() ?? false,
   }
 }

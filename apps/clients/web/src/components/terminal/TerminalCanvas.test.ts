@@ -6,6 +6,37 @@ import type { TerminalAdapter, TerminalAdapterFactory } from '../../terminal/ter
 import { selectTheme } from '../../stores/theme'
 
 describe('TerminalCanvas', () => {
+  it('renders scaled modes through xterm geometry without scaling the mouse event surface', async () => {
+    let callbacks!: TerminalSocketCallbacks
+    const socket: TerminalSocketLike = { connect: vi.fn(), sendInput: vi.fn(), sendAction: vi.fn(), dispose: vi.fn() }
+    const adapter: TerminalAdapter = {
+      write: vi.fn(), resize: vi.fn(), reset: vi.fn(), focus: vi.fn(), refreshTheme: vi.fn(), setInputEnabled: vi.fn(),
+      measureCell: vi.fn(() => ({ width: 10, height: 20 })),
+      setVisualScale: vi.fn((scale: number) => ({ width: 10 * scale, height: 20 * scale })),
+      canClientPan: vi.fn(() => false), dispose: vi.fn(),
+    }
+    const createSocket = vi.fn((_id: string, nextCallbacks: TerminalSocketCallbacks) => { callbacks = nextCallbacks; return socket })
+    const createAdapter: TerminalAdapterFactory = vi.fn(() => adapter)
+    const wrapper = mount(TerminalCanvas, { props: { termId: 'term-scaled', displayMode: 'scale-50', createSocket, createAdapter } })
+
+    callbacks.onReady({ type: 'terminal.ready', terminal_id: 't1', stream_id: 's1', rows: 40, cols: 120 })
+    await flushPromises()
+
+    expect(adapter.setVisualScale).toHaveBeenLastCalledWith(0.5)
+    expect(wrapper.get('.terminal-grid').attributes('style')).toContain('width: 600px')
+    expect(wrapper.get('.terminal-grid').attributes('style')).toContain('height: 400px')
+    expect(wrapper.get('.terminal-grid').attributes('style')).toContain('translate(')
+    expect(wrapper.get('.terminal-grid').attributes('style')).not.toContain('scale(')
+    expect(socket.sendInput).not.toHaveBeenCalled()
+    expect(adapter.resize).not.toHaveBeenCalled()
+
+    await wrapper.setProps({ displayMode: 'scale-75' })
+    await flushPromises()
+    await wrapper.setProps({ displayMode: 'scale-50' })
+    await flushPromises()
+    expect(adapter.setVisualScale).toHaveBeenLastCalledWith(0.5)
+  })
+
   it('creates xterm only from terminal.ready, applies only server sizes, streams bytes, and disposes everything', async () => {
     let callbacks!: TerminalSocketCallbacks
     let input!: (value: string | Uint8Array) => void

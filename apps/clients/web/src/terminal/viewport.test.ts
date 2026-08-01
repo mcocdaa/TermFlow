@@ -9,7 +9,7 @@ describe('client-only terminal display presentation', () => {
     ['scale-50', 0.5],
     ['scale-75', 0.75],
     ['font-100', 1],
-  ] as Array<[DisplayMode, number]>)('maps %s to a CSS-only scale', (mode, scale) => {
+  ] as Array<[DisplayMode, number]>)('maps %s to an xterm visual scale', (mode, scale) => {
     expect(displayPresentation(mode, grid, { width: 1000, height: 600 }, metrics)).toEqual(expect.objectContaining({ scale, gridWidth: 1200, gridHeight: 800 }))
   })
 
