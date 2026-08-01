@@ -9,6 +9,8 @@ from uuid import UUID, uuid4
 
 from termflow_protocol import (
     CommandResultPayload,
+    MessageType,
+    TerminalInputPayload,
     TermRenameResultPayload,
     TopologySnapshot,
     WireMessage,
@@ -23,10 +25,40 @@ class ConnectionBackpressure(RuntimeError):
     pass
 
 
+def _queued_terminal_bytes(message: WireMessage) -> int:
+    if message.type is not MessageType.TERMINAL_INPUT:
+        return 0
+    return len(TerminalInputPayload.model_validate(message.payload).to_bytes())
+
+
+class BoundedWireQueue:
+    def __init__(self, *, max_messages: int, max_bytes: int) -> None:
+        self._queue: asyncio.Queue[tuple[WireMessage, int]] = asyncio.Queue(
+            maxsize=max_messages
+        )
+        self._max_bytes = max_bytes
+        self._queued_bytes = 0
+
+    def put_nowait(self, message: WireMessage) -> None:
+        byte_count = _queued_terminal_bytes(message)
+        if self._queued_bytes + byte_count > self._max_bytes:
+            raise asyncio.QueueFull
+        self._queue.put_nowait((message, byte_count))
+        self._queued_bytes += byte_count
+
+    async def get(self) -> WireMessage:
+        message, byte_count = await self._queue.get()
+        self._queued_bytes -= byte_count
+        return message
+
+    def empty(self) -> bool:
+        return self._queue.empty()
+
+
 @dataclass(eq=False, slots=True)
 class LiveConnection:
     instance_id: UUID
-    outbound: asyncio.Queue[WireMessage]
+    outbound: BoundedWireQueue
     connection_id: UUID = field(default_factory=uuid4)
     topology: TopologySnapshot | None = None
     topology_ready: asyncio.Event = field(default_factory=asyncio.Event)
@@ -39,15 +71,19 @@ class LiveConnection:
 
 
 class LiveInstanceRegistry:
-    def __init__(self, *, queue_size: int) -> None:
+    def __init__(self, *, queue_size: int, queue_max_bytes: int = 1024 * 1024) -> None:
         self._queue_size = queue_size
+        self._queue_max_bytes = queue_max_bytes
         self._connections: dict[UUID, LiveConnection] = {}
         self._lock = asyncio.Lock()
 
     async def register(self, instance_id: UUID) -> LiveConnection:
         connection = LiveConnection(
             instance_id=instance_id,
-            outbound=asyncio.Queue(maxsize=self._queue_size),
+            outbound=BoundedWireQueue(
+                max_messages=self._queue_size,
+                max_bytes=self._queue_max_bytes,
+            ),
         )
         async with self._lock:
             previous = self._connections.get(instance_id)
@@ -82,6 +118,18 @@ class LiveInstanceRegistry:
         except asyncio.QueueFull as exc:
             raise ConnectionBackpressure(str(instance_id)) from exc
         return connection
+
+    def enqueue_current_nowait(self, instance_id: UUID, message: WireMessage) -> bool:
+        """Best-effort cancellation cleanup; normal routing uses :meth:`enqueue`."""
+
+        connection = self._connections.get(instance_id)
+        if connection is None:
+            return False
+        try:
+            connection.outbound.put_nowait(message)
+        except asyncio.QueueFull:
+            return False
+        return True
 
     async def online_ids(self) -> set[UUID]:
         async with self._lock:

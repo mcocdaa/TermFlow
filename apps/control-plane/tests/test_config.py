@@ -19,6 +19,9 @@ def test_control_plane_defaults_are_single_process_friendly() -> None:
     assert settings.max_input_bytes == 16 * 1024
     assert settings.browser_session_ttl_seconds == 8 * 60 * 60
     assert settings.terminal_max_frame_bytes == 65_536
+    assert settings.terminal_input_rate_bytes_per_second == 256 * 1024
+    assert settings.terminal_queue_max_messages == 256
+    assert settings.terminal_queue_max_bytes == 1024 * 1024
     assert settings.allowed_web_origins == ("http://127.0.0.1:8000",)
 
 
@@ -32,6 +35,9 @@ def test_public_integration_environment_names_are_stable(monkeypatch, tmp_path) 
     )
     monkeypatch.setenv("TERMFLOW_BROWSER_SESSION_TTL_SECONDS", "1234")
     monkeypatch.setenv("TERMFLOW_TERMINAL_MAX_FRAME_BYTES", "4096")
+    monkeypatch.setenv("TERMFLOW_TERMINAL_INPUT_RATE_BYTES_PER_SECOND", "8192")
+    monkeypatch.setenv("TERMFLOW_TERMINAL_QUEUE_MAX_MESSAGES", "32")
+    monkeypatch.setenv("TERMFLOW_TERMINAL_QUEUE_MAX_BYTES", "262144")
 
     settings = Settings(_env_file=None)
 
@@ -43,3 +49,6 @@ def test_public_integration_environment_names_are_stable(monkeypatch, tmp_path) 
     )
     assert settings.browser_session_ttl_seconds == 1234
     assert settings.terminal_max_frame_bytes == 4096
+    assert settings.terminal_input_rate_bytes_per_second == 8192
+    assert settings.terminal_queue_max_messages == 32
+    assert settings.terminal_queue_max_bytes == 262144

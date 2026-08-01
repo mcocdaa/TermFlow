@@ -12,7 +12,7 @@ DEV_ORIGIN = "http://127.0.0.1:8000"
 
 def _login(client: TestClient, token: str = ADMIN_TOKEN, origin: str = DEV_ORIGIN):
     return client.post(
-        "/api/v1/session",
+        "/api/v1/admin/sessions",
         headers={"Origin": origin},
         json={"admin_token": token},
     )
@@ -29,7 +29,7 @@ def test_browser_login_status_logout_and_cookie_admin_access(client) -> None:
     assert "Path=/" in cookie
     assert "Secure" not in cookie
 
-    status = client.get("/api/v1/session")
+    status = client.get("/api/v1/admin/session")
     assert status.status_code == 200
     assert status.json()["authenticated"] is True
     enrollment = client.post(
@@ -38,17 +38,27 @@ def test_browser_login_status_logout_and_cookie_admin_access(client) -> None:
     )
     assert enrollment.status_code == 201
 
-    logged_out = client.delete("/api/v1/session", headers={"Origin": DEV_ORIGIN})
+    logged_out = client.delete("/api/v1/admin/session", headers={"Origin": DEV_ORIGIN})
     assert logged_out.status_code == 200
     assert logged_out.headers["cache-control"] == "no-store"
-    assert client.get("/api/v1/session").status_code == 401
+    assert client.get("/api/v1/admin/session").status_code == 401
+
+
+def test_admin_session_routes_are_the_only_canonical_openapi_paths(client) -> None:
+    paths = client.get("/openapi.json").json()["paths"]
+
+    assert "/api/v1/admin/sessions" in paths
+    assert set(paths["/api/v1/admin/sessions"]) == {"post"}
+    assert "/api/v1/admin/session" in paths
+    assert set(paths["/api/v1/admin/session"]) == {"get", "delete"}
+    assert "/api/v1/session" not in paths
 
 
 def test_browser_login_rejects_invalid_token_and_origin(client) -> None:
     wrong_token = _login(client, token="wrong")
     wrong_origin = _login(client, origin="https://evil.example")
     missing_origin = client.post(
-        "/api/v1/session",
+        "/api/v1/admin/sessions",
         json={"admin_token": ADMIN_TOKEN},
     )
     assert wrong_token.status_code == 401
@@ -101,7 +111,7 @@ def test_https_uses_secure_host_cookie(tmp_path) -> None:
         assert "__Host-termflow_session=" in cookie
         assert "Secure" in cookie
         assert "Domain=" not in cookie
-        assert client.get("/api/v1/session").status_code == 200
+        assert client.get("/api/v1/admin/session").status_code == 200
 
 
 def test_cookie_state_change_rejects_untrusted_origin(client) -> None:

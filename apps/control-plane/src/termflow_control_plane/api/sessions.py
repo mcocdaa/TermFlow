@@ -16,6 +16,7 @@ from termflow_control_plane.auth.sessions import (
     origin_allowed,
 )
 from termflow_control_plane.config import Settings
+from termflow_control_plane.connections.terminal_hub import TerminalHub
 from termflow_control_plane.errors import TermFlowError
 
 from .dependencies import get_browser_sessions, get_settings
@@ -31,12 +32,12 @@ def _no_store(response: Response) -> None:
     "/session",
     response_model=BrowserSessionResponse,
     status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
 )
 @router.post(
     "/admin/sessions",
     response_model=BrowserSessionResponse,
     status_code=status.HTTP_201_CREATED,
-    include_in_schema=False,
 )
 async def create_browser_session(
     request: BrowserSessionCreateRequest,
@@ -65,11 +66,14 @@ async def create_browser_session(
     return BrowserSessionResponse(expires_at=expires_at)
 
 
-@router.get("/session", response_model=BrowserSessionResponse)
+@router.get(
+    "/session",
+    response_model=BrowserSessionResponse,
+    include_in_schema=False,
+)
 @router.get(
     "/admin/session",
     response_model=BrowserSessionResponse,
-    include_in_schema=False,
 )
 async def get_browser_session(
     http_request: Request,
@@ -85,11 +89,14 @@ async def get_browser_session(
     return BrowserSessionResponse(expires_at=expires_at)
 
 
-@router.delete("/session", response_model=BrowserSessionDeleteResponse)
+@router.delete(
+    "/session",
+    response_model=BrowserSessionDeleteResponse,
+    include_in_schema=False,
+)
 @router.delete(
     "/admin/session",
     response_model=BrowserSessionDeleteResponse,
-    include_in_schema=False,
 )
 async def delete_browser_session(
     http_request: Request,
@@ -103,7 +110,12 @@ async def delete_browser_session(
     secret = http_request.cookies.get(policy.name)
     if sessions.authenticate(secret) is None:
         raise TermFlowError("unauthorized", 401, "Authentication is required.")
+    session_key = sessions.session_key(secret)
     sessions.invalidate(secret)
+    if session_key is not None:
+        terminal_hub = http_request.app.state.terminal_hub
+        assert isinstance(terminal_hub, TerminalHub)
+        await terminal_hub.terminate_session(session_key)
     response.delete_cookie(
         key=policy.name,
         path="/",

@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     browser_session_ttl_seconds: int = Field(default=8 * 60 * 60, ge=60)
     browser_session_capacity: int = Field(default=4096, ge=1)
     terminal_max_frame_bytes: int = Field(default=65_536, ge=1, le=65_536)
+    terminal_input_rate_bytes_per_second: int = Field(default=256 * 1024, ge=1)
+    terminal_queue_max_messages: int = Field(default=256, ge=1)
+    terminal_queue_max_bytes: int = Field(default=1024 * 1024, ge=1)
     heartbeat_interval_seconds: int = 15
     offline_after_seconds: int = 45
     command_timeout_seconds: float = 5.0

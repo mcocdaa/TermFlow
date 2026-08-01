@@ -91,7 +91,7 @@ def test_browser_cookie_requires_exact_origin_for_event_websocket(
 ) -> None:
     instance_id, _ = _provision_instance(client, admin_headers)
     login = client.post(
-        "/api/v1/session",
+        "/api/v1/admin/sessions",
         headers={"Origin": "http://127.0.0.1:8000"},
         json={"admin_token": "admin-token-that-is-long-enough-for-tests"},
     )

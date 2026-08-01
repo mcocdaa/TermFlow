@@ -75,6 +75,13 @@ class BrowserSessionStore:
             return False
         return self._sessions.pop(hash_token(secret), None) is not None
 
+    def session_key(self, secret: str | None) -> str | None:
+        """Return an authenticated digest suitable for in-memory ownership only."""
+
+        if self.authenticate(secret) is None or secret is None:
+            return None
+        return hash_token(secret)
+
     @property
     def live_count(self) -> int:
         self._prune(self._clock())
@@ -143,3 +150,16 @@ def websocket_admin_close_code(
         return None
     policy = browser_cookie_policy(settings)
     return None if store.authenticate(websocket.cookies.get(policy.name)) is not None else 4401
+
+
+def websocket_browser_session_key(
+    websocket: WebSocket,
+    settings: Settings,
+    store: BrowserSessionStore,
+) -> str | None:
+    """Identify cookie-authenticated owners without retaining the raw Cookie."""
+
+    if websocket.headers.get("origin") is None:
+        return None
+    policy = browser_cookie_policy(settings)
+    return store.session_key(websocket.cookies.get(policy.name))
