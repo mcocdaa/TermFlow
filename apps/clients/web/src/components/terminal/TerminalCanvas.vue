@@ -1,5 +1,5 @@
 <template>
-  <div ref="frameElement" class="terminal-frame" :data-status="status" :data-display-mode="displayMode" :data-focused-pane="pointer.state.focusedPaneId ?? undefined" :data-cell-width="cellMetrics?.width" :data-cell-height="cellMetrics?.height" @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerUp">
+  <div ref="frameElement" class="terminal-frame" :data-status="status" :data-display-mode="displayMode" :data-focused-pane="pointer.state.focusedPaneId ?? undefined" :data-cell-width="renderedCellMetrics?.width" :data-cell-height="renderedCellMetrics?.height" :data-visual-scale="appliedVisualScale" @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerUp">
     <div class="terminal-viewport-content" :style="contentStyle">
       <div class="terminal-grid" :style="gridStyle"><div ref="host" class="terminal-host" role="application" :aria-label="`Term ${termId} 终端`" /></div>
     </div>
@@ -10,7 +10,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
-import type { TerminalAdapterFactory } from '../../terminal/terminalAdapter'
+import type { TerminalAdapterFactory, TerminalCellMetrics } from '../../terminal/terminalAdapter'
 import type { PaneTopologyDto } from '../../api/types'
 import type { TerminalSocketFactory } from '../../composables/useTerminalSession'
 import { useTerminalSession } from '../../composables/useTerminalSession'
@@ -23,14 +23,17 @@ const emit = defineEmits<{ bindings: [value: { prefix: string; prefix2?: string 
 const host = ref<HTMLElement | null>(null)
 const frameElement = ref<HTMLElement | null>(null)
 const frame = ref({ width: 1, height: 1 })
-const cellMetrics = ref<{ width: number; height: number } | null>(null)
+const baselineCellMetrics = ref<TerminalCellMetrics | null>(null)
+const renderedCellMetrics = ref<TerminalCellMetrics | null>(null)
+const appliedVisualScale = ref(1)
 const session = useTerminalSession(props.termId, host, props.createSocket, props.createAdapter, props.transformInput)
 const { status, dimensions, bindings, terminalError, lastActionResult, resetKey, authenticationRequired } = session
-const presentation = computed(() => dimensions.value && cellMetrics.value ? displayPresentation(props.displayMode, dimensions.value, frame.value, { cellWidth: cellMetrics.value.width, cellHeight: cellMetrics.value.height }) : null)
+const presentation = computed(() => dimensions.value && baselineCellMetrics.value ? displayPresentation(props.displayMode, dimensions.value, frame.value, { cellWidth: baselineCellMetrics.value.width, cellHeight: baselineCellMetrics.value.height }) : null)
 const pointer = createPointerViewport({ viewport: frame.value, content: frame.value, canPan: () => !props.selectionActive && !props.mouseReportingActive && session.canClientPan() })
-const totalScale = computed(() => (presentation.value?.scale ?? 1) * pointer.state.scale)
-const contentStyle = computed(() => presentation.value ? { width: `${presentation.value.gridWidth * totalScale.value}px`, height: `${presentation.value.gridHeight * totalScale.value}px` } : {})
-const gridStyle = computed(() => presentation.value ? { width: `${presentation.value.gridWidth}px`, height: `${presentation.value.gridHeight}px`, transform: `translate(${pointer.state.panX}px, ${pointer.state.panY}px) scale(${totalScale.value})` } : {})
+const requestedVisualScale = computed(() => (presentation.value?.scale ?? 1) * pointer.state.scale)
+const renderedGrid = computed(() => dimensions.value && renderedCellMetrics.value ? { width: dimensions.value.cols * renderedCellMetrics.value.width, height: dimensions.value.rows * renderedCellMetrics.value.height } : null)
+const contentStyle = computed(() => renderedGrid.value ? { width: `${renderedGrid.value.width}px`, height: `${renderedGrid.value.height}px` } : {})
+const gridStyle = computed(() => renderedGrid.value ? { width: `${renderedGrid.value.width}px`, height: `${renderedGrid.value.height}px`, transform: `translate(${pointer.state.panX}px, ${pointer.state.panY}px)` } : {})
 let observer: ResizeObserver | null = null
 let pendingFocusPane: PaneTopologyDto | null = null
 onMounted(() => {
@@ -46,6 +49,27 @@ watchEffect(() => {
   if (!presentation.value) return
   pointer.updateGeometry(frame.value, { width: presentation.value.gridWidth * presentation.value.scale, height: presentation.value.gridHeight * presentation.value.scale })
 })
+watchEffect(() => {
+  const size = dimensions.value
+  if (!size || !baselineCellMetrics.value) return
+  const requested = requestedVisualScale.value
+  let rendered = session.setVisualScale(requested)
+  if (!rendered) return
+  let applied = requested
+  const renderedWidth = size.cols * rendered.width
+  const renderedHeight = size.rows * rendered.height
+  if (
+    props.displayMode === 'fit'
+    && pointer.state.scale === 1
+    && (renderedWidth > frame.value.width + 1 || renderedHeight > frame.value.height + 1)
+  ) {
+    const correction = Math.min(1, frame.value.width / renderedWidth, frame.value.height / renderedHeight)
+    applied = requested * correction * 0.999
+    rendered = session.setVisualScale(applied) ?? rendered
+  }
+  appliedVisualScale.value = applied
+  renderedCellMetrics.value = rendered
+})
 watch(bindings, (value) => emit('bindings', value), { deep: true, immediate: true })
 watch(status, (value) => emit('status', value), { immediate: true })
 watch(resetKey, (value) => emit('reset-input', value))
@@ -56,7 +80,8 @@ watch(dimensions, () => { void nextTick(refreshCellMetrics) })
 function refreshCellMetrics() {
   const measured = session.measureCell()
   if (!measured) return
-  cellMetrics.value = measured
+  if (!baselineCellMetrics.value) baselineCellMetrics.value = measured
+  renderedCellMetrics.value = measured
   if (pendingFocusPane) applyPaneFocus(pendingFocusPane)
 }
 function point(event: PointerEvent) { return { pointerId: event.pointerId, x: event.clientX, y: event.clientY } }
@@ -66,13 +91,13 @@ function onPointerUp(event: PointerEvent) { if (event.pointerType === 'mouse') r
 function focusPane(pane: PaneTopologyDto) {
   pendingFocusPane = pane
   refreshCellMetrics()
-  if (!cellMetrics.value) return
+  if (!baselineCellMetrics.value) return
   applyPaneFocus(pane)
 }
 function applyPaneFocus(pane: PaneTopologyDto) {
-  if (!cellMetrics.value) return
+  if (!baselineCellMetrics.value) return
   const scale = presentation.value?.scale ?? 1
-  pointer.focusPane(pane, { cellWidth: cellMetrics.value.width * scale, cellHeight: cellMetrics.value.height * scale })
+  pointer.focusPane(pane, { cellWidth: baselineCellMetrics.value.width * scale, cellHeight: baselineCellMetrics.value.height * scale })
   pendingFocusPane = null
 }
 function resetViewport() { pendingFocusPane = null; pointer.reset() }
