@@ -66,6 +66,17 @@ class FakeInput:
         pass
 
 
+class FakeTerminalManager:
+    def __init__(self) -> None:
+        self.messages: list[WireMessage] = []
+
+    async def handle_wire_message(self, message: WireMessage) -> None:
+        self.messages.append(message)
+
+    async def close(self) -> None:
+        pass
+
+
 @pytest.mark.asyncio
 async def test_tmux_output_is_buffered_before_network_publish() -> None:
     buffers = OutputBuffers(max_bytes_per_pane=1024)
@@ -116,3 +127,27 @@ async def test_unavailable_replay_sends_gap_then_capture_snapshot() -> None:
     ]
     output = PaneOutputPayload.model_validate(transport.messages[-1].payload)
     assert output.to_bytes() == b"screen snapshot"
+
+
+@pytest.mark.asyncio
+async def test_runtime_delegates_terminal_messages_without_disturbing_pane_channel() -> None:
+    buffers = OutputBuffers(max_bytes_per_pane=1024)
+    transport = FakeTransport(buffers)
+    terminals = FakeTerminalManager()
+    instance_id = uuid4()
+    runtime = BridgeRuntime(
+        instance_id=instance_id,
+        control=FakeControl(),
+        topology_provider=topology,
+        transport=transport,
+        buffers=buffers,
+        input_handler=FakeInput(),
+        terminal_manager=terminals,
+    )
+    message = WireMessage(
+        type=MessageType.TERMINAL_OPEN,
+        instance_id=instance_id,
+        payload={"terminal_id": str(uuid4())},
+    )
+    await runtime.handle_message(message)
+    assert terminals.messages == [message]

@@ -18,16 +18,24 @@ from termflow_protocol import (
 )
 
 from termflow_control_plane.api.bridge import router as bridge_router
+from termflow_control_plane.api.computers import router as computers_router
+from termflow_control_plane.api.dashboard import router as dashboard_router
 from termflow_control_plane.api.enrollment import router as enrollment_router
 from termflow_control_plane.api.events import router as events_router
 from termflow_control_plane.api.instances import router as instances_router
+from termflow_control_plane.api.sessions import router as sessions_router
+from termflow_control_plane.api.terminal import router as terminal_router_api
+from termflow_control_plane.api.terms import router as terms_router
+from termflow_control_plane.auth.sessions import BrowserSessionStore
 from termflow_control_plane.config import Settings
 from termflow_control_plane.connections.event_hub import EventHub
 from termflow_control_plane.connections.registry import LiveConnection, LiveInstanceRegistry
+from termflow_control_plane.connections.terminal_hub import TerminalHub
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.database import Database
 from termflow_control_plane.persistence.repositories import RepositoryBundle
 from termflow_control_plane.routing.router import CommandRouter
+from termflow_control_plane.routing.terminal_router import TerminalRouter
 from termflow_control_plane.web import install_web_hosting
 
 
@@ -83,6 +91,11 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
             audit=app.state.repositories.audit,
             settings=settings,
         )
+        app.state.terminal_router = TerminalRouter(
+            registry=app.state.registry,
+            hub=app.state.terminal_hub,
+            audit=app.state.repositories.audit,
+        )
         expiry_task = asyncio.create_task(
             _heartbeat_expiry_loop(app.state.registry, app.state.event_hub, settings)
         )
@@ -96,8 +109,19 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
 
     app = FastAPI(title="TermFlow Control Plane", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
-    app.state.registry = LiveInstanceRegistry(queue_size=settings.connection_queue_size)
+    app.state.registry = LiveInstanceRegistry(
+        queue_size=settings.connection_queue_size,
+        queue_max_bytes=settings.terminal_queue_max_bytes,
+    )
     app.state.event_hub = EventHub(queue_size=settings.event_queue_size)
+    app.state.browser_sessions = BrowserSessionStore(
+        ttl=timedelta(seconds=settings.browser_session_ttl_seconds),
+        capacity=settings.browser_session_capacity,
+    )
+    app.state.terminal_hub = TerminalHub(
+        queue_max_messages=settings.terminal_queue_max_messages,
+        queue_max_bytes=settings.terminal_queue_max_bytes,
+    )
 
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
@@ -126,6 +150,11 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         return HealthResponse()
 
     app.include_router(enrollment_router)
+    app.include_router(sessions_router)
+    app.include_router(dashboard_router)
+    app.include_router(computers_router)
+    app.include_router(terms_router)
+    app.include_router(terminal_router_api)
     app.include_router(instances_router)
     app.include_router(bridge_router)
     app.include_router(events_router)

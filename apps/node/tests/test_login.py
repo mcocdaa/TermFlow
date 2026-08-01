@@ -11,12 +11,21 @@ from typer.testing import CliRunner
 
 
 @pytest.mark.asyncio
-async def test_enrollment_client_posts_and_validates_response() -> None:
+async def test_enrollment_client_posts_computer_identity_and_validates_response(
+    monkeypatch,
+) -> None:
     installation_id = uuid4()
+    monkeypatch.setattr("termflow_node.control_plane_client.socket.gethostname", lambda: "devbox")
+    monkeypatch.setattr("termflow_node.control_plane_client.platform.system", lambda: "TestOS")
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url == "https://termflow.example.com/api/v1/installations/enroll"
-        assert json.loads(request.content) == {"enrollment_token": "one-time-secret"}
+        assert json.loads(request.content) == {
+            "enrollment_token": "one-time-secret",
+            "hostname": "devbox",
+            "platform": "TestOS",
+            "client_version": "0.1.0",
+        }
         return httpx.Response(
             200,
             json={

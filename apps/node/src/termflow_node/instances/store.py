@@ -55,8 +55,10 @@ class InstanceStore:
         )
         payload = json.dumps(
             {
+                "schema_version": instance.schema_version,
                 "instance_id": str(instance.instance_id),
                 "name": instance.name,
+                "session_id": instance.session_id,
                 "session_name": instance.session_name,
                 "socket_path": str(instance.socket_path),
                 "created_at": instance.created_at.isoformat(),

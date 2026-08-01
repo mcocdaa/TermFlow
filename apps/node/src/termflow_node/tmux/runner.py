@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -41,6 +42,22 @@ class RunCommand(Protocol):
 
 
 _VERSION = re.compile(r"^tmux\s+(\d+)\.(\d+)")
+
+
+@dataclass(frozen=True, slots=True)
+class TmuxSessionIdentity:
+    session_id: str
+    session_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class TmuxClient:
+    tty: str
+    activity: int
+    cols: int
+    rows: int
+    control_mode: bool
+    termname: str
 
 
 def _subprocess_run(
@@ -115,6 +132,74 @@ class TmuxRunner:
             "-n",
             window_name,
         )
+
+    @staticmethod
+    def _session_identity_line(line: str) -> TmuxSessionIdentity:
+        session_id, separator, session_name = line.rstrip("\n").partition("\t")
+        if (
+            not separator
+            or not session_id.startswith("$")
+            or not session_id[1:].isdigit()
+            or not session_name
+        ):
+            raise TmuxCommandError(["tmux", "session-identity"], 1)
+        return TmuxSessionIdentity(session_id, session_name)
+
+    def session_identity(self, target: str | None = None) -> TmuxSessionIdentity:
+        format_string = "#{session_id}\t#{session_name}"
+        if target is None:
+            result = self._execute("list-sessions", "-F", format_string)
+            lines = [line for line in result.stdout.splitlines() if line]
+            if len(lines) != 1:
+                raise TmuxCommandError(self._argv("list-sessions"), 1)
+            return self._session_identity_line(lines[0])
+        result = self._execute(
+            "display-message",
+            "-p",
+            "-t",
+            target,
+            format_string,
+        )
+        return self._session_identity_line(result.stdout)
+
+    def rename_session(self, target: str, name: str) -> None:
+        self._execute("rename-session", "-t", target, name)
+
+    def kill_session(self, target: str) -> None:
+        self._execute("kill-session", "-t", target, check=False)
+
+    def list_clients(self, target: str) -> list[TmuxClient]:
+        format_string = "\t".join(
+            (
+                "#{client_tty}",
+                "#{client_activity}",
+                "#{client_width}",
+                "#{client_height}",
+                "#{client_control_mode}",
+                "#{client_termname}",
+            )
+        )
+        result = self._execute(
+            "list-clients", "-t", target, "-F", format_string, check=False
+        )
+        if result.returncode != 0:
+            return []
+        clients: list[TmuxClient] = []
+        for line in result.stdout.splitlines():
+            fields = line.split("\t")
+            if len(fields) != 6:
+                raise TmuxCommandError(self._argv("list-clients"), 1)
+            clients.append(
+                TmuxClient(
+                    tty=fields[0],
+                    activity=int(fields[1]),
+                    cols=int(fields[2]),
+                    rows=int(fields[3]),
+                    control_mode=fields[4] == "1",
+                    termname=fields[5],
+                )
+            )
+        return clients
 
     def is_alive(self, session_name: str = "main") -> bool:
         return self._execute("has-session", "-t", session_name, check=False).returncode == 0

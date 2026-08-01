@@ -14,6 +14,38 @@ from .common import utc_now
 from .topology import PaneId, TopologySnapshot
 
 MAX_INPUT_BYTES = 16 * 1024
+MAX_TERMINAL_BYTES = 65_536
+
+type TerminalAction = Literal[
+    "split_left_right",
+    "split_top_bottom",
+    "new_window",
+    "select_left",
+    "select_right",
+    "select_up",
+    "select_down",
+    "toggle_zoom",
+    "copy_mode",
+    "close_pane",
+]
+type TerminalCloseReason = Literal[
+    "client_closed",
+    "replaced",
+    "grace_expired",
+    "stream_gap",
+    "instance_offline",
+    "internal_error",
+]
+
+
+def _decode_terminal_base64(value: str) -> bytes:
+    try:
+        decoded = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("data_base64 must be strict Base64") from exc
+    if len(decoded) > MAX_TERMINAL_BYTES:
+        raise ValueError(f"decoded data exceeds {MAX_TERMINAL_BYTES} bytes")
+    return decoded
 
 
 def validate_plain_text(text: str, *, max_bytes: int = MAX_INPUT_BYTES) -> str:
@@ -132,6 +164,160 @@ class InstancePresencePayload(PayloadModel):
     observed_at: datetime = Field(default_factory=utc_now)
 
 
+class TerminalPayload(PayloadModel):
+    terminal_id: UUID
+
+
+class TerminalOpenPayload(TerminalPayload):
+    resume_stream_id: UUID | None = None
+    after_seq: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def resume_fields_are_consistent(self) -> TerminalOpenPayload:
+        if (self.resume_stream_id is None) != (self.after_seq is None):
+            raise ValueError("resume_stream_id and after_seq must be supplied together")
+        return self
+
+
+class TerminalOpenedPayload(TerminalPayload):
+    stream_id: UUID
+    rows: int = Field(ge=1)
+    cols: int = Field(ge=1)
+
+
+class TerminalInputPayload(TerminalPayload):
+    data_base64: str
+
+    @field_validator("data_base64")
+    @classmethod
+    def valid_base64(cls, value: str) -> str:
+        _decode_terminal_base64(value)
+        return value
+
+    @classmethod
+    def from_bytes(cls, terminal_id: UUID, data: bytes) -> TerminalInputPayload:
+        return cls(
+            terminal_id=terminal_id,
+            data_base64=base64.b64encode(data).decode("ascii"),
+        )
+
+    def to_bytes(self) -> bytes:
+        return _decode_terminal_base64(self.data_base64)
+
+
+class TerminalOutputPayload(TerminalPayload):
+    stream_id: UUID
+    seq: int = Field(ge=1)
+    data_base64: str
+
+    @field_validator("data_base64")
+    @classmethod
+    def valid_base64(cls, value: str) -> str:
+        _decode_terminal_base64(value)
+        return value
+
+    @classmethod
+    def from_bytes(
+        cls,
+        terminal_id: UUID,
+        stream_id: UUID,
+        seq: int,
+        data: bytes,
+    ) -> TerminalOutputPayload:
+        return cls(
+            terminal_id=terminal_id,
+            stream_id=stream_id,
+            seq=seq,
+            data_base64=base64.b64encode(data).decode("ascii"),
+        )
+
+    def to_bytes(self) -> bytes:
+        return _decode_terminal_base64(self.data_base64)
+
+
+class TerminalSizePayload(TerminalPayload):
+    rows: int = Field(ge=1)
+    cols: int = Field(ge=1)
+
+
+class TerminalBinding(PayloadModel):
+    action: TerminalAction
+    key: str | None = None
+    tooltip: str = Field(min_length=1, max_length=256)
+
+
+class TerminalBindingsPayload(TerminalPayload):
+    prefix: str = Field(min_length=1, max_length=64)
+    prefix2: str | None = Field(default=None, min_length=1, max_length=64)
+    bindings: list[TerminalBinding]
+
+
+class TerminalActionPayload(TerminalPayload):
+    action_id: UUID
+    action: TerminalAction
+    target_pane_id: PaneId | None = None
+    confirmed: bool = False
+
+    @model_validator(mode="after")
+    def action_arguments_are_valid(self) -> TerminalActionPayload:
+        if self.action != "new_window" and self.target_pane_id is None:
+            raise ValueError("target_pane_id is required for Pane actions")
+        if self.action == "close_pane" and not self.confirmed:
+            raise ValueError("confirmed must be true for close_pane")
+        return self
+
+
+class TerminalActionResultPayload(TerminalPayload):
+    action_id: UUID
+    ok: bool
+    error_code: str | None = None
+
+    @model_validator(mode="after")
+    def result_is_consistent(self) -> TerminalActionResultPayload:
+        if self.ok and self.error_code is not None:
+            raise ValueError("successful results cannot contain error_code")
+        if not self.ok and not self.error_code:
+            raise ValueError("failed results require error_code")
+        return self
+
+
+class TerminalClosePayload(TerminalPayload):
+    reason: TerminalCloseReason
+
+
+class TerminalClosedPayload(TerminalPayload):
+    reason: TerminalCloseReason
+    error_code: str | None = None
+
+
+class TermRenamePayload(PayloadModel):
+    command_id: UUID
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def valid_name(cls, value: str) -> str:
+        if not 1 <= len(value) <= 128:
+            raise ValueError("name must contain between 1 and 128 characters")
+        if any(ord(character) < 32 or 127 <= ord(character) <= 159 for character in value):
+            raise ValueError("name contains unsupported control characters")
+        return value
+
+
+class TermRenameResultPayload(PayloadModel):
+    command_id: UUID
+    ok: bool
+    error_code: str | None = None
+
+    @model_validator(mode="after")
+    def result_is_consistent(self) -> TermRenameResultPayload:
+        if self.ok and self.error_code is not None:
+            raise ValueError("successful results cannot contain error_code")
+        if not self.ok and not self.error_code:
+            raise ValueError("failed results require error_code")
+        return self
+
+
 PAYLOAD_MODELS: dict[str, type[PayloadModel]] = {
     "bridge.hello": BridgeHelloPayload,
     "bridge.heartbeat": BridgeHeartbeatPayload,
@@ -144,6 +330,18 @@ PAYLOAD_MODELS: dict[str, type[PayloadModel]] = {
     "command.result": CommandResultPayload,
     "instance.online": InstancePresencePayload,
     "instance.offline": InstancePresencePayload,
+    "terminal.open": TerminalOpenPayload,
+    "terminal.opened": TerminalOpenedPayload,
+    "terminal.input": TerminalInputPayload,
+    "terminal.output": TerminalOutputPayload,
+    "terminal.size": TerminalSizePayload,
+    "terminal.bindings": TerminalBindingsPayload,
+    "terminal.action": TerminalActionPayload,
+    "terminal.action_result": TerminalActionResultPayload,
+    "terminal.close": TerminalClosePayload,
+    "terminal.closed": TerminalClosedPayload,
+    "term.rename": TermRenamePayload,
+    "term.rename_result": TermRenameResultPayload,
 }
 
 

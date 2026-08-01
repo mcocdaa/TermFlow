@@ -7,7 +7,7 @@ from termflow_control_plane.connections.registry import (
     InstanceOffline,
     LiveInstanceRegistry,
 )
-from termflow_protocol import MessageType, WireMessage
+from termflow_protocol import MessageType, TerminalInputPayload, WireMessage
 
 
 @pytest.mark.asyncio
@@ -44,6 +44,23 @@ async def test_full_connection_queue_fails_fast() -> None:
 
 
 @pytest.mark.asyncio
+async def test_terminal_connection_queue_is_also_bounded_by_decoded_bytes() -> None:
+    registry = LiveInstanceRegistry(queue_size=4, queue_max_bytes=4)
+    instance_id = uuid4()
+    await registry.register(instance_id)
+    message = WireMessage(
+        type=MessageType.TERMINAL_INPUT,
+        instance_id=instance_id,
+        payload=TerminalInputPayload.from_bytes(instance_id, b"12345").model_dump(
+            mode="json"
+        ),
+    )
+
+    with pytest.raises(ConnectionBackpressure):
+        await registry.enqueue(instance_id, message)
+
+
+@pytest.mark.asyncio
 async def test_expire_removes_only_stale_connections() -> None:
     registry = LiveInstanceRegistry(queue_size=2)
     stale = await registry.register(uuid4())
@@ -52,4 +69,3 @@ async def test_expire_removes_only_stale_connections() -> None:
     expired = await registry.expire_before(datetime.now(UTC) - timedelta(seconds=30))
     assert expired == [stale]
     assert await registry.get(live.instance_id) is live
-

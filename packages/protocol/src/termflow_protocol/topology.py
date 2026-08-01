@@ -18,6 +18,9 @@ class PaneSnapshot(BaseModel):
     title: str
     width: int = Field(ge=1)
     height: int = Field(ge=1)
+    left: int = Field(default=0, ge=0)
+    top: int = Field(default=0, ge=0)
+    current_command: str | None = None
     active: bool
     dead: bool
 
@@ -59,4 +62,3 @@ class TopologySnapshot(BaseModel):
 
     def contains_pane(self, pane_id: str) -> bool:
         return any(pane.pane_id == pane_id for window in self.windows for pane in window.panes)
-
