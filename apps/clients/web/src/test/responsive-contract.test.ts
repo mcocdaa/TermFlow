@@ -13,8 +13,8 @@ const viewports = [[360, 800], [800, 360], [1024, 768], [1440, 900]] as const
 describe('responsive shell contract', () => {
   it.each(viewports)('keeps navigation and terminal title controls reachable at %ix%i', async (width, height) => {
     Object.defineProperties(window, { innerWidth: { value: width, configurable: true }, innerHeight: { value: height, configurable: true } })
-    const router = createAppRouter({ sessionStatus: async () => ({ authenticated: false }), history: createMemoryHistory() })
-    await router.push('/login')
+    const router = createAppRouter({ sessionStatus: async () => ({ authenticated: true }), history: createMemoryHistory() })
+    await router.push('/')
     await router.isReady()
     const app = mount(App, { global: { plugins: [router] } })
     expect(app.get('main')).toBeTruthy()

@@ -11,8 +11,8 @@ import { createAppRouter } from '../router'
 
 describe('accessibility contracts', () => {
   it('provides skip navigation, named navigation landmarks, and a focusable main target', async () => {
-    const router = createAppRouter({ sessionStatus: async () => ({ authenticated: false }), history: createMemoryHistory() })
-    await router.push('/login')
+    const router = createAppRouter({ sessionStatus: async () => ({ authenticated: true }), history: createMemoryHistory() })
+    await router.push('/')
     await router.isReady()
     const wrapper = mount(App, { global: { plugins: [router] } })
     expect(wrapper.get('[href="#main-content"]')).toBeTruthy()
