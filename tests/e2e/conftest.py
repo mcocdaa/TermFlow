@@ -82,6 +82,8 @@ class TermFlowSystem:
                 "TERMFLOW_ADMIN_TOKEN": self.admin_token,
                 "TERMFLOW_DATABASE_URL": f"sqlite+aiosqlite:///{self.database_path}",
                 "TERMFLOW_ALLOW_INSECURE_LOOPBACK": "true",
+                "TERMFLOW_PUBLIC_BASE_URL": self.base_url,
+                "TERMFLOW_TRUSTED_WEB_ORIGINS": self.base_url,
             }
         )
         log = self.control_log_path.open("ab")
