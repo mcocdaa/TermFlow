@@ -57,7 +57,7 @@ Term/Window/Pane 模型或 A-B-C 边界。重点是让注册、电脑管理、�
 
 ## 图标与许可
 
-Web C 使用 `lucide-vue-next` 的树摇 SVG 组件替换返回箭头、展开三角、单选圆点、帮助、
+Web C 使用 Lucide 官方现行 Vue 包 `@lucide/vue` 的树摇 SVG 组件替换返回箭头、展开三角、单选圆点、帮助、
 关闭等字符图标。Lucide 主项目采用 ISC 许可证，源自 Feather 的部分图标保留 MIT
 许可；依赖锁文件固定实际版本。图标不单独编码业务语义，所有图标按钮保留可访问名称。
 
