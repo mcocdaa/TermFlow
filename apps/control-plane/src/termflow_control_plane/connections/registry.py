@@ -33,14 +33,20 @@ def _queued_terminal_bytes(message: WireMessage) -> int:
 
 class BoundedWireQueue:
     def __init__(self, *, max_messages: int, max_bytes: int) -> None:
+        self._max_messages = max_messages
         self._queue: asyncio.Queue[tuple[WireMessage, int]] = asyncio.Queue(
-            maxsize=max_messages
+            maxsize=max_messages + 1
         )
         self._max_bytes = max_bytes
         self._queued_bytes = 0
 
     def put_nowait(self, message: WireMessage) -> None:
         byte_count = _queued_terminal_bytes(message)
+        message_limit = self._max_messages + (
+            1 if message.type is MessageType.TERMINAL_CLOSE else 0
+        )
+        if self._queue.qsize() >= message_limit:
+            raise asyncio.QueueFull
         if self._queued_bytes + byte_count > self._max_bytes:
             raise asyncio.QueueFull
         self._queue.put_nowait((message, byte_count))
@@ -62,6 +68,8 @@ class LiveConnection:
     connection_id: UUID = field(default_factory=uuid4)
     topology: TopologySnapshot | None = None
     topology_ready: asyncio.Event = field(default_factory=asyncio.Event)
+    capabilities: frozenset[str] = frozenset()
+    hello_ready: asyncio.Event = field(default_factory=asyncio.Event)
     last_heartbeat: datetime = field(default_factory=lambda: datetime.now(UTC))
     pending: dict[UUID, asyncio.Future[CommandResultPayload]] = field(default_factory=dict)
     pending_renames: dict[UUID, asyncio.Future[TermRenameResultPayload]] = field(
@@ -129,6 +137,15 @@ class LiveInstanceRegistry:
             connection.outbound.put_nowait(message)
         except asyncio.QueueFull:
             return False
+        return True
+
+    def force_disconnect_current_nowait(self, instance_id: UUID) -> bool:
+        """Bound remote lifetime when even the reserved teardown slot is unavailable."""
+
+        connection = self._connections.get(instance_id)
+        if connection is None:
+            return False
+        connection.replaced.set()
         return True
 
     async def online_ids(self) -> set[UUID]:

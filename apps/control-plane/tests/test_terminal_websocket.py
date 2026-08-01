@@ -8,6 +8,7 @@ from termflow_control_plane.app import create_app
 from termflow_control_plane.config import Settings
 from termflow_control_plane.persistence.database import Database
 from termflow_protocol import (
+    BridgeHelloPayload,
     MessageType,
     TerminalActionResultPayload,
     TerminalBindingsPayload,
@@ -56,6 +57,16 @@ def _bridge_message(instance_id, message_type: MessageType, payload) -> str:
     ).model_dump_json()
 
 
+def _announce_bridge(bridge, instance_id: UUID) -> None:
+    bridge.send_text(
+        _bridge_message(
+            instance_id,
+            MessageType.BRIDGE_HELLO,
+            BridgeHelloPayload(name="terminal"),
+        )
+    )
+
+
 def test_browser_terminal_routes_binary_and_semantic_control_frames(
     client,
     admin_headers,
@@ -66,6 +77,7 @@ def test_browser_terminal_routes_binary_and_semantic_control_frames(
         "/api/v1/bridge/connect",
         headers={"Authorization": f"Bearer {instance_token}"},
     ) as bridge:
+        _announce_bridge(bridge, instance_id)
         with client.websocket_connect(
             f"/api/v1/terms/{instance_id}/terminal",
             headers={"Origin": ORIGIN},
@@ -190,9 +202,35 @@ def test_terminal_auth_origin_offline_and_native_bearer(client, admin_headers) -
         "/api/v1/bridge/connect",
         headers={"Authorization": f"Bearer {instance_token}"},
     ) as bridge:
+        _announce_bridge(bridge, instance_id)
         with client.websocket_connect(url, headers=admin_headers):
             opening = WireMessage.model_validate(bridge.receive_json())
             assert opening.type is MessageType.TERMINAL_OPEN
+
+
+def test_terminal_rejects_bridge_without_full_terminal_capability(
+    client,
+    admin_headers,
+) -> None:
+    instance_id, instance_token = _provision(client, admin_headers)
+    with client.websocket_connect(
+        "/api/v1/bridge/connect",
+        headers={"Authorization": f"Bearer {instance_token}"},
+    ) as bridge:
+        bridge.send_text(
+            _bridge_message(
+                instance_id,
+                MessageType.BRIDGE_HELLO,
+                BridgeHelloPayload(name="old-node", capabilities=("topology",)),
+            )
+        )
+        with client.websocket_connect(
+            f"/api/v1/terms/{instance_id}/terminal",
+            headers=admin_headers,
+        ) as terminal:
+            assert terminal.receive_json()["code"] == "capability_unavailable"
+            with pytest.raises(WebSocketDisconnect):
+                terminal.receive_json()
 
 
 def test_new_owner_replaces_old_and_logout_closes_cookie_terminal(
@@ -206,6 +244,7 @@ def test_new_owner_replaces_old_and_logout_closes_cookie_terminal(
         "/api/v1/bridge/connect",
         headers={"Authorization": f"Bearer {instance_token}"},
     ) as bridge:
+        _announce_bridge(bridge, instance_id)
         with client.websocket_connect(url, headers={"Origin": ORIGIN}) as first:
             first_open = WireMessage.model_validate(bridge.receive_json())
             with client.websocket_connect(url, headers={"Origin": ORIGIN}) as second:
@@ -221,6 +260,65 @@ def test_new_owner_replaces_old_and_logout_closes_cookie_terminal(
                     )
                     assert second.receive_json()["reason"] == "client_closed"
                     assert logout.result(timeout=2).status_code == 200
+
+
+def test_session_capacity_eviction_closes_established_cookie_terminal(tmp_path) -> None:
+    settings = Settings(
+        admin_token="admin-token-that-is-long-enough-for-tests",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'eviction.db'}",
+        allow_insecure_loopback=True,
+        browser_session_capacity=1,
+    )
+    app = create_app(settings=settings, database=Database(settings.database_url))
+    with TestClient(app) as client:
+        headers = {"Authorization": "Bearer admin-token-that-is-long-enough-for-tests"}
+        instance_id, instance_token = _provision(client, headers)
+        _login(client)
+        with client.websocket_connect(
+            "/api/v1/bridge/connect",
+            headers={"Authorization": f"Bearer {instance_token}"},
+        ) as bridge:
+            _announce_bridge(bridge, instance_id)
+            with client.websocket_connect(
+                f"/api/v1/terms/{instance_id}/terminal",
+                headers={"Origin": ORIGIN},
+            ) as terminal:
+                WireMessage.model_validate(bridge.receive_json())
+                _login(client)
+                assert terminal.receive_json()["reason"] == "client_closed"
+
+
+def test_plain_websocket_disconnect_preserves_aggregate_input_audit(
+    client,
+    admin_headers,
+) -> None:
+    instance_id, instance_token = _provision(client, admin_headers)
+    with client.websocket_connect(
+        "/api/v1/bridge/connect",
+        headers={"Authorization": f"Bearer {instance_token}"},
+    ) as bridge:
+        _announce_bridge(bridge, instance_id)
+        with client.websocket_connect(
+            f"/api/v1/terms/{instance_id}/terminal",
+            headers=admin_headers,
+        ) as terminal:
+            WireMessage.model_validate(bridge.receive_json())
+            terminal.send_bytes(b"disconnect audit")
+            assert (
+                WireMessage.model_validate(bridge.receive_json()).type
+                is MessageType.TERMINAL_INPUT
+            )
+
+        assert (
+            WireMessage.model_validate(bridge.receive_json()).type
+            is MessageType.TERMINAL_CLOSE
+        )
+        client.portal.call(client.app.state.terminal_audit.flush)
+
+    audit_rows = client.portal.call(client.app.state.repositories.audit.list_all)
+    input_rows = [row for row in audit_rows if row.operation == "terminal.input"]
+    assert len(input_rows) == 1
+    assert input_rows[0].input_bytes == len(b"disconnect audit")
 
 
 def test_oversized_binary_and_json_terminal_bytes_close_only_that_terminal(
@@ -241,6 +339,7 @@ def test_oversized_binary_and_json_terminal_bytes_close_only_that_terminal(
             "/api/v1/bridge/connect",
             headers={"Authorization": f"Bearer {instance_token}"},
         ) as bridge:
+            _announce_bridge(bridge, instance_id)
             url = f"/api/v1/terms/{instance_id}/terminal"
             with client.websocket_connect(url, headers=headers) as terminal:
                 WireMessage.model_validate(bridge.receive_json())
@@ -272,6 +371,7 @@ def test_bridge_closed_event_is_forwarded_as_browser_control(
         "/api/v1/bridge/connect",
         headers={"Authorization": f"Bearer {instance_token}"},
     ) as bridge:
+        _announce_bridge(bridge, instance_id)
         with client.websocket_connect(
             f"/api/v1/terms/{instance_id}/terminal",
             headers=admin_headers,
@@ -303,6 +403,7 @@ def test_bridge_reconnect_requests_only_proven_terminal_stream_cursor(
         headers=bridge_headers,
     )
     first_bridge = first_context.__enter__()
+    _announce_bridge(first_bridge, instance_id)
     first_connected = True
     terminal_context = client.websocket_connect(url, headers=admin_headers)
     terminal = terminal_context.__enter__()
@@ -343,6 +444,7 @@ def test_bridge_reconnect_requests_only_proven_terminal_stream_cursor(
             "/api/v1/bridge/connect",
             headers=bridge_headers,
         ) as reconnected:
+            _announce_bridge(reconnected, instance_id)
             resume = WireMessage.model_validate(reconnected.receive_json())
             assert resume.type is MessageType.TERMINAL_OPEN
             assert resume.payload == {
@@ -350,6 +452,48 @@ def test_bridge_reconnect_requests_only_proven_terminal_stream_cursor(
                 "resume_stream_id": str(stream_id),
                 "after_seq": 1,
             }
+            # A can emit a live chunk before it processes B's resume request. The
+            # replay of that same sequence must be deduplicated, not treated as a gap.
+            reconnected.send_text(
+                _bridge_message(
+                    instance_id,
+                    MessageType.TERMINAL_OUTPUT,
+                    TerminalOutputPayload.from_bytes(
+                        terminal_id,
+                        stream_id,
+                        2,
+                        b"two",
+                    ),
+                )
+            )
+            assert terminal.receive_bytes() == b"two"
+            reconnected.send_text(
+                _bridge_message(
+                    instance_id,
+                    MessageType.TERMINAL_OPENED,
+                    TerminalOpenedPayload(
+                        terminal_id=terminal_id,
+                        stream_id=stream_id,
+                        rows=24,
+                        cols=80,
+                    ),
+                )
+            )
+            assert terminal.receive_json()["type"] == "terminal.ready"
+            for seq, data in ((2, b"two"), (3, b"three")):
+                reconnected.send_text(
+                    _bridge_message(
+                        instance_id,
+                        MessageType.TERMINAL_OUTPUT,
+                        TerminalOutputPayload.from_bytes(
+                            terminal_id,
+                            stream_id,
+                            seq,
+                            data,
+                        ),
+                    )
+                )
+            assert terminal.receive_bytes() == b"three"
     finally:
         if first_connected:
             first_context.__exit__(None, None, None)

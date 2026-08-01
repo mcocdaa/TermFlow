@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Protocol
 from uuid import UUID
 
@@ -10,6 +11,7 @@ from termflow_protocol import (
     MessageType,
     TerminalActionFrame,
     TerminalActionPayload,
+    TerminalActionResultPayload,
     TerminalClosePayload,
     TerminalCloseReason,
     TerminalInputPayload,
@@ -26,7 +28,7 @@ from termflow_control_plane.connections.terminal_hub import BrowserTerminal, Ter
 
 
 class AuditWriter(Protocol):
-    async def record(
+    def record_nowait(
         self,
         operation: str,
         instance_id: UUID | None,
@@ -35,6 +37,8 @@ class AuditWriter(Protocol):
         result: str,
         error_code: str | None,
     ) -> object: ...
+
+    async def flush(self) -> None: ...
 
 
 class TerminalRouteError(RuntimeError):
@@ -50,10 +54,12 @@ class TerminalRouter:
         registry: LiveInstanceRegistry,
         hub: TerminalHub,
         audit: AuditWriter,
+        capability_wait_seconds: float = 5.0,
     ) -> None:
         self._registry = registry
         self._hub = hub
         self._audit = audit
+        self._capability_wait_seconds = capability_wait_seconds
 
     @staticmethod
     def _message(
@@ -67,7 +73,7 @@ class TerminalRouter:
             payload=payload.model_dump(mode="json"),
         )
 
-    async def _record(
+    def _record(
         self,
         operation: str,
         terminal: BrowserTerminal,
@@ -77,7 +83,7 @@ class TerminalRouter:
         result: str = "ok",
         error_code: str | None = None,
     ) -> None:
-        await self._audit.record(
+        self._audit.record_nowait(
             operation,
             terminal.instance_id,
             pane_id,
@@ -101,12 +107,18 @@ class TerminalRouter:
         session_key: str | None,
     ) -> BrowserTerminal:
         try:
-            await self._registry.get(instance_id)
+            connection = await self._registry.get(instance_id)
         except InstanceOffline as exc:
             raise TerminalRouteError("instance_offline") from exc
+        try:
+            async with asyncio.timeout(self._capability_wait_seconds):
+                await connection.hello_ready.wait()
+        except TimeoutError as exc:
+            raise TerminalRouteError("capability_unavailable") from exc
+        if "full_terminal" not in connection.capabilities:
+            raise TerminalRouteError("capability_unavailable")
         terminal = await self._hub.register(instance_id, session_key=session_key)
         request = TerminalOpenPayload(terminal_id=terminal.terminal_id)
-        await self._record("terminal.open", terminal)
         try:
             await self._enqueue(
                 terminal,
@@ -115,7 +127,8 @@ class TerminalRouter:
         except TerminalRouteError as exc:
             await self._hub.unregister(terminal)
             terminal.terminate("instance_offline", error_code=exc.code)
-            await self._record(
+            terminal.open_audited = True
+            self._record(
                 "terminal.open",
                 terminal,
                 result="rejected",
@@ -125,6 +138,12 @@ class TerminalRouter:
         return terminal
 
     async def bridge_connected(self, instance_id: UUID) -> None:
+        try:
+            connection = await self._registry.get(instance_id)
+        except InstanceOffline:
+            return
+        if "full_terminal" not in connection.capabilities:
+            return
         terminal = await self._hub.current(instance_id)
         if terminal is None or terminal.terminated or terminal.remote_closed:
             return
@@ -147,7 +166,31 @@ class TerminalRouter:
             terminal.terminate("instance_offline", error_code="reconnect_failed")
 
     async def forward_from_bridge(self, message: WireMessage) -> bool:
-        return await self._hub.forward(message)
+        terminal = await self._hub.current(message.instance_id)
+        forwarded = await self._hub.forward(message)
+        if terminal is None or str(message.payload.get("terminal_id")) != str(
+            terminal.terminal_id
+        ):
+            return forwarded
+        if (
+            message.type is MessageType.TERMINAL_OPENED
+            and forwarded
+            and not terminal.open_audited
+        ):
+            terminal.open_audited = True
+            self._record("terminal.open", terminal)
+        elif message.type is MessageType.TERMINAL_ACTION_RESULT:
+            result = TerminalActionResultPayload.model_validate(message.payload)
+            if result.action_id in terminal.pending_actions:
+                pane_id = terminal.pending_actions.pop(result.action_id)
+                self._record(
+                    "terminal.action",
+                    terminal,
+                    pane_id=pane_id,
+                    result="ok" if result.ok else "failed",
+                    error_code=result.error_code,
+                )
+        return forwarded
 
     async def input(self, terminal: BrowserTerminal, data: bytes) -> None:
         payload = TerminalInputPayload.from_bytes(terminal.terminal_id, data)
@@ -157,7 +200,7 @@ class TerminalRouter:
                 self._message(terminal, MessageType.TERMINAL_INPUT, payload),
             )
         except TerminalRouteError as exc:
-            await self._record(
+            self._record(
                 "terminal.input",
                 terminal,
                 input_bytes=len(data),
@@ -167,11 +210,11 @@ class TerminalRouter:
             raise
         terminal.input_bytes += len(data)
 
-    async def _record_input_total(self, terminal: BrowserTerminal) -> None:
+    def _record_input_total(self, terminal: BrowserTerminal) -> None:
         if terminal.input_audited or terminal.input_bytes == 0:
             return
         terminal.input_audited = True
-        await self._record(
+        self._record(
             "terminal.input",
             terminal,
             input_bytes=terminal.input_bytes,
@@ -189,18 +232,15 @@ class TerminalRouter:
             target_pane_id=frame.target_pane_id,
             confirmed=frame.confirmed,
         )
-        await self._record(
-            "terminal.action",
-            terminal,
-            pane_id=frame.target_pane_id,
-        )
+        terminal.pending_actions[frame.action_id] = frame.target_pane_id
         try:
             await self._enqueue(
                 terminal,
                 self._message(terminal, MessageType.TERMINAL_ACTION, payload),
             )
         except TerminalRouteError as exc:
-            await self._record(
+            terminal.pending_actions.pop(frame.action_id, None)
+            self._record(
                 "terminal.action",
                 terminal,
                 pane_id=frame.target_pane_id,
@@ -208,6 +248,25 @@ class TerminalRouter:
                 error_code=exc.code,
             )
             raise
+
+    def _record_unresolved(self, terminal: BrowserTerminal) -> None:
+        if not terminal.open_audited:
+            terminal.open_audited = True
+            self._record(
+                "terminal.open",
+                terminal,
+                result="unknown",
+                error_code="outcome_unknown",
+            )
+        for action_id, pane_id in tuple(terminal.pending_actions.items()):
+            terminal.pending_actions.pop(action_id, None)
+            self._record(
+                "terminal.action",
+                terminal,
+                pane_id=pane_id,
+                result="unknown",
+                error_code="outcome_unknown",
+            )
 
     async def request_close(
         self,
@@ -217,14 +276,12 @@ class TerminalRouter:
         if terminal.close_requested:
             return
         terminal.close_requested = True
-        current = await self._hub.current(terminal.instance_id)
         error_code: str | None = None
-        await self._record_input_total(terminal)
-        await self._record(
-            "terminal.close",
-            terminal,
-            result="ok",
-        )
+        self._record_input_total(terminal)
+        self._record_unresolved(terminal)
+        # Persist accumulated metadata before the teardown frame becomes observable.
+        await self._audit.flush()
+        current = await self._hub.current(terminal.instance_id)
         if current is terminal and not terminal.remote_closed:
             payload = TerminalClosePayload(
                 terminal_id=terminal.terminal_id,
@@ -237,28 +294,42 @@ class TerminalRouter:
                 )
             except TerminalRouteError as exc:
                 error_code = exc.code
+                self._registry.force_disconnect_current_nowait(terminal.instance_id)
         await self._hub.unregister(terminal)
-        if error_code is not None:
-            await self._record(
-                "terminal.close",
-                terminal,
-                result="unknown",
-                error_code=error_code,
-            )
+        terminal.close_audited = True
+        self._record(
+            "terminal.close",
+            terminal,
+            result="unknown" if error_code is not None else "ok",
+            error_code=error_code,
+        )
+        await self._audit.flush()
 
     def abandon(self, terminal: BrowserTerminal) -> None:
         """Detach on ASGI cancellation without starting database cleanup work."""
 
-        if terminal.close_requested or terminal.remote_closed:
-            self._hub.abandon(terminal)
-            return
+        already_requested = terminal.close_requested
         terminal.close_requested = True
-        payload = TerminalClosePayload(
-            terminal_id=terminal.terminal_id,
-            reason="client_closed",
-        )
-        self._registry.enqueue_current_nowait(
-            terminal.instance_id,
-            self._message(terminal, MessageType.TERMINAL_CLOSE, payload),
-        )
-        self._hub.abandon(terminal)
+        self._record_input_total(terminal)
+        self._record_unresolved(terminal)
+        was_current = self._hub.abandon(terminal)
+        close_sent = terminal.remote_closed or not was_current
+        if not already_requested and was_current and not terminal.remote_closed:
+            payload = TerminalClosePayload(
+                terminal_id=terminal.terminal_id,
+                reason="client_closed",
+            )
+            close_sent = self._registry.enqueue_current_nowait(
+                terminal.instance_id,
+                self._message(terminal, MessageType.TERMINAL_CLOSE, payload),
+            )
+            if not close_sent:
+                self._registry.force_disconnect_current_nowait(terminal.instance_id)
+        if not terminal.close_audited:
+            terminal.close_audited = True
+            self._record(
+                "terminal.close",
+                terminal,
+                result="ok" if close_sent else "unknown",
+                error_code=None if close_sent else "backpressure",
+            )

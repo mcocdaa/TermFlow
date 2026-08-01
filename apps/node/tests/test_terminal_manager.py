@@ -60,6 +60,7 @@ class FakeRemote:
         self.resizes: list[tuple[int, int]] = []
         self._seq = 0
         self.emit_on_start: bytes | None = None
+        self.fail_write = False
 
     async def start(self) -> None:
         self.started = True
@@ -70,6 +71,8 @@ class FakeRemote:
         assert wait_seconds > 0
 
     async def write(self, data: bytes) -> None:
+        if self.fail_write:
+            raise OSError("pty write failed")
         self.writes.append(data)
 
     def resize(self, rows: int, cols: int) -> None:
@@ -146,6 +149,7 @@ class Subject:
         *,
         grace_seconds: float = 30.0,
         emit_on_start: bytes | None = None,
+        publish=None,
     ) -> None:
         self.instance_id = uuid4()
         self.messages: list[WireMessage] = []
@@ -165,7 +169,7 @@ class Subject:
             session_id="$0",
             runner=FakeRunner(),
             topology_provider=_topology,
-            publish=lambda message: self.messages.append(message) or True,
+            publish=publish or (lambda message: self.messages.append(message) or True),
             remote_factory=remote_factory,
             action_executor=self.actions,
             binding_reader=FakeBindings(),
@@ -261,6 +265,51 @@ async def test_open_output_input_action_and_close_are_multiplexed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pty_write_failure_closes_only_the_remote_proxy() -> None:
+    subject = Subject()
+    terminal_id = uuid4()
+    await subject.open(terminal_id)
+    remote = subject.remotes[0]
+    remote.fail_write = True
+
+    await subject.send(
+        MessageType.TERMINAL_INPUT,
+        {"terminal_id": terminal_id, "data_base64": "eA=="},
+    )
+
+    assert remote.closed
+    assert subject.manager.current_terminal_id is None
+    assert subject.messages[-1].type is MessageType.TERMINAL_CLOSED
+    assert subject.messages[-1].payload["reason"] == "internal_error"
+    await subject.manager.close()
+
+
+@pytest.mark.asyncio
+async def test_output_backpressure_closes_proxy_and_publishes_teardown() -> None:
+    published: list[WireMessage] = []
+
+    def publish(message: WireMessage) -> bool:
+        if message.type is MessageType.TERMINAL_OUTPUT:
+            return False
+        published.append(message)
+        return True
+
+    subject = Subject(publish=publish)
+    terminal_id = uuid4()
+    await subject.open(terminal_id)
+    remote = subject.remotes[0]
+
+    await remote.emit(b"cannot queue")
+    await asyncio.sleep(0)
+
+    assert remote.closed
+    assert subject.manager.current_terminal_id is None
+    assert published[-1].type is MessageType.TERMINAL_CLOSED
+    assert published[-1].payload["reason"] == "internal_error"
+    await subject.manager.close()
+
+
+@pytest.mark.asyncio
 async def test_new_owner_deterministically_replaces_old_terminal() -> None:
     subject = Subject()
     first, second = uuid4(), uuid4()
@@ -305,7 +354,7 @@ async def test_bridge_reconnect_replays_only_exact_terminal_stream_sequence() ->
 
 
 @pytest.mark.asyncio
-async def test_stream_mismatch_closes_old_and_creates_fresh_client() -> None:
+async def test_stream_mismatch_atomically_switches_to_a_fresh_client() -> None:
     subject = Subject()
     terminal_id = uuid4()
     await subject.open(terminal_id)
@@ -314,8 +363,11 @@ async def test_stream_mismatch_closes_old_and_creates_fresh_client() -> None:
     await subject.open(terminal_id, resume_stream_id=uuid4(), after_seq=0)
     assert old.closed
     assert len(subject.remotes) == 2
-    assert subject.messages[0].payload["reason"] == "stream_gap"
-    assert subject.messages[-2].type is MessageType.TERMINAL_OPENED
+    assert [message.type for message in subject.messages] == [
+        MessageType.TERMINAL_OPENED,
+        MessageType.TERMINAL_BINDINGS,
+    ]
+    assert subject.remotes[1].stream_id != old.stream_id
     await subject.manager.close()
 
 
@@ -331,6 +383,17 @@ async def test_grace_expiry_closes_retained_proxy() -> None:
     # Disconnected output is intentionally not queued; the next owner gets a fresh redraw.
     subject.manager.bridge_connected()
     assert subject.manager.current_terminal_id is None
+    subject.messages.clear()
+    await subject.open(
+        terminal_id,
+        resume_stream_id=subject.remotes[0].stream_id,
+        after_seq=0,
+    )
+    assert len(subject.remotes) == 2
+    assert [message.type for message in subject.messages] == [
+        MessageType.TERMINAL_OPENED,
+        MessageType.TERMINAL_BINDINGS,
+    ]
     await subject.manager.close()
 
 

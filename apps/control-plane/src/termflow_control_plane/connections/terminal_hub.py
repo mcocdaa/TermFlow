@@ -48,6 +48,9 @@ class BrowserTerminal:
         self.remote_closed = False
         self.input_bytes = 0
         self.input_audited = False
+        self.open_audited = False
+        self.close_audited = False
+        self.pending_actions: dict[UUID, str | None] = {}
 
     @property
     def terminated(self) -> bool:
@@ -97,14 +100,16 @@ class BrowserTerminal:
             await self._available.wait()
 
     def observe_opened(self, opened: TerminalOpenedPayload) -> None:
-        self._stream_id = opened.stream_id
-        self._last_seq = 0
+        if self._stream_id != opened.stream_id:
+            self._stream_id = opened.stream_id
+            self._last_seq = 0
 
-    def accepts_output(self, output: TerminalOutputPayload) -> bool:
-        return (
-            self._stream_id == output.stream_id
-            and output.seq == self._last_seq + 1
-        )
+    def output_state(self, output: TerminalOutputPayload) -> str:
+        if self._stream_id != output.stream_id:
+            return "gap"
+        if output.seq <= self._last_seq:
+            return "duplicate"
+        return "next" if output.seq == self._last_seq + 1 else "gap"
 
     def observe_output(self, output: TerminalOutputPayload) -> None:
         self._last_seq = output.seq
@@ -171,7 +176,10 @@ class TerminalHub:
             terminal.observe_opened(opened)
         elif message.type is MessageType.TERMINAL_OUTPUT:
             output = TerminalOutputPayload.model_validate(message.payload)
-            if not terminal.accepts_output(output):
+            output_state = terminal.output_state(output)
+            if output_state == "duplicate":
+                return True
+            if output_state == "gap":
                 terminal.terminate("stream_gap", error_code="stream_gap")
                 return False
             byte_count = len(output.to_bytes())
@@ -185,11 +193,16 @@ class TerminalHub:
 
     async def terminate_session(self, session_key: str) -> int:
         async with self._lock:
-            matches = [
-                terminal
-                for terminal in self._current.values()
-                if terminal.session_key == session_key
-            ]
+            return self.terminate_session_nowait(session_key)
+
+    def terminate_session_nowait(self, session_key: str) -> int:
+        """Synchronously revoke established terminals owned by a browser session."""
+
+        matches = [
+            terminal
+            for terminal in self._current.values()
+            if terminal.session_key == session_key
+        ]
         for terminal in matches:
             terminal.terminate("client_closed")
         return len(matches)

@@ -75,16 +75,19 @@ def test_bearer_authentication_remains_available(client, admin_headers) -> None:
 def test_session_store_hashes_secrets_expires_and_enforces_capacity() -> None:
     now = datetime(2026, 8, 1, tzinfo=UTC)
     clock_value = [now]
+    revoked: list[str] = []
     store = BrowserSessionStore(
         ttl=timedelta(seconds=10),
         capacity=2,
         clock=lambda: clock_value[0],
+        on_revoke=revoked.append,
     )
     first, _ = store.create()
     second, second_expiry = store.create()
     third, _ = store.create()
 
     assert store.authenticate(first) is None
+    assert len(revoked) == 1
     assert store.authenticate(second) == second_expiry
     assert store.authenticate(third) is not None
     representation = repr(store)
@@ -95,6 +98,7 @@ def test_session_store_hashes_secrets_expires_and_enforces_capacity() -> None:
     clock_value[0] = now + timedelta(seconds=11)
     assert store.authenticate(second) is None
     assert store.live_count == 0
+    assert len(revoked) == 3
 
 
 def test_https_uses_secure_host_cookie(tmp_path) -> None:

@@ -4,6 +4,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from termflow_protocol import (
+    BridgeHelloPayload,
     CommandResultPayload,
     MessageType,
     PaneSnapshot,
@@ -162,6 +163,13 @@ def test_full_terminal_bytes_are_ephemeral_but_byte_count_is_audited(
         "/api/v1/bridge/connect",
         headers={"Authorization": f"Bearer {registration['instance_token']}"},
     ) as bridge:
+        bridge.send_text(
+            WireMessage(
+                type=MessageType.BRIDGE_HELLO,
+                instance_id=instance_id,
+                payload=BridgeHelloPayload(name="full-private").model_dump(mode="json"),
+            ).model_dump_json()
+        )
         with client.websocket_connect(
             f"/api/v1/terms/{instance_id}/terminal",
             headers=admin_headers,
