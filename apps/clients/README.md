@@ -1,11 +1,14 @@
-# TermFlow Clients
+# TermFlow clients
 
-TermFlow V1 intentionally contains no client implementation.
+`web/` is the independent Vue Web C. It uses only the public, relative `/api/v1`
+HTTP endpoints and same-origin WebSocket endpoints exposed by the control plane.
+It does not import control-plane implementation code or read its database.
 
-A future C (mobile app, web app, or desktop executable) authenticates only with B. It may list
-online Instances, select existing Panes, render Base64 terminal bytes, and send ordinary text plus
-optional Enter through the same V1 API. STT and a B-side Agent are outside V1; future automation
-must use the authenticated control API and cannot bypass it to access A's private tmux socket.
+Development commands run from `apps/clients/web`:
 
-Future mobile, web, and desktop clients will authenticate only with the Control Plane and use the
-versioned protocol package. They will not connect directly to local tmux sockets.
+```bash
+npm ci
+npm run test:run
+npm run typecheck
+npm run build
+```
