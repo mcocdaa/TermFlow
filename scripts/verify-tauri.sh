@@ -6,8 +6,8 @@ REPOSITORY_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 MANIFEST="${REPOSITORY_ROOT}/apps/clients/tauri/src-tauri/Cargo.toml"
 
 if [[ ! -f "${MANIFEST}" ]]; then
-  echo "Tauri project is not present in this checkout; Rust and unsigned desktop gates were not run." >&2
-  exit 0
+  echo "Tauri project is required; Rust and unsigned desktop gates cannot be skipped." >&2
+  exit 1
 fi
 
 cargo fmt --manifest-path "${MANIFEST}" --all -- --check

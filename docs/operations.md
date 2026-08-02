@@ -22,8 +22,16 @@ mTLS 的证书签发、校验与轮换不属于 TermFlow，也不会被默认镜
 python -c 'import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("="))'
 ```
 
-不要把输出提交到 `.env` 示例、镜像层、CI 日志或版本控制。也可以通过只读 secret 文件
-配置对应的 `TERMFLOW_TOTP_MASTER_KEY_FILE`。密钥丢失不能通过 Web C、App 或 EXE 恢复。
+不要把输出提交到 `.env` 示例、镜像层、CI 日志或版本控制。需要文件注入时，使用仓库提供的
+只读 Compose override；路径变量指向宿主机上权限受限且只包含该 base64url 值的文件：
+
+```bash
+TERMFLOW_TOTP_MASTER_KEY_FILE=/secure/termflow-totp-key \
+  docker compose -f deploy/compose.yaml -f deploy/compose.totp-secret.yaml up -d
+```
+
+override 把文件挂载到 `/run/secrets/termflow-totp-master-key`，并设置 B 的
+`TERMFLOW_TOTP_MASTER_KEY_FILE`。密钥丢失不能通过 Web C、App 或 EXE 恢复。
 
 验证器丢失时，拥有 Docker 主机权限的管理员在容器内执行本地恢复命令：
 
@@ -38,7 +46,7 @@ docker compose exec control-plane termflow-control auth totp reset
 ## 构建证明的边界
 
 `scripts/verify.sh` 验证当前主机上的 Python、Web、Rust/Tauri 与 Docker gate。一个 Linux
-runner 的成功不能证明 Windows/macOS 可编译，更不能证明 Android/iOS 或任何已签名安装包
-存在。CI 的桌面 job 只做各原生 runner 的 `--no-bundle` 无签名编译；移动 job 只有在仓库已
-提交 Tauri 生成的 Android/iOS 工程后才运行 debug/unsigned 编译。签名、notarization、商店
-上传和发布凭据属于单独受保护的 release 流程。
+runner 的成功不能证明 Windows/macOS 可编译，更不能证明任何已签名安装包存在。CI 的桌面
+job 在三个原生 runner 上做 `--no-bundle` 无签名编译；Android/iOS job 每次从已提交的同一份
+Tauri 配置生成平台工程，再执行 debug/unsigned 编译。缺少 Tauri 工程或生成失败都会使 CI
+失败。签名、notarization、商店上传和发布凭据属于单独受保护的 release 流程。

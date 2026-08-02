@@ -90,24 +90,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
 
-  native-projects:
-    runs-on: ubuntu-latest
-    outputs:
-      tauri: ${{ steps.paths.outputs.tauri }}
-      android: ${{ steps.paths.outputs.android }}
-      ios: ${{ steps.paths.outputs.ios }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: paths
-        shell: bash
-        run: |
-          test -f apps/clients/tauri/src-tauri/Cargo.toml && echo "tauri=true" >> "$GITHUB_OUTPUT" || echo "tauri=false" >> "$GITHUB_OUTPUT"
-          test -d apps/clients/tauri/src-tauri/gen/android && echo "android=true" >> "$GITHUB_OUTPUT" || echo "android=false" >> "$GITHUB_OUTPUT"
-          test -d apps/clients/tauri/src-tauri/gen/apple && echo "ios=true" >> "$GITHUB_OUTPUT" || echo "ios=false" >> "$GITHUB_OUTPUT"
-
   tauri-desktop-unsigned:
-    needs: native-projects
-    if: needs.native-projects.outputs.tauri == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -134,8 +117,6 @@ jobs:
         run: npm run tauri:build --workspace @termflow/tauri-client -- --no-bundle
 
   tauri-android-unsigned:
-    needs: native-projects
-    if: needs.native-projects.outputs.android == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -156,12 +137,12 @@ jobs:
         with:
           workspaces: apps/clients/tauri/src-tauri -> target
       - run: npm ci
+      - name: Generate the Android project from the committed Tauri configuration
+        run: npm run tauri --workspace @termflow/tauri-client -- android init --ci
       - name: Compile Android debug APK without publication signing
         run: npm run tauri --workspace @termflow/tauri-client -- android build --debug --ci --target aarch64 --apk
 
   tauri-ios-unsigned:
-    needs: native-projects
-    if: needs.native-projects.outputs.ios == 'true'
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
@@ -177,5 +158,7 @@ jobs:
         with:
           workspaces: apps/clients/tauri/src-tauri -> target
       - run: npm ci
+      - name: Generate the iOS project from the committed Tauri configuration
+        run: npm run tauri --workspace @termflow/tauri-client -- ios init --ci
       - name: Compile iOS simulator debug app without publication signing
         run: npm run tauri --workspace @termflow/tauri-client -- ios build --debug --ci --target aarch64-sim

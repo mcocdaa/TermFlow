@@ -99,6 +99,8 @@ def test_delivery_scripts_verify_image_contents_and_tauri_compile_gates() -> Non
         "termflow_protocol",
         "/app/frontend-dist/index.html",
         "/opt/termflow/bin/termflow-control",
+        "auth totp reset --help",
+        "find /",
     ):
         assert expected in image_check
     for forbidden in (
@@ -116,8 +118,25 @@ def test_delivery_scripts_verify_image_contents_and_tauri_compile_gates() -> Non
 
     for command in ("cargo fmt", "cargo clippy", "cargo test", "cargo check", "--no-bundle"):
         assert command in tauri_check
+    assert "project is not present" not in tauri_check
     assert 'node-version: "22.23.2"' in workflow
     assert "dtolnay/rust-toolchain@stable" in workflow
     assert "tauri-desktop-unsigned" in workflow
     assert "tauri-android-unsigned" in workflow
     assert "tauri-ios-unsigned" in workflow
+    assert "android init --ci" in workflow
+    assert "ios init --ci" in workflow
+    assert "tauri=false" not in workflow
+    assert "needs.native-projects.outputs" not in workflow
+
+
+def test_compose_has_an_explicit_optional_totp_secret_file_override() -> None:
+    override = yaml.safe_load(Path("deploy/compose.totp-secret.yaml").read_text())
+    service = override["services"]["control-plane"]
+    assert service["environment"]["TERMFLOW_TOTP_MASTER_KEY_FILE"] == (
+        "/run/secrets/termflow-totp-master-key"
+    )
+    assert service["secrets"] == ["termflow-totp-master-key"]
+    assert override["secrets"]["termflow-totp-master-key"]["file"] == (
+        "${TERMFLOW_TOTP_MASTER_KEY_FILE:?set TERMFLOW_TOTP_MASTER_KEY_FILE}"
+    )
