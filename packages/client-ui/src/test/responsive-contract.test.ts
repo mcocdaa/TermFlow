@@ -81,6 +81,7 @@ describe('responsive shell contract', () => {
     expect(appCss).not.toContain('.titlebar-button:focus-visible')
     expect(css).not.toContain(".viewport-lock-button[aria-pressed='true']")
     expect(css).toContain('.titlebar-menu { position: static;')
+    expect(css).toContain('.terminal-titlebar { z-index: 50;')
     expect(css).toContain('.terminal-titlebar .floating-menu {')
     expect(css).toContain('max-height: calc(100dvh - 3.25rem - 2 * var(--space-2));')
     expect(appCss).toContain(".terminal-frame[data-display-mode='fit'] .xterm-viewport { overflow-y: hidden !important; }")

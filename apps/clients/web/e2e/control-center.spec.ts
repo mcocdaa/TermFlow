@@ -541,6 +541,13 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
     await expect(tmuxTrigger).toHaveAttribute('aria-expanded', 'false')
     await expect(page.getByRole('menu', { name: /tmux 操作/i })).toBeHidden()
     await expect.poll(() => buttonVisualStyle(tmuxTrigger)).toEqual(closedTmuxStyle)
+    await tmuxTrigger.click()
+    await page.getByRole('menuitem', { name: '关闭 Pane' }).click()
+    const closePaneDialog = page.getByRole('alertdialog', { name: '关闭 Pane？' })
+    await expect(closePaneDialog).toBeVisible()
+    await closePaneDialog.getByRole('button', { name: '取消' }).click()
+    await expect(closePaneDialog).toBeHidden()
+    await expect.poll(() => buttonVisualStyle(tmuxTrigger)).toEqual(closedTmuxStyle)
 
     await page.getByRole('button', { name: 'Ctrl' }).click()
     await expect(page.getByRole('button', { name: 'Ctrl' })).toHaveAttribute('aria-pressed', 'true')
