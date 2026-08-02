@@ -1,7 +1,7 @@
 # Offline Term Removal and Viewport Lock Design
 
-**Date:** 2026-08-02  
-**Status:** Design approved; pending written-spec review  
+**Date:** 2026-08-02
+**Status:** Design approved; pending written-spec review
 **Scope:** Control Plane, Node CLI/Bridge, shared client UI/core, and the Web C browser surface
 
 ## 1. Problem statement
