@@ -45,3 +45,4 @@ services:
 
 volumes:
   termflow-data:
+    name: termflow-data

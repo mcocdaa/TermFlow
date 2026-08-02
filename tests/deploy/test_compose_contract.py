@@ -10,6 +10,7 @@ def test_compose_is_single_worker_and_persists_only_metadata() -> None:
     assert service["volumes"] == ["termflow-data:/app/data"]
     assert service["healthcheck"]["test"][-1].endswith("/healthz")
     assert list(compose["services"]) == ["control-plane"]
+    assert compose["volumes"]["termflow-data"] == {"name": "termflow-data"}
 
 
 def test_compose_configures_same_origin_web_control_limits() -> None:
@@ -36,12 +37,20 @@ def test_compose_configures_same_origin_web_control_limits() -> None:
 def test_control_plane_image_builds_web_without_shipping_node() -> None:
     dockerfile = Path("deploy/Dockerfile.control-plane").read_text()
     assert "FROM node:22" in dockerfile
+    assert "COPY package.json package-lock.json ./" in dockerfile
+    assert "apps/clients/web/package-lock.json" not in dockerfile
     assert "npm ci" in dockerfile
-    assert "npm run build" in dockerfile
+    assert "npm run build:web" in dockerfile
     assert "COPY --from=web" in dockerfile
     assert "FROM python:3.12-slim AS runtime" in dockerfile
     assert "EXPOSE 8000" in dockerfile
     assert "USER termflow" in dockerfile
+
+    runtime = dockerfile.split("FROM python:3.12-slim AS runtime", maxsplit=1)[1]
+    assert "COPY packages ./packages" not in runtime
+    assert "COPY apps ./apps" not in runtime
+    assert "COPY packages/protocol ./packages/protocol" in runtime
+    assert "COPY apps/control-plane ./apps/control-plane" in runtime
 
 
 def test_docker_context_excludes_local_state_and_frontend_build_output() -> None:

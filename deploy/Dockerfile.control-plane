@@ -4,15 +4,23 @@ FROM node:22-bookworm-slim AS web
 
 WORKDIR /workspace
 
-COPY apps/clients/web/package.json apps/clients/web/package-lock.json ./apps/clients/web/
+COPY package.json package-lock.json ./
+COPY apps/clients/web/package.json ./apps/clients/web/package.json
+COPY packages/client-contracts/package.json ./packages/client-contracts/package.json
+COPY packages/client-core/package.json ./packages/client-core/package.json
+COPY packages/client-ui/package.json ./packages/client-ui/package.json
 COPY packages/design-tokens/package.json ./packages/design-tokens/package.json
 
-RUN cd apps/clients/web && npm ci
+RUN npm ci
 
+COPY tsconfig.base.json ./
 COPY apps/clients/web ./apps/clients/web
+COPY packages/client-contracts ./packages/client-contracts
+COPY packages/client-core ./packages/client-core
+COPY packages/client-ui ./packages/client-ui
 COPY packages/design-tokens ./packages/design-tokens
 
-RUN cd apps/clients/web && npm run build
+RUN npm run build:web
 
 FROM python:3.12-slim AS runtime
 
@@ -27,8 +35,9 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
-COPY packages ./packages
-COPY apps ./apps
+COPY packages/protocol ./packages/protocol
+COPY apps/control-plane ./apps/control-plane
+COPY apps/node/pyproject.toml ./apps/node/pyproject.toml
 COPY --from=web /workspace/apps/clients/web/dist /app/frontend-dist
 
 RUN uv sync --frozen --no-dev --package termflow-control-plane \
