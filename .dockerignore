@@ -14,6 +14,11 @@
 dist
 **/dist
 **/node_modules
+**/target
+**/.cargo
+apps/node/src
+apps/node/tests
+apps/clients/tauri
 docs/superpowers
 tests
 apps/**/tests
