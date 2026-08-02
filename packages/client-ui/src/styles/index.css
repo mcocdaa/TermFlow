@@ -1,0 +1,5 @@
+@import '@termflow/design-tokens/styles';
+@import '@xterm/xterm/css/xterm.css';
+@import './reset.css';
+@import './app.css';
+@import './terminal-responsive.css';

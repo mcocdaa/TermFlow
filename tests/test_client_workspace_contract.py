@@ -31,12 +31,19 @@ def test_client_workspace_has_one_lock_and_fixed_dependency_direction() -> None:
     assert contracts.get("dependencies", {}) == {}
     assert core["dependencies"] == {"@termflow/client-contracts": "0.1.0"}
     assert set(ui["dependencies"]) >= {
+        "@termflow/client-contracts",
         "@termflow/client-core",
         "@termflow/design-tokens",
         "vue",
         "vue-router",
     }
-    assert set(web["dependencies"]) >= {"@termflow/client-core", "@termflow/client-ui"}
+    assert set(web["dependencies"]) == {
+        "@termflow/client-core",
+        "@termflow/client-ui",
+        "vue",
+        "vue-router",
+    }
+    assert ui["exports"]["./styles"] == "./src/styles/index.css"
 
 
 def test_registry_packages_are_pinned_with_integrity() -> None:

@@ -1,10 +1,11 @@
 import { themeIds, type ThemeId } from '@termflow/design-tokens'
-import { readonly, ref, type DeepReadonly, type Ref } from 'vue'
+import { inject, readonly, ref, type DeepReadonly, type Ref } from 'vue'
+import { themeStateKey } from '../runtimeKey'
+
+export type { ThemeId } from '@termflow/design-tokens'
 
 export const THEME_STORAGE_KEY = 'termflow.theme'
 const DEFAULT_THEME: ThemeId = 'graphite-signal'
-export const activeTheme = ref<ThemeId>(DEFAULT_THEME)
-let configuredTheme: ThemeState | null = null
 
 export interface ThemePreferences {
   load(): ThemeId | null
@@ -20,7 +21,7 @@ export interface ThemeState {
   select(theme: ThemeId): void
 }
 
-function isThemeId(value: string | null): value is ThemeId {
+export function isThemeId(value: string | null): value is ThemeId {
   return value !== null && (themeIds as readonly string[]).includes(value)
 }
 
@@ -39,13 +40,8 @@ export function createThemeState(preferences: ThemePreferences, target: ThemeTar
   }
 }
 
-export function configureActiveTheme(preferences: ThemePreferences, target: ThemeTarget): ThemeId {
-  configuredTheme = createThemeState(preferences, target)
-  activeTheme.value = configuredTheme.active.value
-  return activeTheme.value
-}
-
-export function selectActiveTheme(theme: ThemeId): void {
-  configuredTheme?.select(theme)
-  activeTheme.value = configuredTheme?.active.value ?? theme
+export function useTheme(): ThemeState {
+  const theme = inject(themeStateKey, undefined)
+  if (theme === undefined) throw new Error('TermFlow client theme is not installed.')
+  return theme
 }

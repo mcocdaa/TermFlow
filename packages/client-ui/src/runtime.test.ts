@@ -3,6 +3,7 @@ import { defineComponent } from 'vue'
 import { describe, expect, it } from 'vitest'
 import { createClientUi, useClientRuntime } from './runtime'
 import type { ClientRuntime } from './runtime'
+import { createThemeState } from './theme/theme'
 
 const fakeRuntime = (): ClientRuntime => ({
   api: {} as ClientRuntime['api'],
@@ -34,5 +35,24 @@ describe('client UI runtime', () => {
   it('fails with a fixed startup error when the composition root omitted the runtime', () => {
     const component = defineComponent({ setup: () => useClientRuntime(), template: '<div />' })
     expect(() => mount(component)).toThrow('TermFlow client runtime is not installed.')
+  })
+
+  it('creates isolated session and theme state for each Vue application', async () => {
+    const firstTheme = createThemeState({ load: () => 'cloud-cobalt', save: () => undefined }, { apply: () => undefined })
+    const secondTheme = createThemeState({ load: () => 'midnight-indigo', save: () => undefined }, { apply: () => undefined })
+    const firstRuntime: ClientRuntime = {
+      ...fakeRuntime(),
+      api: { sessions: { login: async () => ({ authenticated: true, expires_at: '2026-08-02T00:00:00Z' }) } } as unknown as ClientRuntime['api'],
+    }
+    const first = createClientUi(firstRuntime, { theme: firstTheme })
+    const second = createClientUi(fakeRuntime(), { theme: secondTheme })
+
+    expect(first.session).toBeDefined()
+    expect(first.session).not.toBe(second.session)
+    expect(first.theme).toBe(firstTheme)
+    expect(second.theme).toBe(secondTheme)
+    await first.session.loginWithToken('one-app-only')
+    expect(first.session.sessionState.authenticated).toBe(true)
+    expect(second.session.sessionState.authenticated).toBe(false)
   })
 })

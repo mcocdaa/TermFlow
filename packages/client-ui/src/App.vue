@@ -11,7 +11,7 @@
       <RouterLink to="/"><LayoutDashboard :size="18" aria-hidden="true" />控制中心</RouterLink>
       <RouterLink to="/computers"><MonitorCog :size="18" aria-hidden="true" />电脑管理</RouterLink>
     </aside>
-    <main id="main-content" tabindex="-1"><RouterView /></main>
+    <main id="main-content" tabindex="-1"><RouterView :key="routeViewKey" /></main>
     <nav v-if="!terminalLayout && !bareLayout" class="mobile-nav" aria-label="移动端导航">
       <RouterLink to="/"><LayoutDashboard :size="18" aria-hidden="true" />控制中心</RouterLink>
       <RouterLink to="/computers"><MonitorCog :size="18" aria-hidden="true" />电脑管理</RouterLink>
@@ -31,6 +31,7 @@ const route = useRoute()
 const { logoutSession, sessionState } = useSession()
 const terminalLayout = computed(() => route.meta.terminal === true)
 const bareLayout = computed(() => route.meta.bare === true)
+const routeViewKey = computed(() => terminalLayout.value ? `term:${String(route.params.termId)}` : 'shared-client-route')
 async function logout() {
   await logoutSession()
   await router.replace('/login')

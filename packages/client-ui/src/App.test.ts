@@ -1,6 +1,7 @@
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
+import type { TerminalSessionLike } from '@termflow/client-core'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
 import { createClientUi } from './runtime'
 import { clientRoutes } from './router/routes'
@@ -14,6 +15,32 @@ async function renderAt(path: string) {
 }
 
 describe('shared application routes', () => {
+  it('replaces the terminal session when navigating between Term route parameters', async () => {
+    const first: TerminalSessionLike = { connect: vi.fn(), sendInput: vi.fn(), sendAction: vi.fn(), dispose: vi.fn() }
+    const second: TerminalSessionLike = { connect: vi.fn(), sendInput: vi.fn(), sendAction: vi.fn(), dispose: vi.fn() }
+    const terminals = [first, second]
+    const createdTermIds: string[] = []
+    const createTerminal = vi.fn((termId: string) => {
+      createdTermIds.push(termId)
+      return terminals[createdTermIds.length - 1]!
+    })
+    const router = createRouter({ history: createMemoryHistory(), routes: clientRoutes })
+    await router.push('/terms/term-a')
+    await router.isReady()
+    const wrapper = mount(App, {
+      global: { plugins: [router, createClientUi(createFakeRuntime({ createTerminal }))] },
+    })
+    await flushPromises()
+
+    await router.push('/terms/term-b')
+    await flushPromises()
+
+    expect(createdTermIds).toEqual(['term-a', 'term-b'])
+    expect(first.dispose).toHaveBeenCalledOnce()
+    expect(second.connect).toHaveBeenCalledOnce()
+    wrapper.unmount()
+  })
+
   it.each([
     ['/login', '登录'],
     ['/', '控制中心'],

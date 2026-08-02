@@ -1,6 +1,8 @@
 import type { ApiClient, TerminalSessionCallbacks, TerminalSessionLike } from '@termflow/client-core'
-import { inject, type Plugin } from 'vue'
-import { clientRuntimeKey } from './runtimeKey'
+import { inject, type App } from 'vue'
+import { createSessionActions, type SessionActions } from './composables/useSession'
+import { clientRuntimeKey, sessionActionsKey, themeStateKey } from './runtimeKey'
+import { createThemeState, type ThemeState } from './theme/theme'
 
 export interface ClipboardPort {
   writeText(text: string): Promise<void>
@@ -28,10 +30,35 @@ export interface ClientRuntime {
   readonly canonicalServerUrl: string
 }
 
-export function createClientUi(runtime: ClientRuntime): Plugin {
+export interface ClientUiOptions {
+  readonly theme?: ThemeState
+}
+
+export interface ClientUiPlugin {
+  readonly session: SessionActions
+  readonly theme: ThemeState
+  install(app: App): void
+}
+
+function defaultThemeState(): ThemeState {
+  return createThemeState(
+    { load: () => null, save: () => undefined },
+    { apply: () => undefined },
+  )
+}
+
+export function createClientUi(runtime: ClientRuntime, options: ClientUiOptions = {}): ClientUiPlugin {
   Object.freeze(runtime)
+  const session = createSessionActions(runtime.api)
+  const theme = options.theme ?? defaultThemeState()
   return {
-    install(app) { app.provide(clientRuntimeKey, runtime) },
+    session,
+    theme,
+    install(app) {
+      app.provide(clientRuntimeKey, runtime)
+      app.provide(sessionActionsKey, session)
+      app.provide(themeStateKey, theme)
+    },
   }
 }
 

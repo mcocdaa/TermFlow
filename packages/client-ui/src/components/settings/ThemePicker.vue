@@ -29,7 +29,9 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue'
 import type { ThemeId } from '@termflow/design-tokens'
-import { activeTheme, selectActiveTheme } from '../../theme/theme'
+import { useTheme } from '../../theme/theme'
+
+const { active: activeTheme, select: selectTheme } = useTheme()
 
 const themes: ReadonlyArray<{ id: ThemeId; label: string }> = [
   { id: 'graphite-signal', label: '石墨信号' },
@@ -39,7 +41,7 @@ const themes: ReadonlyArray<{ id: ThemeId; label: string }> = [
 const radioButtons = ref<HTMLButtonElement[]>([])
 
 function choose(id: ThemeId) {
-  selectActiveTheme(id)
+  selectTheme(id)
 }
 
 async function move(offset: number) {

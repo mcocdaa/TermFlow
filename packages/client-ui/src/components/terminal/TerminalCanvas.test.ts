@@ -5,7 +5,7 @@ import type { ClientRuntime } from '../../runtime'
 import { createClientUi } from '../../runtime'
 import { createFakeRuntime } from '../../test/fakeRuntime'
 import type { TerminalAdapter, TerminalAdapterFactory } from '../../terminal/xtermAdapter'
-import { selectActiveTheme } from '../../theme/theme'
+import { createThemeState } from '../../theme/theme'
 import TerminalCanvas from './TerminalCanvas.vue'
 
 function terminalRuntime() {
@@ -21,7 +21,8 @@ describe('TerminalCanvas', () => {
     let input!: (value: string | Uint8Array) => void
     const adapter: TerminalAdapter = { write: vi.fn(), resize: vi.fn(), reset: vi.fn(), focus: vi.fn(), refreshTheme: vi.fn(), setInputEnabled: vi.fn(), measureCell: vi.fn(() => ({ width: 10, height: 20 })), canClientPan: vi.fn(() => false), dispose: vi.fn() }
     const createAdapter: TerminalAdapterFactory = vi.fn((_host, _size, onInput) => { input = onInput; return adapter })
-    const wrapper = mount(TerminalCanvas, { props: { termId: 'term-9', createAdapter }, global: { plugins: [createClientUi(session.runtime)] } })
+    const theme = createThemeState({ load: () => null, save: vi.fn() }, { apply: vi.fn() })
+    const wrapper = mount(TerminalCanvas, { props: { termId: 'term-9', createAdapter }, global: { plugins: [createClientUi(session.runtime, { theme })] } })
 
     expect(session.createTerminal).toHaveBeenCalledWith('term-9', expect.any(Object))
     expect(session.terminal.connect).toHaveBeenCalledOnce()
@@ -42,7 +43,7 @@ describe('TerminalCanvas', () => {
     expect(session.terminal.sendInput).toHaveBeenCalledWith('ls\r')
     session.callbacks().onStatus('reconnecting')
     expect(adapter.setInputEnabled).toHaveBeenLastCalledWith(false)
-    selectActiveTheme('cloud-cobalt')
+    theme.select('cloud-cobalt')
     await wrapper.vm.$nextTick()
     expect(adapter.refreshTheme).toHaveBeenCalled()
 
@@ -64,5 +65,13 @@ describe('TerminalCanvas', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.get('[role="alert"]').text()).toBe('目标 Pane 已不存在，请刷新状态。')
     expect(wrapper.text()).not.toContain('target_not_found')
+
+    session.callbacks().onClosed('stream_gap')
+    session.callbacks().onStatus('reconnecting')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('[role="alert"]').text()).toBe('终端连接已关闭。')
+    session.callbacks().onStatus('connected')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
   })
 })

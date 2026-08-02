@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ThemeId } from '@termflow/design-tokens'
-import { activeTheme, configureActiveTheme, createThemeState, selectActiveTheme, THEME_STORAGE_KEY, type ThemePreferences, type ThemeTarget } from './theme'
+import { createThemeState, isThemeId, THEME_STORAGE_KEY, type ThemePreferences, type ThemeTarget } from './theme'
 
 function setup(stored: ThemeId | null) {
   const preferences: ThemePreferences = { load: vi.fn(() => stored), save: vi.fn() }
@@ -9,6 +9,12 @@ function setup(stored: ThemeId | null) {
 }
 
 describe('theme state', () => {
+  it('exposes the shared theme identifier validator to platform adapters', () => {
+    expect(isThemeId('cloud-cobalt')).toBe(true)
+    expect(isThemeId('admin-token-secret')).toBe(false)
+    expect(isThemeId(null)).toBe(false)
+  })
+
   it('loads and applies a valid preference without exposing credentials', () => {
     const { theme, target, preferences } = setup('cloud-cobalt')
     expect(theme.active.value).toBe('cloud-cobalt')
@@ -26,15 +32,15 @@ describe('theme state', () => {
     expect(target.apply).toHaveBeenLastCalledWith('midnight-indigo')
   })
 
-  it('exposes one configured active theme for shared terminal and settings UI', () => {
-    const preferences: ThemePreferences = { load: vi.fn<() => ThemeId | null>(() => 'cloud-cobalt'), save: vi.fn() }
-    const target: ThemeTarget = { apply: vi.fn() }
-    configureActiveTheme(preferences, target)
+  it('keeps independent theme state for separate client applications', () => {
+    const first = setup('cloud-cobalt')
+    const second = setup('midnight-indigo')
 
-    expect(activeTheme.value).toBe('cloud-cobalt')
-    selectActiveTheme('midnight-indigo')
-    expect(activeTheme.value).toBe('midnight-indigo')
-    expect(preferences.save).toHaveBeenCalledWith('midnight-indigo')
-    expect(target.apply).toHaveBeenLastCalledWith('midnight-indigo')
+    first.theme.select('graphite-signal')
+
+    expect(first.theme.active.value).toBe('graphite-signal')
+    expect(second.theme.active.value).toBe('midnight-indigo')
+    expect(first.preferences.save).toHaveBeenCalledWith('graphite-signal')
+    expect(second.preferences.save).not.toHaveBeenCalled()
   })
 })

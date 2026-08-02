@@ -25,12 +25,13 @@ import TmuxActionMenu from '../components/terminal/TmuxActionMenu.vue'
 import MobileKeyBar from '../components/terminal/MobileKeyBar.vue'
 import ClosePaneDialog from '../components/terminal/ClosePaneDialog.vue'
 import { createOrientationViewState, orientationFor } from '../terminal/orientation'
-import { clearSessionState } from '../composables/useSession'
+import { useSession } from '../composables/useSession'
 import { useClientRuntime } from '../runtime'
 import type { BindingSnapshot, PaneTopology, TerminalActionId } from '../types'
 const route = useRoute()
 const router = useRouter()
 const runtime = useClientRuntime()
+const { clearSessionState } = useSession()
 const termId = computed(() => String(route.params.termId))
 const orientation = ref(orientationFor(window.innerWidth, window.innerHeight))
 const orientationViews = reactive(createOrientationViewState())

@@ -16,7 +16,8 @@ const requiredTokens = [
 ]
 
 describe('design token contract', () => {
-  const themesDirectory = resolve(process.cwd(), '../../../packages/design-tokens/src/themes')
+  const workspaceRoot = resolve(process.cwd(), '../../..')
+  const themesDirectory = resolve(workspaceRoot, 'packages/design-tokens/src/themes')
 
   it('provides exactly three complete named themes', () => {
     const files = readdirSync(themesDirectory).filter((file) => file.endsWith('.css')).sort()
@@ -28,7 +29,7 @@ describe('design token contract', () => {
   })
 
   it('keeps literal colors inside theme sources only', () => {
-    const webSource = resolve(process.cwd(), 'src')
+    const clientUiSource = resolve(workspaceRoot, 'packages/client-ui/src')
     const offenders: string[] = []
     const walk = (directory: string) => {
       for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -37,7 +38,7 @@ describe('design token contract', () => {
         else if (/\.(vue|css|ts)$/.test(entry.name) && /#[\da-f]{3,8}|rgba?\(|hsla?\(/i.test(readFileSync(path, 'utf8'))) offenders.push(path)
       }
     }
-    walk(webSource)
+    walk(clientUiSource)
     expect(offenders).toEqual([])
   })
 })

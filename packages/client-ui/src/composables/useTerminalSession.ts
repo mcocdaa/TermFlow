@@ -43,7 +43,11 @@ export function useTerminalSession(
   let adapter: TerminalAdapter | null = null
 
   const callbacks: TerminalSessionCallbacks = {
-    onStatus: (value) => { status.value = value; adapter?.setInputEnabled(value === 'connected') },
+    onStatus: (value) => {
+      status.value = value
+      if (value === 'connected') terminalError.value = ''
+      adapter?.setInputEnabled(value === 'connected')
+    },
     onReady: (control) => {
       dimensions.value = { rows: control.rows, cols: control.cols }
       if (!adapter && host.value) {

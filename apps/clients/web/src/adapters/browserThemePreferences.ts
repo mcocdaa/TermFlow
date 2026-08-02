@@ -1,16 +1,13 @@
 import {
+  isThemeId,
   THEME_STORAGE_KEY,
+  type ThemeId,
   type ThemePreferences,
   type ThemeTarget,
 } from '@termflow/client-ui'
-import { themeIds, type ThemeId } from '@termflow/design-tokens'
 
 type ThemeStorage = Pick<Storage, 'getItem' | 'setItem'>
 type ThemeRoot = Pick<HTMLElement, 'dataset'>
-
-function isThemeId(value: string | null): value is ThemeId {
-  return value !== null && (themeIds as readonly string[]).includes(value)
-}
 
 export function createBrowserThemePreferences(storage: ThemeStorage = globalThis.localStorage): ThemePreferences {
   return {

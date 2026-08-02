@@ -18,10 +18,11 @@ import type { TerminalFactory } from '../../composables/useTerminalSession'
 import { useTerminalSession } from '../../composables/useTerminalSession'
 import { displayPresentation, type DisplayMode } from '../../terminal/viewport'
 import { createPointerViewport, type PointerViewportSnapshot } from '../../composables/usePointerViewport'
-import { activeTheme } from '../../theme/theme'
+import { useTheme } from '../../theme/theme'
 
 const props = withDefaults(defineProps<{ termId: string; displayMode?: DisplayMode; selectionActive?: boolean; mouseReportingActive?: boolean; transformInput?: (value: string | Uint8Array) => string | Uint8Array; createTerminal?: TerminalFactory; createAdapter?: TerminalAdapterFactory }>(), { displayMode: 'font-100', selectionActive: false, mouseReportingActive: false })
 const emit = defineEmits<{ bindings: [value: { prefix: string; prefix2?: string | null; bindings: Array<{ action: TerminalActionId; key: string | null; tooltip: string }> }]; 'reset-input': [key: number]; status: [value: TerminalConnectionStatus]; 'authentication-required': []; 'action-result': [value: TerminalActionResultFrame] }>()
+const { active: activeTheme } = useTheme()
 const host = ref<HTMLElement | null>(null)
 const frameElement = ref<HTMLElement | null>(null)
 const frame = ref({ width: 1, height: 1 })
