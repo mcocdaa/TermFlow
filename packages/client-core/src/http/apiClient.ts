@@ -2,7 +2,10 @@ import type {
   ErrorEnvelope,
 } from '@termflow/client-contracts'
 import { createComputersApi } from '../api/computers'
+import { createClientsApi } from '../api/clients'
 import { createDashboardApi } from '../api/dashboard'
+import { createOAuthApi } from '../api/oauth'
+import { createSecurityApi } from '../api/security'
 import { createSessionApi } from '../api/session'
 import { createTermsApi } from '../api/terms'
 import { ApiError, type ApiErrorKind } from './apiError'
@@ -92,6 +95,9 @@ export function createApiClient(transport: HttpTransport) {
     sessions: createSessionApi(request),
     dashboard: createDashboardApi(request),
     computers: createComputersApi(request),
+    security: createSecurityApi(request),
+    oauth: createOAuthApi(request),
+    clients: createClientsApi(request),
     terms: createTermsApi(request),
   }
 }

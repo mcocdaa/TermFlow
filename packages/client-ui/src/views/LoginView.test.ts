@@ -60,4 +60,26 @@ describe('LoginView', () => {
     expect((wrapper.get('input').element as HTMLInputElement).value).toBe('')
     expect(wrapper.html()).not.toContain('do-not-render-me')
   })
+
+  it('clears the token and completes a six-digit TOTP challenge in the same form', async () => {
+    const login = vi.fn().mockResolvedValue({ status: 'totp_required', challenge_id: 'challenge-1', expires_at: '2026-08-01T01:00:00Z' })
+    const completeTotp = vi.fn().mockResolvedValue({ authenticated: true, expires_at: '2026-08-01T02:00:00Z' })
+    const runtime = createFakeRuntime({ api: { sessions: { login, completeTotp } } as unknown as ClientRuntime['api'] })
+    const { router, wrapper } = await mountLogin(runtime)
+
+    await wrapper.get('#admin-token').setValue('bootstrap-secret')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.find('#admin-token').exists()).toBe(false)
+    expect(wrapper.get('#totp-code').attributes('autocomplete')).toBe('one-time-code')
+    expect(wrapper.html()).not.toContain('bootstrap-secret')
+    await wrapper.get('#totp-code').setValue('123456')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(completeTotp).toHaveBeenCalledWith('challenge-1', '123456')
+    expect(router.currentRoute.value.fullPath).toBe('/')
+    expect(wrapper.html()).not.toContain('123456')
+  })
 })
