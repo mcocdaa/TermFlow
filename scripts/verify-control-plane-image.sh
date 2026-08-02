@@ -3,7 +3,7 @@ set -euo pipefail
 
 CONTROL_PLANE_IMAGE="${1:-termflow-control-plane:verify}"
 
-docker run --rm --entrypoint /bin/sh "${CONTROL_PLANE_IMAGE}" -eu -c '
+docker run --rm --user 0:0 --entrypoint /bin/sh "${CONTROL_PLANE_IMAGE}" -eu -c '
   test -x /opt/termflow/bin/termflow-control
   test -f /app/frontend-dist/index.html
   /opt/termflow/bin/python -c "import importlib.util, termflow_control_plane, termflow_protocol; assert importlib.util.find_spec(\"termflow_node\") is None"
