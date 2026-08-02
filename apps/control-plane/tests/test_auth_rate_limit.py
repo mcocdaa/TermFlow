@@ -195,3 +195,37 @@ def test_control_plane_returns_structured_429_with_retry_after(client: TestClien
     assert response.json()["error"]["message"] == (
         "Authentication is temporarily unavailable."
     )
+
+
+def test_real_browser_login_enforces_backoff_and_emits_safe_audit(client: TestClient) -> None:
+    clock = ManualClock()
+    client.app.state.auth_rate_limiter = _limiter(clock, capacity=100)
+    events: list[object] = []
+
+    class AuditCapture:
+        async def record(self, *args: object, **kwargs: object) -> None:
+            events.append((args, kwargs))
+
+    client.app.state.auth_audit = AuditCapture()
+    headers = {"Origin": "http://127.0.0.1:8000"}
+
+    rejected = client.post(
+        "/api/v1/admin/sessions",
+        headers=headers,
+        json={"admin_token": "submitted-secret"},
+    )
+    limited = client.post(
+        "/api/v1/admin/sessions",
+        headers=headers,
+        json={"admin_token": "a-different-secret"},
+    )
+
+    assert rejected.status_code == 401
+    assert rejected.json()["error"]["code"] == "authentication_failed"
+    assert limited.status_code == 429
+    assert limited.headers["retry-after"] == "1"
+    serialized = repr(events)
+    assert "submitted-secret" not in serialized
+    assert "a-different-secret" not in serialized
+    assert "REJECTED" in serialized
+    assert "RATE_LIMITED" in serialized

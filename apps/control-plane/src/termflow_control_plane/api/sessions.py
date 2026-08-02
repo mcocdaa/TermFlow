@@ -10,6 +10,13 @@ from termflow_protocol import (
     BrowserSessionResponse,
 )
 
+from termflow_control_plane.auth.audit import (
+    AuthAuditErrorCode,
+    AuthAuditOperation,
+    AuthAuditResult,
+    AuthenticationAudit,
+)
+from termflow_control_plane.auth.rate_limit import AuthRateLimiter, direct_peer_source
 from termflow_control_plane.auth.sessions import (
     BrowserSessionStore,
     browser_cookie_policy,
@@ -45,11 +52,44 @@ async def create_browser_session(
     settings: Annotated[Settings, Depends(get_settings)],
     sessions: Annotated[BrowserSessionStore, Depends(get_browser_sessions)],
 ) -> BrowserSessionResponse:
+    source = direct_peer_source(http_request)
+    limiter: AuthRateLimiter = http_request.app.state.auth_rate_limiter
+    audit: AuthenticationAudit = http_request.app.state.auth_audit
     if not origin_allowed(http_request.headers.get("origin"), settings):
+        await audit.record(
+            AuthAuditOperation.WEB_SESSION_LOGIN,
+            AuthAuditResult.REJECTED,
+            source,
+            error_code=AuthAuditErrorCode.ORIGIN_REJECTED,
+        )
         raise TermFlowError("origin_not_allowed", 403, "The browser Origin is not allowed.")
-    supplied = request.admin_token.get_secret_value()
-    if not hmac.compare_digest(supplied, settings.admin_token.get_secret_value()):
-        raise TermFlowError("unauthorized", 401, "Authentication is required.")
+    try:
+        limiter.check("web_session", source)
+    except TermFlowError:
+        await audit.record(
+            AuthAuditOperation.WEB_SESSION_LOGIN,
+            AuthAuditResult.RATE_LIMITED,
+            source,
+            error_code=AuthAuditErrorCode.RATE_LIMITED,
+        )
+        raise
+    async with limiter.verification_slot():
+        supplied = request.admin_token.get_secret_value()
+        if not hmac.compare_digest(supplied, settings.admin_token.get_secret_value()):
+            limiter.record_failure("web_session", source)
+            await audit.record(
+                AuthAuditOperation.WEB_SESSION_LOGIN,
+                AuthAuditResult.REJECTED,
+                source,
+                error_code=AuthAuditErrorCode.INVALID_CREDENTIALS,
+            )
+            raise TermFlowError("authentication_failed", 401, "Authentication failed.")
+    limiter.record_success("web_session", source)
+    await audit.record(
+        AuthAuditOperation.WEB_SESSION_LOGIN,
+        AuthAuditResult.OK,
+        source,
+    )
     secret, expires_at = sessions.create()
     policy = browser_cookie_policy(settings)
     response.set_cookie(
