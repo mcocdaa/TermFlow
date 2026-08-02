@@ -1,42 +1,54 @@
 <template>
   <section class="settings-panel" aria-labelledby="server-heading">
     <div class="settings-panel-heading">
-      <div><p class="eyebrow">Server</p><h2 id="server-heading">B 连接地址</h2></div>
-      <span class="status-chip">只读</span>
+      <div><p class="eyebrow">Server</p><h2 id="server-heading">中继服务器</h2></div>
     </div>
-    <p class="settings-copy">此地址由服务器部署配置决定，Web 管理页不能修改。</p>
+    <div data-server-label class="server-url-heading">
+      <h3>服务网址</h3>
+      <button
+        ref="qrTrigger"
+        data-action="show-server-qr"
+        class="icon-button icon-only"
+        type="button"
+        aria-label="显示服务网址二维码"
+        @click="qrOpen = true"
+      >
+        <QrCode :size="18" aria-hidden="true" />
+      </button>
+    </div>
     <div class="server-address-row">
       <code data-server-issuer>{{ issuer }}</code>
-      <button class="secondary-button" type="button" @click="copyIssuer">{{ copied ? '已复制' : '复制' }}</button>
+      <button data-action="copy-server-url" class="secondary-button" type="button" @click="copyIssuer">{{ copied ? '已复制' : '复制' }}</button>
     </div>
-    <div class="connection-qr">
-      <img v-if="qrDataUrl" :src="qrDataUrl" alt="TermFlow Server 连接二维码" />
-      <p>二维码只包含公开 issuer 和协议版本，不包含管理员 Token、TOTP 或客户端凭据。</p>
-    </div>
+    <QrCodeDialog
+      :open="qrOpen"
+      title="服务网址二维码"
+      :value="qrPayload"
+      description="二维码仅包含公开服务网址和协议版本。"
+      :return-focus="qrTrigger"
+      @close="qrOpen = false"
+    />
   </section>
 </template>
 
 <script setup lang="ts">
-import QRCode from 'qrcode'
-import { onMounted, ref, watch } from 'vue'
+import { QrCode } from '@lucide/vue'
+import { computed, ref } from 'vue'
+import QrCodeDialog from '../common/QrCodeDialog.vue'
 import { useClientRuntime } from '../../runtime'
 
 const props = defineProps<{ issuer: string }>()
 const runtime = useClientRuntime()
-const qrDataUrl = ref('')
 const copied = ref(false)
-
-async function renderQr() {
-  qrDataUrl.value = await QRCode.toDataURL(JSON.stringify({ protocol: 'termflow-connect-v1', issuer: props.issuer }), {
-    errorCorrectionLevel: 'M', margin: 1, width: 208,
-  })
-}
+const qrOpen = ref(false)
+const qrTrigger = ref<HTMLButtonElement | null>(null)
+const qrPayload = computed(() => JSON.stringify({
+  protocol: 'termflow-connect-v1',
+  issuer: props.issuer,
+}))
 
 async function copyIssuer() {
   await runtime.clipboard.writeText(props.issuer)
   copied.value = true
 }
-
-onMounted(renderQr)
-watch(() => props.issuer, renderQr)
 </script>

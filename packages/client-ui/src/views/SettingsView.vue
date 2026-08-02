@@ -1,6 +1,6 @@
 <template>
   <div class="page settings-page">
-    <header class="page-heading"><div><p class="eyebrow">Preferences & Security</p><h1>设置</h1><p>主题在客户端本地保存；认证和客户端授权由当前 B 管理。</p></div></header>
+    <header class="page-heading"><div><p class="eyebrow">Settings</p><h1>设置</h1></div></header>
     <section class="settings-panel" aria-labelledby="appearance-heading"><div class="settings-panel-heading"><div><p class="eyebrow">Appearance</p><h2 id="appearance-heading">界面主题</h2></div></div><ThemePicker /></section>
     <ServerConnectionPanel :issuer="issuer" />
     <template v-if="runtime.capabilities.manageSecurity">

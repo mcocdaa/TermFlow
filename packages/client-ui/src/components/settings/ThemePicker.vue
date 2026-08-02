@@ -1,6 +1,7 @@
 <template>
   <div
     class="theme-picker"
+    data-layout="theme-grid"
     role="radiogroup"
     aria-label="界面主题"
     @keydown.right.prevent="move(1)"

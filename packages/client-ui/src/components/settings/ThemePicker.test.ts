@@ -1,5 +1,7 @@
 import { mount } from '@vue/test-utils'
 import type { ThemeId } from '@termflow/design-tokens'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createClientUi } from '../../runtime'
 import { createFakeRuntime } from '../../test/fakeRuntime'
@@ -46,5 +48,17 @@ describe('ThemePicker', () => {
     expect(radios[1]!.attributes('aria-label')).toBe('云端钴蓝')
     expect(document.activeElement).toBe(radios[1]!.element)
     wrapper.unmount()
+  })
+
+  it('uses a scalable full-width grid for direct radio children', () => {
+    const wrapper = mountPicker()
+    const group = wrapper.get('[role="radiogroup"]')
+    expect(group.attributes('data-layout')).toBe('theme-grid')
+    expect(group.element.children).toHaveLength(3)
+    expect([...group.element.children].every((child) => child.classList.contains('theme-option'))).toBe(true)
+
+    const css = readFileSync(resolve(process.cwd(), 'src/styles/app.css'), 'utf8')
+    expect(css).toContain('grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));')
+    expect(css).not.toContain('.settings-page .theme-picker { width: fit-content;')
   })
 })
