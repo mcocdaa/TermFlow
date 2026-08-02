@@ -38,28 +38,29 @@
 <script setup lang="ts">
 import { CircleHelp, Copy, X } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { createEnrollmentCode } from '../../api/computers'
-import { ApiError } from '../../api/http'
+import { ApiError } from '@termflow/client-core'
+import { useClientRuntime } from '../../runtime'
 
 const emit = defineEmits<{ closed: [] }>()
+const runtime = useClientRuntime()
 const open = ref(true)
 const busy = ref(false)
 const copied = ref(false)
 const displayName = ref('')
 const code = ref<string | null>(null)
 const expiresAt = ref<number | null>(null)
-const now = ref(Date.now())
+const now = ref(runtime.clock.now())
 const message = ref('')
 const panel = ref<HTMLElement | null>(null)
 const nameInput = ref<HTMLInputElement | null>(null)
 const copyButton = ref<HTMLButtonElement | null>(null)
 const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-let timer: ReturnType<typeof setInterval> | null = null
+let timer: unknown | null = null
 
 const secondsRemaining = computed(() => expiresAt.value === null ? 0 : Math.max(0, Math.ceil((expiresAt.value - now.value) / 1000)))
-const command = computed(() => code.value ? `termflow login --server ${window.location.origin} --code ${code.value}` : '')
+const command = computed(() => code.value ? `termflow login --server ${runtime.canonicalServerUrl} --code ${code.value}` : '')
 
-function stopTimer() { if (timer !== null) clearInterval(timer); timer = null }
+function stopTimer() { if (timer !== null) runtime.clock.clearInterval(timer); timer = null }
 function clearSecret() { code.value = null; expiresAt.value = null; copied.value = false; stopTimer() }
 function close() {
   clearSecret()
@@ -84,8 +85,8 @@ function onDialogKeydown(event: KeyboardEvent) {
 }
 function startTimer() {
   stopTimer()
-  timer = setInterval(() => {
-    now.value = Date.now()
+  timer = runtime.clock.setInterval(() => {
+    now.value = runtime.clock.now()
     if (secondsRemaining.value > 0) return
     clearSecret()
     if (open.value) void create(true)
@@ -103,18 +104,18 @@ async function create(automatic = false) {
   busy.value = true
   message.value = ''
   try {
-    const enrollment = await createEnrollmentCode(displayName.value)
+    const enrollment = await runtime.api.computers.createEnrollment(displayName.value)
     if (!open.value) return
     code.value = enrollment.token
     expiresAt.value = new Date(enrollment.expires_at).getTime()
-    now.value = Date.now()
+    now.value = runtime.clock.now()
     copied.value = false
     startTimer()
     if (!automatic) void nextTick(() => copyButton.value?.focus())
   } catch (error) { message.value = error instanceof ApiError ? error.message : automatic ? '注册码刷新失败，请手动重试。' : '无法创建注册码。' }
   finally { busy.value = false }
 }
-async function copy() { if (!command.value) return; await navigator.clipboard.writeText(command.value); copied.value = true }
+async function copy() { if (!command.value) return; await runtime.clipboard.writeText(command.value); copied.value = true }
 onMounted(() => nameInput.value?.focus())
 onBeforeUnmount(() => { clearSecret(); if (returnFocus?.isConnected) returnFocus.focus() })
 </script>

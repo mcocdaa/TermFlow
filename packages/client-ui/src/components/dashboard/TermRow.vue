@@ -13,11 +13,11 @@
 
 <script setup lang="ts">
 import { RouterLink } from 'vue-router'
-import type { TermSummaryDto } from '../../api/types'
+import type { TermSummary } from '../../types'
 import { formatBRecordedTime } from '../../utils/time'
 import StatusPill from './StatusPill.vue'
 
-const props = defineProps<{ term: TermSummaryDto }>()
+const props = defineProps<{ term: TermSummary }>()
 const route = `/terms/${encodeURIComponent(props.term.instance_id)}`
 const formatTime = formatBRecordedTime
 </script>

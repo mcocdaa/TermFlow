@@ -1,10 +1,13 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { createMemoryHistory } from 'vue-router'
 import { describe, expect, it, vi } from 'vitest'
-import App from '../App.vue'
-import { createAppRouter } from '../router'
+import type { ClientRuntime } from '../runtime'
+import { createClientUi } from '../runtime'
+import { createFakeRuntime } from '../test/fakeRuntime'
+import ComputersView from './ComputersView.vue'
 
-const computer = {
+type Computer = Awaited<ReturnType<ClientRuntime['api']['computers']['list']>>['computers'][number]
+
+const computer: Computer = {
   installation_id: 'machine-1', display_name: '主工作站', hostname: 'devbox', platform: 'Linux x86_64', client_version: '1.4.2', online: true,
   registered_at: '2026-07-20T00:00:00Z', last_seen_at: '2026-08-01T01:00:00Z', terms: [
     { instance_id: 't1', name: 'one', online: true, window_count: 1, pane_count: 1, active_pane_count: 1, current_command: 'sh', last_seen_at: null },
@@ -13,21 +16,20 @@ const computer = {
   ],
 }
 
+function mountComputers(runtime: ClientRuntime) {
+  return mount(ComputersView, { global: { plugins: [createClientUi(runtime)] } })
+}
+
 describe('ComputersView', () => {
   it('renders four Chinese columns, one online Term pill, and saves a validated display name', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ computers: [computer] }), { status: 200, headers: { 'content-type': 'application/json' } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ...computer, display_name: '构建主机' }), { status: 200, headers: { 'content-type': 'application/json' } }))
-    vi.stubGlobal('fetch', fetchMock)
-    const router = createAppRouter({ sessionStatus: async () => ({ authenticated: true }), history: createMemoryHistory() })
-    await router.push('/computers')
-    await router.isReady()
-    const wrapper = mount(App, { global: { plugins: [router] } })
+    const list = vi.fn().mockResolvedValue({ computers: [computer] })
+    const rename = vi.fn().mockResolvedValue({ ...computer, display_name: '构建主机' })
+    const runtime = createFakeRuntime({ api: { computers: { list, rename } } as unknown as ClientRuntime['api'] })
+    const wrapper = mountComputers(runtime)
     await flushPromises()
 
-    expect(wrapper.findAll('[role="columnheader"]').map((header) => header.text())).toEqual([
-      '名称', '终端', '最近在线', '注册时间',
-    ])
+    expect(list).toHaveBeenCalledTimes(1)
+    expect(wrapper.findAll('[role="columnheader"]').map((header) => header.text())).toEqual(['名称', '终端', '最近在线', '注册时间'])
     expect(wrapper.text()).toContain('devbox')
     expect(wrapper.text()).not.toContain('操作系统')
     expect(wrapper.text()).not.toContain('Linux x86_64')
@@ -43,39 +45,26 @@ describe('ComputersView', () => {
     await wrapper.get('[data-action="save-name"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('构建主机')
-    expect(fetchMock.mock.calls[1][1].method).toBe('PATCH')
+    expect(rename).toHaveBeenCalledWith('machine-1', '构建主机')
   })
 
   it('rejects control characters before sending a rename request', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ computers: [computer] }), { status: 200, headers: { 'content-type': 'application/json' } }))
-    vi.stubGlobal('fetch', fetchMock)
-    const router = createAppRouter({ sessionStatus: async () => ({ authenticated: true }), history: createMemoryHistory() })
-    await router.push('/computers')
-    await router.isReady()
-    const wrapper = mount(App, { global: { plugins: [router] } })
+    const list = vi.fn().mockResolvedValue({ computers: [computer] })
+    const rename = vi.fn()
+    const runtime = createFakeRuntime({ api: { computers: { list, rename } } as unknown as ClientRuntime['api'] })
+    const wrapper = mountComputers(runtime)
     await flushPromises()
     await wrapper.get('[data-action="edit-name"]').trigger('click')
     await wrapper.get('input[name="display-name"]').setValue('bad\u007fname')
     await wrapper.get('[data-action="save-name"]').trigger('click')
     expect(wrapper.get('[role="alert"]').text()).toContain('1 至 128')
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(rename).not.toHaveBeenCalled()
   })
 
   it('omits absent identity metadata, the old time note, and timezone suffixes', async () => {
-    const sparseComputer = {
-      ...computer,
-      installation_id: 'machine-sparse',
-      display_name: 'Computer',
-      hostname: null,
-      platform: null,
-      client_version: null,
-      terms: [],
-    }
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ computers: [sparseComputer] }), { status: 200, headers: { 'content-type': 'application/json' } })))
-    const router = createAppRouter({ sessionStatus: async () => ({ authenticated: true }), history: createMemoryHistory() })
-    await router.push('/computers')
-    await router.isReady()
-    const wrapper = mount(App, { global: { plugins: [router] } })
+    const sparseComputer = { ...computer, installation_id: 'machine-sparse', display_name: 'Computer', hostname: null, platform: null, client_version: null, terms: [] }
+    const runtime = createFakeRuntime({ api: { computers: { list: vi.fn().mockResolvedValue({ computers: [sparseComputer] }) } } as unknown as ClientRuntime['api'] })
+    const wrapper = mountComputers(runtime)
     await flushPromises()
 
     const row = wrapper.get('[data-computer-id="machine-sparse"]')

@@ -10,19 +10,20 @@
 
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { listComputers } from '../api/computers'
-import { ApiError } from '../api/http'
-import type { ComputerSummaryDto } from '../api/types'
+import { ApiError } from '@termflow/client-core'
 import ComputerTable from '../components/computers/ComputerTable.vue'
 import EnrollmentDialog from '../components/computers/EnrollmentDialog.vue'
+import { useClientRuntime } from '../runtime'
+import type { ComputerSummary } from '../types'
 
-const computers = ref<ComputerSummaryDto[]>([])
+const runtime = useClientRuntime()
+const computers = ref<ComputerSummary[]>([])
 const loading = ref(true)
 const message = ref('')
 const showEnrollment = ref(false)
 const controller = new AbortController()
 onMounted(async () => {
-  try { computers.value = (await listComputers(controller.signal)).computers }
+  try { computers.value = (await runtime.api.computers.list(controller.signal)).computers }
   catch (error) { if (!(error instanceof ApiError) || error.kind !== 'aborted') message.value = error instanceof ApiError ? error.message : '无法加载 Computers。' }
   finally { loading.value = false }
 })

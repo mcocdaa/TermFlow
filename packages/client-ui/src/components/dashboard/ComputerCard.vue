@@ -11,9 +11,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { ComputerSummaryDto } from '../../api/types'
+import type { ComputerSummary } from '../../types'
 import StatusPill from './StatusPill.vue'
 import TermRow from './TermRow.vue'
-const props = defineProps<{ computer: ComputerSummaryDto }>()
+const props = defineProps<{ computer: ComputerSummary }>()
 const metadata = computed(() => [props.computer.hostname, props.computer.platform].filter(Boolean).join(' · '))
 </script>

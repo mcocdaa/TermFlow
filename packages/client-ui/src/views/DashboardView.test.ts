@@ -1,11 +1,14 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { createMemoryHistory } from 'vue-router'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { describe, expect, it, vi } from 'vitest'
-import App from '../App.vue'
-import { createAppRouter } from '../router'
-import type { DashboardDto } from '../api/types'
+import type { ClientRuntime } from '../runtime'
+import { createClientUi } from '../runtime'
+import { createFakeRuntime } from '../test/fakeRuntime'
+import DashboardView from './DashboardView.vue'
 
-const dashboard: DashboardDto = {
+type DashboardSnapshot = Awaited<ReturnType<ClientRuntime['api']['dashboard']['get']>>
+
+const dashboard: DashboardSnapshot = {
   metrics: { online_terms: 2, total_terms: 3, active_panes: 5, interactions_24h: 37, computers: 2 },
   computers: [
     {
@@ -24,39 +27,45 @@ const dashboard: DashboardDto = {
   ],
 }
 
+async function mountDashboard(runtime: ClientRuntime) {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/', component: DashboardView },
+      { path: '/terms/:termId', component: { template: '<div />' } },
+    ],
+  })
+  await router.push('/')
+  await router.isReady()
+  return mount(DashboardView, { global: { plugins: [router, createClientUi(runtime)] } })
+}
+
 describe('DashboardView', () => {
-  it('renders server metrics and Computers with complete Term rows', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(dashboard), { status: 200, headers: { 'content-type': 'application/json' } })))
-    const router = createAppRouter({ sessionStatus: async () => ({ authenticated: true }), history: createMemoryHistory() })
-    await router.push('/')
-    await router.isReady()
-    const wrapper = mount(App, { global: { plugins: [router] } })
+  it('renders runtime metrics and Computers with complete Term rows', async () => {
+    const getDashboard = vi.fn().mockResolvedValue(dashboard)
+    const runtime = createFakeRuntime({ api: { dashboard: { get: getDashboard } } as unknown as ClientRuntime['api'] })
+    const wrapper = await mountDashboard(runtime)
     await flushPromises()
 
+    expect(getDashboard).toHaveBeenCalledTimes(1)
     expect(wrapper.text()).toContain('在线 Terms2')
     expect(wrapper.text()).toContain('共 3 Terms')
     expect(wrapper.text()).toContain('活动 Panes5')
     expect(wrapper.text()).toContain('24 小时交互37')
     expect(wrapper.text()).toContain('Computers2')
     const metricCards = wrapper.findAll('.metric-card')
-    const onlineMetric = metricCards.find((card) => card.text().includes('在线 Terms'))
-    const paneMetric = metricCards.find((card) => card.text().includes('活动 Panes'))
-    const interactionsMetric = metricCards.find((card) => card.text().includes('24 小时交互'))
-    const computersMetric = metricCards.find((card) => card.text().includes('Computers'))
     expect(metricCards).toHaveLength(4)
     expect(metricCards.every((card) => Boolean(card.attributes('aria-describedby')))).toBe(true)
-    expect(onlineMetric?.attributes('aria-describedby')).toBeTruthy()
-    expect(onlineMetric?.get('[role="tooltip"]').text()).toContain('共 3 个 Term')
-    expect(paneMetric?.get('[role="tooltip"]').text()).toContain('当前处于活动状态')
-    expect(interactionsMetric?.get('[role="tooltip"]').text()).toContain('过去 24 小时')
-    expect(computersMetric?.get('[role="tooltip"]').text()).toContain('2 台在线')
+    expect(metricCards.find((card) => card.text().includes('在线 Terms'))?.get('[role="tooltip"]').text()).toContain('共 3 个 Term')
+    expect(metricCards.find((card) => card.text().includes('活动 Panes'))?.get('[role="tooltip"]').text()).toContain('当前处于活动状态')
+    expect(metricCards.find((card) => card.text().includes('24 小时交互'))?.get('[role="tooltip"]').text()).toContain('过去 24 小时')
+    expect(metricCards.find((card) => card.text().includes('Computers'))?.get('[role="tooltip"]').text()).toContain('2 台在线')
     expect(wrapper.text()).toContain('设计工作站')
     expect(wrapper.text()).toContain('产品开发')
     expect(wrapper.text()).toContain('python3')
     expect(wrapper.text()).toContain('2 Windows')
     expect(wrapper.text()).toContain('4 Panes')
     const onlineTerm = wrapper.get('[data-term-id="term-1"]')
-    expect(onlineTerm.classes()).toContain('term-card')
     expect(onlineTerm.element.tagName).toBe('A')
     expect(onlineTerm.attributes('href')).toBe('/terms/term-1')
     expect(onlineTerm.attributes('aria-label')).toContain('产品开发')
@@ -64,25 +73,21 @@ describe('DashboardView', () => {
     expect(onlineTerm.get('.term-last-seen').element.tagName).toBe('TIME')
     expect(wrapper.find('a[href="/terms/term-2"]').exists()).toBe(false)
     const offlineTerm = wrapper.get('[data-term-id="term-2"]')
-    expect(offlineTerm.classes()).toContain('term-card')
     expect(offlineTerm.element.tagName).toBe('ARTICLE')
     expect(offlineTerm.find('button').exists()).toBe(false)
     expect(offlineTerm.find('a').exists()).toBe(false)
   })
 
   it('does not render an isolated metadata separator for an unnamed host', async () => {
-    const sparseDashboard: DashboardDto = {
+    const sparseDashboard: DashboardSnapshot = {
       metrics: { online_terms: 0, total_terms: 0, active_panes: 0, interactions_24h: 0, computers: 1 },
       computers: [{
         installation_id: 'computer-sparse', display_name: 'Computer', hostname: null, platform: null, client_version: null, online: false,
         registered_at: '2026-08-01T00:00:00Z', last_seen_at: null, terms: [],
       }],
     }
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(sparseDashboard), { status: 200, headers: { 'content-type': 'application/json' } })))
-    const router = createAppRouter({ sessionStatus: async () => ({ authenticated: true }), history: createMemoryHistory() })
-    await router.push('/')
-    await router.isReady()
-    const wrapper = mount(App, { global: { plugins: [router] } })
+    const runtime = createFakeRuntime({ api: { dashboard: { get: vi.fn().mockResolvedValue(sparseDashboard) } } as unknown as ClientRuntime['api'] })
+    const wrapper = await mountDashboard(runtime)
     await flushPromises()
 
     const card = wrapper.get('[data-computer-id="computer-sparse"]')
@@ -90,20 +95,33 @@ describe('DashboardView', () => {
     expect(card.text()).not.toContain('null')
   })
 
-  it('cancels stale polling when the document becomes hidden', async () => {
-    const fetchMock = vi.fn().mockImplementation((_url, init: RequestInit) => new Promise((_resolve, reject) => {
-      init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
-    }))
-    vi.stubGlobal('fetch', fetchMock)
-    const router = createAppRouter({ sessionStatus: async () => ({ authenticated: true }), history: createMemoryHistory() })
-    await router.push('/')
-    await router.isReady()
-    const wrapper = mount(App, { global: { plugins: [router] } })
-    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
-    document.dispatchEvent(new Event('visibilitychange'))
+  it('aborts stale polling through runtime visibility and clock ports', async () => {
+    let visibilityListener: (() => void) | undefined
+    let hidden = false
+    let signal: AbortSignal | undefined
+    const getDashboard = vi.fn((nextSignal?: AbortSignal) => {
+      signal = nextSignal
+      return new Promise<DashboardSnapshot>((_resolve, reject) => {
+        nextSignal?.addEventListener('abort', () => reject(new Error('aborted')))
+      })
+    })
+    const clearTimeout = vi.fn()
+    const runtime = createFakeRuntime({
+      api: { dashboard: { get: getDashboard } } as unknown as ClientRuntime['api'],
+      clock: { now: () => 0, setTimeout: () => 7, clearTimeout, setInterval: () => 1, clearInterval: () => undefined },
+      visibility: {
+        isHidden: () => hidden,
+        subscribe: (listener) => { visibilityListener = listener; return vi.fn() },
+      },
+    })
+    const wrapper = await mountDashboard(runtime)
     await flushPromises()
-    expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true)
+    hidden = true
+    visibilityListener?.()
+    await flushPromises()
+
+    expect(getDashboard).toHaveBeenCalledTimes(1)
+    expect(signal?.aborted).toBe(true)
     wrapper.unmount()
-    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
   })
 })

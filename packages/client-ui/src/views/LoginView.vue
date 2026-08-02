@@ -15,21 +15,21 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ApiError } from '../api/http'
-import { loginWithToken } from '../stores/session'
+import { ApiError } from '@termflow/client-core'
+import { useSession } from '../composables/useSession'
 
 const adminToken = ref('')
 const busy = ref(false)
 const message = ref('')
 const route = useRoute()
 const router = useRouter()
+const { loginWithToken } = useSession()
 
 async function submit() {
   if (!adminToken.value || busy.value) return
   busy.value = true
   message.value = ''
   const token = adminToken.value
-  adminToken.value = ''
   try {
     await loginWithToken(token)
     const requested = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
@@ -37,6 +37,7 @@ async function submit() {
   } catch (error) {
     message.value = error instanceof ApiError ? error.message : '登录失败，请重试。'
   } finally {
+    adminToken.value = ''
     busy.value = false
   }
 }

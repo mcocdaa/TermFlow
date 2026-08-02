@@ -11,11 +11,30 @@ function productionFiles(directory: string): string[] {
   })
 }
 
+const workspaceRoot = resolve(process.cwd(), '../../..')
+const clientProductionFiles = () => [
+  resolve(workspaceRoot, 'apps/clients/web/src'),
+  resolve(workspaceRoot, 'packages/client-contracts/src'),
+  resolve(workspaceRoot, 'packages/client-core/src'),
+  resolve(workspaceRoot, 'packages/client-ui/src'),
+].flatMap(productionFiles)
+
+const relativeToWorkspace = (file: string) => file.replace(`${workspaceRoot}/`, '')
+
 describe('privacy contracts', () => {
   it('allows browser persistence only for the theme identifier', () => {
-    const files = productionFiles(resolve(process.cwd(), 'src'))
-    const persistence = files.filter((file) => /localStorage|sessionStorage|indexedDB/.test(readFileSync(file, 'utf8')))
-    expect(persistence.map((file) => file.replace(`${process.cwd()}/`, ''))).toEqual(['src/adapters/browserThemePreferences.ts'])
+    const persistence = clientProductionFiles().filter((file) => /localStorage|sessionStorage|indexedDB/i.test(readFileSync(file, 'utf8')))
+    expect(persistence.map(relativeToWorkspace)).toEqual(['apps/clients/web/src/adapters/browserThemePreferences.ts'])
+  })
+
+  it('keeps shared client packages free of browser and native runtime globals', () => {
+    const packageFiles = [
+      resolve(workspaceRoot, 'packages/client-contracts/src'),
+      resolve(workspaceRoot, 'packages/client-core/src'),
+      resolve(workspaceRoot, 'packages/client-ui/src'),
+    ].flatMap(productionFiles)
+    const forbidden = /window\.|navigator\.|localStorage|sessionStorage|indexedDB|\bfetch\(|\bWebSocket\b|@tauri/i
+    expect(packageFiles.filter((file) => forbidden.test(readFileSync(file, 'utf8'))).map(relativeToWorkspace)).toEqual([])
   })
 
   it('keeps terminal output out of storage, URL, console, and telemetry-shaped globals', () => {

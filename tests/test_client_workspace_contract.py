@@ -80,3 +80,50 @@ def test_client_core_has_no_platform_runtime_dependencies() -> None:
         "setTimeout(",
     ):
         assert forbidden not in source
+
+
+def _client_production_files() -> list[Path]:
+    roots = (
+        ROOT / "apps/clients/web/src",
+        ROOT / "packages/client-contracts/src",
+        ROOT / "packages/client-core/src",
+        ROOT / "packages/client-ui/src",
+    )
+    return [
+        path
+        for root in roots
+        for path in root.rglob("*")
+        if path.suffix in {".ts", ".vue"}
+        and not path.name.endswith(".test.ts")
+        and "test" not in path.relative_to(root).parts
+    ]
+
+
+def test_client_persistence_is_limited_to_browser_theme_preferences() -> None:
+    references = [
+        path.relative_to(ROOT).as_posix()
+        for path in _client_production_files()
+        if any(token in path.read_text().lower() for token in ("localstorage", "sessionstorage", "indexeddb"))
+    ]
+    assert references == ["apps/clients/web/src/adapters/browserThemePreferences.ts"]
+
+
+def test_shared_client_packages_have_no_browser_or_native_runtime_globals() -> None:
+    forbidden = (
+        "window.",
+        "navigator.",
+        "localstorage",
+        "sessionstorage",
+        "indexeddb",
+        "fetch(",
+        "websocket",
+        "@tauri",
+    )
+    violations: list[str] = []
+    for path in _client_production_files():
+        if "packages/client-" not in path.relative_to(ROOT).as_posix():
+            continue
+        source = path.read_text().lower()
+        if any(token in source for token in forbidden):
+            violations.append(path.relative_to(ROOT).as_posix())
+    assert violations == []

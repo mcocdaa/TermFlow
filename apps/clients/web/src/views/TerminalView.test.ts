@@ -1,9 +1,11 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { createClientUi } from '@termflow/client-ui'
 import { createMemoryHistory } from 'vue-router'
 import { describe, expect, it, vi } from 'vitest'
 import App from '../App.vue'
 import { createAppRouter } from '../router'
 import TerminalCanvas from '../components/terminal/TerminalCanvas.vue'
+import { createFakeRuntime } from '../test/fakeRuntime'
 
 class QuietWebSocket {
   static readonly OPEN = 1
@@ -52,7 +54,7 @@ describe('TerminalView', () => {
     const router = createAppRouter({ sessionStatus: async () => ({ authenticated: true }), history: createMemoryHistory() })
     await router.push('/terms/term-1')
     await router.isReady()
-    const wrapper = mount(App, { attachTo: document.body, global: { plugins: [router] } })
+    const wrapper = mount(App, { attachTo: document.body, global: { plugins: [router, createClientUi(createFakeRuntime())] } })
     await flushPromises()
 
     expect(wrapper.find('.app-header').exists()).toBe(false)

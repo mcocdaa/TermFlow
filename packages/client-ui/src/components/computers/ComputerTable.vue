@@ -11,11 +11,11 @@
 </template>
 
 <script setup lang="ts">
-import type { ComputerSummaryDto } from '../../api/types'
+import type { ComputerSummary } from '../../types'
 import StatusPill from '../dashboard/StatusPill.vue'
 import ComputerNameEditor from './ComputerNameEditor.vue'
 import { formatBRecordedTime } from '../../utils/time'
-defineProps<{ computers: ComputerSummaryDto[] }>()
+defineProps<{ computers: ComputerSummary[] }>()
 const format = formatBRecordedTime
-const onlineTermCount = (computer: ComputerSummaryDto) => computer.terms.filter((term) => term.online).length
+const onlineTermCount = (computer: ComputerSummary) => computer.terms.filter((term) => term.online).length
 </script>

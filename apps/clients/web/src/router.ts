@@ -1,7 +1,5 @@
 import { createMemoryHistory, createRouter, createWebHistory, type RouterHistory } from 'vue-router'
-import ComputersView from './views/ComputersView.vue'
-import DashboardView from './views/DashboardView.vue'
-import LoginView from './views/LoginView.vue'
+import { ComputersView, DashboardView, LoginView } from '@termflow/client-ui'
 import NotFoundView from './views/NotFoundView.vue'
 import TerminalView from './views/TerminalView.vue'
 

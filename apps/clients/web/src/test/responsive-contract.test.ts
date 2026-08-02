@@ -1,12 +1,14 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { mount } from '@vue/test-utils'
+import { createClientUi } from '@termflow/client-ui'
 import { createMemoryHistory } from 'vue-router'
 import { describe, expect, it } from 'vitest'
 import App from '../App.vue'
 import TerminalTitlebar from '../components/terminal/TerminalTitlebar.vue'
 import TmuxActionMenu from '../components/terminal/TmuxActionMenu.vue'
 import { createAppRouter } from '../router'
+import { createFakeRuntime } from './fakeRuntime'
 
 const viewports = [[360, 800], [800, 360], [1024, 768], [1440, 900]] as const
 
@@ -16,7 +18,7 @@ describe('responsive shell contract', () => {
     const router = createAppRouter({ sessionStatus: async () => ({ authenticated: true }), history: createMemoryHistory() })
     await router.push('/')
     await router.isReady()
-    const app = mount(App, { global: { plugins: [router] } })
+    const app = mount(App, { global: { plugins: [router, createClientUi(createFakeRuntime())] } })
     expect(app.get('main')).toBeTruthy()
     expect(app.get('.side-nav')).toBeTruthy()
     expect(app.get('.mobile-nav')).toBeTruthy()

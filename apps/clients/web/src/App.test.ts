@@ -1,13 +1,15 @@
 import { mount } from '@vue/test-utils'
+import { createClientUi } from '@termflow/client-ui'
 import { describe, expect, it } from 'vitest'
 import App from './App.vue'
 import { createAppRouter } from './router'
+import { createFakeRuntime } from './test/fakeRuntime'
 
 async function renderAt(path: string) {
   const router = createAppRouter({ sessionStatus: async () => ({ authenticated: true }) })
   await router.push(path)
   await router.isReady()
-  return mount(App, { global: { plugins: [router] } })
+  return mount(App, { global: { plugins: [router, createClientUi(createFakeRuntime())] } })
 }
 
 describe('application routes', () => {

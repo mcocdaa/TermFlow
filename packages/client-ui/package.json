@@ -9,6 +9,11 @@
   "exports": {
     ".": "./src/index.ts",
     "./composables/usePointerViewport": "./src/composables/usePointerViewport.ts",
+    "./composables/useSession": "./src/composables/useSession.ts",
+    "./views/ComputersView": "./src/views/ComputersView.vue",
+    "./views/DashboardView": "./src/views/DashboardView.vue",
+    "./views/LoginView": "./src/views/LoginView.vue",
+    "./components/dashboard/StatusPill": "./src/components/dashboard/StatusPill.vue",
     "./terminal/actions": "./src/terminal/actions.ts",
     "./terminal/orientation": "./src/terminal/orientation.ts",
     "./terminal/viewport": "./src/terminal/viewport.ts",

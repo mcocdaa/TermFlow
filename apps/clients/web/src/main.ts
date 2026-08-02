@@ -1,4 +1,5 @@
 import { createApp } from 'vue'
+import { createClientUi } from '@termflow/client-ui'
 import '@termflow/design-tokens/styles'
 import '@xterm/xterm/css/xterm.css'
 import './styles/reset.css'
@@ -8,6 +9,7 @@ import App from './App.vue'
 import { createAppRouter } from './router'
 import { applyInitialTheme } from './stores/theme'
 import { refreshSession } from './stores/session'
+import { createBrowserRuntime } from './runtime'
 
 applyInitialTheme()
 
@@ -15,4 +17,4 @@ const router = createAppRouter({
   sessionStatus: refreshSession,
 })
 
-createApp(App).use(router).mount('#app')
+createApp(App).use(createClientUi(createBrowserRuntime())).use(router).mount('#app')

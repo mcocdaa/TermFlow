@@ -13,11 +13,12 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { ApiError } from '../../api/http'
-import { renameComputer } from '../../api/computers'
+import { ApiError } from '@termflow/client-core'
+import { useClientRuntime } from '../../runtime'
 
 const props = defineProps<{ computerId: string; displayName: string }>()
 const emit = defineEmits<{ updated: [name: string] }>()
+const runtime = useClientRuntime()
 const editing = ref(false)
 const busy = ref(false)
 const draft = ref(props.displayName)
@@ -37,7 +38,7 @@ async function save() {
   editing.value = false
   busy.value = true
   try {
-    const updated = await renameComputer(props.computerId, draft.value)
+    const updated = await runtime.api.computers.rename(props.computerId, draft.value)
     currentName.value = updated.display_name
     emit('updated', updated.display_name)
   } catch (error) {
