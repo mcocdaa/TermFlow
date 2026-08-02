@@ -1,7 +1,11 @@
 """HTTP request and response DTOs for TermFlow V1."""
 
+import base64
+import ipaddress
+import re
 from datetime import datetime
 from typing import Literal
+from urllib.parse import parse_qs, urlsplit, urlunsplit
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
@@ -14,11 +18,115 @@ class HttpModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+type OAuthScope = Literal[
+    "terminal.read",
+    "terminal.write",
+    "computers.read",
+    "computers.write",
+]
+
+OAUTH_SCOPES: tuple[OAuthScope, ...] = (
+    "terminal.read",
+    "terminal.write",
+    "computers.read",
+    "computers.write",
+)
+_ASCII_TOTP = re.compile(r"[0-9]{6}\Z", flags=re.ASCII)
+_PKCE_VALUE = re.compile(r"[A-Za-z0-9._~-]{43,128}\Z", flags=re.ASCII)
+_BASE64URL_256 = re.compile(r"[A-Za-z0-9_-]{43}\Z", flags=re.ASCII)
+_OPAQUE_STATE = re.compile(r"[A-Za-z0-9._~-]{16,256}\Z", flags=re.ASCII)
+
+
 def validate_editable_name(value: str) -> str:
     if not 1 <= len(value) <= 128:
         raise ValueError("name must contain between 1 and 128 characters")
     if any(ord(character) < 32 or 127 <= ord(character) <= 159 for character in value):
         raise ValueError("name contains unsupported control characters")
+    return value
+
+
+def validate_client_name(value: str) -> str:
+    validate_editable_name(value)
+    if value != value.strip() or not value.strip():
+        raise ValueError("client name must not have leading or trailing whitespace")
+    return value
+
+
+def validate_totp_code(value: str | SecretStr) -> str | SecretStr:
+    raw_value = value.get_secret_value() if isinstance(value, SecretStr) else value
+    if _ASCII_TOTP.fullmatch(raw_value) is None:
+        raise ValueError("TOTP code must contain exactly six ASCII digits")
+    return value
+
+
+def validate_pkce_value(value: str | SecretStr) -> str | SecretStr:
+    raw_value = value.get_secret_value() if isinstance(value, SecretStr) else value
+    if _PKCE_VALUE.fullmatch(raw_value) is None:
+        raise ValueError("PKCE value must be 43-128 unreserved ASCII characters")
+    return value
+
+
+def validate_base64url_256(value: str) -> str:
+    if _BASE64URL_256.fullmatch(value) is None:
+        raise ValueError("value must be unpadded base64url for 32 bytes")
+    try:
+        decoded = base64.b64decode(value + "=", altchars=b"-_", validate=True)
+    except ValueError as exc:
+        raise ValueError("value must be unpadded base64url for 32 bytes") from exc
+    if len(decoded) != 32:
+        raise ValueError("value must be unpadded base64url for 32 bytes")
+    return value
+
+
+def validate_scopes(value: list[OAuthScope]) -> list[OAuthScope]:
+    if not value:
+        raise ValueError("at least one scope is required")
+    if len(value) != len(set(value)):
+        raise ValueError("scopes must be unique")
+    return value
+
+
+def validate_redirect_uri(value: str) -> str:
+    if value == "termflow://auth/callback":
+        return value
+    if any(character.isspace() or ord(character) < 32 for character in value):
+        raise ValueError("redirect URI contains unsupported characters")
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("redirect URI is malformed") from exc
+    if parsed.username is not None or parsed.password is not None or parsed.fragment:
+        raise ValueError("redirect URI must not contain credentials or a fragment")
+    if parsed.scheme == "https" and parsed.hostname:
+        return value
+    if parsed.scheme != "http" or not parsed.hostname or port is None:
+        raise ValueError("redirect URI must use the approved native callback forms")
+    try:
+        is_loopback = ipaddress.ip_address(parsed.hostname).is_loopback
+    except ValueError as exc:
+        raise ValueError("HTTP redirect URI must use a loopback IP literal") from exc
+    if not is_loopback or not 49_152 <= port <= 65_535:
+        raise ValueError("HTTP redirect URI must use an explicit ephemeral loopback port")
+    return value
+
+
+def validate_callback_uri(value: str) -> str:
+    parsed = urlsplit(value)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    if set(query) != {"state", "transaction_id"} or any(
+        len(values) != 1 for values in query.values()
+    ):
+        raise ValueError("callback URI must contain only state and transaction_id")
+    state = query["state"][0]
+    if _OPAQUE_STATE.fullmatch(state) is None:
+        raise ValueError("callback state is malformed")
+    try:
+        UUID(query["transaction_id"][0])
+    except ValueError as exc:
+        raise ValueError("callback transaction_id is malformed") from exc
+    base_uri = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", parsed.fragment))
+    validate_redirect_uri(base_uri)
     return value
 
 
@@ -127,6 +235,324 @@ class BrowserSessionResponse(HttpModel):
 
 
 class BrowserSessionDeleteResponse(HttpModel):
+    ok: bool = True
+
+
+class BrowserSessionChallengeResponse(HttpModel):
+    status: Literal["totp_required"] = "totp_required"
+    challenge_id: UUID
+    expires_at: datetime
+
+
+class BrowserSessionTotpRequest(HttpModel):
+    code: SecretStr
+
+    @field_validator("code", mode="before")
+    @classmethod
+    def valid_totp_code(cls, value: str | SecretStr) -> str | SecretStr:
+        return validate_totp_code(value)
+
+
+class TotpStatusResponse(HttpModel):
+    enabled: bool
+    available: bool
+
+
+class TotpSetupRequest(HttpModel):
+    admin_token: SecretStr
+    totp_code: SecretStr | None = None
+
+    @field_validator("totp_code", mode="before")
+    @classmethod
+    def valid_totp_code(cls, value: str | SecretStr | None) -> str | SecretStr | None:
+        return validate_totp_code(value) if value is not None else None
+
+
+class TotpSetupResponse(HttpModel):
+    setup_id: UUID
+    provisioning_uri: str = Field(repr=False, min_length=1, max_length=2048)
+    setup_key: str = Field(repr=False, min_length=16, max_length=128)
+    expires_at: datetime
+
+    @field_validator("provisioning_uri")
+    @classmethod
+    def valid_provisioning_uri(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        query = parse_qs(parsed.query)
+        if (
+            parsed.scheme != "otpauth"
+            or parsed.netloc != "totp"
+            or not parsed.path
+            or not query.get("secret", [""])[0]
+        ):
+            raise ValueError("provisioning URI must be an otpauth TOTP URI with a secret")
+        return value
+
+
+class TotpConfirmRequest(HttpModel):
+    code: SecretStr
+
+    @field_validator("code", mode="before")
+    @classmethod
+    def valid_totp_code(cls, value: str | SecretStr) -> str | SecretStr:
+        return validate_totp_code(value)
+
+
+class TotpDisableRequest(HttpModel):
+    admin_token: SecretStr
+    code: SecretStr
+
+    @field_validator("code", mode="before")
+    @classmethod
+    def valid_totp_code(cls, value: str | SecretStr) -> str | SecretStr:
+        return validate_totp_code(value)
+
+
+class OAuthPublicJwk(HttpModel):
+    kty: Literal["EC"] = "EC"
+    crv: Literal["P-256"] = "P-256"
+    alg: Literal["ES256"] = "ES256"
+    x: str
+    y: str
+
+    @field_validator("x", "y")
+    @classmethod
+    def valid_coordinate(cls, value: str) -> str:
+        return validate_base64url_256(value)
+
+
+class OAuthMetadataResponse(HttpModel):
+    issuer: str = Field(min_length=1, max_length=2048)
+    authorization_endpoint: str = Field(min_length=1, max_length=2048)
+    token_endpoint: str = Field(min_length=1, max_length=2048)
+    revocation_endpoint: str = Field(min_length=1, max_length=2048)
+    response_types_supported: list[Literal["code"]]
+    grant_types_supported: list[Literal["authorization_code", "refresh_token"]]
+    code_challenge_methods_supported: list[Literal["S256"]]
+    dpop_signing_alg_values_supported: list[Literal["ES256"]]
+    scopes_supported: list[OAuthScope]
+
+    @field_validator("scopes_supported")
+    @classmethod
+    def nonempty_unique_scopes(cls, value: list[OAuthScope]) -> list[OAuthScope]:
+        return validate_scopes(value)
+
+
+class OAuthAuthorizationRequest(HttpModel):
+    response_type: Literal["code"] = "code"
+    client_name: str
+    platform: str = Field(min_length=1, max_length=128)
+    client_version: str | None = Field(default=None, min_length=1, max_length=64)
+    redirect_uri: str
+    state: str = Field(min_length=16, max_length=256, pattern=r"[A-Za-z0-9._~-]+")
+    code_challenge: str
+    code_challenge_method: Literal["S256"] = "S256"
+    dpop_jkt: str
+    public_jwk: OAuthPublicJwk
+    scopes: list[OAuthScope]
+
+    @field_validator("client_name")
+    @classmethod
+    def valid_client_name(cls, value: str) -> str:
+        return validate_client_name(value)
+
+    @field_validator("redirect_uri")
+    @classmethod
+    def safe_redirect_uri(cls, value: str) -> str:
+        return validate_redirect_uri(value)
+
+    @field_validator("code_challenge")
+    @classmethod
+    def valid_code_challenge(cls, value: str) -> str:
+        validated = validate_pkce_value(value)
+        assert isinstance(validated, str)
+        return validated
+
+    @field_validator("dpop_jkt")
+    @classmethod
+    def valid_dpop_thumbprint(cls, value: str) -> str:
+        return validate_base64url_256(value)
+
+    @field_validator("scopes")
+    @classmethod
+    def nonempty_unique_scopes(cls, value: list[OAuthScope]) -> list[OAuthScope]:
+        return validate_scopes(value)
+
+
+class OAuthAuthorizationPreviewResponse(HttpModel):
+    transaction_id: UUID
+    issuer: str = Field(min_length=1, max_length=2048)
+    client_name: str
+    platform: str
+    client_version: str | None = None
+    key_fingerprint: str
+    scopes: list[OAuthScope]
+    redirect_uri: str
+    totp_required: bool
+    expires_at: datetime
+
+    @field_validator("client_name")
+    @classmethod
+    def valid_client_name(cls, value: str) -> str:
+        return validate_client_name(value)
+
+    @field_validator("key_fingerprint")
+    @classmethod
+    def valid_key_fingerprint(cls, value: str) -> str:
+        return validate_base64url_256(value)
+
+    @field_validator("scopes")
+    @classmethod
+    def nonempty_unique_scopes(cls, value: list[OAuthScope]) -> list[OAuthScope]:
+        return validate_scopes(value)
+
+    @field_validator("redirect_uri")
+    @classmethod
+    def safe_redirect_uri(cls, value: str) -> str:
+        return validate_redirect_uri(value)
+
+
+class OAuthAuthorizationDecisionRequest(HttpModel):
+    transaction_id: UUID
+    decision: Literal["allow", "deny"]
+    admin_token: SecretStr
+    totp_code: SecretStr | None = None
+
+    @field_validator("totp_code", mode="before")
+    @classmethod
+    def valid_totp_code(cls, value: str | SecretStr | None) -> str | SecretStr | None:
+        return validate_totp_code(value) if value is not None else None
+
+
+class OAuthAuthorizationDecisionResponse(HttpModel):
+    status: Literal["approved", "denied"]
+    callback_uri: str
+
+    @field_validator("callback_uri")
+    @classmethod
+    def safe_callback_uri(cls, value: str) -> str:
+        return validate_callback_uri(value)
+
+
+class OAuthTokenRequest(HttpModel):
+    grant_type: Literal["authorization_code", "refresh_token"]
+    transaction_id: UUID | None = None
+    code_verifier: SecretStr | None = None
+    refresh_token: SecretStr | None = None
+    public_jwk: OAuthPublicJwk
+
+    @field_validator("code_verifier", mode="before")
+    @classmethod
+    def valid_code_verifier(cls, value: str | SecretStr | None) -> str | SecretStr | None:
+        return validate_pkce_value(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def fields_match_grant(self) -> "OAuthTokenRequest":
+        if self.grant_type == "authorization_code":
+            if self.transaction_id is None or self.code_verifier is None:
+                raise ValueError("authorization_code requires transaction_id and code_verifier")
+            if self.refresh_token is not None:
+                raise ValueError("authorization_code must not include refresh_token")
+        elif (
+            self.refresh_token is None
+            or self.transaction_id is not None
+            or self.code_verifier is not None
+        ):
+            raise ValueError("refresh_token requires only refresh_token credentials")
+        return self
+
+
+class OAuthTokenResponse(HttpModel):
+    token_type: Literal["DPoP"] = "DPoP"
+    access_token: str = Field(repr=False, min_length=32)
+    expires_in: int = Field(gt=0)
+    refresh_token: str = Field(repr=False, min_length=32)
+    scopes: list[OAuthScope]
+
+    @field_validator("scopes")
+    @classmethod
+    def nonempty_unique_scopes(cls, value: list[OAuthScope]) -> list[OAuthScope]:
+        return validate_scopes(value)
+
+
+class OAuthRevokeRequest(HttpModel):
+    token: SecretStr
+    token_type_hint: Literal["access_token", "refresh_token"] | None = None
+
+
+class OAuthRevokeResponse(HttpModel):
+    ok: bool = True
+
+
+class CliTokenRequest(HttpModel):
+    admin_token: SecretStr
+    totp_code: SecretStr | None = None
+    scopes: list[OAuthScope] = Field(default_factory=lambda: list(OAUTH_SCOPES))
+
+    @field_validator("totp_code", mode="before")
+    @classmethod
+    def valid_totp_code(cls, value: str | SecretStr | None) -> str | SecretStr | None:
+        return validate_totp_code(value) if value is not None else None
+
+    @field_validator("scopes")
+    @classmethod
+    def nonempty_unique_scopes(cls, value: list[OAuthScope]) -> list[OAuthScope]:
+        return validate_scopes(value)
+
+
+class CliTokenResponse(HttpModel):
+    token_type: Literal["Bearer"] = "Bearer"
+    access_token: str = Field(repr=False, min_length=32)
+    expires_in: int = Field(gt=0)
+    scopes: list[OAuthScope]
+
+    @field_validator("scopes")
+    @classmethod
+    def nonempty_unique_scopes(cls, value: list[OAuthScope]) -> list[OAuthScope]:
+        return validate_scopes(value)
+
+
+class NativeClientResponse(HttpModel):
+    client_id: UUID
+    display_name: str
+    platform: str
+    client_version: str | None = None
+    key_thumbprint: str
+    scopes: list[OAuthScope]
+    created_at: datetime
+    last_used_at: datetime | None = None
+    revoked_at: datetime | None = None
+
+    @field_validator("display_name")
+    @classmethod
+    def valid_display_name(cls, value: str) -> str:
+        return validate_client_name(value)
+
+    @field_validator("key_thumbprint")
+    @classmethod
+    def valid_key_thumbprint(cls, value: str) -> str:
+        return validate_base64url_256(value)
+
+    @field_validator("scopes")
+    @classmethod
+    def nonempty_unique_scopes(cls, value: list[OAuthScope]) -> list[OAuthScope]:
+        return validate_scopes(value)
+
+
+class NativeClientListResponse(HttpModel):
+    clients: list[NativeClientResponse]
+
+
+class NativeClientUpdateRequest(HttpModel):
+    display_name: str
+
+    @field_validator("display_name")
+    @classmethod
+    def valid_display_name(cls, value: str) -> str:
+        return validate_client_name(value)
+
+
+class NativeClientDeleteResponse(HttpModel):
     ok: bool = True
 
 
