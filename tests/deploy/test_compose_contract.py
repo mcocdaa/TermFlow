@@ -143,3 +143,23 @@ def test_compose_has_an_explicit_optional_totp_secret_file_override() -> None:
     assert override["secrets"]["termflow-totp-master-key"]["file"] == (
         "${TERMFLOW_TOTP_MASTER_KEY_FILE:?set TERMFLOW_TOTP_MASTER_KEY_FILE}"
     )
+
+
+def test_windows_installer_is_a_manual_native_artifact_not_a_docker_layer() -> None:
+    path = Path(".github/workflows/tauri-windows-package.yml")
+    workflow = yaml.safe_load(path.read_text())
+    assert "workflow_dispatch" in workflow[True]
+    job = workflow["jobs"]["windows-nsis"]
+    assert job["runs-on"] == "windows-latest"
+
+    rendered = path.read_text()
+    assert 'node-version: "22.23.2"' in rendered
+    assert "npm ci" in rendered
+    assert "--bundles nsis" in rendered
+    assert "actions/upload-artifact@v4" in rendered
+    assert (
+        "apps/clients/tauri/src-tauri/target/release/bundle/nsis/*-setup.exe"
+        in rendered
+    )
+    assert "retention-days: 7" in rendered
+    assert "deploy/Dockerfile.control-plane" not in rendered
