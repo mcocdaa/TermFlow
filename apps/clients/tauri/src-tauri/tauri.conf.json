@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TermFlow",
+  "version": "0.1.0",
+  "identifier": "io.termflow.client",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{ "title": "TermFlow", "width": 1280, "height": 800, "minWidth": 360, "minHeight": 560 }],
+    "security": { "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost https: http://127.0.0.1:* http://localhost:* wss: ws://127.0.0.1:* ws://localhost:*; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'" }
+  },
+  "bundle": { "active": true, "targets": "all" },
+  "plugins": {
+    "deep-link": {
+      "desktop": { "schemes": ["termflow"] },
+      "mobile": [{ "scheme": ["termflow"], "appLink": false }]
+    }
+  }
+}

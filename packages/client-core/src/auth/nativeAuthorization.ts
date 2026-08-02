@@ -38,15 +38,22 @@ export class NativeAuthorizationSession {
     url.searchParams.set('code_challenge_method', pkce.method)
     url.searchParams.set('dpop_jkt', await this.options.key.thumbprint())
     url.searchParams.set('client_name', this.options.client.name)
-    url.searchParams.set('client_platform', this.options.client.platform)
+    url.searchParams.set('platform', this.options.client.platform)
     url.searchParams.set('client_version', this.options.client.version)
-    url.searchParams.set('scope', this.options.scopes.join(' '))
+    url.searchParams.set('public_jwk', JSON.stringify(await this.options.key.publicJwk()))
+    for (const scope of this.options.scopes) url.searchParams.append('scopes', scope)
+    const callbackPromise = this.options.browser.waitForCallback(state, signal)
     await this.options.browser.open(url.toString())
 
-    const callback = new URL(await this.options.browser.waitForCallback(state, signal))
-    const transaction = callback.searchParams.get('transaction')
+    const callback = new URL(await callbackPromise)
+    const transaction = callback.searchParams.get('transaction_id')
+    const callbackKeys = [...callback.searchParams.keys()]
     if (callback.protocol !== 'termflow:' || callback.hostname !== 'auth' || callback.pathname !== '/callback'
-      || callback.searchParams.get('state') !== state || callback.searchParams.get('issuer') !== this.options.issuer
+      || callback.searchParams.get('state') !== state
+      || callbackKeys.length !== 2
+      || callback.searchParams.getAll('state').length !== 1
+      || callback.searchParams.getAll('transaction_id').length !== 1
+      || !callbackKeys.every(key => key === 'state' || key === 'transaction_id')
       || transaction === null) {
       throw new Error('authorization_callback_invalid')
     }

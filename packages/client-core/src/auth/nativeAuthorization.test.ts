@@ -15,7 +15,7 @@ const vault = (): CredentialVaultPort => ({
 
 describe('NativeAuthorizationSession', () => {
   it('opens the system browser and accepts only the matching state and transaction', async () => {
-    const callback = 'termflow://auth/callback?state=state-1&transaction=tx-public&issuer=https%3A%2F%2Fb.example'
+    const callback = 'termflow://auth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111'
     const port = browser(callback)
     const store = vault()
     const exchange = vi.fn().mockResolvedValue({
@@ -28,7 +28,7 @@ describe('NativeAuthorizationSession', () => {
       scopes: ['terminal.read'],
       browser: port,
       vault: store,
-      key: { publicJwk: async () => ({ kty: 'EC', crv: 'P-256', x: 'x', y: 'y' }), thumbprint: async () => 'jkt', signJwt: async () => new Uint8Array() },
+      key: { publicJwk: async () => ({ kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' }), thumbprint: async () => 'jkt', signJwt: async () => new Uint8Array() },
       createPkce: async () => ({ verifier: 'v'.repeat(43), challenge: 'c'.repeat(43), method: 'S256' }),
       createId: () => 'state-1',
       exchange,
@@ -36,7 +36,8 @@ describe('NativeAuthorizationSession', () => {
 
     await expect(session.authorize()).resolves.toMatchObject({ accessToken: 'access' })
     expect(port.open).toHaveBeenCalledOnce()
-    expect(exchange).toHaveBeenCalledWith(expect.objectContaining({ transaction: 'tx-public', verifier: 'v'.repeat(43) }))
+    expect(vi.mocked(port.waitForCallback).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(port.open).mock.invocationCallOrder[0]!)
+    expect(exchange).toHaveBeenCalledWith(expect.objectContaining({ transaction: '11111111-1111-4111-8111-111111111111', verifier: 'v'.repeat(43) }))
     expect(store.replace).toHaveBeenCalledWith('https://b.example', expect.objectContaining({ accessToken: 'access' }))
   })
 
@@ -45,8 +46,8 @@ describe('NativeAuthorizationSession', () => {
     const session = new NativeAuthorizationSession({
       issuer: 'https://b.example', authorizeEndpoint: 'https://b.example/api/v1/oauth/authorize',
       client: { name: 'Desktop', platform: 'linux', version: '1' }, scopes: ['terminal.read'],
-      browser: browser('termflow://auth/callback?state=attacker&transaction=tx&issuer=https%3A%2F%2Fb.example'), vault: vault(),
-      key: { publicJwk: async () => ({ kty: 'EC', crv: 'P-256', x: 'x', y: 'y' }), thumbprint: async () => 'jkt', signJwt: async () => new Uint8Array() },
+      browser: browser('termflow://auth/callback?state=attacker&transaction_id=11111111-1111-4111-8111-111111111111'), vault: vault(),
+      key: { publicJwk: async () => ({ kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' }), thumbprint: async () => 'jkt', signJwt: async () => new Uint8Array() },
       createPkce: async () => ({ verifier: 'v'.repeat(43), challenge: 'c'.repeat(43), method: 'S256' }),
       createId: () => 'expected', exchange,
     })
@@ -55,13 +56,13 @@ describe('NativeAuthorizationSession', () => {
     expect(exchange).not.toHaveBeenCalled()
   })
 
-  it('rejects an issuer mix-up callback', async () => {
+  it('rejects callbacks that carry anything beyond state and transaction_id', async () => {
     const exchange = vi.fn()
     const session = new NativeAuthorizationSession({
       issuer: 'https://b.example', authorizeEndpoint: 'https://b.example/api/v1/oauth/authorize',
       client: { name: 'Desktop', platform: 'linux', version: '1' }, scopes: ['terminal.read'],
-      browser: browser('termflow://auth/callback?state=expected&transaction=tx&issuer=https%3A%2F%2Fevil.example'), vault: vault(),
-      key: { publicJwk: async () => ({ kty: 'EC', crv: 'P-256', x: 'x', y: 'y' }), thumbprint: async () => 'jkt', signJwt: async () => new Uint8Array() },
+      browser: browser('termflow://auth/callback?state=expected&transaction_id=11111111-1111-4111-8111-111111111111&code=must-not-leak'), vault: vault(),
+      key: { publicJwk: async () => ({ kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' }), thumbprint: async () => 'jkt', signJwt: async () => new Uint8Array() },
       createPkce: async () => ({ verifier: 'v'.repeat(43), challenge: 'c'.repeat(43), method: 'S256' }),
       createId: () => 'expected', exchange,
     })
@@ -69,4 +70,5 @@ describe('NativeAuthorizationSession', () => {
     await expect(session.authorize()).rejects.toThrow('authorization_callback_invalid')
     expect(exchange).not.toHaveBeenCalled()
   })
+
 })

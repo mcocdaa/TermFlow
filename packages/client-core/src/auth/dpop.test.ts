@@ -6,7 +6,7 @@ function decode(segment: string): Record<string, unknown> {
 }
 
 const key: NativeKeyPort = {
-  publicJwk: async () => ({ kty: 'EC', crv: 'P-256', x: 'x', y: 'y' }),
+  publicJwk: async () => ({ kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' }),
   thumbprint: async () => 'thumbprint',
   signJwt: async () => new Uint8Array([1, 2, 3]),
 }
@@ -21,6 +21,7 @@ describe('createDpopProof', () => {
       accessToken: 'access-secret',
       now: () => 1_754_000_000_999,
       createId: () => 'jti-1',
+      sha256: async input => new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', input.slice().buffer)),
     })
     const [encodedHeader, encodedClaims] = proof.split('.')
     const header = decode(encodedHeader!)

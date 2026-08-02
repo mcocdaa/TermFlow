@@ -1,6 +1,7 @@
 export interface PublicEcJwk {
   kty: 'EC'
   crv: 'P-256'
+  alg: 'ES256'
   x: string
   y: string
   kid?: string

@@ -12,3 +12,6 @@ __pycache__/
 dist/
 .superpowers/
 .worktrees/
+apps/clients/tauri/src-tauri/target/
+apps/clients/tauri/src-tauri/gen/
+*.tsbuildinfo

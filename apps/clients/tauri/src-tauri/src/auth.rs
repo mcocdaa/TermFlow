@@ -1,0 +1,378 @@
+use std::{
+    collections::HashMap,
+    sync::Mutex,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use p256::{
+    ecdsa::{signature::Signer, Signature, SigningKey},
+    pkcs8::{DecodePrivateKey, EncodePrivateKey},
+};
+use reqwest::{Client, StatusCode};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use tauri::State;
+use url::Url;
+
+const KEYRING_SERVICE: &str = "io.termflow.client";
+const ACCESS_EARLY_SECONDS: i64 = 60;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicJwk {
+    kty: &'static str,
+    crv: &'static str,
+    alg: &'static str,
+    x: String,
+    y: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessCredential {
+    access_token: String,
+    expires_at: String,
+    token_type: &'static str,
+}
+
+#[derive(Debug, Clone)]
+struct AccessState {
+    access_token: String,
+    expires_at_unix: i64,
+}
+
+#[derive(Default)]
+pub struct NativeAuthState {
+    access: Mutex<HashMap<String, AccessState>>,
+    refresh_gate: tokio::sync::Mutex<()>,
+    http: Client,
+}
+
+#[derive(Debug, Deserialize)]
+struct TokenResponse {
+    access_token: String,
+    refresh_token: String,
+    expires_in: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NativeHeaders {
+    authorization: String,
+    dpop: String,
+}
+
+fn safe_error(code: &str) -> String {
+    code.to_owned()
+}
+fn now_unix() -> Result<i64, String> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_secs() as i64)
+        .map_err(|_| safe_error("clock_invalid"))
+}
+fn canonical_issuer(value: &str) -> Result<String, String> {
+    let url = Url::parse(value).map_err(|_| safe_error("issuer_invalid"))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.username() != ""
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path() != "/"
+    {
+        return Err(safe_error("issuer_invalid"));
+    }
+    if url.scheme() == "http" && !matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "::1"))
+    {
+        return Err(safe_error("https_required"));
+    }
+    Ok(url.origin().ascii_serialization())
+}
+fn issuer_key(issuer: &str, kind: &str) -> String {
+    format!(
+        "{}.{}",
+        URL_SAFE_NO_PAD.encode(Sha256::digest(issuer.as_bytes())),
+        kind
+    )
+}
+fn keyring_entry(issuer: &str, kind: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(KEYRING_SERVICE, &issuer_key(issuer, kind))
+        .map_err(|_| safe_error("secure_store_unavailable"))
+}
+
+fn signing_key(issuer: &str) -> Result<SigningKey, String> {
+    let entry = keyring_entry(issuer, "p256")?;
+    match entry.get_secret() {
+        Ok(bytes) => {
+            SigningKey::from_pkcs8_der(&bytes).map_err(|_| safe_error("device_key_invalid"))
+        }
+        Err(keyring::Error::NoEntry) => {
+            let key = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
+            let bytes = key
+                .to_pkcs8_der()
+                .map_err(|_| safe_error("device_key_invalid"))?;
+            entry
+                .set_secret(bytes.as_bytes())
+                .map_err(|_| safe_error("secure_store_unavailable"))?;
+            Ok(key)
+        }
+        Err(_) => Err(safe_error("secure_store_unavailable")),
+    }
+}
+fn public_jwk(key: &SigningKey) -> Result<PublicJwk, String> {
+    let point = key.verifying_key().to_encoded_point(false);
+    let x = point.x().ok_or_else(|| safe_error("device_key_invalid"))?;
+    let y = point.y().ok_or_else(|| safe_error("device_key_invalid"))?;
+    Ok(PublicJwk {
+        kty: "EC",
+        crv: "P-256",
+        alg: "ES256",
+        x: URL_SAFE_NO_PAD.encode(x),
+        y: URL_SAFE_NO_PAD.encode(y),
+    })
+}
+fn thumbprint(jwk: &PublicJwk) -> String {
+    let canonical = format!(
+        r#"{{"crv":"P-256","kty":"EC","x":"{}","y":"{}"}}"#,
+        jwk.x, jwk.y
+    );
+    URL_SAFE_NO_PAD.encode(Sha256::digest(canonical.as_bytes()))
+}
+fn jwt_segment(value: &Value) -> Result<String, String> {
+    serde_json::to_vec(value)
+        .map(|bytes| URL_SAFE_NO_PAD.encode(bytes))
+        .map_err(|_| safe_error("dpop_encoding_failed"))
+}
+fn dpop_proof(
+    key: &SigningKey,
+    method: &str,
+    target: &str,
+    nonce: Option<&str>,
+    access_token: Option<&str>,
+) -> Result<String, String> {
+    let mut url = Url::parse(target).map_err(|_| safe_error("dpop_url_invalid"))?;
+    url.set_query(None);
+    url.set_fragment(None);
+    let jwk = public_jwk(key)?;
+    let header = jwt_segment(&json!({"typ":"dpop+jwt","alg":"ES256","jwk":jwk}))?;
+    let mut claims = json!({"jti":uuid::Uuid::new_v4().to_string(),"htm":method.to_uppercase(),"htu":url.as_str(),"iat":now_unix()?});
+    if let Some(value) = nonce {
+        claims["nonce"] = Value::String(value.to_owned());
+    }
+    if let Some(value) = access_token {
+        claims["ath"] = Value::String(URL_SAFE_NO_PAD.encode(Sha256::digest(value.as_bytes())));
+    }
+    let payload = jwt_segment(&claims)?;
+    let input = format!("{header}.{payload}");
+    let signature: Signature = key.sign(input.as_bytes());
+    Ok(format!(
+        "{input}.{}",
+        URL_SAFE_NO_PAD.encode(signature.to_bytes())
+    ))
+}
+fn access_credential(value: &AccessState) -> AccessCredential {
+    let timestamp = time::OffsetDateTime::from_unix_timestamp(value.expires_at_unix)
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+    AccessCredential {
+        access_token: value.access_token.clone(),
+        expires_at: timestamp
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default(),
+        token_type: "DPoP",
+    }
+}
+async fn token_request(
+    state: &NativeAuthState,
+    issuer: &str,
+    body: Value,
+) -> Result<TokenResponse, String> {
+    let key = signing_key(issuer)?;
+    let endpoint = format!("{issuer}/api/v1/oauth/token");
+    let first_proof = dpop_proof(&key, "POST", &endpoint, None, None)?;
+    let first = state
+        .http
+        .post(&endpoint)
+        .header("DPoP", first_proof)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|_| safe_error("token_exchange_failed"))?;
+    let response = if first.status() == StatusCode::UNAUTHORIZED {
+        if let Some(nonce) = first
+            .headers()
+            .get("DPoP-Nonce")
+            .and_then(|value| value.to_str().ok())
+        {
+            let proof = dpop_proof(&key, "POST", &endpoint, Some(nonce), None)?;
+            state
+                .http
+                .post(&endpoint)
+                .header("DPoP", proof)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|_| safe_error("token_exchange_failed"))?
+        } else {
+            first
+        }
+    } else {
+        first
+    };
+    if !response.status().is_success() {
+        return Err(safe_error("authorization_required"));
+    }
+    response
+        .json::<TokenResponse>()
+        .await
+        .map_err(|_| safe_error("token_response_invalid"))
+}
+async fn store_token_response(
+    state: &NativeAuthState,
+    issuer: &str,
+    response: TokenResponse,
+) -> Result<AccessCredential, String> {
+    keyring_entry(issuer, "refresh")?
+        .set_secret(response.refresh_token.as_bytes())
+        .map_err(|_| safe_error("secure_store_unavailable"))?;
+    let access = AccessState {
+        access_token: response.access_token,
+        expires_at_unix: now_unix()? + response.expires_in,
+    };
+    let result = access_credential(&access);
+    state
+        .access
+        .lock()
+        .map_err(|_| safe_error("auth_state_unavailable"))?
+        .insert(issuer.to_owned(), access);
+    Ok(result)
+}
+async fn refresh_access(state: &NativeAuthState, issuer: &str) -> Result<AccessCredential, String> {
+    let refresh = keyring_entry(issuer, "refresh")?
+        .get_secret()
+        .map_err(|_| safe_error("authorization_required"))?;
+    let value = String::from_utf8(refresh).map_err(|_| safe_error("authorization_required"))?;
+    let response = token_request(state, issuer, json!({"grant_type":"refresh_token","refresh_token":value,"public_jwk":public_jwk(&signing_key(issuer)?)?})).await?;
+    store_token_response(state, issuer, response).await
+}
+
+fn access_is_stale(state: &NativeAuthState, issuer: &str) -> Result<bool, String> {
+    let values = state
+        .access
+        .lock()
+        .map_err(|_| safe_error("auth_state_unavailable"))?;
+    Ok(values
+        .get(issuer)
+        .map(|value| value.expires_at_unix - ACCESS_EARLY_SECONDS <= now_unix().unwrap_or(i64::MAX))
+        .unwrap_or(true))
+}
+
+async fn current_access(state: &NativeAuthState, issuer: &str) -> Result<AccessState, String> {
+    if access_is_stale(state, issuer)? {
+        let _refresh_guard = state.refresh_gate.lock().await;
+        if access_is_stale(state, issuer)? {
+            refresh_access(state, issuer).await?;
+        }
+    }
+    state
+        .access
+        .lock()
+        .map_err(|_| safe_error("auth_state_unavailable"))?
+        .get(issuer)
+        .cloned()
+        .ok_or_else(|| safe_error("authorization_required"))
+}
+
+#[tauri::command]
+pub fn native_public_jwk(issuer: String) -> Result<PublicJwk, String> {
+    let issuer = canonical_issuer(&issuer)?;
+    public_jwk(&signing_key(&issuer)?)
+}
+#[tauri::command]
+pub fn native_key_thumbprint(issuer: String) -> Result<String, String> {
+    let issuer = canonical_issuer(&issuer)?;
+    Ok(thumbprint(&public_jwk(&signing_key(&issuer)?)?))
+}
+#[tauri::command]
+pub fn native_sign_jwt(issuer: String, signing_input: Vec<u8>) -> Result<Vec<u8>, String> {
+    let issuer = canonical_issuer(&issuer)?;
+    let signature: Signature = signing_key(&issuer)?.sign(&signing_input);
+    Ok(signature.to_bytes().to_vec())
+}
+
+#[tauri::command]
+pub async fn native_exchange_authorization(
+    state: State<'_, NativeAuthState>,
+    issuer: String,
+    transaction_id: String,
+    code_verifier: String,
+    redirect_uri: String,
+) -> Result<AccessCredential, String> {
+    let issuer = canonical_issuer(&issuer)?;
+    let _ = redirect_uri;
+    let response = token_request(&state, &issuer, json!({"grant_type":"authorization_code","transaction_id":transaction_id,"code_verifier":code_verifier,"public_jwk":public_jwk(&signing_key(&issuer)?)?})).await?;
+    store_token_response(&state, &issuer, response).await
+}
+#[tauri::command]
+pub async fn native_refresh_access(
+    state: State<'_, NativeAuthState>,
+    issuer: String,
+) -> Result<AccessCredential, String> {
+    let issuer = canonical_issuer(&issuer)?;
+    let _refresh_guard = state.refresh_gate.lock().await;
+    refresh_access(&state, &issuer).await
+}
+
+#[tauri::command]
+pub async fn native_request_headers(
+    state: State<'_, NativeAuthState>,
+    issuer: String,
+    method: String,
+    url: String,
+    nonce: Option<String>,
+) -> Result<NativeHeaders, String> {
+    let issuer = canonical_issuer(&issuer)?;
+    let access = current_access(&state, &issuer).await?;
+    let proof = dpop_proof(
+        &signing_key(&issuer)?,
+        &method,
+        &url,
+        nonce.as_deref(),
+        Some(&access.access_token),
+    )?;
+    Ok(NativeHeaders {
+        authorization: format!("DPoP {}", access.access_token),
+        dpop: proof,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn public_material_and_debug_output_never_include_private_key() {
+        let key = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
+        let private = key.to_pkcs8_der().unwrap();
+        let public = public_jwk(&key).unwrap();
+        let serialized = serde_json::to_string(&public).unwrap();
+        assert!(!serialized
+            .as_bytes()
+            .windows(8)
+            .any(|window| private.as_bytes().windows(8).any(|secret| secret == window)));
+        assert!(!format!("{public:?}").contains(&URL_SAFE_NO_PAD.encode(private.as_bytes())));
+    }
+    #[test]
+    fn dpop_contains_only_public_jwk_and_raw_signature() {
+        let key = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
+        let proof = dpop_proof(
+            &key,
+            "GET",
+            "https://b.example/api/v1/dashboard?ignored=1",
+            None,
+            Some("access-value"),
+        )
+        .unwrap();
+        assert_eq!(proof.split('.').count(), 3);
+        assert!(!proof.contains("access-value"));
+        assert!(!proof.contains("ignored=1"));
+    }
+}
