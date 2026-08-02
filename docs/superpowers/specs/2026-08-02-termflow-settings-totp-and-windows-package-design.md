@@ -76,9 +76,11 @@ TOTP 状态拆分为：
 
 `configured=false, enabled=true` 是非法状态，仓储层和服务层都不得产生。
 
-关闭“启用双重认证登录”只清除启用时间并撤销相关会话/令牌，不删除加密 Secret。再次开启时
+关闭“启用双重认证登录”只清除启用时间，不删除加密 Secret。再次开启时
 要求管理员 Token 和验证器当前的新验证码。关闭、开启和重新配置都要求管理员 Token 与当前
-验证器的新验证码；验证码继续受 counter 防重放和认证限速保护。验证器丢失时没有 Web、App、
+验证器的新验证码；验证码继续受 counter 防重放和认证限速保护。正常开关只影响之后新建的
+Web session、App/EXE 授权和 CLI token exchange，不把当前已授权客户端误当作验证器恢复路径，
+也不强制中断正在使用的终端。验证器丢失时没有 Web、App、
 恢复码、邮件或短信恢复入口，只能在 Control Plane 容器内执行 reset；reset 才会删除 Secret、
 清空配置状态并使认证 epoch 失效。
 
@@ -116,9 +118,10 @@ Web 用户不负责提供或理解 TOTP 加密主密钥。默认单实例 Compos
 
 - 电脑注册响应增加 B 生成的 `server_url` 和 `login_command`；现有 token 和过期时间保留。
 - TOTP 状态响应增加 `configured`，保留 `enabled` 和 `available`。
-- setup confirm 只写入加密 Secret 并令 `configured=true`，不自动启用登录保护。
+- 首次 setup confirm 只写入加密 Secret 并令 `configured=true, enabled=false`，不自动启用登录
+  保护；重新配置替换 Secret 并保持操作前的 enabled 状态。
 - 增加 TOTP enable/disable 登录保护操作；两者都执行管理员 Token、当前验证码、限速、审计和
-  epoch/session 失效逻辑。
+  generation/challenge 失效逻辑，但不撤销已经授权的客户端或当前会话。
 - 重新配置以新 Secret 原子替换旧 Secret，旧验证器立即失效。
 - 现有数据库字段足以表达“有 ciphertext 但 enabled_at 为空”；迁移只在约束或索引确有需要时
   增加，不复制 Secret。
