@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import inspect, select, text
+from sqlalchemy import func, inspect, select, text
 from termflow_control_plane.auth.secret_box import AesGcmSecretBox
 from termflow_control_plane.persistence.database import Database, UnrecognizedDatabaseSchema
 from termflow_control_plane.persistence.models import (
@@ -249,7 +249,7 @@ async def test_oauth_code_and_refresh_rotation_have_one_winner_and_store_digests
             public_jwk='{"kty":"EC","crv":"P-256"}',
             key_thumbprint="thumbprint",
             platform="linux",
-            scopes=("terminal:read", "terminal:write"),
+            scopes=("terminal.read", "terminal.write"),
         )
         active_client = await repositories.native_clients.get_active_by_thumbprint("thumbprint")
         assert active_client is not None
@@ -258,7 +258,7 @@ async def test_oauth_code_and_refresh_rotation_have_one_winner_and_store_digests
             transaction_secret="transaction-secret",
             client_id=client_id,
             redirect_uri="termflow://oauth/callback",
-            scopes=("terminal:read",),
+            scopes=("terminal.read",),
             pkce_challenge="pkce-challenge",
             expires_at=now + timedelta(minutes=5),
             epoch=1,
@@ -279,7 +279,7 @@ async def test_oauth_code_and_refresh_rotation_have_one_winner_and_store_digests
         refresh = await repositories.auth_tokens.issue(
             raw_refresh,
             kind="refresh",
-            scopes=("terminal:read",),
+            scopes=("terminal.read",),
             key_thumbprint="thumbprint",
             expires_at=now + timedelta(days=30),
             epoch=1,
@@ -304,7 +304,7 @@ async def test_oauth_code_and_refresh_rotation_have_one_winner_and_store_digests
         await repositories.auth_tokens.issue(
             "access-token-plaintext",
             kind="access",
-            scopes=("terminal:read",),
+            scopes=("terminal.read",),
             key_thumbprint="thumbprint",
             expires_at=now + timedelta(minutes=10),
             epoch=1,
@@ -313,7 +313,7 @@ async def test_oauth_code_and_refresh_rotation_have_one_winner_and_store_digests
         await repositories.auth_tokens.issue(
             "cli-token-plaintext",
             kind="cli",
-            scopes=("terminal:read",),
+            scopes=("terminal.read",),
             key_thumbprint=None,
             expires_at=now + timedelta(minutes=15),
             epoch=1,
@@ -343,18 +343,24 @@ async def test_reset_increments_epoch_and_invalidates_auth_artifacts_but_keeps_c
     encrypted = secret_box.encrypt(b"secret", purpose="totp-authenticator")
     try:
         await repositories.auth_state.enable_totp(encrypted, counter=42)
+        pending = secret_box.encrypt(b"pending-reset-secret", purpose="totp-setup")
+        await repositories.totp_setups.create(
+            pending,
+            expires_at=datetime.now(UTC) + timedelta(minutes=10),
+            epoch=1,
+        )
         await repositories.native_clients.create(
             client_id=client_id,
             display_name="Phone",
             public_jwk='{"kty":"EC"}',
             key_thumbprint="phone-thumbprint",
             platform="android",
-            scopes=("terminal:read",),
+            scopes=("terminal.read",),
         )
         await repositories.auth_tokens.issue(
             "cli-secret",
             kind="cli",
-            scopes=("terminal:read",),
+            scopes=("terminal.read",),
             key_thumbprint=None,
             expires_at=datetime.now(UTC) + timedelta(minutes=15),
             epoch=1,
@@ -368,6 +374,8 @@ async def test_reset_increments_epoch_and_invalidates_auth_artifacts_but_keeps_c
         client = await repositories.native_clients.get(client_id)
         assert client is not None
         assert client.revoked_at is None
+        async with database.session_factory() as session:
+            assert await session.scalar(select(func.count(TotpSetup.id))) == 0
     finally:
         await database.dispose()
 
@@ -387,7 +395,7 @@ async def test_native_client_lifecycle_and_auth_audit_are_separate_from_terminal
             public_jwk='{"kty":"EC"}',
             key_thumbprint="desktop-thumbprint",
             platform="macos",
-            scopes=("terminal:write", "terminal:read"),
+            scopes=("terminal.write", "terminal.read"),
         )
         assert client.created_at is not None
         assert client.updated_at is not None

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import case, func, or_, select, update
+from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from termflow_control_plane.auth.secret_box import EncryptedSecret
@@ -371,11 +371,7 @@ class AuthStateRepository:
             epoch = result.scalar_one_or_none()
             if epoch is None:
                 raise RuntimeError("authentication state singleton is missing")
-            await session.execute(
-                update(TotpSetup)
-                .where(TotpSetup.consumed_at.is_(None))
-                .values(consumed_at=observed_at)
-            )
+            await session.execute(delete(TotpSetup))
             await session.execute(
                 update(AuthChallenge)
                 .where(AuthChallenge.completed_at.is_(None))
