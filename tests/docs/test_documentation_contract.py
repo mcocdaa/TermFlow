@@ -60,7 +60,10 @@ def test_operations_docs_define_external_edge_secrets_and_native_toolchains() ->
     for boundary in ("DNS", "反向代理", "TLS", "mTLS", "不属于 TermFlow"):
         assert boundary in operations
     assert "TERMFLOW_TOTP_MASTER_KEY" in operations
-    assert "默认值" in operations
+    assert "TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE" not in env_example
+    assert "多 B" in operations
+    assert "0600" in operations
+    assert "自动创建" in operations
     assert "docker compose exec control-plane termflow-control auth totp reset" in operations
     for platform in ("Linux", "Windows", "macOS", "Android", "iOS"):
         assert platform in clients

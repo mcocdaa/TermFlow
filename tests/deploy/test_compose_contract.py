@@ -24,6 +24,9 @@ def test_compose_configures_same_origin_web_control_limits() -> None:
     assert "TERMFLOW_TRUSTED_WEB_ORIGINS" in environment
     assert "TERMFLOW_BROWSER_SESSION_TTL_SECONDS" in environment
     assert environment["TERMFLOW_TOTP_MASTER_KEY"] is None
+    assert environment["TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE"] == (
+        "/app/data/totp-master-key"
+    )
     assert environment["TERMFLOW_ENROLLMENT_TOKEN_TTL_SECONDS"] == (
         "${TERMFLOW_ENROLLMENT_TOKEN_TTL_SECONDS:-60}"
     )

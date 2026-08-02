@@ -14,15 +14,19 @@ mTLS 的证书签发、校验与轮换不属于 TermFlow，也不会被默认镜
 
 ## 管理凭据与 TOTP 密钥
 
-`TERMFLOW_ADMIN_TOKEN` 必须由部署者生成。启用 TOTP 还必须另外提供
-`TERMFLOW_TOTP_MASTER_KEY`：它是 32 个随机字节的无填充 base64url，仓库和 Compose 没有
-任何密钥默认值。可以在部署主机本地生成：
+`TERMFLOW_ADMIN_TOKEN` 必须由部署者生成。默认单实例 Compose 会在持久化的
+`termflow-data` 数据卷中自动创建权限为 `0600` 的 TOTP 主密钥文件，并在后续启动中复用；
+密钥不会进入镜像、日志或仓库。显式设置的 `TERMFLOW_TOTP_MASTER_KEY` 或
+`TERMFLOW_TOTP_MASTER_KEY_FILE` 始终优先于这个自动文件。
+
+多 B 实例不能各自使用自动文件；部署者必须生成同一个 32 字节无填充 base64url 密钥，并把
+同一个显式密钥安全注入所有 B：
 
 ```bash
 python -c 'import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("="))'
 ```
 
-不要把输出提交到 `.env` 示例、镜像层、CI 日志或版本控制。需要文件注入时，使用仓库提供的
+不要把输出提交到 `.env` 示例、镜像层、CI 日志或版本控制。需要显式文件注入时，使用仓库提供的
 只读 Compose override；路径变量指向宿主机上权限受限且只包含该 base64url 值的文件：
 
 ```bash
@@ -31,7 +35,8 @@ TERMFLOW_TOTP_MASTER_KEY_FILE=/secure/termflow-totp-key \
 ```
 
 override 把文件挂载到 `/run/secrets/termflow-totp-master-key`，并设置 B 的
-`TERMFLOW_TOTP_MASTER_KEY_FILE`。密钥丢失不能通过 Web C、App 或 EXE 恢复。
+`TERMFLOW_TOTP_MASTER_KEY_FILE`。默认自动文件只适用于 Compose 的单实例数据卷；密钥丢失
+不能通过 Web C、App 或 EXE 恢复。
 
 验证器丢失时，拥有 Docker 主机权限的管理员在容器内执行本地恢复命令：
 

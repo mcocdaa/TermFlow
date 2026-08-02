@@ -33,6 +33,7 @@ from termflow_control_plane.api.terminal import router as terminal_router_api
 from termflow_control_plane.api.terms import router as terms_router
 from termflow_control_plane.auth.audit import AuthenticationAudit
 from termflow_control_plane.auth.dpop import DpopVerifier
+from termflow_control_plane.auth.master_key import resolve_totp_master_key
 from termflow_control_plane.auth.rate_limit import AuthRateLimiter
 from termflow_control_plane.auth.secret_box import AesGcmSecretBox
 from termflow_control_plane.auth.service import AuthenticationRejected, AuthenticationService
@@ -134,7 +135,7 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         app.state.browser_sessions.synchronize_epoch(auth_state.epoch)
         await app.state.terminal_hub.synchronize_epoch(auth_state.epoch)
         await app.state.event_hub.synchronize_epoch(auth_state.epoch)
-        master_key = settings.totp_master_key_bytes
+        master_key = resolve_totp_master_key(settings)
         secret_box = (
             AesGcmSecretBox(master_key, key_version=settings.totp_master_key_version)
             if master_key is not None

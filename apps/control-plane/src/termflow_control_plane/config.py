@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     browser_session_capacity: int = Field(default=4096, ge=1)
     totp_master_key: SecretStr | None = None
     totp_master_key_file: Path | None = None
+    totp_auto_master_key_file: Path | None = None
     totp_master_key_version: int = Field(default=1, ge=1, le=2_147_483_647)
     totp_setup_ttl_seconds: int = Field(default=10 * 60, ge=60, le=60 * 60)
     auth_challenge_ttl_seconds: int = Field(default=5 * 60, ge=30, le=15 * 60)
