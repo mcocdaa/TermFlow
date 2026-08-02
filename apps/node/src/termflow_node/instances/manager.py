@@ -18,7 +18,7 @@ from platformdirs import user_runtime_path
 
 from termflow_node.tmux.runner import TmuxRunner
 
-from .models import InstanceLifecycle, LocalInstance
+from .models import InstanceLifecycle, LocalInstance, RemoteAccessState
 from .store import InstanceListResult, InstanceStore
 
 
@@ -115,7 +115,7 @@ class InstanceManager:
             identity = runner.session_identity(name)
             identified = record.model_copy(
                 update={
-                    "schema_version": 2,
+                    "schema_version": 3,
                     "session_id": identity.session_id,
                     "session_name": identity.session_name,
                     "name": identity.session_name,
@@ -141,7 +141,7 @@ class InstanceManager:
     def current(self, instance_id: UUID) -> LocalInstance:
         record = self._store.load(instance_id)
         runner = self._runner_factory(record.socket_path)
-        target = record.session_id if record.schema_version == 2 else None
+        target = record.session_id if record.schema_version in {2, 3} else None
         identity = runner.session_identity(target)
         resolved_name = identity.session_name
         if record.schema_version == 1 and identity.session_name == "main":
@@ -150,7 +150,7 @@ class InstanceManager:
                 runner.rename_session(identity.session_id, resolved_name)
         current = record.model_copy(
             update={
-                "schema_version": 2,
+                "schema_version": 3,
                 "session_id": identity.session_id,
                 "session_name": resolved_name,
                 "name": resolved_name,
@@ -194,33 +194,51 @@ class InstanceManager:
 
     def attach(self, identifier: str) -> tuple[LocalInstance, list[str]]:
         record = self.resolve(identifier)
-        runner = self._runner_factory(record.socket_path)
-        session_id = record.session_id
-        if session_id is None or not runner.is_alive(session_id):
+        self.require_running_tmux(record)
+        record = self.start_bridge(record)
+        if record.session_id is None:
             raise InstanceResolutionError(
                 f"Instance {record.instance_id} tmux server is not running"
             )
-        if record.bridge_pid is None or not self._is_expected_bridge(
-            record.bridge_pid,
-            record.instance_id,
-        ):
-            record = record.model_copy(update={"bridge_pid": self._bridge_launcher(record)})
-            self._store.save(record)
-        return record, runner.attach_argv(session_id)
+        runner = self._runner_factory(record.socket_path)
+        return record, runner.attach_argv(record.session_id)
+
+    def require_running_tmux(self, record: LocalInstance) -> None:
+        target = record.session_id
+        if target is None or not self._runner_factory(record.socket_path).is_alive(target):
+            raise InstanceResolutionError(
+                f"Instance {record.instance_id} tmux server is not running"
+            )
+
+    def stop_bridge(self, record: LocalInstance) -> LocalInstance:
+        pid = record.bridge_pid
+        if pid is not None and self._is_expected_bridge(pid, record.instance_id):
+            os.kill(pid, signal.SIGTERM)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and self._is_expected_bridge(
+                pid, record.instance_id
+            ):
+                time.sleep(0.05)
+            if self._is_expected_bridge(pid, record.instance_id):
+                raise BridgeStartError(
+                    f"Bridge process for Instance {record.instance_id} did not stop"
+                )
+        stopped = record.model_copy(update={"bridge_pid": None})
+        self._store.save(stopped)
+        return stopped
+
+    def start_bridge(self, record: LocalInstance) -> LocalInstance:
+        if record.remote_access is RemoteAccessState.ACTIVATION_REQUIRED:
+            return record
+        if self.bridge_is_alive(record):
+            return record
+        started = record.model_copy(update={"bridge_pid": self._bridge_launcher(record)})
+        self._store.save(started)
+        return started
 
     def kill(self, instance_id: UUID) -> LocalInstance:
         record = self.current(instance_id)
-        if record.bridge_pid is not None and self._is_expected_bridge(
-            record.bridge_pid,
-            instance_id,
-        ):
-            os.kill(record.bridge_pid, signal.SIGTERM)
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline and self._is_expected_bridge(
-                record.bridge_pid,
-                instance_id,
-            ):
-                time.sleep(0.05)
+        record = self.stop_bridge(record)
         if record.session_id is None:
             raise InstanceResolutionError(f"Instance {instance_id} has no stable tmux identity")
         self._runner_factory(record.socket_path).kill_session(record.session_id)

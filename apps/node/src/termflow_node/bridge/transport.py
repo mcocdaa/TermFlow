@@ -17,10 +17,11 @@ from termflow_protocol import (
 )
 from websockets.asyncio.client import ClientConnection
 from websockets.asyncio.client import connect as websocket_connect
+from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 from termflow_node.config.models import InstallationConfig
 from termflow_node.control_plane_client import ControlPlaneClient, validate_server_url
-from termflow_node.instances.models import LocalInstance
+from termflow_node.instances.models import LocalInstance, RemoteAccessState
 from termflow_node.instances.store import InstanceStore
 
 from .backoff import ReconnectBackoff
@@ -68,6 +69,18 @@ def bridge_websocket_url(server_url: str) -> str:
     if base_url.startswith("http://"):
         return f"ws://{base_url.removeprefix('http://')}/api/v1/bridge/connect"
     raise ValueError("unsupported Control Plane URL")
+
+
+def is_instance_credential_rejection(error: BaseException) -> bool:
+    """Classify only deterministic rejection of an issued Instance credential."""
+
+    if isinstance(error, InvalidStatus):
+        return error.response.status_code == 403
+    if not isinstance(error, ConnectionClosed):
+        return False
+    received_code = error.rcvd.code if error.rcvd is not None else None
+    sent_code = error.sent.code if error.sent is not None else None
+    return received_code == 4401 or sent_code == 4401
 
 
 class BridgeTransport:
@@ -156,11 +169,24 @@ class BridgeTransport:
         for message in retained:
             self._outbound.put_nowait(message)
 
+    def _mark_activation_required(self) -> None:
+        self._instance = self._instance.model_copy(
+            update={
+                "schema_version": 3,
+                "remote_access": RemoteAccessState.ACTIVATION_REQUIRED,
+                "instance_token": None,
+                "bridge_pid": None,
+            }
+        )
+        self._store.save(self._instance)
+
     async def run(
         self,
         handler: Callable[[WireMessage], Awaitable[None]],
         shutdown: asyncio.Event,
     ) -> None:
+        if self._instance.remote_access is RemoteAccessState.ACTIVATION_REQUIRED:
+            return
         while not shutdown.is_set():
             try:
                 if self._instance.instance_token is None:
@@ -172,7 +198,10 @@ class BridgeTransport:
                 await self._run_connected(handler, shutdown)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as error:
+                if is_instance_credential_rejection(error):
+                    self._mark_activation_required()
+                    return
                 if shutdown.is_set():
                     return
                 await self._sleep(self._backoff.next_delay())

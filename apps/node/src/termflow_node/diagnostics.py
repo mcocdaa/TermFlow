@@ -10,7 +10,7 @@ from pathlib import Path
 from termflow_node.config.store import ConfigStore
 from termflow_node.control_plane_client import InsecureServerUrl, validate_server_url
 from termflow_node.instances.manager import InstanceManager, launch_bridge
-from termflow_node.instances.models import LocalInstance
+from termflow_node.instances.models import LocalInstance, RemoteAccessState
 from termflow_node.instances.store import InstanceStore
 from termflow_node.tmux.runner import TmuxRunner
 
@@ -85,7 +85,12 @@ def run_diagnostics(
         checks.append(DiagnosticCheck("instance_metadata", False, str(diagnostic)))
     for record in listing.instances:
         tmux_alive, bridge_alive = probe_instance_health(record)
-        if repair and tmux_alive and not bridge_alive:
+        if (
+            repair
+            and tmux_alive
+            and not bridge_alive
+            and record.remote_access is RemoteAccessState.ACTIVE
+        ):
             try:
                 pid = launch_bridge(
                     record,
@@ -100,7 +105,11 @@ def run_diagnostics(
             DiagnosticCheck(
                 f"instance:{record.instance_id}",
                 tmux_alive and bridge_alive,
-                f"tmux={'up' if tmux_alive else 'down'} bridge={'up' if bridge_alive else 'down'}",
+                (
+                    f"tmux={'up' if tmux_alive else 'down'} "
+                    f"bridge={'up' if bridge_alive else 'down'} "
+                    f"remote_access={record.remote_access}"
+                ),
             )
         )
     return checks

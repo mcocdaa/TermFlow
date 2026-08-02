@@ -1,10 +1,11 @@
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
 from termflow_node.instances.manager import InstanceManager
-from termflow_node.instances.models import InstanceLifecycle, LocalInstance
+from termflow_node.instances.models import InstanceLifecycle, LocalInstance, RemoteAccessState
 from termflow_node.instances.store import InstanceStore
 from termflow_node.tmux.runner import TmuxSessionIdentity
 
@@ -74,7 +75,7 @@ def test_legacy_identity_migration_preserves_the_authoritative_tmux_name(
 
     migrated, argv = manager.attach(str(legacy.instance_id))
 
-    assert migrated.schema_version == 2
+    assert migrated.schema_version == 3
     assert migrated.session_id == "$3"
     assert migrated.name == expected_name
     assert migrated.session_name == expected_name
@@ -127,6 +128,7 @@ def test_list_migrates_legacy_identity_before_display(tmp_path) -> None:
 
     assert listing.instances[0].session_id == "$3"
     assert listing.instances[0].name == "local-list-name"
+    assert listing.instances[0].schema_version == 3
 
 
 def test_kill_targets_stable_session_id_not_display_name(tmp_path) -> None:
@@ -150,3 +152,91 @@ def test_kill_targets_stable_session_id_not_display_name(tmp_path) -> None:
 
     assert stopped.lifecycle is InstanceLifecycle.STOPPED
     assert ("kill_session", "$3") in fake.calls
+
+
+def test_attach_keeps_tmux_but_does_not_launch_required_bridge(tmp_path) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    instance_id = uuid4()
+    record = LocalInstance(
+        schema_version=3,
+        instance_id=instance_id,
+        name="local-only",
+        session_id="$3",
+        session_name="local-only",
+        socket_path=(store.instance_dir(instance_id) / "tmux.sock").absolute(),
+        created_at=datetime.now(UTC),
+        bridge_pid=None,
+        instance_token=None,
+        lifecycle=InstanceLifecycle.RUNNING,
+        remote_access=RemoteAccessState.ACTIVATION_REQUIRED,
+    )
+    store.save(record)
+    fake = FakeRunner(record.socket_path, session_name=record.name)
+    launcher = Mock(return_value=999)
+    manager = InstanceManager(
+        store,
+        bridge_launcher=launcher,
+        runner_factory=lambda path: fake,
+    )
+
+    attached, argv = manager.attach(str(record.instance_id))
+
+    assert argv[-1] == record.session_id
+    assert attached.remote_access is RemoteAccessState.ACTIVATION_REQUIRED
+    launcher.assert_not_called()
+
+
+def test_stop_bridge_terminates_matching_process_and_clears_pid(
+    tmp_path, monkeypatch
+) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    instance_id = uuid4()
+    record = LocalInstance(
+        schema_version=3,
+        instance_id=instance_id,
+        name="local-only",
+        session_id="$3",
+        session_name="local-only",
+        socket_path=(store.instance_dir(instance_id) / "tmux.sock").absolute(),
+        created_at=datetime.now(UTC),
+        bridge_pid=4321,
+        lifecycle=InstanceLifecycle.RUNNING,
+        remote_access=RemoteAccessState.ACTIVATION_REQUIRED,
+    )
+    store.save(record)
+    manager = InstanceManager(store)
+    checks = iter([True, False, False])
+    monkeypatch.setattr(manager, "_is_expected_bridge", lambda pid, instance_id: next(checks))
+    killed: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        "termflow_node.instances.manager.os.kill",
+        lambda pid, signal_number: killed.append((pid, signal_number)),
+    )
+
+    stopped = manager.stop_bridge(record)
+
+    assert stopped.bridge_pid is None
+    assert store.load(instance_id).bridge_pid is None
+    assert killed == [(4321, 15)]
+
+
+def test_require_running_tmux_rejects_dead_local_session(tmp_path) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    instance_id = uuid4()
+    record = LocalInstance(
+        schema_version=3,
+        instance_id=instance_id,
+        name="stopped",
+        session_id="$3",
+        session_name="stopped",
+        socket_path=(store.instance_dir(instance_id) / "tmux.sock").absolute(),
+        created_at=datetime.now(UTC),
+        lifecycle=InstanceLifecycle.RUNNING,
+        remote_access=RemoteAccessState.ACTIVATION_REQUIRED,
+    )
+    fake = FakeRunner(record.socket_path, session_name=record.name)
+    fake.is_alive = lambda target: False  # type: ignore[method-assign]
+    manager = InstanceManager(store, runner_factory=lambda path: fake)
+
+    with pytest.raises(LookupError, match="tmux server is not running"):
+        manager.require_running_tmux(record)

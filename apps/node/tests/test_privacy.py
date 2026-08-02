@@ -2,12 +2,15 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
+from termflow_node import cli
 from termflow_node.bridge.input_handler import InputHandler
 from termflow_node.config.models import InstallationConfig
 from termflow_node.config.store import ConfigStore
+from termflow_node.instances.activation import ActivationError
 from termflow_node.instances.models import InstanceLifecycle, LocalInstance
 from termflow_node.instances.store import InstanceStore
 from termflow_protocol import PaneInputPayload, PaneSnapshot, TopologySnapshot, WindowSnapshot
+from typer.testing import CliRunner
 
 SENTINEL = "SECRET_NODE_BODY_c8c9"
 INSTALLATION_SECRET = "installation-private-value"
@@ -91,3 +94,30 @@ async def test_terminal_body_never_reaches_local_state_or_logs(tmp_path, caplog)
     assert INSTANCE_SECRET.encode() in files[instance_store.metadata_path(instance_id)]
     assert INSTALLATION_SECRET.encode() not in files[log_path]
     assert INSTANCE_SECRET.encode() not in files[log_path]
+
+
+def test_activate_cli_does_not_print_dependency_exception_secrets(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    class SecretFailureActivator:
+        async def activate(self, identifier: str):
+            try:
+                raise RuntimeError(f"{INSTALLATION_SECRET} {INSTANCE_SECRET}")
+            except RuntimeError as exc:
+                raise ActivationError(
+                    "Remote activation failed; local tmux was not changed."
+                ) from exc
+
+    monkeypatch.setattr(
+        cli,
+        "default_instance_activator",
+        lambda store: SecretFailureActivator(),
+        raising=False,
+    )
+
+    result = CliRunner().invoke(cli.app, ["activate", "private"])
+
+    assert result.exit_code == 1
+    combined = result.stdout + result.stderr + caplog.text
+    assert INSTALLATION_SECRET not in combined
+    assert INSTANCE_SECRET not in combined

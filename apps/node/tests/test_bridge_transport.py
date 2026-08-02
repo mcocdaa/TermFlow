@@ -8,10 +8,18 @@ import httpx
 import pytest
 from pydantic import SecretStr
 from termflow_node.bridge.backoff import ReconnectBackoff
-from termflow_node.bridge.transport import BridgeTransport, bridge_websocket_url
+from termflow_node.bridge.transport import (
+    BridgeTransport,
+    bridge_websocket_url,
+    is_instance_credential_rejection,
+)
 from termflow_node.config.models import InstallationConfig
 from termflow_node.control_plane_client import ControlPlaneClient
-from termflow_node.instances.models import InstanceLifecycle, LocalInstance
+from termflow_node.instances.models import (
+    InstanceLifecycle,
+    LocalInstance,
+    RemoteAccessState,
+)
 from termflow_node.instances.store import InstanceStore
 from termflow_protocol import (
     MessageType,
@@ -20,6 +28,10 @@ from termflow_protocol import (
     TopologySnapshot,
     WireMessage,
 )
+from websockets.datastructures import Headers
+from websockets.exceptions import ConnectionClosedError, InvalidStatus
+from websockets.frames import Close
+from websockets.http11 import Response
 
 
 def _instance(tmp_path, *, token: str | None) -> LocalInstance:
@@ -267,3 +279,171 @@ async def test_terminal_teardown_has_reserved_transport_capacity(tmp_path) -> No
     assert latest_close.type is MessageType.TERMINAL_CLOSED
     assert latest_close.payload["terminal_id"] == str(replacement_id)
     assert transport._outbound.empty()
+
+
+def _rejection(status_code: int) -> InvalidStatus:
+    return InvalidStatus(Response(status_code, "Rejected", Headers()))
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        _rejection(403),
+        ConnectionClosedError(Close(4401, "Authentication required"), None),
+    ],
+)
+def test_credential_rejection_classification_is_exact(error: Exception) -> None:
+    assert is_instance_credential_rejection(error)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        _rejection(401),
+        _rejection(500),
+        ConnectionClosedError(Close(4403, "Forbidden"), None),
+        OSError("network unavailable"),
+    ],
+)
+def test_transient_or_non_instance_rejections_are_not_definitive(error: Exception) -> None:
+    assert not is_instance_credential_rejection(error)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        _rejection(403),
+        ConnectionClosedError(Close(4401, "Authentication required"), None),
+    ],
+)
+async def test_auth_rejection_requires_activation_and_stops_retry(
+    tmp_path, error: Exception
+) -> None:
+    instance = _instance(tmp_path, token="deleted-token").model_copy(
+        update={"schema_version": 3, "session_id": "$0", "bridge_pid": 4321}
+    )
+    store = InstanceStore(tmp_path / "instances")
+    store.save(instance)
+    sleeps: list[float] = []
+    shutdown = asyncio.Event()
+
+    @asynccontextmanager
+    async def rejected_connect(uri: str, **kwargs):
+        raise error
+        yield
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+        shutdown.set()
+
+    transport = BridgeTransport(
+        installation=_installation(),
+        instance=instance,
+        store=store,
+        control_plane=ControlPlaneClient(),
+        topology_provider=lambda: TopologySnapshot(
+            session_id="$0", session_name="main", revision=1, windows=[]
+        ),
+        connect=rejected_connect,
+        sleep=record_sleep,
+    )
+
+    await transport.run(lambda message: asyncio.sleep(0), shutdown)
+
+    saved = store.load(instance.instance_id)
+    assert saved.remote_access is RemoteAccessState.ACTIVATION_REQUIRED
+    assert saved.instance_token is None
+    assert saved.bridge_pid is None
+    assert sleeps == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [OSError("offline"), _rejection(503)])
+async def test_transient_failures_retry_without_changing_remote_access(
+    tmp_path, error: Exception
+) -> None:
+    instance = _instance(tmp_path, token="still-valid").model_copy(
+        update={"schema_version": 3, "session_id": "$0", "bridge_pid": 4321}
+    )
+    store = InstanceStore(tmp_path / "instances")
+    store.save(instance)
+    shutdown = asyncio.Event()
+    sleeps: list[float] = []
+
+    @asynccontextmanager
+    async def rejected_connect(uri: str, **kwargs):
+        raise error
+        yield
+
+    async def stop_after_backoff(delay: float) -> None:
+        sleeps.append(delay)
+        shutdown.set()
+
+    transport = BridgeTransport(
+        installation=_installation(),
+        instance=instance,
+        store=store,
+        control_plane=ControlPlaneClient(),
+        topology_provider=lambda: TopologySnapshot(
+            session_id="$0", session_name="main", revision=1, windows=[]
+        ),
+        connect=rejected_connect,
+        backoff=ReconnectBackoff(base=0, cap=0),
+        sleep=stop_after_backoff,
+    )
+
+    await transport.run(lambda message: asyncio.sleep(0), shutdown)
+
+    saved = store.load(instance.instance_id)
+    assert saved.remote_access is RemoteAccessState.ACTIVE
+    assert saved.instance_token is not None
+    assert saved.bridge_pid == 4321
+    assert sleeps == [0]
+
+
+@pytest.mark.asyncio
+async def test_activation_required_never_registers_automatically(tmp_path) -> None:
+    shutdown = asyncio.Event()
+    registrations = 0
+
+    class RejectRegistration:
+        async def register_instance(self, *args, **kwargs):
+            nonlocal registrations
+            registrations += 1
+            shutdown.set()
+            raise OSError("registration must be explicit")
+
+    instance = _instance(tmp_path, token=None).model_copy(
+        update={
+            "schema_version": 3,
+            "session_id": "$0",
+            "remote_access": RemoteAccessState.ACTIVATION_REQUIRED,
+        }
+    )
+    store = InstanceStore(tmp_path / "instances")
+    store.save(instance)
+    connect_called = False
+
+    @asynccontextmanager
+    async def connect(uri: str, **kwargs):
+        nonlocal connect_called
+        connect_called = True
+        yield FakeWebSocket()
+
+    transport = BridgeTransport(
+        installation=_installation(),
+        instance=instance,
+        store=store,
+        control_plane=RejectRegistration(),
+        topology_provider=lambda: TopologySnapshot(
+            session_id="$0", session_name="main", revision=1, windows=[]
+        ),
+        connect=connect,
+    )
+
+    await transport.run(lambda message: asyncio.sleep(0), shutdown)
+
+    assert registrations == 0
+    assert connect_called is False
+    assert store.load(instance.instance_id).remote_access is RemoteAccessState.ACTIVATION_REQUIRED

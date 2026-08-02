@@ -15,8 +15,9 @@ from termflow_node.config.models import InstallationConfig
 from termflow_node.config.store import ConfigStore
 from termflow_node.control_plane_client import ControlPlaneClient, validate_server_url
 from termflow_node.diagnostics import probe_instance_health, run_diagnostics
+from termflow_node.instances.activation import ActivationError, default_instance_activator
 from termflow_node.instances.manager import InstanceManager
-from termflow_node.instances.models import LocalInstance
+from termflow_node.instances.models import LocalInstance, RemoteAccessState
 from termflow_node.instances.store import InstanceStore
 
 app = typer.Typer(no_args_is_help=True, help="Run and manage local TermFlow Instances.")
@@ -64,6 +65,7 @@ def _status_payload(record: LocalInstance) -> dict[str, object]:
         "instance_id": str(record.instance_id),
         "name": record.name,
         "lifecycle": record.lifecycle,
+        "remote_access": record.remote_access,
         "tmux_alive": tmux_alive,
         "bridge_alive": bridge_alive,
         "socket_path": str(record.socket_path),
@@ -73,13 +75,16 @@ def _status_payload(record: LocalInstance) -> dict[str, object]:
 def _status_line(payload: dict[str, object]) -> str:
     if not payload["tmux_alive"]:
         health = "tmux-down"
+    elif payload["remote_access"] == RemoteAccessState.ACTIVATION_REQUIRED:
+        health = "activation-required"
     elif payload["bridge_alive"]:
-        health = "connected"
+        health = "bridge-running"
     else:
         health = "bridge-down"
     return (
         f"{payload['instance_id']} {payload['name']} "
-        f"{payload['lifecycle']} {health}"
+        f"{payload['lifecycle']} {health} "
+        f"remote_access={payload['remote_access']}"
     )
 
 
@@ -98,6 +103,22 @@ def attach(identifier: str) -> None:
 
     _, argv = InstanceManager(InstanceStore.default()).attach(identifier)
     os.execvp(argv[0], argv)
+
+
+@app.command()
+def activate(identifier: str) -> None:
+    """Explicitly restore remote access for one locally running Term."""
+
+    activator = default_instance_activator(InstanceStore.default())
+    try:
+        result = asyncio.run(activator.activate(identifier))
+    except ActivationError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    if result.activated:
+        typer.echo(f"Activated {result.instance.instance_id}")
+    else:
+        typer.echo(f"Remote access already active for {result.instance.instance_id}")
 
 
 @app.command("list")

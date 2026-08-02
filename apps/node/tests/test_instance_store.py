@@ -66,23 +66,39 @@ def test_v1_metadata_loads_as_an_unmigrated_record(tmp_path) -> None:
     assert record.schema_version == 1
     assert record.session_id is None
     assert record.session_name == "main"
+    assert record.remote_access.value == "active"
 
 
-def test_v2_metadata_persists_stable_session_identity(tmp_path) -> None:
+def test_v2_loads_active_and_next_save_writes_v3(tmp_path) -> None:
     store = InstanceStore(tmp_path / "instances")
     instance_id = uuid4()
-    record = LocalInstance(
-        schema_version=2,
-        instance_id=instance_id,
-        name="renamed",
-        session_id="$7",
-        session_name="renamed",
-        socket_path=store.instance_dir(instance_id) / "tmux.sock",
-        created_at=datetime.now(UTC),
-        lifecycle=InstanceLifecycle.RUNNING,
+    directory = store.instance_dir(instance_id)
+    directory.mkdir(parents=True, mode=0o700)
+    path = store.metadata_path(instance_id)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "instance_id": str(instance_id),
+                "name": "legacy-v2",
+                "session_id": "$7",
+                "session_name": "legacy-v2",
+                "socket_path": str(directory / "tmux.sock"),
+                "created_at": datetime.now(UTC).isoformat(),
+                "bridge_pid": None,
+                "instance_token": None,
+                "lifecycle": "running",
+            }
+        )
     )
+    path.chmod(0o600)
+
+    record = store.load(instance_id)
+
+    assert record.remote_access.value == "active"
     store.save(record)
-    dumped = json.loads(store.metadata_path(instance_id).read_text())
-    assert dumped["schema_version"] == 2
+    dumped = json.loads(path.read_text())
+    assert dumped["schema_version"] == 3
     assert dumped["session_id"] == "$7"
-    assert store.load(instance_id) == record
+    assert dumped["remote_access"] == "active"
+    assert store.load(instance_id).schema_version == 3

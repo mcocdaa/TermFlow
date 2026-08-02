@@ -53,9 +53,10 @@ class InstanceStore:
             if instance.instance_token is not None
             else None
         )
+        serialized_version = 3 if instance.session_id is not None else instance.schema_version
         payload = json.dumps(
             {
-                "schema_version": instance.schema_version,
+                "schema_version": serialized_version,
                 "instance_id": str(instance.instance_id),
                 "name": instance.name,
                 "session_id": instance.session_id,
@@ -65,6 +66,7 @@ class InstanceStore:
                 "bridge_pid": instance.bridge_pid,
                 "instance_token": token,
                 "lifecycle": instance.lifecycle,
+                "remote_access": instance.remote_access.value,
             },
             separators=(",", ":"),
         ).encode("utf-8")
