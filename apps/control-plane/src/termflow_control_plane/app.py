@@ -1,6 +1,7 @@
 """FastAPI application factory."""
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
@@ -9,6 +10,7 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 from termflow_protocol import (
     ErrorDetail,
     ErrorEnvelope,
@@ -49,6 +51,10 @@ from termflow_control_plane.routing.router import CommandRouter
 from termflow_control_plane.routing.terminal_audit import TerminalAuditWriter
 from termflow_control_plane.routing.terminal_router import TerminalRouter
 from termflow_control_plane.web import install_web_hosting
+
+logger = logging.getLogger(__name__)
+
+_AUTHENTICATION_EPOCH_POLL_SECONDS = 1.0
 
 
 def _request_id(request: Request) -> UUID:
@@ -108,15 +114,21 @@ async def _authentication_epoch_loop(
 
     while not stop.is_set():
         try:
-            await asyncio.wait_for(stop.wait(), timeout=1)
+            await asyncio.wait_for(
+                stop.wait(),
+                timeout=_AUTHENTICATION_EPOCH_POLL_SECONDS,
+            )
         except TimeoutError:
             pass
         if stop.is_set():
             return
-        state = await repositories.auth_state.get()
-        browser_sessions.synchronize_epoch(state.epoch)
-        await terminal_hub.synchronize_epoch(state.epoch)
-        await event_hub.synchronize_epoch(state.epoch)
+        try:
+            state = await repositories.auth_state.get()
+            browser_sessions.synchronize_epoch(state.epoch)
+            await terminal_hub.synchronize_epoch(state.epoch)
+            await event_hub.synchronize_epoch(state.epoch)
+        except SQLAlchemyError:
+            logger.exception("Authentication epoch poll failed; retrying")
 
 
 async def _verify_oauth_totp(service: AuthenticationService, code: str) -> bool:
@@ -197,11 +209,13 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
                 await expiry_task
             with suppress(asyncio.CancelledError):
                 await session_expiry_task
-            await auth_epoch_task
             try:
-                await app.state.terminal_audit.close()
+                await auth_epoch_task
             finally:
-                await active_database.dispose()
+                try:
+                    await app.state.terminal_audit.close()
+                finally:
+                    await active_database.dispose()
 
     app = FastAPI(title="TermFlow Control Plane", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings

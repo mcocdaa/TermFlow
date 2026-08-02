@@ -32,6 +32,7 @@ from termflow_protocol import (
 )
 
 from termflow_control_plane.auth.dpop import DpopVerifier
+from termflow_control_plane.auth.epoch import persisted_authentication_epoch
 from termflow_control_plane.auth.sessions import (
     BrowserSessionStore,
     authenticate_admin_websocket,
@@ -101,12 +102,12 @@ async def _send_terminal_events(
     websocket: WebSocket,
     terminal: BrowserTerminal,
     terminal_router: TerminalRouter,
-    sessions: BrowserSessionStore,
+    repositories: RepositoryBundle,
     auth_epoch: int,
 ) -> None:
     while True:
         event = await terminal.next_event()
-        if sessions.epoch != auth_epoch:
+        if await persisted_authentication_epoch(repositories) != auth_epoch:
             await terminal_router.request_close(terminal, "client_closed")
             with suppress(RuntimeError):
                 await websocket.close(code=4401, reason="Authentication epoch changed")
@@ -208,7 +209,7 @@ async def _receive_terminal_input(
     terminal: BrowserTerminal,
     terminal_router: TerminalRouter,
     settings: Settings,
-    sessions: BrowserSessionStore,
+    repositories: RepositoryBundle,
     auth_epoch: int,
 ) -> None:
     bucket = _TokenBucket.create(settings.terminal_input_rate_bytes_per_second)
@@ -216,7 +217,7 @@ async def _receive_terminal_input(
         incoming = await websocket.receive()
         if incoming["type"] == "websocket.disconnect":
             return
-        if sessions.epoch != auth_epoch:
+        if await persisted_authentication_epoch(repositories) != auth_epoch:
             terminal.terminate("client_closed")
             with suppress(RuntimeError):
                 await websocket.close(code=4401, reason="Authentication epoch changed")
@@ -331,7 +332,7 @@ async def connect_terminal(websocket: WebSocket, instance_id: UUID) -> None:
             websocket,
             terminal,
             terminal_router,
-            sessions,
+            repositories,
             auth_epoch,
         )
     )
@@ -341,7 +342,7 @@ async def connect_terminal(websocket: WebSocket, instance_id: UUID) -> None:
             terminal,
             terminal_router,
             settings,
-            sessions,
+            repositories,
             auth_epoch,
         )
     )
