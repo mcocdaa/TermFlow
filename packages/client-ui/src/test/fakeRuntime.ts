@@ -25,6 +25,8 @@ export function createFakeRuntime(overrides: Partial<ClientRuntime> = {}): Clien
       clearInterval: () => undefined,
     },
     visibility: { isHidden: () => false, subscribe: () => () => undefined },
+    capabilities: { manageSecurity: true, manageAuthorizedClients: true },
+    authorizationCompletion: { navigate: () => undefined },
     canonicalServerUrl: 'https://control.example',
     platform: 'Linux x86_64',
     ...overrides,

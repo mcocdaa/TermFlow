@@ -10,6 +10,8 @@ describe('browser runtime composition', () => {
       clipboard: { writeText: async () => undefined },
       clock: { now: () => 1, setTimeout: () => 2, clearTimeout: () => undefined, setInterval: () => 3, clearInterval: () => undefined },
       visibility: { isHidden: () => false, subscribe: () => () => undefined },
+      capabilities: { manageSecurity: true, manageAuthorizedClients: true },
+      authorizationCompletion: { navigate: () => undefined },
       canonicalServerUrl: 'https://b.termflow.test',
       platform: 'MacIntel',
     }

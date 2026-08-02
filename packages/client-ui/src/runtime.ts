@@ -21,12 +21,23 @@ export interface VisibilityPort {
   subscribe(listener: () => void): () => void
 }
 
+export interface ClientCapabilities {
+  manageSecurity: boolean
+  manageAuthorizedClients: boolean
+}
+
+export interface AuthorizationCompletionPort {
+  navigate(callbackUri: string): void
+}
+
 export interface ClientRuntime {
   readonly api: ApiClient
   readonly createTerminal: (termId: string, callbacks: TerminalSessionCallbacks) => TerminalSessionLike
   readonly clipboard: ClipboardPort
   readonly clock: ClockPort
   readonly visibility: VisibilityPort
+  readonly capabilities: ClientCapabilities
+  readonly authorizationCompletion: AuthorizationCompletionPort
   readonly canonicalServerUrl: string
   readonly platform: string
 }
