@@ -30,39 +30,26 @@ router = APIRouter(tags=["events"])
 async def _send_subscription(
     websocket: WebSocket,
     subscriber: EventSubscriber,
-    repositories: RepositoryBundle,
-    auth_epoch: int,
 ) -> None:
-    disconnected = asyncio.create_task(websocket.receive())
-    try:
-        while True:
-            next_event = asyncio.create_task(subscriber.queue.get())
-            closed = asyncio.create_task(subscriber.closed.wait())
-            done, pending = await asyncio.wait(
-                {next_event, closed, disconnected},
-                return_when=asyncio.FIRST_COMPLETED,
+    while True:
+        next_event = asyncio.create_task(subscriber.queue.get())
+        closed = asyncio.create_task(subscriber.closed.wait())
+        done, pending = await asyncio.wait(
+            {next_event, closed},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        for task in pending:
+            with suppress(asyncio.CancelledError):
+                await task
+        if closed in done:
+            await websocket.close(
+                code=subscriber.close_code,
+                reason=subscriber.close_reason,
             )
-            for task in pending - {disconnected}:
-                task.cancel()
-            for task in pending - {disconnected}:
-                with suppress(asyncio.CancelledError):
-                    await task
-            if disconnected in done:
-                return
-            if closed in done:
-                await websocket.close(
-                    code=subscriber.close_code,
-                    reason=subscriber.close_reason,
-                )
-                return
-            if (await repositories.auth_state.get()).epoch != auth_epoch:
-                await websocket.close(code=4401, reason="Authentication epoch changed")
-                return
-            await websocket.send_text(next_event.result().model_dump_json())
-    finally:
-        disconnected.cancel()
-        with suppress(asyncio.CancelledError):
-            await disconnected
+            return
+        await websocket.send_text(next_event.result().model_dump_json())
 
 
 @router.websocket("/api/v1/events")
@@ -144,6 +131,6 @@ async def subscribe_events(
             except ConnectionBackpressure:
                 await websocket.close(code=4429, reason="Bridge queue full")
                 return
-        await _send_subscription(websocket, subscriber, repositories, auth_epoch)
+        await _send_subscription(websocket, subscriber)
     finally:
         await hub.unsubscribe(subscriber)
