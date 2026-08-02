@@ -1,0 +1,83 @@
+import { flushPromises, mount } from '@vue/test-utils'
+import { createMemoryHistory, createRouter } from 'vue-router'
+import { describe, expect, it, vi } from 'vitest'
+import type { ClientRuntime } from '../runtime'
+import { createClientUi } from '../runtime'
+import { createFakeRuntime } from '../test/fakeRuntime'
+import TotpActivationView from './TotpActivationView.vue'
+
+vi.mock('qrcode', () => ({
+  default: { toString: vi.fn().mockResolvedValue('<svg><path /></svg>') },
+}))
+
+describe('TotpActivationView', () => {
+  it('guides setup, leaves protection off, then enables with a fresh code', async () => {
+    const createTotpSetup = vi.fn().mockResolvedValue({
+      setup_id: 'setup-1',
+      provisioning_uri: 'otpauth://totp/TermFlow?secret=SETUPKEY&issuer=TermFlow&algorithm=SHA1&digits=6&period=30',
+      setup_key: 'SETUPKEY',
+      expires_at: '2026-08-02T12:10:00Z',
+    })
+    const confirmTotpSetup = vi.fn().mockResolvedValue({ configured: true, enabled: false, available: true })
+    const enableTotpProtection = vi.fn().mockResolvedValue({ configured: true, enabled: true, available: true })
+    const runtime = createFakeRuntime({
+      api: {
+        security: {
+          totpStatus: vi.fn().mockResolvedValue({ configured: false, enabled: false, available: true }),
+          createTotpSetup,
+          confirmTotpSetup,
+          enableTotpProtection,
+        },
+      } as unknown as ClientRuntime['api'],
+    })
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/settings', component: { template: '<div />' } },
+      { path: '/settings/two-factor-auth', component: TotpActivationView },
+    ] })
+    await router.push('/settings/two-factor-auth')
+    await router.isReady()
+    const wrapper = mount(TotpActivationView, { global: { plugins: [router, createClientUi(runtime)] } })
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-guide-step]')).toHaveLength(5)
+    await wrapper.get('input[name="setup-admin-token"]').setValue('admin-secret')
+    await wrapper.get('[data-action="begin-totp-setup"]').trigger('submit')
+    await flushPromises()
+    expect(wrapper.text()).toContain('SETUPKEY')
+    expect(wrapper.find('.themed-qr-code').exists()).toBe(true)
+
+    await wrapper.get('input[name="setup-confirm-code"]').setValue('123456')
+    await wrapper.get('[data-action="confirm-totp-setup"]').trigger('submit')
+    await flushPromises()
+    expect(confirmTotpSetup).toHaveBeenCalledWith('setup-1', '123456')
+    expect(wrapper.get('[role="switch"]').attributes('aria-checked')).toBe('false')
+
+    await wrapper.get('[role="switch"]').trigger('click')
+    await wrapper.get('input[name="admin-token"]').setValue('admin-again')
+    await wrapper.get('input[name="totp-code"]').setValue('234567')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('[role="switch"]').attributes('aria-checked')).toBe('true')
+  })
+
+  it('shows the generic unavailable state when status loading fails', async () => {
+    const runtime = createFakeRuntime({
+      api: {
+        security: {
+          totpStatus: vi.fn().mockRejectedValue(new Error('deployment detail')),
+        },
+      } as unknown as ClientRuntime['api'],
+    })
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/settings', component: { template: '<div />' } },
+      { path: '/settings/two-factor-auth', component: TotpActivationView },
+    ] })
+    await router.push('/settings/two-factor-auth')
+    await router.isReady()
+    const wrapper = mount(TotpActivationView, { global: { plugins: [router, createClientUi(runtime)] } })
+    await flushPromises()
+
+    expect(wrapper.get('[role="status"]').text()).toBe('双重因素认证暂时不可用，请联系服务器管理员。')
+    expect(wrapper.text()).not.toContain('deployment detail')
+  })
+})

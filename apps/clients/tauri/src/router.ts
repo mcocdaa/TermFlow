@@ -6,7 +6,7 @@ export function createTauriRouter(runtime: ClientRuntime) {
   const routes = [
     { path: '/connect', component: NativeConnectView, meta: { bare: true } },
     { path: '/login', redirect: '/connect', meta: { bare: true } },
-    ...clientRoutes.filter((route) => route.path !== '/login' && route.path !== '/authorize'),
+    ...clientRoutes.filter((route) => route.path !== '/login' && route.path !== '/authorize' && route.meta?.webOnly !== true),
   ]
   const router = createRouter({ history: import.meta.env.VITEST ? createMemoryHistory() : createWebHashHistory(), routes })
   router.beforeEach(async (to) => {

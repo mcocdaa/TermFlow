@@ -9,6 +9,7 @@ describe('browser router composition', () => {
     expect(router.getRoutes().map((route) => route.path).sort()).toEqual(
       clientRoutes.map((route) => route.path).sort(),
     )
+    expect(router.getRoutes().map((route) => route.path)).toContain('/settings/two-factor-auth')
   })
 
   it('redirects protected pages to login and retains the intended route', async () => {

@@ -1,88 +1,77 @@
 <template>
   <section class="settings-panel" aria-labelledby="totp-heading">
     <div class="settings-panel-heading">
-      <div><p class="eyebrow">Security</p><h2 id="totp-heading">验证器双重验证</h2></div>
-      <span class="status-chip" :data-status="status.enabled ? 'enabled' : 'disabled'">{{ status.enabled ? '已启用' : '未启用' }}</span>
+      <div><p class="eyebrow">Two Factor Authentication</p><h2 id="totp-heading">双重因素认证</h2></div>
+      <span v-if="!loading" class="status-chip" :data-status="status.enabled ? 'enabled' : 'disabled'">{{ status.configured ? '验证器已绑定' : '未激活' }}</span>
     </div>
-    <p v-if="!status.available" class="settings-warning" role="status">服务器尚未配置独立的 TOTP 加密主密钥，此功能不可用。</p>
-    <template v-else-if="setup">
-      <div class="totp-setup-material">
-        <img :src="setupQr" alt="验证器设置二维码" />
-        <div><p>扫码后输入第一个有效验证码。密钥只在本次设置中显示。</p><code data-setup-key>{{ setup.setup_key }}</code></div>
-      </div>
-      <form class="inline-security-form" @submit.prevent="confirmSetup">
-        <label for="setup-code">6 位验证码</label>
-        <input id="setup-code" v-model="confirmCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required />
-        <button class="primary-button" type="submit" :disabled="busy">确认启用</button>
-      </form>
+    <p v-if="loading" role="status">正在读取安全状态…</p>
+    <template v-else-if="!status.available">
+      <p class="settings-warning" role="status">双重因素认证暂时不可用，请联系服务器管理员。</p>
     </template>
-    <form v-else class="security-form" @submit.prevent="status.enabled ? disable() : beginSetup()">
-      <p>{{ status.enabled ? '关闭或重新配置需要管理员 Token 和当前的新验证码。' : '启用时需要重新输入管理员 Token。' }}</p>
-      <label for="totp-admin-token">管理员 Token</label>
-      <input id="totp-admin-token" v-model="adminToken" type="password" autocomplete="off" required />
-      <template v-if="status.enabled">
-        <label for="current-totp">当前验证码</label>
-        <input id="current-totp" v-model="currentCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required />
-      </template>
-      <p v-if="message" class="form-error" role="alert">{{ message }}</p>
-      <div v-if="status.enabled" class="dialog-actions">
-        <button class="secondary-button" type="button" :disabled="busy" @click="beginSetup">重新配置</button>
-        <button class="danger-button" type="submit" :disabled="busy">关闭双重验证</button>
+    <template v-else-if="!status.configured">
+      <p class="settings-copy">绑定你自己的验证器 App，为新的管理登录和客户端授权增加一次性验证码保护。</p>
+      <button data-action="activate-totp" class="primary-button settings-action-button" type="button" @click="activate">激活双重因素认证</button>
+    </template>
+    <template v-else>
+      <div class="security-setting-row">
+        <div><strong>启用双重认证登录</strong><span>对之后的新登录和授权要求一次性验证码。</span></div>
+        <button
+          ref="switchButton"
+          class="toggle-switch"
+          type="button"
+          role="switch"
+          :aria-checked="status.enabled"
+          aria-label="启用双重认证登录"
+          @click="openProtectionDialog"
+        ><span aria-hidden="true" /></button>
       </div>
-      <button v-else class="primary-button" type="submit" :disabled="busy">开始设置</button>
-    </form>
-    <p class="settings-footnote">TermFlow 不提供恢复码、邮件或远程重置；丢失验证器只能由服务器管理员在容器内重置。</p>
+      <button class="secondary-button settings-action-button" type="button" @click="activate">重新配置验证器</button>
+    </template>
+    <TotpProtectionDialog
+      :open="dialogOpen"
+      :target-enabled="!status.enabled"
+      :return-focus="switchButton"
+      @close="dialogOpen = false"
+      @confirmed="applyStatus"
+    />
   </section>
 </template>
 
 <script setup lang="ts">
-import type { TotpSetupResponse, TotpStatusResponse } from '@termflow/client-contracts'
-import QRCode from 'qrcode'
+import type { TotpStatusResponse } from '@termflow/client-contracts'
 import { onMounted, reactive, ref } from 'vue'
-import { ApiError } from '@termflow/client-core'
+import { useRouter } from 'vue-router'
 import { useClientRuntime } from '../../runtime'
+import TotpProtectionDialog from './TotpProtectionDialog.vue'
 
 const emit = defineEmits<{ changed: [TotpStatusResponse] }>()
 const runtime = useClientRuntime()
+const router = useRouter()
 const status = reactive<TotpStatusResponse>({ configured: false, enabled: false, available: false })
-const setup = ref<TotpSetupResponse | null>(null)
-const setupQr = ref('')
-const adminToken = ref('')
-const currentCode = ref('')
-const confirmCode = ref('')
-const busy = ref(false)
-const message = ref('')
+const loading = ref(true)
+const dialogOpen = ref(false)
+const switchButton = ref<HTMLButtonElement | null>(null)
 
-async function loadStatus() {
-  const next = await runtime.api.security.totpStatus()
+function applyStatus(next: TotpStatusResponse) {
   Object.assign(status, next)
   emit('changed', next)
 }
-async function beginSetup() {
-  busy.value = true; message.value = ''
-  try {
-    setup.value = await runtime.api.security.createTotpSetup({ adminToken: adminToken.value, ...(currentCode.value ? { totpCode: currentCode.value } : {}) })
-    setupQr.value = await QRCode.toDataURL(setup.value.provisioning_uri, { errorCorrectionLevel: 'M', margin: 1, width: 208 })
-  } catch (error) { message.value = error instanceof ApiError ? error.message : '无法开始设置，请重试。' }
-  finally { adminToken.value = ''; currentCode.value = ''; busy.value = false }
+
+function activate() {
+  void router.push('/settings/two-factor-auth')
 }
-async function confirmSetup() {
-  if (setup.value === null) return
-  busy.value = true; message.value = ''
-  try {
-    const next = await runtime.api.security.confirmTotpSetup(setup.value.setup_id, confirmCode.value)
-    Object.assign(status, next); setup.value = null; setupQr.value = ''; confirmCode.value = ''; emit('changed', next)
-  } catch (error) { message.value = error instanceof ApiError ? error.message : '验证码无效或设置已过期。' }
-  finally { confirmCode.value = ''; busy.value = false }
+
+function openProtectionDialog() {
+  dialogOpen.value = true
 }
-async function disable() {
-  busy.value = true; message.value = ''
+
+onMounted(async () => {
   try {
-    await runtime.api.security.disableTotp({ adminToken: adminToken.value, totpCode: currentCode.value })
-    const next = { configured: true, enabled: false, available: true }
-    Object.assign(status, next); emit('changed', next)
-  } catch (error) { message.value = error instanceof ApiError ? error.message : '无法关闭双重验证。' }
-  finally { adminToken.value = ''; currentCode.value = ''; busy.value = false }
-}
-onMounted(() => { void loadStatus() })
+    applyStatus(await runtime.api.security.totpStatus())
+  } catch {
+    Object.assign(status, { configured: false, enabled: false, available: false })
+  } finally {
+    loading.value = false
+  }
+})
 </script>

@@ -21,7 +21,10 @@ export function createSecurityApi(request: ApiRequest) {
     confirmTotpSetup: (setupId: string, code: string, signal?: AbortSignal) => request<TotpStatusResponse>(`/api/v1/admin/totp/setups/${encodeURIComponent(setupId)}/confirm`, withSignal({
       method: 'POST', body: { code },
     }, signal)),
-    disableTotp: (reauth: Required<SecurityReauthentication>, signal?: AbortSignal) => request<void>('/api/v1/admin/totp', withSignal({
+    enableTotpProtection: (reauth: Required<SecurityReauthentication>, signal?: AbortSignal) => request<TotpStatusResponse>('/api/v1/admin/totp/enable', withSignal({
+      method: 'POST', body: { admin_token: reauth.adminToken, code: reauth.totpCode },
+    }, signal)),
+    disableTotpProtection: (reauth: Required<SecurityReauthentication>, signal?: AbortSignal) => request<TotpStatusResponse>('/api/v1/admin/totp', withSignal({
       method: 'DELETE', body: { admin_token: reauth.adminToken, code: reauth.totpCode },
     }, signal)),
     createCliToken: (reauth: SecurityReauthentication, scopes: OAuthScope[], signal?: AbortSignal) => request<CliTokenResponse>('/api/v1/admin/cli-tokens', withSignal({
