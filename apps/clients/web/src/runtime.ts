@@ -20,3 +20,5 @@ function browserDependencies(): ClientRuntime {
 export function createBrowserRuntime(dependencies: ClientRuntime = browserDependencies()): ClientRuntime {
   return dependencies
 }
+
+export const browserRuntime = createBrowserRuntime()

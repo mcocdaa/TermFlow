@@ -1,7 +1,7 @@
 import { createSessionActions, sessionState } from '@termflow/client-ui'
-import { browserApiClient } from '../api/http'
+import { browserRuntime } from '../runtime'
 
-const actions = createSessionActions(browserApiClient)
+const actions = createSessionActions(browserRuntime.api)
 
 export { sessionState }
 export const refreshSession = actions.refreshSession

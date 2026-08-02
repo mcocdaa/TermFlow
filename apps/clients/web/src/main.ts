@@ -9,7 +9,7 @@ import App from './App.vue'
 import { createAppRouter } from './router'
 import { applyInitialTheme } from './stores/theme'
 import { refreshSession } from './stores/session'
-import { createBrowserRuntime } from './runtime'
+import { browserRuntime } from './runtime'
 
 applyInitialTheme()
 
@@ -17,4 +17,4 @@ const router = createAppRouter({
   sessionStatus: refreshSession,
 })
 
-createApp(App).use(createClientUi(createBrowserRuntime())).use(router).mount('#app')
+createApp(App).use(createClientUi(browserRuntime)).use(router).mount('#app')
