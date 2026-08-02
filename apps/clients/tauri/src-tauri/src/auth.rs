@@ -122,6 +122,36 @@ fn remembered_dpop_nonce(state: &NativeAuthState, issuer: &str) -> Result<Option
         .cloned())
 }
 
+fn token_error_revokes_credentials(body: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|value| value.get("error").cloned())
+        .and_then(|value| value.get("code").and_then(Value::as_str).map(str::to_owned))
+        .is_some_and(|code| code == "invalid_grant")
+}
+
+fn clear_cached_credentials(state: &NativeAuthState, issuer: &str) -> Result<(), String> {
+    state
+        .access
+        .lock()
+        .map_err(|_| safe_error("auth_state_unavailable"))?
+        .remove(issuer);
+    state
+        .nonces
+        .lock()
+        .map_err(|_| safe_error("auth_state_unavailable"))?
+        .remove(issuer);
+    Ok(())
+}
+
+fn clear_native_credentials(state: &NativeAuthState, issuer: &str) -> Result<(), String> {
+    clear_cached_credentials(state, issuer)?;
+    match keyring_entry(issuer, "refresh")?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(_) => Err(safe_error("secure_store_unavailable")),
+    }
+}
+
 fn signing_key(issuer: &str) -> Result<SigningKey, String> {
     let entry = keyring_entry(issuer, "p256")?;
     match entry.get_secret() {
@@ -241,6 +271,10 @@ async fn token_request(
         first
     };
     if !response.status().is_success() {
+        let body = response.bytes().await.unwrap_or_default();
+        if token_error_revokes_credentials(&body) {
+            return Err(safe_error("invalid_grant"));
+        }
         return Err(safe_error("authorization_required"));
     }
     if let Some(nonce) = response
@@ -280,7 +314,14 @@ async fn refresh_access(state: &NativeAuthState, issuer: &str) -> Result<AccessC
         .get_secret()
         .map_err(|_| safe_error("authorization_required"))?;
     let value = String::from_utf8(refresh).map_err(|_| safe_error("authorization_required"))?;
-    let response = token_request(state, issuer, json!({"grant_type":"refresh_token","refresh_token":value,"public_jwk":public_jwk(&signing_key(issuer)?)?})).await?;
+    let response = match token_request(state, issuer, json!({"grant_type":"refresh_token","refresh_token":value,"public_jwk":public_jwk(&signing_key(issuer)?)?})).await {
+        Ok(response) => response,
+        Err(error) if error == "invalid_grant" => {
+            clear_native_credentials(state, issuer)?;
+            return Err(safe_error("authorization_required"));
+        }
+        Err(error) => return Err(error),
+    };
     store_token_response(state, issuer, response).await
 }
 
@@ -437,5 +478,58 @@ mod tests {
             Some("nonce-two".to_owned())
         );
         assert!(remember_dpop_nonce(&state, "https://one.example", "bad nonce").is_err());
+    }
+
+    #[test]
+    fn oauth_invalid_grant_is_the_only_token_error_that_revokes_local_credentials() {
+        assert!(token_error_revokes_credentials(
+            br#"{"error":{"code":"invalid_grant","message":"The grant is invalid."}}"#
+        ));
+        assert!(!token_error_revokes_credentials(
+            br#"{"error":{"code":"invalid_dpop_proof","message":"Authentication failed."}}"#
+        ));
+        assert!(!token_error_revokes_credentials(b"not-json"));
+    }
+
+    #[test]
+    fn clearing_cached_credentials_drops_access_and_nonce_for_only_one_issuer() {
+        let state = NativeAuthState::default();
+        state.access.lock().unwrap().insert(
+            "https://one.example".to_owned(),
+            AccessState {
+                access_token: "one".to_owned(),
+                expires_at_unix: 1,
+            },
+        );
+        state.access.lock().unwrap().insert(
+            "https://two.example".to_owned(),
+            AccessState {
+                access_token: "two".to_owned(),
+                expires_at_unix: 2,
+            },
+        );
+        remember_dpop_nonce(&state, "https://one.example", "nonce-one").unwrap();
+        remember_dpop_nonce(&state, "https://two.example", "nonce-two").unwrap();
+
+        clear_cached_credentials(&state, "https://one.example").unwrap();
+
+        assert!(!state
+            .access
+            .lock()
+            .unwrap()
+            .contains_key("https://one.example"));
+        assert!(state
+            .access
+            .lock()
+            .unwrap()
+            .contains_key("https://two.example"));
+        assert_eq!(
+            remembered_dpop_nonce(&state, "https://one.example").unwrap(),
+            None
+        );
+        assert_eq!(
+            remembered_dpop_nonce(&state, "https://two.example").unwrap(),
+            Some("nonce-two".to_owned())
+        );
     }
 }
