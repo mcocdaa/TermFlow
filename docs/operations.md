@@ -55,3 +55,30 @@ runner 的成功不能证明 Windows/macOS 可编译，更不能证明任何已�
 job 在三个原生 runner 上做 `--no-bundle` 无签名编译；Android/iOS job 每次从已提交的同一份
 Tauri 配置生成平台工程，再执行 debug/unsigned 编译。缺少 Tauri 工程或生成失败都会使 CI
 失败。签名、notarization、商店上传和发布凭据属于单独受保护的 release 流程。
+
+## Windows 测试安装包
+
+需要在 Windows 上试用当前 Tauri C 时，使用 GitHub Actions 中手动触发的
+`Tauri Windows Installer`，不要从 Linux 或 WSL 的 `--no-bundle` 编译结果推断 Windows
+安装包已经生成：
+
+1. 把需要测试的 commit 推送到 GitHub。
+2. 打开 Actions → `Tauri Windows Installer` → Run workflow，并选择对应分支。
+3. 等待 `windows-nsis` job 成功。
+4. 在该次 run 的 Artifacts 中下载 `termflow-windows-installer`；artifact 只保留 7 天。
+5. 解压后在 Windows 上运行其中的 `*-setup.exe`。
+
+这个 workflow 只生成未签名的私有测试包。Windows SmartScreen 显示“未知发布者”属于预期，
+但只能在你确认 commit 与 Actions run 来源可信时继续；它不适合作为公开发布流程。公开分发仍需
+独立的代码签名、受保护的签名凭据和 release 审批。Control Plane Docker 镜像不包含这个安装包，
+也不包含 Tauri、Rust、NSIS 或 Windows 构建工具链。
+
+也可以直接在原生 Windows 主机安装 Rust stable MSVC、Visual Studio C++ Build Tools、WebView2、
+Node 22.23.2 和 npm，然后在仓库根目录执行：
+
+```powershell
+npm ci
+npm run tauri:build --workspace @termflow/tauri-client -- --bundles nsis
+```
+
+这条本地命令同样只生成未签名 NSIS 测试包；WSL 环境不能代替原生 Windows 打包证明。

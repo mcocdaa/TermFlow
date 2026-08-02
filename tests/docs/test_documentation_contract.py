@@ -70,3 +70,18 @@ def test_operations_docs_define_external_edge_secrets_and_native_toolchains() ->
     assert "Node 22.23.2" in clients
     assert "不能" in clients and "跨平台" in clients
     assert "TERMFLOW_TOTP_MASTER_KEY=" not in env_example
+
+
+def test_operations_docs_explain_manual_unsigned_windows_installer() -> None:
+    operations = Path("docs/operations.md").read_text()
+    for phrase in (
+        "Tauri Windows Installer",
+        "termflow-windows-installer",
+        "*-setup.exe",
+        "7 天",
+        "SmartScreen",
+        "未知发布者",
+        "Control Plane Docker 镜像不包含这个安装包",
+        "--bundles nsis",
+    ):
+        assert phrase in operations
