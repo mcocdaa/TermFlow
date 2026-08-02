@@ -64,7 +64,10 @@ def test_operations_docs_define_external_edge_secrets_and_native_toolchains() ->
     assert "多 B" in operations
     assert "0600" in operations
     assert "自动创建" in operations
-    assert "docker compose exec control-plane termflow-control auth totp reset" in operations
+    assert (
+        "docker compose --env-file .env -f deploy/compose.yaml exec control-plane "
+        "termflow-control auth totp reset"
+    ) in operations
     for platform in ("Linux", "Windows", "macOS", "Android", "iOS"):
         assert platform in clients
     assert "Node 22.23.2" in clients

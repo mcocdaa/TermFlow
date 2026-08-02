@@ -19,6 +19,14 @@ mTLS 的证书签发、校验与轮换不属于 TermFlow，也不会被默认镜
 密钥不会进入镜像、日志或仓库。显式设置的 `TERMFLOW_TOTP_MASTER_KEY` 或
 `TERMFLOW_TOTP_MASTER_KEY_FILE` 始终优先于这个自动文件。
 
+从仓库根目录运行 Compose 时请显式指定根目录的 env 文件；因为 Compose 文件位于
+`deploy/`，不指定时 Compose 可能把 `deploy/` 作为 project directory，进而找不到根目录
+的 `.env`：
+
+```bash
+docker compose --env-file .env -f deploy/compose.yaml up -d --build
+```
+
 多 B 实例不能各自使用自动文件；部署者必须生成同一个 32 字节无填充 base64url 密钥，并把
 同一个显式密钥安全注入所有 B：
 
@@ -41,8 +49,7 @@ override 把文件挂载到 `/run/secrets/termflow-totp-master-key`，并设置 
 验证器丢失时，拥有 Docker 主机权限的管理员在容器内执行本地恢复命令：
 
 ```bash
-cd deploy
-docker compose exec control-plane termflow-control auth totp reset
+docker compose --env-file .env -f deploy/compose.yaml exec control-plane termflow-control auth totp reset
 ```
 
 该命令属于 B 的容器内管理面，不是远程 HTTP API。执行前应备份 metadata 数据卷，并按命令
