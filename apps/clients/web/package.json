@@ -15,7 +15,6 @@
     "test:run": "vitest run"
   },
   "dependencies": {
-    "@lucide/vue": "^1.28.0",
     "@termflow/client-core": "0.1.0",
     "@termflow/client-ui": "0.1.0",
     "@termflow/design-tokens": "0.1.0",

@@ -1,11 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { mount } from '@vue/test-utils'
-import { createClientUi, TerminalTitlebar, TmuxActionMenu } from '@termflow/client-ui'
-import { createMemoryHistory } from 'vue-router'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { describe, expect, it } from 'vitest'
 import App from '../App.vue'
-import { createAppRouter } from '../router'
+import TerminalTitlebar from '../components/terminal/TerminalTitlebar.vue'
+import TmuxActionMenu from '../components/terminal/TmuxActionMenu.vue'
+import { clientRoutes } from '../router/routes'
+import { createClientUi } from '../runtime'
 import { createFakeRuntime } from './fakeRuntime'
 
 const viewports = [[360, 800], [800, 360], [1024, 768], [1440, 900]] as const
@@ -13,7 +15,7 @@ const viewports = [[360, 800], [800, 360], [1024, 768], [1440, 900]] as const
 describe('responsive shell contract', () => {
   it.each(viewports)('keeps navigation and terminal title controls reachable at %ix%i', async (width, height) => {
     Object.defineProperties(window, { innerWidth: { value: width, configurable: true }, innerHeight: { value: height, configurable: true } })
-    const router = createAppRouter({ sessionStatus: async () => ({ authenticated: true }), history: createMemoryHistory() })
+    const router = createRouter({ history: createMemoryHistory(), routes: clientRoutes })
     await router.push('/')
     await router.isReady()
     const app = mount(App, { global: { plugins: [router, createClientUi(createFakeRuntime())] } })
@@ -29,6 +31,9 @@ describe('responsive shell contract', () => {
     const tmux = mount(TmuxActionMenu, { props: { bindings: { prefix: 'C-a', bindings: [] }, activePaneId: '%1' } })
     expect(tmux.get('[data-action="toggle-mobile-drawer"]')).toBeTruthy()
     expect(tmux.find('[data-mobile-drawer]').exists()).toBe(false)
+    tmux.unmount()
+    titlebar.unmount()
+    app.unmount()
   })
 
   it('uses one portrait/landscape logic with coarse-pointer behavior and safe-area insets', () => {

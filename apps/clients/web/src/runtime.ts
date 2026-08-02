@@ -1,17 +1,28 @@
+import { createApiClient, TerminalSession, type TerminalScheduler } from '@termflow/client-core'
 import type { ClientRuntime } from '@termflow/client-ui'
-import { browserApiClient } from './api/http'
 import { createBrowserClipboard } from './adapters/browserClipboard'
 import { createBrowserClock } from './adapters/browserClock'
 import { browserCanonicalServerUrl } from './adapters/browserCanonicalServerUrl'
+import { createBrowserHttpTransport } from './adapters/browserHttpTransport'
+import { createBrowserTerminalTransport } from './adapters/browserTerminalTransport'
 import { createBrowserVisibility } from './adapters/browserVisibility'
-import { createTerminalSocket } from './terminal/socket'
 
 function browserDependencies(): ClientRuntime {
+  const clock = createBrowserClock()
+  const terminalTransport = createBrowserTerminalTransport()
+  const scheduler: TerminalScheduler = {
+    set: (callback, delayMs) => clock.setTimeout(callback, delayMs),
+    clear: (handle) => clock.clearTimeout(handle),
+  }
   return {
-    api: browserApiClient,
-    createTerminal: createTerminalSocket,
+    api: createApiClient(createBrowserHttpTransport()),
+    createTerminal: (termId, callbacks) => new TerminalSession(termId, callbacks, {
+      transport: terminalTransport,
+      scheduler,
+      createId: () => globalThis.crypto.randomUUID(),
+    }),
     clipboard: createBrowserClipboard(),
-    clock: createBrowserClock(),
+    clock,
     visibility: createBrowserVisibility(),
     canonicalServerUrl: browserCanonicalServerUrl(),
   }

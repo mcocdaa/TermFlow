@@ -8,6 +8,9 @@
   },
   "exports": {
     ".": "./src/index.ts",
+    "./styles/app.css": "./src/styles/app.css",
+    "./styles/reset.css": "./src/styles/reset.css",
+    "./styles/terminal-responsive.css": "./src/styles/terminal-responsive.css",
     "./composables/usePointerViewport": "./src/composables/usePointerViewport.ts",
     "./composables/useSession": "./src/composables/useSession.ts",
     "./views/ComputersView": "./src/views/ComputersView.vue",

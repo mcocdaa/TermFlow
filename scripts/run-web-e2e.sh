@@ -49,8 +49,8 @@ export XDG_RUNTIME_DIR="$RUN_DIR/runtime"
 mkdir -m 700 -p "$XDG_RUNTIME_DIR" "$TERMFLOW_E2E_SCREENSHOT_DIR"
 
 (
-  cd "$REPO_ROOT/apps/clients/web"
-  npm run build
+  cd "$REPO_ROOT"
+  npm run build:web
 )
 "$REPO_ROOT/.venv/bin/termflow-control" serve --host 127.0.0.1 --port "$PORT" \
   >"$RUN_DIR/control-plane.log" 2>&1 &

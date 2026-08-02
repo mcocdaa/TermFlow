@@ -29,7 +29,7 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue'
 import type { ThemeId } from '@termflow/design-tokens'
-import { activeTheme, selectTheme } from '../../stores/theme'
+import { activeTheme, selectActiveTheme } from '../../theme/theme'
 
 const themes: ReadonlyArray<{ id: ThemeId; label: string }> = [
   { id: 'graphite-signal', label: '石墨信号' },
@@ -39,13 +39,15 @@ const themes: ReadonlyArray<{ id: ThemeId; label: string }> = [
 const radioButtons = ref<HTMLButtonElement[]>([])
 
 function choose(id: ThemeId) {
-  selectTheme(id)
+  selectActiveTheme(id)
 }
 
 async function move(offset: number) {
   const current = themes.findIndex((theme) => theme.id === activeTheme.value)
   const next = (current + offset + themes.length) % themes.length
-  choose(themes[next].id)
+  const theme = themes[next]
+  if (theme === undefined) return
+  choose(theme.id)
   await nextTick()
   radioButtons.value[next]?.focus()
 }

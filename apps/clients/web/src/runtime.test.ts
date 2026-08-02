@@ -1,10 +1,6 @@
 import type { ClientRuntime } from '@termflow/client-ui'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { browserApiClient } from './api/http'
 import { browserRuntime, createBrowserRuntime } from './runtime'
-import { createTerminalSocket } from './terminal/socket'
 
 describe('browser runtime composition', () => {
   it('assembles the injected browser ports as one ClientRuntime', () => {
@@ -22,16 +18,13 @@ describe('browser runtime composition', () => {
     expect(runtime).toEqual(dependencies)
   })
 
-  it('assembles the default browser ports once and routes the session facade through that runtime', () => {
-    expect(browserRuntime.api).toBe(browserApiClient)
-    expect(browserRuntime.createTerminal).toBe(createTerminalSocket)
+  it('assembles the default HTTP, terminal, and browser ports once', () => {
+    expect(browserRuntime.api.sessions.status).toBeTypeOf('function')
+    expect(browserRuntime.api.dashboard.get).toBeTypeOf('function')
+    expect(browserRuntime.createTerminal).toBeTypeOf('function')
     expect(browserRuntime.clipboard.writeText).toBeTypeOf('function')
     expect(browserRuntime.clock.now).toBeTypeOf('function')
     expect(browserRuntime.visibility.subscribe).toBeTypeOf('function')
     expect(browserRuntime.canonicalServerUrl).toBe('http://localhost:3000')
-
-    const sessionFacade = readFileSync(resolve(process.cwd(), 'src/stores/session.ts'), 'utf8')
-    expect(sessionFacade).toContain('createSessionActions(browserRuntime.api)')
-    expect(sessionFacade).not.toContain('browserApiClient')
   })
 })

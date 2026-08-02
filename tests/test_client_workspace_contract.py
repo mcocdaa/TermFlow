@@ -126,3 +126,28 @@ def test_shared_client_packages_have_no_direct_network_storage_clipboard_or_nati
         if any(token in source for token in forbidden):
             violations.append(path.relative_to(ROOT).as_posix())
     assert violations == []
+
+
+def test_web_client_is_only_a_browser_composition_root() -> None:
+    web_source = ROOT / "apps/clients/web/src"
+    allowed = {
+        "env.d.ts",
+        "main.ts",
+        "router.ts",
+        "runtime.ts",
+        "adapters/browserCanonicalServerUrl.ts",
+        "adapters/browserClipboard.ts",
+        "adapters/browserClock.ts",
+        "adapters/browserHttpTransport.ts",
+        "adapters/browserTerminalTransport.ts",
+        "adapters/browserThemePreferences.ts",
+        "adapters/browserVisibility.ts",
+    }
+    production = {
+        path.relative_to(web_source).as_posix()
+        for path in web_source.rglob("*")
+        if path.suffix in {".ts", ".vue"}
+        and not path.name.endswith(".test.ts")
+        and "test" not in path.relative_to(web_source).parts
+    }
+    assert production == allowed

@@ -24,6 +24,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.2"
+          cache: npm
+
       - name: Install uv and tmux
         run: |
           python -m pip install --disable-pip-version-check uv==0.11.19
@@ -35,7 +40,22 @@ jobs:
       - name: Sync locked workspace
         run: uv sync --frozen --all-packages
 
-      - name: Test
+      - name: Install locked client workspace
+        run: npm ci
+
+      - name: Verify generated client contracts
+        run: npm run contracts:check
+
+      - name: Test clients
+        run: npm run test:run
+
+      - name: Typecheck clients
+        run: npm run typecheck
+
+      - name: Build Web C
+        run: npm run build:web
+
+      - name: Test Python workspace
         run: uv run --all-packages pytest -q --junitxml=.ci/pytest.xml
 
       - name: Static checks

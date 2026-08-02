@@ -24,10 +24,11 @@ import { LayoutDashboard, MonitorCog } from '@lucide/vue'
 import { computed } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import ThemePicker from './components/settings/ThemePicker.vue'
-import { logoutSession, sessionState } from './stores/session'
+import { useSession } from './composables/useSession'
 
 const router = useRouter()
 const route = useRoute()
+const { logoutSession, sessionState } = useSession()
 const terminalLayout = computed(() => route.meta.terminal === true)
 const bareLayout = computed(() => route.meta.bare === true)
 async function logout() {

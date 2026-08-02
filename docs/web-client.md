@@ -3,6 +3,11 @@
 Web C 是独立客户端，只调用 B 的公开 `/api/v1` HTTP 和 WebSocket 契约。它和 B 构建进
 同一个 Docker 镜像是为了简化部署，不代表它可以读取 B 的 Python 模块或 SQLite。
 
+当前代码按可复用客户端边界拆分：`client-contracts` 是由 Python 协议确定性生成的 DTO，
+`client-core` 管理与平台无关的 HTTP 和终端会话，`client-ui` 管理 Vue 页面、xterm 和样式；
+`apps/clients/web` 只组合浏览器 transport、history、主题偏好和 mount。未来 Tauri App/EXE
+复用前三层并提供自己的 native transport 与安全存储适配器，无需复制页面和终端控制逻辑。
+
 ## 页面
 
 - 登录：使用不带全局导航的极简页面；Admin Token 只用于换取 HttpOnly 会话，成功后立即

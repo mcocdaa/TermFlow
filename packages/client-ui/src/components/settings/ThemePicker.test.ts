@@ -1,0 +1,40 @@
+import { mount } from '@vue/test-utils'
+import type { ThemeId } from '@termflow/design-tokens'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { activeTheme, configureActiveTheme, type ThemePreferences, type ThemeTarget } from '../../theme/theme'
+import ThemePicker from './ThemePicker.vue'
+
+let preferences: ThemePreferences
+let target: ThemeTarget
+
+describe('ThemePicker', () => {
+  beforeEach(() => {
+    preferences = { load: vi.fn<() => ThemeId | null>(() => 'graphite-signal'), save: vi.fn() }
+    target = { apply: vi.fn((theme: ThemeId) => { document.documentElement.dataset.theme = theme }) }
+    configureActiveTheme(preferences, target)
+  })
+
+  it('shows three named radio options and persists only the selected identifier through the theme port', async () => {
+    const wrapper = mount(ThemePicker)
+    const radios = wrapper.findAll('[role="radio"]')
+    expect(radios.map((radio) => radio.text())).toEqual(['石墨信号', '云端钴蓝', '午夜靛蓝'])
+
+    await radios[1]!.trigger('click')
+
+    expect(radios[1]!.attributes('aria-checked')).toBe('true')
+    expect(activeTheme.value).toBe('cloud-cobalt')
+    expect(preferences.save).toHaveBeenCalledWith('cloud-cobalt')
+    expect(target.apply).toHaveBeenLastCalledWith('cloud-cobalt')
+  })
+
+  it('supports arrow-key selection', async () => {
+    const wrapper = mount(ThemePicker, { attachTo: document.body })
+    const radios = wrapper.findAll('[role="radio"]')
+    ;(radios[0]!.element as HTMLButtonElement).focus()
+    await wrapper.get('[role="radiogroup"]').trigger('keydown', { key: 'ArrowRight' })
+    expect(radios[1]!.attributes('aria-checked')).toBe('true')
+    expect(radios[1]!.attributes('aria-label')).toBe('云端钴蓝')
+    expect(document.activeElement).toBe(radios[1]!.element)
+    wrapper.unmount()
+  })
+})

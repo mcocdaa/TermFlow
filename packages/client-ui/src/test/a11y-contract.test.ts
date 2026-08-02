@@ -1,16 +1,19 @@
 import { mount } from '@vue/test-utils'
-import { ClosePaneDialog, createClientUi, StatusPill, TmuxActionMenu } from '@termflow/client-ui'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { createMemoryHistory } from 'vue-router'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { describe, expect, it } from 'vitest'
 import App from '../App.vue'
-import { createAppRouter } from '../router'
+import ClosePaneDialog from '../components/terminal/ClosePaneDialog.vue'
+import StatusPill from '../components/dashboard/StatusPill.vue'
+import TmuxActionMenu from '../components/terminal/TmuxActionMenu.vue'
+import { clientRoutes } from '../router/routes'
+import { createClientUi } from '../runtime'
 import { createFakeRuntime } from './fakeRuntime'
 
 describe('accessibility contracts', () => {
   it('provides skip navigation, named navigation landmarks, and a focusable main target', async () => {
-    const router = createAppRouter({ sessionStatus: async () => ({ authenticated: true }), history: createMemoryHistory() })
+    const router = createRouter({ history: createMemoryHistory(), routes: clientRoutes })
     await router.push('/')
     await router.isReady()
     const wrapper = mount(App, { global: { plugins: [router, createClientUi(createFakeRuntime())] } })
@@ -18,6 +21,7 @@ describe('accessibility contracts', () => {
     expect(wrapper.get('aside[aria-label="主导航"]')).toBeTruthy()
     expect(wrapper.get('nav[aria-label="移动端导航"]')).toBeTruthy()
     expect(wrapper.get('main').attributes('tabindex')).toBe('-1')
+    wrapper.unmount()
   })
 
   it('traps modal focus and restores it to the invoking control', async () => {
@@ -51,6 +55,9 @@ describe('accessibility contracts', () => {
     const online = mount(StatusPill, { props: { online: true } })
     expect(online.text()).toContain('在线')
     expect(online.get('[aria-hidden="true"]').text()).toBe('')
-    expect(mount(StatusPill, { props: { online: false } }).text()).toContain('离线')
+    const offline = mount(StatusPill, { props: { online: false } })
+    expect(offline.text()).toContain('离线')
+    online.unmount()
+    offline.unmount()
   })
 })
