@@ -2,7 +2,6 @@
   <section class="terminal-view" aria-labelledby="terminal-title">
     <h1 id="terminal-title" class="sr-only">远程终端</h1>
     <TerminalTitlebar :title="termName" :computer-name="computerName" :status="connectionStatus" :display-menu-open="openMenu === 'display'" v-model:display-mode="displayMode" v-model:viewport-locked="viewportLocked" @update:display-menu-open="setMenuOpen('display', $event)" @rename="updateTermName">
-      <PaneFocusMenu :panes="panes" :open="openMenu === 'pane'" @update:open="setMenuOpen('pane', $event)" @focus="terminalCanvas?.focusPane($event)" @reset="terminalCanvas?.resetViewport()" />
       <TmuxActionMenu :bindings="bindings" :active-pane-id="activePane?.pane_id ?? null" :disabled="connectionStatus !== 'connected'" :open="openMenu === 'tmux'" @update:open="setMenuOpen('tmux', $event)" @action="runAction" @request-close="requestClose" />
     </TerminalTitlebar>
     <TerminalCanvas ref="terminalCanvas" :term-id="termId" :display-mode="displayMode" :viewport-locked="viewportLocked" :transform-input="transformInput" @bindings="bindings = $event" @reset-input="modifierResetKey = $event" @status="connectionStatus = $event" @authentication-required="handleAuthenticationRequired" @action-result="handleActionResult" />
@@ -20,7 +19,6 @@ import { useRoute, useRouter } from 'vue-router'
 import TerminalCanvas from '../components/terminal/TerminalCanvas.vue'
 import TerminalTitlebar from '../components/terminal/TerminalTitlebar.vue'
 import type { DisplayMode } from '../terminal/viewport'
-import PaneFocusMenu from '../components/terminal/PaneFocusMenu.vue'
 import TmuxActionMenu from '../components/terminal/TmuxActionMenu.vue'
 import MobileKeyBar from '../components/terminal/MobileKeyBar.vue'
 import ClosePaneDialog from '../components/terminal/ClosePaneDialog.vue'
@@ -45,7 +43,7 @@ const displayMode = computed<DisplayMode>({
 const termName = ref(`Term · ${termId.value}`)
 const computerName = ref('Computer 未报告')
 const connectionStatus = ref<TerminalConnectionStatus>('connecting')
-type DesktopMenu = 'display' | 'tmux' | 'pane'
+type DesktopMenu = 'display' | 'tmux'
 const openMenu = ref<DesktopMenu | null>(null)
 const viewportLocked = ref(false)
 const renameError = ref('')
@@ -74,7 +72,6 @@ async function updateTermName(name: string) {
 function restoreOrientationView() {
   const saved = orientationViews[orientation.value].viewport
   if (saved) terminalCanvas.value?.restoreViewport(saved)
-  else if (orientation.value === 'portrait' && activePane.value) terminalCanvas.value?.focusPane(activePane.value)
   else terminalCanvas.value?.resetViewport()
 }
 function onViewportResize() {

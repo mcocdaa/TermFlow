@@ -8,7 +8,6 @@
     .control-label, .menu-chevron, .terminal-identifiers [data-computer-name] { display: none; }
     .terminal-status { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
     .titlebar-button { width: 2.35rem; min-width: 2.35rem; padding: 0; justify-content: center; }
-    .pane-focus-menu { display: block; }
     .terminal-overlay { max-width: calc(100% - 2 * var(--space-4)); white-space: nowrap; }
     .desktop-action-menu { display: block; }
     .mobile-keybar { position: static; grid-row: 3; z-index: 40; min-width: 0; display: flex; gap: var(--space-1); overflow-x: auto; touch-action: pan-x; overscroll-behavior-inline: contain; overscroll-behavior-block: none; padding: var(--space-2) max(var(--space-2), env(safe-area-inset-right)) var(--space-2) max(var(--space-2), env(safe-area-inset-left)); padding-block-end: max(var(--space-2), env(safe-area-inset-bottom)); border-block-start: 1px solid var(--color-border); background: var(--color-panel); }

@@ -1,5 +1,5 @@
 <template>
-  <div ref="frameElement" class="terminal-frame" :data-status="status" :data-display-mode="displayMode" :data-viewport-lock="viewportLocked ? 'locked' : 'unlocked'" :data-focused-pane="pointer.state.focusedPaneId ?? undefined" :data-cell-width="renderedCellMetrics?.width" :data-cell-height="renderedCellMetrics?.height" :data-visual-scale="appliedVisualScale" @wheel.capture="onWheel" @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerCancel">
+  <div ref="frameElement" class="terminal-frame" :data-status="status" :data-display-mode="displayMode" :data-viewport-lock="viewportLocked ? 'locked' : 'unlocked'" :data-cell-width="renderedCellMetrics?.width" :data-cell-height="renderedCellMetrics?.height" :data-visual-scale="appliedVisualScale" @wheel.capture="onWheel" @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerCancel">
     <div class="terminal-viewport-content" :style="contentStyle">
       <div class="terminal-grid" :style="gridStyle"><div ref="host" class="terminal-host" role="application" :aria-label="`Term ${termId} 终端`" /></div>
     </div>
@@ -13,7 +13,7 @@ import type { TerminalConnectionStatus } from '@termflow/client-core'
 import type { TerminalActionResultFrame } from '@termflow/client-contracts'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import type { TerminalAdapterFactory, TerminalCellMetrics } from '../../terminal/xtermAdapter'
-import type { PaneTopology, TerminalActionId } from '../../types'
+import type { TerminalActionId } from '../../types'
 import type { TerminalFactory } from '../../composables/useTerminalSession'
 import { useTerminalSession } from '../../composables/useTerminalSession'
 import { displayPresentation, type DisplayMode } from '../../terminal/viewport'
@@ -45,7 +45,6 @@ const renderedGrid = computed(() => dimensions.value && renderedCellMetrics.valu
 const contentStyle = computed(() => renderedGrid.value ? { width: `${renderedGrid.value.width}px`, height: `${renderedGrid.value.height}px` } : {})
 const gridStyle = computed(() => renderedGrid.value ? { width: `${renderedGrid.value.width}px`, height: `${renderedGrid.value.height}px`, transform: `translate(${pointer.state.panX}px, ${pointer.state.panY}px)` } : {})
 let observer: ResizeObserver | null = null
-let pendingFocusPane: PaneTopology | null = null
 onMounted(() => {
   const element = frameElement.value
   if (!element) return
@@ -106,7 +105,6 @@ function refreshCellMetrics() {
   if (!measured) return
   if (!baselineCellMetrics.value) baselineCellMetrics.value = measured
   renderedCellMetrics.value = measured
-  if (pendingFocusPane) applyPaneFocus(pendingFocusPane)
 }
 function point(event: PointerEvent) { return { pointerId: event.pointerId, x: event.clientX, y: event.clientY } }
 function onWheel(event: WheelEvent) {
@@ -148,26 +146,13 @@ function onPointerCancel(event: PointerEvent) {
   touchGestures.pointerCancel(event.pointerId, point(event))
   frameElement.value?.releasePointerCapture?.(event.pointerId)
 }
-function focusPane(pane: PaneTopology) {
-  pendingFocusPane = pane
-  refreshCellMetrics()
-  if (!baselineCellMetrics.value) return
-  applyPaneFocus(pane)
-}
-function applyPaneFocus(pane: PaneTopology) {
-  if (!baselineCellMetrics.value) return
-  const scale = presentation.value?.scale ?? 1
-  pointer.focusPane(pane, { cellWidth: baselineCellMetrics.value.width * scale, cellHeight: baselineCellMetrics.value.height * scale })
-  pendingFocusPane = null
-}
 function resetViewport() {
-  pendingFocusPane = null
   pointer.reset()
   if (frameElement.value) {
     frameElement.value.scrollLeft = 0
     frameElement.value.scrollTop = 0
   }
 }
-function restoreViewport(value: PointerViewportSnapshot) { pendingFocusPane = null; pointer.restore(value) }
-defineExpose({ dimensions, bindings, lastActionResult, sendAction: session.sendAction, sendInput: session.sendInput, focus: session.focus, focusPane, resetViewport, captureViewport: pointer.snapshot, restoreViewport })
+function restoreViewport(value: PointerViewportSnapshot) { pointer.restore(value) }
+defineExpose({ dimensions, bindings, lastActionResult, sendAction: session.sendAction, sendInput: session.sendInput, focus: session.focus, resetViewport, captureViewport: pointer.snapshot, restoreViewport })
 </script>

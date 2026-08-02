@@ -59,6 +59,8 @@ describe('TerminalView', () => {
     expect(getDashboard).toHaveBeenCalledWith(expect.any(AbortSignal))
     expect(wrapper.get('[data-computer-name]').text()).toBe('设计工作站')
     expect(wrapper.get('[data-term-name]').text()).toBe('产品开发')
+    expect(wrapper.find('[data-action="toggle-pane-focus-menu"]').exists()).toBe(false)
+    expect(wrapper.findComponent(TerminalCanvas).vm).not.toHaveProperty('focusPane')
     expect(wrapper.get('.terminal-frame').attributes('data-display-mode')).toBe('font-100')
     const viewportLock = wrapper.get('[data-action="toggle-viewport-lock"]')
     expect(viewportLock.attributes('aria-label')).toBe('锁定画布')

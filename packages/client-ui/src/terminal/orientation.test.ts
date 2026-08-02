@@ -14,7 +14,7 @@ describe('terminal orientation state', () => {
   it('keeps portrait and landscape display and viewport choices independent', () => {
     const state = createOrientationViewState()
     state.portrait.displayMode = 'scale-50'
-    state.portrait.viewport = { scale: 2, panX: -30, panY: -40, focusedPaneId: '%1' }
+    state.portrait.viewport = { scale: 2, panX: -30, panY: -40 }
     expect(state.landscape).toEqual({ displayMode: 'fit', viewport: null })
   })
 })

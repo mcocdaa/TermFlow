@@ -2,8 +2,7 @@ import { reactive } from 'vue'
 
 export interface PointerSample { pointerId: number; x: number; y: number }
 export interface ViewportGeometry { width: number; height: number }
-export interface PaneGeometry { pane_id: string; left: number; top: number; width: number; height: number }
-export interface PointerViewportSnapshot { scale: number; panX: number; panY: number; focusedPaneId: string | null }
+export interface PointerViewportSnapshot { scale: number; panX: number; panY: number }
 interface PointerViewportOptions {
   viewport: ViewportGeometry
   content: ViewportGeometry
@@ -19,7 +18,7 @@ export function createPointerViewport(options: PointerViewportOptions) {
   let viewport = options.viewport
   let content = options.content
   const pointers = new Map<number, PointerSample>()
-  const state = reactive({ scale: 1, panX: 0, panY: 0, focusedPaneId: null as string | null })
+  const state = reactive({ scale: 1, panX: 0, panY: 0 })
   let pinch: { distance: number; midpoint: { x: number; y: number }; scale: number; panX: number; panY: number } | null = null
 
   function clampPan() {
@@ -48,41 +47,29 @@ export function createPointerViewport(options: PointerViewportOptions) {
       state.scale = nextScale
       state.panX = currentMidpoint.x - contentX * nextScale
       state.panY = currentMidpoint.y - contentY * nextScale
-      state.focusedPaneId = null
       clampPan()
       return
     }
     if (pointers.size === 1 && (options.canPan?.() ?? true)) {
       state.panX += point.x - previous.x
       state.panY += point.y - previous.y
-      state.focusedPaneId = null
       clampPan()
     }
   }
   function pointerUp(pointerId: number) { pointers.delete(pointerId); pinch = null; if (pointers.size === 2) beginPinch() }
   function setTransform(transform: { scale: number; panX: number; panY: number }) {
-    state.scale = clamp(transform.scale, 0.25, 4); state.panX = transform.panX; state.panY = transform.panY; state.focusedPaneId = null; clampPan()
+    state.scale = clamp(transform.scale, 0.25, 4); state.panX = transform.panX; state.panY = transform.panY; clampPan()
   }
   function updateGeometry(nextViewport: ViewportGeometry, nextContent: ViewportGeometry) { viewport = nextViewport; content = nextContent; clampPan() }
-  function focusPane(pane: PaneGeometry, cell: { cellWidth: number; cellHeight: number }) {
-    const paneWidth = Math.max(1, pane.width * cell.cellWidth)
-    const paneHeight = Math.max(1, pane.height * cell.cellHeight)
-    state.scale = clamp(Math.min(viewport.width / paneWidth, viewport.height / paneHeight), 0.25, 4)
-    state.panX = (viewport.width - paneWidth * state.scale) / 2 - pane.left * cell.cellWidth * state.scale
-    state.panY = (viewport.height - paneHeight * state.scale) / 2 - pane.top * cell.cellHeight * state.scale
-    state.focusedPaneId = pane.pane_id
-    clampPan()
-  }
-  function reset() { state.scale = 1; state.panX = 0; state.panY = 0; state.focusedPaneId = null; clampPan() }
-  function snapshot(): PointerViewportSnapshot { return { scale: state.scale, panX: state.panX, panY: state.panY, focusedPaneId: state.focusedPaneId } }
+  function reset() { state.scale = 1; state.panX = 0; state.panY = 0; clampPan() }
+  function snapshot(): PointerViewportSnapshot { return { scale: state.scale, panX: state.panX, panY: state.panY } }
   function restore(value: PointerViewportSnapshot) {
     pointers.clear()
     pinch = null
     state.scale = clamp(value.scale, 0.25, 4)
     state.panX = value.panX
     state.panY = value.panY
-    state.focusedPaneId = value.focusedPaneId
     clampPan()
   }
-  return { state, pointerDown, pointerMove, pointerUp, setTransform, updateGeometry, focusPane, reset, snapshot, restore }
+  return { state, pointerDown, pointerMove, pointerUp, setTransform, updateGeometry, reset, snapshot, restore }
 }

@@ -25,16 +25,6 @@ describe('mobile pointer viewport', () => {
     expect(viewport.state.panX).toBe(-100)
   })
 
-  it('focuses a Pane from topology geometry as a client-only crop', () => {
-    const emitControl = vi.fn()
-    const viewport = createPointerViewport({ viewport: { width: 800, height: 360 }, content: { width: 1200, height: 720 }, emitControl })
-    viewport.focusPane({ pane_id: '%7', left: 60, top: 20, width: 40, height: 10 }, { cellWidth: 10, cellHeight: 18 })
-    expect(viewport.state.focusedPaneId).toBe('%7')
-    expect(viewport.state.scale).toBeGreaterThan(1)
-    expect(viewport.state.panX).toBeLessThan(0)
-    expect(emitControl).not.toHaveBeenCalled()
-  })
-
   it('preserves scale and clamps pan across orientation changes', () => {
     const viewport = createPointerViewport({ viewport: { width: 360, height: 800 }, content: { width: 1200, height: 720 } })
     viewport.setTransform({ scale: 2, panX: -1000, panY: -500 })
@@ -44,12 +34,14 @@ describe('mobile pointer viewport', () => {
     expect(viewport.state.panY).toBeGreaterThanOrEqual(360 - 1440)
   })
 
-  it('captures and restores a client-only viewport including Pane focus', () => {
+  it('captures and restores only generic scale and pan', () => {
     const viewport = createPointerViewport({ viewport: { width: 360, height: 800 }, content: { width: 1200, height: 720 } })
-    viewport.focusPane({ pane_id: '%7', left: 20, top: 10, width: 40, height: 20 }, { cellWidth: 10, cellHeight: 18 })
-    const portrait = viewport.snapshot()
+    viewport.setTransform({ scale: 2, panX: -30, panY: -40 })
+    const snapshot = viewport.snapshot()
+    expect(snapshot).toEqual({ scale: 2, panX: -30, panY: -40 })
+    expect(viewport).not.toHaveProperty('focusPane')
     viewport.reset()
-    viewport.restore(portrait)
-    expect(viewport.snapshot()).toEqual(portrait)
+    viewport.restore(snapshot)
+    expect(viewport.snapshot()).toEqual(snapshot)
   })
 })

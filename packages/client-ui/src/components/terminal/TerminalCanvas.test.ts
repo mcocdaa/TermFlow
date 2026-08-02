@@ -218,7 +218,6 @@ describe('TerminalCanvas', () => {
     expect(session.createTerminal).toHaveBeenCalledWith('term-9', expect.any(Object))
     expect(session.terminal.connect).toHaveBeenCalledOnce()
     expect(createAdapter).not.toHaveBeenCalled()
-    wrapper.vm.focusPane({ pane_id: '%1', window_id: '@1', index: 0, title: 'shell', current_command: 'zsh', active: true, dead: false, left: 0, top: 0, width: 40, height: 20 })
     session.callbacks().onReady({ type: 'terminal.ready', terminal_id: '11111111-1111-4111-8111-111111111111', stream_id: '22222222-2222-4222-8222-222222222222', rows: 44, cols: 150 })
     await flushPromises()
     expect(createAdapter).toHaveBeenCalledWith(expect.any(HTMLElement), { rows: 44, cols: 150 }, expect.any(Function), 'Linux x86_64')
