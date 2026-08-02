@@ -8,4 +8,4 @@ class TermFlowError(Exception):
     code: str
     status_code: int
     message: str
-
+    retry_after: int | None = None

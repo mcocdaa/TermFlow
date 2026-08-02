@@ -1,8 +1,15 @@
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import pytest
+from termflow_control_plane.auth.audit import (
+    AuthAuditOperation,
+    AuthAuditResult,
+    AuthenticationAudit,
+)
 from termflow_protocol import (
     BridgeHelloPayload,
     CommandResultPayload,
@@ -18,6 +25,91 @@ from termflow_protocol import (
 
 SENTINEL = "SECRET_TERMINAL_BODY_9f0d"
 FULL_TERMINAL_SENTINEL = b"FULL_PTY_SECRET_BODY_71ac"
+AUTH_SOURCE_SENTINEL = "203.0.113.42"
+AUTH_CREDENTIAL_SENTINELS = (
+    "ADMIN_TOKEN_SECRET_5ad0",
+    "TOTP_SECRET_194203",
+    "DPoP_PROOF_SECRET_218a",
+    "REFRESH_TOKEN_SECRET_b093",
+)
+
+
+class _AuthAuditRepository:
+    def __init__(self) -> None:
+        self.rows: list[dict[str, object]] = []
+
+    async def record(
+        self,
+        operation: str,
+        result: str,
+        source_digest: str,
+        *,
+        client_id: UUID | None = None,
+        error_code: str | None = None,
+    ) -> object:
+        row = {
+            "operation": operation,
+            "result": result,
+            "source_digest": source_digest,
+            "client_id": client_id,
+            "error_code": error_code,
+        }
+        self.rows.append(row)
+        return row
+
+
+@pytest.mark.asyncio
+async def test_auth_audit_contains_only_allowlisted_secret_free_metadata() -> None:
+    now = datetime(2026, 8, 2, 12, 0, tzinfo=UTC)
+    repository = _AuthAuditRepository()
+    audit = AuthenticationAudit(
+        repository,
+        digest_key=b"audit-key-that-never-appears-in-repr",
+        clock=lambda: now,
+    )
+
+    event = await audit.record(
+        AuthAuditOperation.WEB_SESSION_LOGIN,
+        AuthAuditResult.REJECTED,
+        AUTH_SOURCE_SENTINEL,
+    )
+
+    assert event.operation is AuthAuditOperation.WEB_SESSION_LOGIN
+    assert event.result is AuthAuditResult.REJECTED
+    assert event.occurred_at == now
+    assert event.source_digest == repository.rows[0]["source_digest"]
+    assert len(event.source_digest) == 32
+    rendered = repr(event) + repr(repository.rows) + repr(audit)
+    assert AUTH_SOURCE_SENTINEL not in rendered
+    assert "audit-key-that-never-appears-in-repr" not in rendered
+    assert all(secret not in rendered for secret in AUTH_CREDENTIAL_SENTINELS)
+
+
+def test_request_validation_error_never_echoes_submitted_credentials(client, caplog) -> None:
+    response = client.post(
+        "/api/v1/admin/sessions",
+        headers={"Origin": "http://127.0.0.1:8000"},
+        json={"admin_token": {"submitted": AUTH_CREDENTIAL_SENTINELS[0]}},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_request"
+    assert response.json()["error"]["message"] == "The request is invalid."
+    rendered = response.text + caplog.text
+    assert all(secret not in rendered for secret in AUTH_CREDENTIAL_SENTINELS)
+
+
+def test_auth_audit_does_not_pollute_terminal_interaction_statistics(client) -> None:
+    before = client.portal.call(client.app.state.repositories.audit.list_all)
+    client.portal.call(
+        client.app.state.auth_audit.record,
+        AuthAuditOperation.WEB_SESSION_LOGIN,
+        AuthAuditResult.REJECTED,
+        AUTH_SOURCE_SENTINEL,
+    )
+    after = client.portal.call(client.app.state.repositories.audit.list_all)
+
+    assert before == after
 
 
 def test_terminal_body_and_raw_credentials_never_reach_sqlite_or_logs(
