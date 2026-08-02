@@ -400,6 +400,8 @@ git commit -m "feat(auth): add CLI sessions and local TOTP reset"
 - Modify: `packages/client-core/src/api/session.ts`
 - Modify: `packages/client-core/src/http/types.ts`
 - Modify: `packages/client-core/src/http/apiClient.ts`
+- Modify: `packages/client-core/src/terminal/ports.ts`
+- Modify: `packages/client-core/src/terminal/session.ts`
 - Modify: `packages/client-core/src/index.ts`
 
 - [ ] **Step 1: Write failing core state-machine tests**
@@ -408,6 +410,7 @@ With fake clock/random/key/vault/browser/deep-link transports, cover:
 
 ```text
 Web login result is authenticated or totp_required without storing administrator Token
+HTTP responses expose status, selected headers, and Retry-After without leaking credentials
 PKCE verifier/challenge generation and exact state correlation
 native authorization ignores callbacks with wrong issuer/state
 authorization code is cleared after one exchange attempt
@@ -445,6 +448,9 @@ export interface AuthorizationBrowserPort {
 ```
 
 Keep credential material out of error objects and `repr`-like debug output. Do not add a platform-global singleton.
+Implement a Web session state machine and discriminated login result, and allow transports to attach DPoP headers
+and observe `DPoP-Nonce`/`Retry-After`. Evolve terminal connect/send operations to promises so the same public
+ports can support the asynchronous Tauri WebSocket plugin without a hidden send queue.
 
 - [ ] **Step 4: Verify GREEN and boundaries**
 
@@ -498,6 +504,7 @@ disable/reconfigure requires administrator Token plus fresh TOTP
 no recovery-code or remote-reset UI exists
 authorized clients list, rename, and revoke with explicit confirmation
 native authorization displays issuer, name, platform, key fingerprint, scopes, and allow/deny
+runtime capabilities hide Web-only TOTP/client management from native settings
 ```
 
 - [ ] **Step 2: Verify RED**
@@ -507,6 +514,9 @@ Run focused client-ui tests. Expected: missing routes/views/components and old l
 - [ ] **Step 3: Implement shared UI**
 
 Add `/settings` and `/authorize`, with `/authorize` using the bare layout. QR rendering occurs locally from the server-provided URI and is never persisted. The settings page groups Appearance, Server, Security, and Authorized Clients. It never exposes an editable B URL in Web C. All network and clipboard work goes through `ClientRuntime`.
+Use `qrcode@1.5.4` and `@types/qrcode@1.5.6`; read the displayed issuer from server metadata rather than
+`window.location`. Runtime capabilities make Web the only surface that can manage TOTP and authorized clients;
+native settings show connection and device information only.
 
 - [ ] **Step 4: Verify GREEN**
 
@@ -533,6 +543,7 @@ git commit -m "feat(web): add secure authentication settings"
 - Create: `apps/clients/tauri/src/adapters/tauriAuthorizationBrowser.ts`
 - Create: `apps/clients/tauri/src/adapters/tauriCredentialVault.ts`
 - Create: `apps/clients/tauri/src/adapters/tauriKey.ts`
+- Create: `apps/clients/tauri/src/adapters/tauriWebSocketTransport.ts`
 - Create adapter/runtime tests
 - Create: `apps/clients/tauri/src-tauri/Cargo.toml`
 - Create: `apps/clients/tauri/src-tauri/build.rs`
@@ -555,7 +566,14 @@ Run workspace tests and `cargo test --manifest-path apps/clients/tauri/src-tauri
 
 - [ ] **Step 3: Scaffold the thin Tauri composition**
 
-Use one Tauri 2 application identifier and shared Vue routes. Add only official opener, deep-link, HTTP, and Stronghold capabilities required by the adapters. Configure `termflow://auth/callback` for desktop development and claimed HTTPS placeholders for mobile release configuration. The Rust shell owns the non-exportable-or-vaulted P-256 private key, DPoP signing, and refresh token storage; JavaScript receives public JWK, signature bytes, access token, expiry, and non-sensitive assurance status only.
+Use one Tauri 2 application identifier and shared Vue routes. Pin the currently verified Tauri 2 line and add only
+the official opener, deep-link, HTTP, WebSocket, OS, store, and clipboard capabilities actually used. V1 uses the
+registered `termflow://auth/callback` custom scheme on desktop and mobile; claimed HTTPS App/Universal Links are
+deferred until TermFlow owns a fixed callback domain instead of pretending a self-hosted B domain can be claimed.
+The Rust shell exposes narrow commands backed by the platform credential service (`keyring`) for the refresh token
+and P-256 key material; it never exposes a generic secret store to JavaScript. Where a platform cannot provide the
+required assurance, the adapter reports the documented lower assurance level and uses a separate encrypted vault.
+JavaScript receives public JWK, signature bytes, access token, expiry, and non-sensitive assurance status only.
 
 Desktop and mobile execute the identical `NativeAuthorizationSession`; platform conditionals are restricted to callback registration and secure-storage assurance reporting.
 
