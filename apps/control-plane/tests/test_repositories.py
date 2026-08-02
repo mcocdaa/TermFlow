@@ -181,6 +181,17 @@ async def test_initialize_idempotently_upgrades_a_v1_sqlite_database(tmp_path) -
             "last_seen_at",
         } <= installation_columns
         assert "last_seen_at" in instance_columns
+        async with database.engine.connect() as connection:
+            enrollment_indexes = await connection.execute(
+                text("PRAGMA index_list(enrollment_tokens)")
+            )
+            installation_indexes = await connection.execute(
+                text("PRAGMA index_list(installations)")
+            )
+            instance_indexes = await connection.execute(text("PRAGMA index_list(instances)"))
+        assert "ix_enrollment_tokens_token_hash" in {row[1] for row in enrollment_indexes}
+        assert "ix_installations_token_hash" in {row[1] for row in installation_indexes}
+        assert "ix_instances_token_hash" in {row[1] for row in instance_indexes}
     finally:
         await database.dispose()
 
