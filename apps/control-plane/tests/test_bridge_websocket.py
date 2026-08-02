@@ -50,6 +50,66 @@ def test_bridge_rejects_invalid_token(client) -> None:
     assert caught.value.code == 4401
 
 
+def test_retired_bridge_is_rejected_before_live_publish(client, admin_headers) -> None:
+    installation_token = _installation_token(client, admin_headers)
+    instance_id = uuid4()
+    token = _register(client, installation_token, instance_id)
+    client.portal.call(client.app.state.registry.begin_retirement, instance_id)
+
+    with pytest.raises(WebSocketDisconnect) as caught:
+        with client.websocket_connect(
+            "/api/v1/bridge/connect",
+            headers={"Authorization": f"Bearer {token}"},
+        ):
+            pass
+    assert caught.value.code == 4401
+    assert (
+        client.portal.call(
+            client.app.state.registry.maybe_get,
+            instance_id,
+        )
+        is None
+    )
+
+
+def test_bridge_token_race_cleans_live_registration(
+    client,
+    admin_headers,
+    monkeypatch,
+) -> None:
+    installation_token = _installation_token(client, admin_headers)
+    instance_id = uuid4()
+    token = _register(client, installation_token, instance_id)
+    instances = client.app.state.repositories.instances
+    original_get_by_token_hash = instances.get_by_token_hash
+    lookup_count = 0
+
+    async def raced_get_by_token_hash(token_hash):
+        nonlocal lookup_count
+        lookup_count += 1
+        if lookup_count == 1:
+            return await original_get_by_token_hash(token_hash)
+        return None
+
+    monkeypatch.setattr(instances, "get_by_token_hash", raced_get_by_token_hash)
+
+    with pytest.raises(WebSocketDisconnect) as caught:
+        with client.websocket_connect(
+            "/api/v1/bridge/connect",
+            headers={"Authorization": f"Bearer {token}"},
+        ):
+            pass
+    assert caught.value.code == 4401
+    assert lookup_count == 2
+    assert (
+        client.portal.call(
+            client.app.state.registry.maybe_get,
+            instance_id,
+        )
+        is None
+    )
+
+
 def test_bridge_authenticates_and_updates_live_topology(client, admin_headers) -> None:
     installation_token = _installation_token(client, admin_headers)
     instance_id = uuid4()

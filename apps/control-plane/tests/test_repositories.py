@@ -66,9 +66,7 @@ async def test_concurrent_enrollment_consumption_has_exactly_one_winner(
 @pytest.mark.asyncio
 async def test_expired_enrollment_cannot_be_consumed(repositories: RepositoryBundle) -> None:
     raw = "y" * 43
-    await repositories.enrollments.create(
-        hash_token(raw), datetime.now(UTC) - timedelta(seconds=1)
-    )
+    await repositories.enrollments.create(hash_token(raw), datetime.now(UTC) - timedelta(seconds=1))
     assert await repositories.enrollments.consume(hash_token(raw)) is None
 
 
@@ -100,6 +98,42 @@ async def test_instance_registration_rotates_only_for_owner(
             "stolen",
             hash_token("bad"),
         )
+
+
+@pytest.mark.asyncio
+async def test_instance_delete_is_exact_and_keeps_installation_and_audit(
+    repositories: RepositoryBundle,
+) -> None:
+    installation = await repositories.installations.create(hash_token("owner"))
+    deleted_id = uuid4()
+    retained_id = uuid4()
+    await repositories.instances.register_or_rotate(
+        deleted_id,
+        installation.id,
+        "deleted",
+        hash_token("deleted-token"),
+    )
+    await repositories.instances.register_or_rotate(
+        retained_id,
+        installation.id,
+        "retained",
+        hash_token("retained-token"),
+    )
+    await repositories.audit.record(
+        "term.before-delete",
+        deleted_id,
+        None,
+        None,
+        "ok",
+        None,
+    )
+
+    assert await repositories.instances.delete(deleted_id) is True
+    assert await repositories.instances.delete(deleted_id) is False
+    assert await repositories.instances.get(deleted_id) is None
+    assert await repositories.instances.get(retained_id) is not None
+    assert await repositories.installations.get(installation.id) is not None
+    assert (await repositories.audit.list_all())[0].instance_id == deleted_id
 
 
 @pytest.mark.asyncio
@@ -164,9 +198,7 @@ async def test_initialize_idempotently_upgrades_a_v1_sqlite_database(tmp_path) -
     await database.initialize()
     try:
         async with database.engine.connect() as connection:
-            enrollment_rows = await connection.execute(
-                text("PRAGMA table_info(enrollment_tokens)")
-            )
+            enrollment_rows = await connection.execute(text("PRAGMA table_info(enrollment_tokens)"))
             installation_rows = await connection.execute(text("PRAGMA table_info(installations)"))
             instance_rows = await connection.execute(text("PRAGMA table_info(instances)"))
         enrollment_columns = {row[1] for row in enrollment_rows}

@@ -43,6 +43,7 @@ async def register_instance(
     request: InstanceRegisterRequest,
     installation: Annotated[Installation, Depends(require_installation)],
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
+    registry: Annotated[LiveInstanceRegistry, Depends(get_registry)],
 ) -> InstanceRegisterResponse:
     """Create an Instance credential, or rotate it for the owning installation."""
 
@@ -60,6 +61,7 @@ async def register_instance(
             status.HTTP_403_FORBIDDEN,
             "The Instance belongs to another installation.",
         ) from exc
+    await registry.reactivate(instance.id)
     return InstanceRegisterResponse(instance_id=instance.id, instance_token=raw_token)
 
 

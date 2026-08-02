@@ -21,6 +21,14 @@ class InstanceOffline(LookupError):
     pass
 
 
+class InstanceOnline(RuntimeError):
+    pass
+
+
+class InstanceRetired(LookupError):
+    pass
+
+
 class ConnectionBackpressure(RuntimeError):
     pass
 
@@ -83,6 +91,7 @@ class LiveInstanceRegistry:
         self._queue_size = queue_size
         self._queue_max_bytes = queue_max_bytes
         self._connections: dict[UUID, LiveConnection] = {}
+        self._retired: set[UUID] = set()
         self._lock = asyncio.Lock()
 
     async def register(self, instance_id: UUID) -> LiveConnection:
@@ -94,11 +103,29 @@ class LiveInstanceRegistry:
             ),
         )
         async with self._lock:
+            if instance_id in self._retired:
+                raise InstanceRetired(str(instance_id))
             previous = self._connections.get(instance_id)
             self._connections[instance_id] = connection
             if previous is not None:
                 previous.replaced.set()
         return connection
+
+    async def begin_retirement(self, instance_id: UUID) -> None:
+        async with self._lock:
+            if instance_id in self._connections:
+                raise InstanceOnline(str(instance_id))
+            if instance_id in self._retired:
+                raise InstanceRetired(str(instance_id))
+            self._retired.add(instance_id)
+
+    async def cancel_retirement(self, instance_id: UUID) -> None:
+        async with self._lock:
+            self._retired.discard(instance_id)
+
+    async def reactivate(self, instance_id: UUID) -> None:
+        async with self._lock:
+            self._retired.discard(instance_id)
 
     async def unregister(self, connection: LiveConnection) -> bool:
         async with self._lock:

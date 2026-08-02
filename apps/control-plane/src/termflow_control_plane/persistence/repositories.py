@@ -178,6 +178,15 @@ class InstanceRepository:
         async with self._sessions() as session:
             return await session.get(Instance, instance_id)
 
+    async def delete(self, instance_id: UUID) -> bool:
+        async with self._sessions() as session:
+            instance = await session.get(Instance, instance_id)
+            if instance is None:
+                return False
+            await session.delete(instance)
+            await session.commit()
+            return True
+
     async def get_by_token_hash(self, token_hash: str) -> Instance | None:
         async with self._sessions() as session:
             instance: Instance | None = await session.scalar(

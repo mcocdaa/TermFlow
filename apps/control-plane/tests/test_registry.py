@@ -5,6 +5,8 @@ import pytest
 from termflow_control_plane.connections.registry import (
     ConnectionBackpressure,
     InstanceOffline,
+    InstanceOnline,
+    InstanceRetired,
     LiveInstanceRegistry,
 )
 from termflow_protocol import (
@@ -25,6 +27,32 @@ async def test_register_replaces_old_connection_without_cross_unregister() -> No
     assert await registry.get(instance_id) is second
     await registry.unregister(first)
     assert await registry.get(instance_id) is second
+
+
+@pytest.mark.asyncio
+async def test_retirement_blocks_late_reconnect_until_reactivated() -> None:
+    registry = LiveInstanceRegistry(queue_size=4)
+    instance_id = uuid4()
+    connection = await registry.register(instance_id)
+    with pytest.raises(InstanceOnline):
+        await registry.begin_retirement(instance_id)
+    await registry.unregister(connection)
+
+    await registry.begin_retirement(instance_id)
+    with pytest.raises(InstanceRetired):
+        await registry.register(instance_id)
+
+    await registry.reactivate(instance_id)
+    assert (await registry.register(instance_id)).instance_id == instance_id
+
+
+@pytest.mark.asyncio
+async def test_failed_delete_can_cancel_retirement() -> None:
+    registry = LiveInstanceRegistry(queue_size=4)
+    instance_id = uuid4()
+    await registry.begin_retirement(instance_id)
+    await registry.cancel_retirement(instance_id)
+    assert (await registry.register(instance_id)).instance_id == instance_id
 
 
 @pytest.mark.asyncio
@@ -62,9 +90,9 @@ async def test_terminal_close_uses_reserved_connection_queue_slot() -> None:
     close = WireMessage(
         type=MessageType.TERMINAL_CLOSE,
         instance_id=instance_id,
-        payload=TerminalClosePayload(
-            terminal_id=uuid4(), reason="client_closed"
-        ).model_dump(mode="json"),
+        payload=TerminalClosePayload(terminal_id=uuid4(), reason="client_closed").model_dump(
+            mode="json"
+        ),
     )
 
     assert registry.enqueue_current_nowait(instance_id, close)
@@ -80,9 +108,7 @@ async def test_terminal_connection_queue_is_also_bounded_by_decoded_bytes() -> N
     message = WireMessage(
         type=MessageType.TERMINAL_INPUT,
         instance_id=instance_id,
-        payload=TerminalInputPayload.from_bytes(instance_id, b"12345").model_dump(
-            mode="json"
-        ),
+        payload=TerminalInputPayload.from_bytes(instance_id, b"12345").model_dump(mode="json"),
     )
 
     with pytest.raises(ConnectionBackpressure):

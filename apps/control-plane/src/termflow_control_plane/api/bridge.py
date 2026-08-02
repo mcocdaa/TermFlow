@@ -31,7 +31,11 @@ from termflow_protocol import (
 
 from termflow_control_plane.auth.tokens import hash_token
 from termflow_control_plane.connections.event_hub import EventHub
-from termflow_control_plane.connections.registry import LiveConnection, LiveInstanceRegistry
+from termflow_control_plane.connections.registry import (
+    InstanceRetired,
+    LiveConnection,
+    LiveInstanceRegistry,
+)
 from termflow_control_plane.persistence.repositories import RepositoryBundle
 from termflow_control_plane.routing.terminal_router import TerminalRouter
 
@@ -170,25 +174,39 @@ async def connect_bridge(websocket: WebSocket) -> None:
     if instance is None:
         await websocket.close(code=4401, reason="Authentication required")
         return
+    assert token is not None
 
-    await websocket.accept()
-    connection = await registry.register(instance.id)
-    await event_hub.publish(_presence_message(connection, "online"))
-    tasks = {
-        asyncio.create_task(_send_messages(websocket, connection)),
-        asyncio.create_task(
-            _receive_messages(
-                websocket,
-                connection,
-                event_hub,
-                repositories,
-                registry,
-                terminal_router,
-            )
-        ),
-        asyncio.create_task(_close_when_replaced(websocket, connection)),
-    }
     try:
+        connection = await registry.register(instance.id)
+    except InstanceRetired:
+        await websocket.close(code=4401, reason="Authentication required")
+        return
+
+    tasks: set[asyncio.Task[None]] = set()
+    published_online = False
+    try:
+        confirmed = await repositories.instances.get_by_token_hash(hash_token(token))
+        if confirmed is None or confirmed.id != instance.id:
+            await websocket.close(code=4401, reason="Authentication required")
+            return
+
+        await websocket.accept()
+        await event_hub.publish(_presence_message(connection, "online"))
+        published_online = True
+        tasks = {
+            asyncio.create_task(_send_messages(websocket, connection)),
+            asyncio.create_task(
+                _receive_messages(
+                    websocket,
+                    connection,
+                    event_hub,
+                    repositories,
+                    registry,
+                    terminal_router,
+                )
+            ),
+            asyncio.create_task(_close_when_replaced(websocket, connection)),
+        }
         done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
             task.cancel()
@@ -204,5 +222,5 @@ async def connect_bridge(websocket: WebSocket) -> None:
     finally:
         for task in tasks:
             task.cancel()
-        if await registry.unregister(connection):
+        if await registry.unregister(connection) and published_online:
             await event_hub.publish(_presence_message(connection, "offline"))
