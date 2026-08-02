@@ -32,10 +32,24 @@ export function createTauriHttpTransport(): HttpTransport {
         if (request.signal !== undefined) init.signal = request.signal
         return fetch(url, init)
       }
+      const rememberNonce = async (response: Response) => {
+        if (isPublic) return
+        const nonce = response.headers.get('dpop-nonce')
+        if (nonce !== null) {
+          await invoke('native_remember_dpop_nonce', {
+            issuer: serverConfig.current,
+            nonce,
+          })
+        }
+      }
       try {
         let response = await send()
+        await rememberNonce(response)
         const nonce = response.status === 401 ? response.headers.get('dpop-nonce') : null
-        if (!isPublic && nonce !== null) response = await send(nonce)
+        if (!isPublic && nonce !== null) {
+          response = await send(nonce)
+          await rememberNonce(response)
+        }
         let body: unknown
         if ((response.headers.get('content-type') ?? '').includes('application/json')) {
           try { body = await response.json() } catch { body = undefined }

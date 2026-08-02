@@ -45,6 +45,7 @@ struct AccessState {
 #[derive(Default)]
 pub struct NativeAuthState {
     access: Mutex<HashMap<String, AccessState>>,
+    nonces: Mutex<HashMap<String, String>>,
     refresh_gate: tokio::sync::Mutex<()>,
     http: Client,
 }
@@ -98,6 +99,27 @@ fn issuer_key(issuer: &str, kind: &str) -> String {
 fn keyring_entry(issuer: &str, kind: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(KEYRING_SERVICE, &issuer_key(issuer, kind))
         .map_err(|_| safe_error("secure_store_unavailable"))
+}
+
+fn remember_dpop_nonce(state: &NativeAuthState, issuer: &str, nonce: &str) -> Result<(), String> {
+    if nonce.is_empty() || nonce.len() > 1024 || nonce.chars().any(char::is_whitespace) {
+        return Err(safe_error("dpop_nonce_invalid"));
+    }
+    state
+        .nonces
+        .lock()
+        .map_err(|_| safe_error("auth_state_unavailable"))?
+        .insert(issuer.to_owned(), nonce.to_owned());
+    Ok(())
+}
+
+fn remembered_dpop_nonce(state: &NativeAuthState, issuer: &str) -> Result<Option<String>, String> {
+    Ok(state
+        .nonces
+        .lock()
+        .map_err(|_| safe_error("auth_state_unavailable"))?
+        .get(issuer)
+        .cloned())
 }
 
 fn signing_key(issuer: &str) -> Result<SigningKey, String> {
@@ -221,6 +243,13 @@ async fn token_request(
     if !response.status().is_success() {
         return Err(safe_error("authorization_required"));
     }
+    if let Some(nonce) = response
+        .headers()
+        .get("DPoP-Nonce")
+        .and_then(|value| value.to_str().ok())
+    {
+        remember_dpop_nonce(state, issuer, nonce)?;
+    }
     response
         .json::<TokenResponse>()
         .await
@@ -332,6 +361,13 @@ pub async fn native_request_headers(
 ) -> Result<NativeHeaders, String> {
     let issuer = canonical_issuer(&issuer)?;
     let access = current_access(&state, &issuer).await?;
+    let nonce = match nonce {
+        Some(value) => {
+            remember_dpop_nonce(&state, &issuer, &value)?;
+            Some(value)
+        }
+        None => remembered_dpop_nonce(&state, &issuer)?,
+    };
     let proof = dpop_proof(
         &signing_key(&issuer)?,
         &method,
@@ -343,6 +379,16 @@ pub async fn native_request_headers(
         authorization: format!("DPoP {}", access.access_token),
         dpop: proof,
     })
+}
+
+#[tauri::command]
+pub fn native_remember_dpop_nonce(
+    state: State<'_, NativeAuthState>,
+    issuer: String,
+    nonce: String,
+) -> Result<(), String> {
+    let issuer = canonical_issuer(&issuer)?;
+    remember_dpop_nonce(&state, &issuer, &nonce)
 }
 
 #[cfg(test)]
@@ -374,5 +420,22 @@ mod tests {
         assert_eq!(proof.split('.').count(), 3);
         assert!(!proof.contains("access-value"));
         assert!(!proof.contains("ignored=1"));
+    }
+
+    #[test]
+    fn remembered_dpop_nonce_is_issuer_scoped_and_validated() {
+        let state = NativeAuthState::default();
+        remember_dpop_nonce(&state, "https://one.example", "nonce-one").unwrap();
+        remember_dpop_nonce(&state, "https://two.example", "nonce-two").unwrap();
+
+        assert_eq!(
+            remembered_dpop_nonce(&state, "https://one.example").unwrap(),
+            Some("nonce-one".to_owned())
+        );
+        assert_eq!(
+            remembered_dpop_nonce(&state, "https://two.example").unwrap(),
+            Some("nonce-two".to_owned())
+        );
+        assert!(remember_dpop_nonce(&state, "https://one.example", "bad nonce").is_err());
     }
 }

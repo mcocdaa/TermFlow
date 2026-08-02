@@ -31,6 +31,7 @@ pub fn run() {
             auth::native_exchange_authorization,
             auth::native_refresh_access,
             auth::native_request_headers,
+            auth::native_remember_dpop_nonce,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run TermFlow client");
