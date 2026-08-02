@@ -143,6 +143,7 @@ class AuthenticationService:
             await self._repositories.auth_challenges.fail_attempt(
                 challenge_id,
                 maximum=self._settings.auth_max_challenge_attempts,
+                now=self._clock(),
             )
             return False
         accepted = await self._repositories.auth_state.accept_totp_counter(
@@ -154,6 +155,7 @@ class AuthenticationService:
             await self._repositories.auth_challenges.fail_attempt(
                 challenge_id,
                 maximum=self._settings.auth_max_challenge_attempts,
+                now=self._clock(),
             )
             return False
         consumed = await self._repositories.auth_challenges.consume(

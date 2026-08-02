@@ -713,8 +713,14 @@ class AuthChallengeRepository:
                 return None
             return EncryptedSecret(row[0], row[1], row[2], row[3])
 
-    async def fail_attempt(self, challenge_id: UUID, maximum: int = 5) -> bool:
-        observed_at = datetime.now(UTC)
+    async def fail_attempt(
+        self,
+        challenge_id: UUID,
+        maximum: int = 5,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        observed_at = now or datetime.now(UTC)
         async with self._sessions() as session:
             result = await session.execute(
                 update(AuthChallenge)
