@@ -5,6 +5,10 @@ use std::{
 };
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+use keyring::{Entry as KeyringEntry, Error as KeyringError};
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use keyring_core::{Entry as KeyringEntry, Error as KeyringError};
 use p256::{
     ecdsa::{signature::Signer, Signature, SigningKey},
     pkcs8::{DecodePrivateKey, EncodePrivateKey},
@@ -15,6 +19,9 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tauri::State;
 use url::Url;
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use std::sync::OnceLock;
 
 const KEYRING_SERVICE: &str = "io.termflow.client";
 const ACCESS_EARLY_SECONDS: i64 = 60;
@@ -96,8 +103,32 @@ fn issuer_key(issuer: &str, kind: &str) -> String {
         kind
     )
 }
-fn keyring_entry(issuer: &str, kind: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new(KEYRING_SERVICE, &issuer_key(issuer, kind))
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
+fn initialize_mobile_keyring() -> Result<(), String> {
+    static INITIALIZED: OnceLock<Result<(), String>> = OnceLock::new();
+    INITIALIZED
+        .get_or_init(|| {
+            #[cfg(target_os = "ios")]
+            let store = apple_native_keyring_store::protected::Store::new();
+            #[cfg(target_os = "android")]
+            let store = android_native_keyring_store::Store::new();
+
+            store
+                .map(keyring_core::set_default_store)
+                .map_err(|_| safe_error("secure_store_unavailable"))
+        })
+        .clone()
+}
+
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+fn initialize_mobile_keyring() -> Result<(), String> {
+    Ok(())
+}
+
+fn keyring_entry(issuer: &str, kind: &str) -> Result<KeyringEntry, String> {
+    initialize_mobile_keyring()?;
+    KeyringEntry::new(KEYRING_SERVICE, &issuer_key(issuer, kind))
         .map_err(|_| safe_error("secure_store_unavailable"))
 }
 
@@ -147,7 +178,7 @@ fn clear_cached_credentials(state: &NativeAuthState, issuer: &str) -> Result<(),
 fn clear_native_credentials(state: &NativeAuthState, issuer: &str) -> Result<(), String> {
     clear_cached_credentials(state, issuer)?;
     match keyring_entry(issuer, "refresh")?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
         Err(_) => Err(safe_error("secure_store_unavailable")),
     }
 }
@@ -158,7 +189,7 @@ fn signing_key(issuer: &str) -> Result<SigningKey, String> {
         Ok(bytes) => {
             SigningKey::from_pkcs8_der(&bytes).map_err(|_| safe_error("device_key_invalid"))
         }
-        Err(keyring::Error::NoEntry) => {
+        Err(KeyringError::NoEntry) => {
             let key = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
             let bytes = key
                 .to_pkcs8_der()

@@ -13,7 +13,6 @@ tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
 base64 = "0.22.1"
-keyring = { version = "=4.1.5", features = ["android-native-keyring-store"] }
 p256 = { version = "0.13.2", features = ["ecdsa", "pkcs8"] }
 reqwest = { version = "0.12.22", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0.219", features = ["derive"] }
@@ -34,6 +33,17 @@ uuid = { version = "1.17.0", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3.20.0"
+
+[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
+keyring = { version = "=4.1.5", features = [] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+keyring-core = { version = "=1.0.0" }
+apple-native-keyring-store = { version = "=1.0.1", features = ["protected"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+keyring-core = { version = "=1.0.0" }
+android-native-keyring-store = { version = "=1.0.0" }
 
 [target."cfg(any(target_os = \"macos\", windows, target_os = \"linux\"))".dependencies]
 tauri-plugin-single-instance = { version = "=2.4.3", features = ["deep-link"] }
