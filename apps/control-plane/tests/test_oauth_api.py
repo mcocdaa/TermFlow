@@ -506,7 +506,7 @@ def test_websocket_authentication_has_a_bounded_source_burst(client) -> None:
 
 def _mark_totp_enabled(client) -> None:
     enabled = asyncio.run(
-        client.app.state.repositories.auth_state.enable_totp(
+        client.app.state.repositories.auth_state.configure_totp(
             EncryptedSecret(
                 ciphertext=b"encrypted-test-secret",
                 nonce=b"123456789012",
@@ -514,6 +514,9 @@ def _mark_totp_enabled(client) -> None:
                 aad_version=1,
             ),
             1,
+            expected_epoch=1,
+            expected_generation=0,
+            enabled=True,
         )
     )
     assert enabled

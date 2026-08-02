@@ -88,9 +88,10 @@ class AuthenticationService:
             self._settings.admin_token.get_secret_value(),
         )
 
-    async def totp_status(self) -> tuple[bool, bool]:
+    async def totp_status(self) -> tuple[bool, bool, bool]:
         state = await self._repositories.auth_state.get()
-        return state.totp_enabled_at is not None, self._secret_box is not None
+        configured = self._has_configured_secret(state)
+        return configured, state.totp_enabled_at is not None, self._secret_box is not None
 
     async def begin_web_login(self, admin_token: str) -> WebLoginChallenge | None:
         state = await self._repositories.auth_state.get()
@@ -100,7 +101,7 @@ class AuthenticationService:
                 raise AuthenticationRejected
             return None
         box = self._required_box(authentication=True)
-        if self._enabled_secret(state, box) is None:
+        if self._configured_secret(state, box) is None:
             raise AuthenticationRejected
         if not primary_matches:
             raise AuthenticationRejected
@@ -128,8 +129,8 @@ class AuthenticationService:
             epoch=state.epoch,
             now=self._clock(),
         )
-        secret = self._enabled_secret(state, box)
-        if encrypted_context is None or secret is None:
+        secret = self._configured_secret(state, box)
+        if state.totp_enabled_at is None or encrypted_context is None or secret is None:
             return False
         try:
             context = box.decrypt(encrypted_context, purpose=_WEB_LOGIN_PURPOSE)
@@ -216,7 +217,7 @@ class AuthenticationService:
         code: str,
     ) -> bool:
         box = self._required_box(authentication=True)
-        secret = self._enabled_secret(state, box)
+        secret = self._configured_secret(state, box)
         if secret is None:
             return False
         counter = match_totp_counter(secret, code, self._clock())
@@ -237,7 +238,7 @@ class AuthenticationService:
             raise AuthenticationRejected
         box = self._required_box(authentication=False)
         state = await self._repositories.auth_state.get()
-        if state.totp_enabled_at is not None:
+        if self._has_configured_secret(state):
             if current_code is None or not await self.verify_fresh_totp(current_code):
                 raise AuthenticationRejected
             state = await self._repositories.auth_state.get()
@@ -303,20 +304,51 @@ class AuthenticationService:
         if consumed is None:
             return False
         authenticator = box.encrypt(secret, purpose=_AUTHENTICATOR_PURPOSE)
-        return await self._repositories.auth_state.enable_totp(
+        return await self._repositories.auth_state.configure_totp(
             authenticator,
             counter,
             expected_epoch=state.epoch,
             expected_generation=state.totp_generation,
+            enabled=state.totp_enabled_at is not None,
         )
+
+    async def enable_totp(self, admin_token: str, code: str) -> bool:
+        if not self.primary_token_matches(admin_token):
+            raise AuthenticationRejected
+        return await self._set_totp_protection(code, enabled=True)
 
     async def disable_totp(self, admin_token: str, code: str) -> bool:
         if not self.primary_token_matches(admin_token):
             raise AuthenticationRejected
+        return await self._set_totp_protection(code, enabled=False)
+
+    async def _set_totp_protection(self, code: str, *, enabled: bool) -> bool:
         state = await self._repositories.auth_state.get()
-        if state.totp_enabled_at is None or not await self.verify_fresh_totp(code):
-            raise AuthenticationRejected
-        return await self._repositories.auth_state.disable_totp(
+        box = self._required_box(authentication=True)
+        secret = self._configured_secret(state, box)
+        if secret is None:
+            return False
+        counter = match_totp_counter(secret, code, self._clock())
+        if counter is None:
+            return False
+        if enabled:
+            if state.totp_enabled_at is not None:
+                return False
+            return await self._repositories.auth_state.enable_totp_protection(
+                counter,
+                expected_epoch=state.epoch,
+                expected_generation=state.totp_generation,
+            )
+        if state.totp_enabled_at is None:
+            return False
+        accepted = await self._repositories.auth_state.accept_totp_counter(
+            counter,
+            epoch=state.epoch,
+            generation=state.totp_generation,
+        )
+        if not accepted:
+            return False
+        return await self._repositories.auth_state.disable_totp_protection(
             expected_epoch=state.epoch,
             expected_generation=state.totp_generation,
         )
@@ -329,7 +361,19 @@ class AuthenticationService:
         raise TotpUnavailable
 
     @staticmethod
-    def _enabled_secret(
+    def _has_configured_secret(state: AuthenticationState) -> bool:
+        return all(
+            value is not None
+            for value in (
+                state.totp_ciphertext,
+                state.totp_nonce,
+                state.totp_key_version,
+                state.totp_aad_version,
+            )
+        )
+
+    @staticmethod
+    def _configured_secret(
         state: AuthenticationState,
         box: AesGcmSecretBox,
     ) -> bytes | None:
@@ -339,7 +383,7 @@ class AuthenticationService:
             state.totp_key_version,
             state.totp_aad_version,
         )
-        if state.totp_enabled_at is None or any(value is None for value in fields):
+        if any(value is None for value in fields):
             return None
         encrypted = EncryptedSecret(
             ciphertext=state.totp_ciphertext,  # type: ignore[arg-type]

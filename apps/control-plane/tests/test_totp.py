@@ -105,9 +105,12 @@ async def test_fresh_totp_counter_can_be_accepted_only_once_concurrently(tmp_pat
     box = AesGcmSecretBox(b"m" * 32)
     secret = b"a" * 20
     try:
-        await repositories.auth_state.enable_totp(
+        await repositories.auth_state.configure_totp(
             box.encrypt(secret, purpose="totp-authenticator"),
             counter=(int(observed_at.timestamp()) // 30) - 1,
+            expected_epoch=1,
+            expected_generation=0,
+            enabled=True,
         )
         service = AuthenticationService(
             repositories,
@@ -143,9 +146,12 @@ async def test_web_login_challenge_is_destroyed_after_five_bad_codes(tmp_path) -
     box = AesGcmSecretBox(b"m" * 32)
     secret = b"b" * 20
     try:
-        await repositories.auth_state.enable_totp(
+        await repositories.auth_state.configure_totp(
             box.encrypt(secret, purpose="totp-authenticator"),
             counter=(int(observed_at.timestamp()) // 30) - 1,
+            expected_epoch=1,
+            expected_generation=0,
+            enabled=True,
         )
         service = AuthenticationService(
             repositories,
@@ -205,5 +211,67 @@ async def test_pending_setup_expires_without_enabling_totp(tmp_path) -> None:
             totp_at(secret, observed_at[0]),
         )
         assert (await repositories.auth_state.get()).totp_enabled_at is None
+    finally:
+        await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_totp_setup_and_login_protection_are_independent(tmp_path) -> None:
+    observed_at = [datetime(2026, 8, 2, 12, 0, tzinfo=UTC)]
+    encoded_key = base64.urlsafe_b64encode(b"m" * 32).decode().rstrip("=")
+    settings = Settings(
+        admin_token="admin-token-that-is-long-enough-for-tests",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'protection-state.db'}",
+        allow_insecure_loopback=True,
+        totp_master_key=encoded_key,
+    )
+    database = Database(settings.database_url)
+    await database.initialize()
+    repositories = RepositoryBundle(database.session_factory)
+    first_secret = b"d" * 20
+    replacement_secret = b"e" * 20
+    secrets = iter((first_secret, replacement_secret))
+    service = AuthenticationService(
+        repositories,
+        settings,
+        secret_box=AesGcmSecretBox(b"m" * 32),
+        clock=lambda: observed_at[0],
+        random_bytes=lambda size: next(secrets) if size == 20 else b"",
+    )
+    admin_token = "admin-token-that-is-long-enough-for-tests"
+    try:
+        setup = await service.begin_totp_setup(admin_token, None)
+        first_code = totp_at(first_secret, observed_at[0])
+        assert await service.confirm_totp_setup(setup.setup_id, first_code)
+        assert await service.totp_status() == (True, False, True)
+
+        assert not await service.enable_totp(admin_token, first_code)
+        observed_at[0] += timedelta(seconds=30)
+        assert await service.enable_totp(
+            admin_token,
+            totp_at(first_secret, observed_at[0]),
+        )
+        assert await service.totp_status() == (True, True, True)
+
+        observed_at[0] += timedelta(seconds=30)
+        assert await service.disable_totp(
+            admin_token,
+            totp_at(first_secret, observed_at[0]),
+        )
+        assert await service.totp_status() == (True, False, True)
+
+        with pytest.raises(AuthenticationRejected):
+            await service.begin_totp_setup(admin_token, None)
+        observed_at[0] += timedelta(seconds=30)
+        replacement = await service.begin_totp_setup(
+            admin_token,
+            totp_at(first_secret, observed_at[0]),
+        )
+        observed_at[0] += timedelta(seconds=30)
+        assert await service.confirm_totp_setup(
+            replacement.setup_id,
+            totp_at(replacement_secret, observed_at[0]),
+        )
+        assert await service.totp_status() == (True, False, True)
     finally:
         await database.dispose()

@@ -416,29 +416,66 @@ class AuthStateRepository:
                 raise RuntimeError("authentication state singleton is missing")
             return state
 
-    async def enable_totp(
+    async def configure_totp(
         self,
         encrypted: EncryptedSecret,
         counter: int,
         *,
-        expected_epoch: int | None = None,
-        expected_generation: int | None = None,
+        expected_epoch: int,
+        expected_generation: int,
+        enabled: bool,
     ) -> bool:
         observed_at = datetime.now(UTC)
         async with self._sessions() as session:
-            statement = update(AuthenticationState).where(AuthenticationState.id == 1)
-            if expected_epoch is not None:
-                statement = statement.where(AuthenticationState.epoch == expected_epoch)
-            if expected_generation is not None:
-                statement = statement.where(
-                    AuthenticationState.totp_generation == expected_generation
-                )
             result = await session.execute(
-                statement.values(
+                update(AuthenticationState)
+                .where(
+                    AuthenticationState.id == 1,
+                    AuthenticationState.epoch == expected_epoch,
+                    AuthenticationState.totp_generation == expected_generation,
+                )
+                .values(
                     totp_ciphertext=encrypted.ciphertext,
                     totp_nonce=encrypted.nonce,
                     totp_key_version=encrypted.key_version,
                     totp_aad_version=encrypted.aad_version,
+                    totp_enabled_at=observed_at if enabled else None,
+                    totp_last_accepted_counter=counter,
+                    totp_generation=AuthenticationState.totp_generation + 1,
+                    updated_at=observed_at,
+                )
+                .returning(AuthenticationState.id)
+            )
+            updated = result.scalar_one_or_none() is not None
+            await session.commit()
+            return updated
+
+    async def enable_totp_protection(
+        self,
+        counter: int,
+        *,
+        expected_epoch: int,
+        expected_generation: int,
+    ) -> bool:
+        observed_at = datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AuthenticationState)
+                .where(
+                    AuthenticationState.id == 1,
+                    AuthenticationState.epoch == expected_epoch,
+                    AuthenticationState.totp_generation == expected_generation,
+                    AuthenticationState.totp_ciphertext.is_not(None),
+                    AuthenticationState.totp_nonce.is_not(None),
+                    AuthenticationState.totp_key_version.is_not(None),
+                    AuthenticationState.totp_aad_version.is_not(None),
+                    AuthenticationState.totp_enabled_at.is_(None),
+                    or_(
+                        AuthenticationState.totp_last_accepted_counter.is_(None),
+                        AuthenticationState.totp_last_accepted_counter < counter,
+                    ),
+                )
+                .values(
                     totp_enabled_at=observed_at,
                     totp_last_accepted_counter=counter,
                     totp_generation=AuthenticationState.totp_generation + 1,
@@ -446,13 +483,11 @@ class AuthStateRepository:
                 )
                 .returning(AuthenticationState.id)
             )
-            updated = result.scalar_one_or_none()
-            if updated is None and expected_epoch is None:
-                raise RuntimeError("authentication state singleton is missing")
+            enabled_now = result.scalar_one_or_none() is not None
             await session.commit()
-            return updated is not None
+            return enabled_now
 
-    async def disable_totp(
+    async def disable_totp_protection(
         self,
         *,
         expected_epoch: int,
@@ -469,12 +504,7 @@ class AuthStateRepository:
                     AuthenticationState.totp_enabled_at.is_not(None),
                 )
                 .values(
-                    totp_ciphertext=None,
-                    totp_nonce=None,
-                    totp_key_version=None,
-                    totp_aad_version=None,
                     totp_enabled_at=None,
-                    totp_last_accepted_counter=None,
                     totp_generation=AuthenticationState.totp_generation + 1,
                     updated_at=observed_at,
                 )
@@ -499,7 +529,10 @@ class AuthStateRepository:
                     AuthenticationState.id == 1,
                     AuthenticationState.epoch == epoch,
                     AuthenticationState.totp_generation == generation,
-                    AuthenticationState.totp_enabled_at.is_not(None),
+                    AuthenticationState.totp_ciphertext.is_not(None),
+                    AuthenticationState.totp_nonce.is_not(None),
+                    AuthenticationState.totp_key_version.is_not(None),
+                    AuthenticationState.totp_aad_version.is_not(None),
                     or_(
                         AuthenticationState.totp_last_accepted_counter.is_(None),
                         AuthenticationState.totp_last_accepted_counter < counter,

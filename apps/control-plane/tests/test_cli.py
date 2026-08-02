@@ -22,9 +22,12 @@ async def _seed_reset_database(database_url: str) -> tuple[UUID, str]:
     box = AesGcmSecretBox(b"r" * 32, key_version=1)
     now = datetime.now(UTC)
     try:
-        await repositories.auth_state.enable_totp(
+        await repositories.auth_state.configure_totp(
             box.encrypt(b"authenticator-secret", purpose="totp-authenticator"),
             counter=42,
+            expected_epoch=1,
+            expected_generation=0,
+            enabled=True,
         )
         await repositories.totp_setups.create(
             box.encrypt(b"pending-secret", purpose="totp-setup"),

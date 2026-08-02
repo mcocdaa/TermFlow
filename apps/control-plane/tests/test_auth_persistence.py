@@ -121,7 +121,13 @@ async def test_totp_secret_and_counter_are_persisted_without_plaintext(
     raw_secret = b"RAW_TOTP_SECRET_MUST_NOT_APPEAR"
     encrypted = secret_box.encrypt(raw_secret, purpose="totp-authenticator")
     try:
-        await repositories.auth_state.enable_totp(encrypted, counter=100)
+        await repositories.auth_state.configure_totp(
+            encrypted,
+            counter=100,
+            expected_epoch=1,
+            expected_generation=0,
+            enabled=True,
+        )
         state = await repositories.auth_state.get()
         assert state.totp_ciphertext == encrypted.ciphertext
         assert state.totp_nonce == encrypted.nonce
@@ -170,11 +176,23 @@ async def test_old_totp_generation_cannot_advance_a_reconfigured_authenticator(
     repositories = RepositoryBundle(database.session_factory)
     try:
         first = secret_box.encrypt(b"first", purpose="totp-authenticator")
-        await repositories.auth_state.enable_totp(first, counter=10, expected_epoch=1)
+        await repositories.auth_state.configure_totp(
+            first,
+            counter=10,
+            expected_epoch=1,
+            expected_generation=0,
+            enabled=True,
+        )
         first_state = await repositories.auth_state.get()
 
         second = secret_box.encrypt(b"second", purpose="totp-authenticator")
-        await repositories.auth_state.enable_totp(second, counter=20, expected_epoch=1)
+        await repositories.auth_state.configure_totp(
+            second,
+            counter=20,
+            expected_epoch=1,
+            expected_generation=first_state.totp_generation,
+            enabled=True,
+        )
         second_state = await repositories.auth_state.get()
         assert second_state.totp_generation == first_state.totp_generation + 1
 
@@ -196,7 +214,7 @@ async def test_old_totp_generation_cannot_advance_a_reconfigured_authenticator(
 
 
 @pytest.mark.asyncio
-async def test_totp_enable_and_disable_require_the_expected_generation(
+async def test_totp_configuration_and_protection_transitions_are_atomic(
     tmp_path,
     secret_box: AesGcmSecretBox,
 ) -> None:
@@ -205,32 +223,58 @@ async def test_totp_enable_and_disable_require_the_expected_generation(
     repositories = RepositoryBundle(database.session_factory)
     try:
         encrypted = secret_box.encrypt(b"first", purpose="totp-authenticator")
-        assert await repositories.auth_state.enable_totp(
+        assert await repositories.auth_state.configure_totp(
             encrypted,
             counter=10,
             expected_epoch=1,
             expected_generation=0,
+            enabled=False,
         )
-        assert not await repositories.auth_state.enable_totp(
+        configured = await repositories.auth_state.get()
+        assert configured.totp_ciphertext == encrypted.ciphertext
+        assert configured.totp_enabled_at is None
+        assert configured.totp_last_accepted_counter == 10
+
+        assert not await repositories.auth_state.configure_totp(
             encrypted,
             counter=11,
             expected_epoch=1,
             expected_generation=0,
+            enabled=False,
         )
-        state = await repositories.auth_state.get()
-        assert not await repositories.auth_state.disable_totp(
-            expected_epoch=state.epoch,
-            expected_generation=state.totp_generation - 1,
+        assert not await repositories.auth_state.enable_totp_protection(
+            counter=10,
+            expected_epoch=configured.epoch,
+            expected_generation=configured.totp_generation,
         )
-        assert await repositories.auth_state.disable_totp(
-            expected_epoch=state.epoch,
-            expected_generation=state.totp_generation,
+        assert await repositories.auth_state.enable_totp_protection(
+            counter=11,
+            expected_epoch=configured.epoch,
+            expected_generation=configured.totp_generation,
+        )
+        enabled = await repositories.auth_state.get()
+        assert enabled.totp_enabled_at is not None
+        assert enabled.totp_last_accepted_counter == 11
+
+        assert not await repositories.auth_state.disable_totp_protection(
+            expected_epoch=enabled.epoch,
+            expected_generation=enabled.totp_generation - 1,
+        )
+        assert await repositories.auth_state.disable_totp_protection(
+            expected_epoch=enabled.epoch,
+            expected_generation=enabled.totp_generation,
         )
         disabled = await repositories.auth_state.get()
         assert disabled.totp_enabled_at is None
-        assert disabled.totp_ciphertext is None
-        assert disabled.totp_last_accepted_counter is None
-        assert disabled.totp_generation == state.totp_generation + 1
+        assert disabled.totp_ciphertext == encrypted.ciphertext
+        assert disabled.totp_nonce == encrypted.nonce
+        assert disabled.totp_last_accepted_counter == 11
+        assert disabled.totp_generation == enabled.totp_generation + 1
+
+        assert await repositories.auth_state.reset_and_increment_epoch() == 2
+        reset = await repositories.auth_state.get()
+        assert reset.totp_ciphertext is None
+        assert reset.totp_last_accepted_counter is None
     finally:
         await database.dispose()
 
@@ -247,10 +291,12 @@ async def test_stale_totp_setup_cannot_reenable_after_epoch_reset(
     try:
         assert await repositories.auth_state.reset_and_increment_epoch() == 2
         assert (
-            await repositories.auth_state.enable_totp(
+            await repositories.auth_state.configure_totp(
                 encrypted,
                 counter=1,
                 expected_epoch=1,
+                expected_generation=1,
+                enabled=True,
             )
             is False
         )
@@ -487,7 +533,13 @@ async def test_reset_increments_epoch_and_invalidates_auth_artifacts_but_keeps_c
     client_id = uuid4()
     encrypted = secret_box.encrypt(b"secret", purpose="totp-authenticator")
     try:
-        await repositories.auth_state.enable_totp(encrypted, counter=42)
+        await repositories.auth_state.configure_totp(
+            encrypted,
+            counter=42,
+            expected_epoch=1,
+            expected_generation=0,
+            enabled=True,
+        )
         pending = secret_box.encrypt(b"pending-reset-secret", purpose="totp-setup")
         await repositories.totp_setups.create(
             pending,
