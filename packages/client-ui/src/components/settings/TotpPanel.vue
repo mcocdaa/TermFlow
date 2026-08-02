@@ -44,7 +44,7 @@ import { useClientRuntime } from '../../runtime'
 
 const emit = defineEmits<{ changed: [TotpStatusResponse] }>()
 const runtime = useClientRuntime()
-const status = reactive<TotpStatusResponse>({ enabled: false, available: false })
+const status = reactive<TotpStatusResponse>({ configured: false, enabled: false, available: false })
 const setup = ref<TotpSetupResponse | null>(null)
 const setupQr = ref('')
 const adminToken = ref('')
@@ -79,7 +79,8 @@ async function disable() {
   busy.value = true; message.value = ''
   try {
     await runtime.api.security.disableTotp({ adminToken: adminToken.value, totpCode: currentCode.value })
-    Object.assign(status, { enabled: false, available: true }); emit('changed', { enabled: false, available: true })
+    const next = { configured: true, enabled: false, available: true }
+    Object.assign(status, next); emit('changed', next)
   } catch (error) { message.value = error instanceof ApiError ? error.message : '无法关闭双重验证。' }
   finally { adminToken.value = ''; currentCode.value = ''; busy.value = false }
 }

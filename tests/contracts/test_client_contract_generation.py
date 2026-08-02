@@ -30,6 +30,7 @@ def test_checked_in_client_contracts_match_python_models(tmp_path: Path) -> None
     assert "export interface BrowserSessionDeleteResponse" in rendered
     assert "export interface BrowserSessionChallengeResponse" in rendered
     assert "export interface TotpStatusResponse" in rendered
+    assert "configured: boolean" in rendered
     assert "export interface TotpSetupResponse" in rendered
     assert "export interface OAuthMetadataResponse" in rendered
     assert "export interface OAuthAuthorizationPreviewResponse" in rendered
@@ -42,6 +43,8 @@ def test_checked_in_client_contracts_match_python_models(tmp_path: Path) -> None
     assert "export interface NativeClientDeleteResponse" in rendered
     assert 'grant_types_supported: ("authorization_code" | "refresh_token")[]' in rendered
     assert "export interface ErrorEnvelope" in rendered
+    assert "server_url: string" in rendered
+    assert "login_command: string" in rendered
     assert "export interface ErrorDetail" in rendered
     assert "export const PROTOCOL_VERSION = 1 as const" in rendered
     assert "expires_at: string" in rendered

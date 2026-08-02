@@ -18,6 +18,7 @@ from termflow_protocol import (
     DashboardMetrics,
     DashboardResponse,
     EnrollmentCreateRequest,
+    EnrollmentCreateResponse,
     EnrollmentMetadataResponse,
     InstallationEnrollResponse,
     NativeClientDeleteResponse,
@@ -43,6 +44,7 @@ from termflow_protocol import (
     TermRenameRequest,
     TotpConfirmRequest,
     TotpDisableRequest,
+    TotpProtectionRequest,
     TotpSetupRequest,
     TotpSetupResponse,
     TotpStatusResponse,
@@ -147,7 +149,9 @@ def test_browser_session_totp_challenge_and_status_are_strict() -> None:
         "challenge_id": str(challenge_id),
         "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
     }
-    assert TotpStatusResponse(enabled=False, available=True).available is True
+    assert TotpStatusResponse(configured=False, enabled=False, available=True).available is True
+    with pytest.raises(ValidationError):
+        TotpStatusResponse(configured=False, enabled=True, available=True)
     with pytest.raises(ValidationError):
         BrowserSessionChallengeResponse(
             status="totp_required",
@@ -164,6 +168,10 @@ def test_browser_session_totp_challenge_and_status_are_strict() -> None:
         (TotpConfirmRequest, {}),
         (
             TotpDisableRequest,
+            {"admin_token": SecretStr("admin-" + "a" * 32)},
+        ),
+        (
+            TotpProtectionRequest,
             {"admin_token": SecretStr("admin-" + "a" * 32)},
         ),
     ],
@@ -206,6 +214,7 @@ def test_submitted_totp_and_admin_credentials_do_not_leak_from_repr() -> None:
         TotpSetupRequest(admin_token=admin_token, totp_code="123456"),
         TotpConfirmRequest(code="123456"),
         TotpDisableRequest(admin_token=admin_token, code="123456"),
+        TotpProtectionRequest(admin_token=admin_token, code="123456"),
         CliTokenRequest(admin_token=admin_token, totp_code="123456"),
     ]
 
@@ -229,6 +238,32 @@ def test_totp_setup_response_exposes_once_only_material_without_repr_leak() -> N
 
     assert response.model_dump()["setup_key"] == setup_key
     assert setup_key not in repr(response)
+
+
+def test_enrollment_response_carries_env_authoritative_server_command() -> None:
+    raw_token = "join-" + "x" * 40
+    response = EnrollmentCreateResponse(
+        token=raw_token,
+        expires_at=datetime.now(UTC),
+        server_url="https://relay.example.com",
+        login_command=(
+            "termflow login --server https://relay.example.com " f"--code {raw_token}"
+        ),
+    )
+
+    assert response.server_url == "https://relay.example.com"
+    assert response.login_command.startswith("termflow login --server")
+    assert response.login_command not in repr(response)
+
+
+def test_totp_status_separates_configuration_from_enforcement() -> None:
+    status = TotpStatusResponse(configured=True, enabled=False, available=True)
+
+    assert status.model_dump() == {
+        "configured": True,
+        "enabled": False,
+        "available": True,
+    }
 
 
 @pytest.mark.parametrize(

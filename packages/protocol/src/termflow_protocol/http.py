@@ -192,6 +192,8 @@ class EnrollmentCreateRequest(HttpModel):
 class EnrollmentCreateResponse(HttpModel):
     token: str = Field(repr=False, min_length=32)
     expires_at: datetime
+    server_url: str = Field(min_length=1, max_length=2048)
+    login_command: str = Field(repr=False, min_length=1, max_length=4096)
 
 
 class EnrollmentMetadataResponse(HttpModel):
@@ -278,8 +280,15 @@ class BrowserSessionTotpRequest(HttpModel):
 
 
 class TotpStatusResponse(HttpModel):
+    configured: bool
     enabled: bool
     available: bool
+
+    @model_validator(mode="after")
+    def enabled_requires_configuration(self) -> "TotpStatusResponse":
+        if self.enabled and not self.configured:
+            raise ValueError("enabled TOTP must be configured")
+        return self
 
 
 class TotpSetupRequest(HttpModel):
@@ -337,7 +346,7 @@ class TotpConfirmRequest(HttpModel):
         return validate_totp_code(value)
 
 
-class TotpDisableRequest(HttpModel):
+class TotpProtectionRequest(HttpModel):
     admin_token: SecretStr
     code: SecretStr
 
@@ -345,6 +354,9 @@ class TotpDisableRequest(HttpModel):
     @classmethod
     def valid_totp_code(cls, value: object) -> str | SecretStr:
         return validate_totp_code(value)
+
+
+TotpDisableRequest = TotpProtectionRequest
 
 
 class OAuthPublicJwk(HttpModel):

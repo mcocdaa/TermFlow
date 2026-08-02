@@ -32,6 +32,7 @@ export interface BrowserSessionChallengeResponse {
 }
 
 export interface TotpStatusResponse {
+  configured: boolean
   enabled: boolean
   available: boolean
 }
@@ -181,6 +182,8 @@ export interface DashboardResponse {
 export interface EnrollmentCreateResponse {
   token: string
   expires_at: string
+  server_url: string
+  login_command: string
 }
 
 export interface PaneSnapshot {
