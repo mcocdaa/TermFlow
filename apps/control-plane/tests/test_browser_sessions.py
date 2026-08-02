@@ -1,10 +1,16 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
-from termflow_control_plane.app import create_app
+from termflow_control_plane.app import _authentication_epoch_loop, create_app
 from termflow_control_plane.auth.sessions import BrowserSessionStore
 from termflow_control_plane.config import Settings
+from termflow_control_plane.connections.event_hub import EventHub
+from termflow_control_plane.connections.terminal_hub import TerminalHub
 from termflow_control_plane.persistence.database import Database
+from termflow_control_plane.persistence.repositories import RepositoryBundle
 
 ADMIN_TOKEN = "admin-token-that-is-long-enough-for-tests"
 DEV_ORIGIN = "http://127.0.0.1:8000"
@@ -118,6 +124,52 @@ def test_http_cookie_is_rejected_when_persisted_auth_epoch_changes(client) -> No
 
     assert client.get("/api/v1/admin/session").status_code == 401
     assert client.app.state.browser_sessions.live_count == 0
+
+
+@pytest.mark.asyncio
+async def test_epoch_watcher_syncs_hubs_when_cookie_request_advanced_store_first(
+    tmp_path,
+) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'epoch-race.db'}")
+    await database.initialize()
+    repositories = RepositoryBundle(database.session_factory)
+    sessions = BrowserSessionStore(ttl=timedelta(minutes=5), capacity=2)
+    terminal_hub = TerminalHub(queue_max_messages=2, queue_max_bytes=1024)
+    event_hub = EventHub(queue_size=2)
+    terminal = await terminal_hub.register(uuid4(), session_key=None, auth_epoch=1)
+    subscriber = await event_hub.subscribe(instance_id=None, auth_epoch=1)
+    stop = asyncio.Event()
+    watcher: asyncio.Task[None] | None = None
+    try:
+        assert await repositories.auth_state.reset_and_increment_epoch() == 2
+        sessions.synchronize_epoch(2)
+        watcher = asyncio.create_task(
+            _authentication_epoch_loop(
+                repositories,
+                sessions,
+                terminal_hub,
+                event_hub,
+                stop,
+            )
+        )
+        await asyncio.sleep(1.1)
+
+        assert terminal.terminated
+        assert subscriber.closed.is_set()
+        replacement = await terminal_hub.register(
+            uuid4(),
+            session_key=None,
+            auth_epoch=2,
+        )
+        assert replacement.auth_epoch == 2
+        assert not (
+            await event_hub.subscribe(instance_id=None, auth_epoch=2)
+        ).closed.is_set()
+    finally:
+        stop.set()
+        if watcher is not None:
+            await watcher
+        await database.dispose()
 
 
 def test_https_uses_secure_host_cookie(tmp_path) -> None:

@@ -114,8 +114,6 @@ async def _authentication_epoch_loop(
         if stop.is_set():
             return
         state = await repositories.auth_state.get()
-        if state.epoch == browser_sessions.epoch:
-            continue
         browser_sessions.synchronize_epoch(state.epoch)
         await terminal_hub.synchronize_epoch(state.epoch)
         await event_hub.synchronize_epoch(state.epoch)
