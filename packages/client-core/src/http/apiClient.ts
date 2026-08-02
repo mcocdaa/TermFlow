@@ -6,7 +6,7 @@ import { createDashboardApi } from '../api/dashboard'
 import { createSessionApi } from '../api/session'
 import { createTermsApi } from '../api/terms'
 import { ApiError, type ApiErrorKind } from './apiError'
-import { HttpTransportError, type ApiRequestOptions, type HttpMethod, type HttpRequest, type HttpTransport } from './types'
+import { HttpTransportError, type ApiRequestOptions, type ApiResponse, type HttpMethod, type HttpRequest, type HttpResponse, type HttpTransport } from './types'
 
 function kindForStatus(status: number): ApiErrorKind {
   if (status === 401 || status === 403) return 'authentication'
@@ -34,32 +34,61 @@ function transportFailure(error: unknown): ApiError {
   return new ApiError('offline')
 }
 
-function httpRequest(method: HttpMethod, body: unknown, signal: AbortSignal | undefined): HttpRequest {
+function httpRequest(method: HttpMethod, headers: Readonly<Record<string, string>> | undefined, body: unknown, signal: AbortSignal | undefined): HttpRequest {
   const request: HttpRequest = { method }
+  if (headers !== undefined) request.headers = headers
   if (body !== undefined) request.body = body
   if (signal !== undefined) request.signal = signal
   return request
 }
 
 export function createApiClient(transport: HttpTransport) {
-  async function request<T = void>(path: `/${string}`, options: ApiRequestOptions = {}): Promise<T> {
+  async function requestTransport(path: `/${string}`, options: ApiRequestOptions): Promise<HttpResponse> {
     let response
     try {
-      response = await transport.request(path, httpRequest(options.method ?? 'GET', options.body, options.signal))
+      response = await transport.request(path, httpRequest(options.method ?? 'GET', options.headers, options.body, options.signal))
     } catch (error) {
       throw transportFailure(error)
     }
 
     if (response.status < 200 || response.status >= 300) {
       const details = publicErrorDetails(response.body)
-      throw new ApiError(kindForStatus(response.status), { status: response.status, ...details })
+      const retryAfter = response.headers.get('retry-after')
+      const dpopNonce = response.headers.get('dpop-nonce')
+      const parsedRetryAfter = retryAfter === null ? undefined : Number.parseInt(retryAfter, 10)
+      throw new ApiError(kindForStatus(response.status), {
+        status: response.status,
+        ...details,
+        ...(parsedRetryAfter !== undefined && Number.isFinite(parsedRetryAfter) ? { retryAfterSeconds: parsedRetryAfter } : {}),
+        ...(dpopNonce === null ? {} : { dpopNonce }),
+      })
     }
+    return response
+  }
+
+  async function requestResponse<T = void>(path: `/${string}`, options: ApiRequestOptions = {}): Promise<ApiResponse<T>> {
+    const response = await requestTransport(path, options)
+    const dpopNonce = response.headers.get('dpop-nonce')
+    const retryAfter = response.headers.get('retry-after')
+    return {
+      status: response.status,
+      headers: {
+        ...(dpopNonce === null ? {} : { dpopNonce }),
+        ...(retryAfter === null ? {} : { retryAfter }),
+      },
+      body: (response.status === 204 ? undefined : response.body) as T,
+    }
+  }
+
+  async function request<T = void>(path: `/${string}`, options: ApiRequestOptions = {}): Promise<T> {
+    const response = await requestResponse<T>(path, options)
     if (response.status === 204) return undefined as T
     return response.body as T
   }
 
   return {
     request,
+    requestResponse,
     sessions: createSessionApi(request),
     dashboard: createDashboardApi(request),
     computers: createComputersApi(request),
