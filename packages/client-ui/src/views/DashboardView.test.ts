@@ -124,4 +124,27 @@ describe('DashboardView', () => {
     expect(signal?.aborted).toBe(true)
     wrapper.unmount()
   })
+
+  it('does not reschedule polling after the view is unmounted', async () => {
+    let signal: AbortSignal | undefined
+    const getDashboard = vi.fn((nextSignal?: AbortSignal) => {
+      signal = nextSignal
+      return new Promise<DashboardSnapshot>((_resolve, reject) => {
+        nextSignal?.addEventListener('abort', () => reject(new Error('aborted')))
+      })
+    })
+    const setTimeout = vi.fn(() => 7)
+    const runtime = createFakeRuntime({
+      api: { dashboard: { get: getDashboard } } as unknown as ClientRuntime['api'],
+      clock: { now: () => 0, setTimeout, clearTimeout: vi.fn(), setInterval: () => 1, clearInterval: () => undefined },
+    })
+    const wrapper = await mountDashboard(runtime)
+    await flushPromises()
+
+    wrapper.unmount()
+    await flushPromises()
+
+    expect(signal?.aborted).toBe(true)
+    expect(setTimeout).not.toHaveBeenCalled()
+  })
 })

@@ -13,6 +13,7 @@ export function useDashboard() {
   let controller: AbortController | null = null
   let timer: unknown | null = null
   let unsubscribeVisibility: (() => void) | null = null
+  let disposed = false
 
   function clearTimer() {
     if (timer !== null) runtime.clock.clearTimeout(timer)
@@ -20,7 +21,7 @@ export function useDashboard() {
   }
 
   async function load() {
-    if (runtime.visibility.isHidden()) return
+    if (disposed || runtime.visibility.isHidden()) return
     controller?.abort()
     controller = new AbortController()
     try {
@@ -31,7 +32,7 @@ export function useDashboard() {
     } finally {
       loading.value = false
       clearTimer()
-      if (!runtime.visibility.isHidden()) timer = runtime.clock.setTimeout(() => { void load() }, POLL_INTERVAL_MS)
+      if (!disposed && !runtime.visibility.isHidden()) timer = runtime.clock.setTimeout(() => { void load() }, POLL_INTERVAL_MS)
     }
   }
 
@@ -47,6 +48,7 @@ export function useDashboard() {
     void load()
   })
   onBeforeUnmount(() => {
+    disposed = true
     controller?.abort()
     clearTimer()
     unsubscribeVisibility?.()
