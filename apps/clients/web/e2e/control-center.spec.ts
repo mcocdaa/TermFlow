@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 
 const adminToken = process.env.TERMFLOW_E2E_ADMIN_TOKEN ?? ''
 const termId = process.env.TERMFLOW_E2E_TERM_ID ?? ''
@@ -64,6 +64,7 @@ async function mobilePageGeometry(page: Page) {
     const body = document.body
     const titlebar = document.querySelector<HTMLElement>('.terminal-titlebar')!
     const frame = document.querySelector<HTMLElement>('.terminal-frame')!
+    const keybarShell = document.querySelector<HTMLElement>('.mobile-keybar-shell')!
     const keybar = document.querySelector<HTMLElement>('.mobile-keybar')!
     const rectangle = (element: HTMLElement) => {
       const box = element.getBoundingClientRect()
@@ -80,11 +81,36 @@ async function mobilePageGeometry(page: Page) {
       visualTop: window.visualViewport?.offsetTop ?? 0,
       titlebar: rectangle(titlebar),
       frame: rectangle(frame),
+      keybarShell: rectangle(keybarShell),
       keybar: rectangle(keybar),
       keybarScrollLeft: keybar.scrollLeft,
     }
   })
 }
+
+async function expectInsideVisualViewport(locator: Locator, page: Page) {
+  const box = await locator.boundingBox()
+  expect(box).not.toBeNull()
+  const viewport = await page.evaluate(() => ({
+    left: window.visualViewport?.offsetLeft ?? 0,
+    top: window.visualViewport?.offsetTop ?? 0,
+    width: window.visualViewport?.width ?? window.innerWidth,
+    height: window.visualViewport?.height ?? window.innerHeight,
+  }))
+  expect(box!.x).toBeGreaterThanOrEqual(viewport.left - 1)
+  expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.left + viewport.width + 1)
+  expect(box!.y).toBeGreaterThanOrEqual(viewport.top - 1)
+  expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.top + viewport.height + 1)
+}
+
+const buttonVisualStyle = (trigger: Locator) => trigger.evaluate((element) => {
+  const style = getComputedStyle(element)
+  return {
+    backgroundColor: style.backgroundColor,
+    color: style.color,
+    borderColor: style.borderColor,
+  }
+})
 
 async function panesForTerm(page: Page): Promise<PaneGeometry[]> {
   const response = await page.request.get(`/api/v1/instances/${termId}/topology`)
@@ -330,7 +356,7 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
   } else {
     await expect(computerName).toBeHidden()
     await expect(page.getByRole('button', { name: '显示设置' })).toBeVisible()
-    await expect(page.getByRole('button', { name: '聚焦 Pane' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '聚焦 Pane' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'tmux 操作' })).toBeVisible()
     await expect(page.getByRole('button', { name: '锁定画布' })).toHaveAttribute('aria-pressed', 'false')
     await expect(page.getByRole('button', { name: '快捷操作' })).toHaveCount(0)
@@ -365,18 +391,15 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
   const displayTrigger = page.getByRole('button', { name: /^显示/ })
   await displayTrigger.hover()
   await expect(page.getByRole('menu', { name: '终端显示比例' })).toBeHidden()
+  const closedDisplayStyle = testInfo.project.name === 'desktop' ? null : await buttonVisualStyle(displayTrigger)
   await displayTrigger.click()
   if (testInfo.project.name === 'desktop') {
     const tmuxTrigger = page.getByRole('button', { name: /tmux 操作/i })
-    const focusTrigger = page.getByRole('button', { name: /聚焦 Pane/i })
     await tmuxTrigger.click()
     await expect(page.getByRole('menu', { name: '终端显示比例' })).toBeHidden()
     await expect(page.getByRole('menu', { name: /tmux 操作/i })).toBeVisible()
-    await focusTrigger.click()
-    await expect(page.getByRole('menu', { name: /tmux 操作/i })).toBeHidden()
-    await expect(page.getByRole('menu', { name: /聚焦 Pane/i })).toBeVisible()
     await displayTrigger.click()
-    await expect(page.getByRole('menu', { name: /聚焦 Pane/i })).toBeHidden()
+    await expect(page.getByRole('menu', { name: /tmux 操作/i })).toBeHidden()
     await expect(page.getByRole('menu', { name: '终端显示比例' })).toBeVisible()
 
     await page.locator('.terminal-host textarea').focus()
@@ -453,9 +476,24 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
     await page.keyboard.press('Enter')
     await expect(page.locator('.xterm')).toHaveClass(/enable-mouse-events/)
     await displayTrigger.click()
+  } else {
+    const displayMenu = page.getByRole('menu', { name: '终端显示比例' })
+    await expect(displayTrigger).toHaveAttribute('aria-expanded', 'true')
+    await expect(displayMenu).toBeVisible()
+    await expectInsideVisualViewport(displayMenu, page)
+    expect(await buttonVisualStyle(displayTrigger)).not.toEqual(closedDisplayStyle)
+    await displayTrigger.click()
+    await expect(displayTrigger).toHaveAttribute('aria-expanded', 'false')
+    await expect(displayMenu).toBeHidden()
+    await expect.poll(() => buttonVisualStyle(displayTrigger)).toEqual(closedDisplayStyle)
+    await displayTrigger.click()
   }
   await page.getByRole('menuitemradio', { name: '50%' }).click()
   await expect(page.locator('.terminal-frame')).toHaveAttribute('data-display-mode', 'scale-50')
+  if (closedDisplayStyle) {
+    await expect(displayTrigger).toHaveAttribute('aria-expanded', 'false')
+    await expect.poll(() => buttonVisualStyle(displayTrigger)).toEqual(closedDisplayStyle)
+  }
 
   let mobilePanes: [PaneGeometry, PaneGeometry] | null = null
   if (testInfo.project.name === 'desktop') {
@@ -491,11 +529,18 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
     await expectWordSelection(page, terminalOutputFrames, rightPane, 'FIFTY')
   } else {
     mobilePanes = await ensureTwoPanes(page)
-    await page.getByRole('button', { name: 'tmux 操作' }).click()
+    const tmuxTrigger = page.getByRole('button', { name: 'tmux 操作' })
+    const closedTmuxStyle = await buttonVisualStyle(tmuxTrigger)
+    await tmuxTrigger.click()
+    await expect(tmuxTrigger).toHaveAttribute('aria-expanded', 'true')
+    await expectInsideVisualViewport(page.getByRole('menu', { name: /tmux 操作/i }), page)
+    expect(await buttonVisualStyle(tmuxTrigger)).not.toEqual(closedTmuxStyle)
     await expect(page.getByRole('menuitem', { name: '选择左侧 Pane' })).toBeVisible()
     await expect(page.getByRole('menuitem', { name: '选择右侧 Pane' })).toBeVisible()
-    await page.getByRole('button', { name: 'tmux 操作' }).click()
+    await tmuxTrigger.click()
+    await expect(tmuxTrigger).toHaveAttribute('aria-expanded', 'false')
     await expect(page.getByRole('menu', { name: /tmux 操作/i })).toBeHidden()
+    await expect.poll(() => buttonVisualStyle(tmuxTrigger)).toEqual(closedTmuxStyle)
 
     await page.getByRole('button', { name: 'Ctrl' }).click()
     await expect(page.getByRole('button', { name: 'Ctrl' })).toHaveAttribute('aria-pressed', 'true')
@@ -505,8 +550,6 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
 
     await displayTrigger.click()
     await page.getByRole('menuitemradio', { name: '100% 实际字号' }).click()
-    await page.getByRole('button', { name: '聚焦 Pane' }).click()
-    await page.getByRole('menuitem', { name: '显示完整终端' }).click()
     const mobileFrame = page.locator('.terminal-frame')
     const mobileGrid = page.locator('.terminal-grid')
     const frameBox = await mobileFrame.boundingBox()
@@ -599,13 +642,17 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
     const screen = document.querySelector<HTMLElement>('.xterm-screen')!
     const xtermViewport = document.querySelector<HTMLElement>('.xterm-viewport')!
     const titlebar = document.querySelector<HTMLElement>('.terminal-titlebar')!
+    const rectangle = (element: HTMLElement) => {
+      const box = element.getBoundingClientRect()
+      return { left: box.left, top: box.top, right: box.right, bottom: box.bottom }
+    }
     return {
       documentOverflow: documentElement.scrollHeight - documentElement.clientHeight,
       viewOverflow: view.scrollHeight - view.clientHeight,
-      frameOverflow: frame.scrollHeight - frame.clientHeight,
       frameOverflowY: getComputedStyle(frame).overflowY,
-      frameClientHeight: frame.clientHeight,
-      frameScrollHeight: frame.scrollHeight,
+      frame: rectangle(frame),
+      grid: rectangle(grid),
+      screen: rectangle(screen),
       contentHeight: content.getBoundingClientRect().height,
       gridHeight: grid.getBoundingClientRect().height,
       gridTransform: getComputedStyle(grid).transform,
@@ -618,31 +665,56 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
   })
   expect(layout.documentOverflow).toBeLessThanOrEqual(1)
   expect(layout.viewOverflow).toBeLessThanOrEqual(1)
-  expect(layout.frameOverflow, JSON.stringify(layout)).toBeLessThanOrEqual(1)
   expect(layout.frameOverflowY).toBe('hidden')
   expect(layout.xtermOverflowY).toBe('hidden')
   expect(layout.titlebarJustify).toBe('flex-start')
+  expect(layout.grid.left).toBeGreaterThanOrEqual(layout.frame.left - 1)
+  expect(layout.grid.top).toBeGreaterThanOrEqual(layout.frame.top - 1)
+  expect(layout.grid.right).toBeLessThanOrEqual(layout.frame.right + 1)
+  expect(layout.grid.bottom).toBeLessThanOrEqual(layout.frame.bottom + 1)
+  expect(layout.screen.left).toBeGreaterThanOrEqual(layout.frame.left - 1)
+  expect(layout.screen.top).toBeGreaterThanOrEqual(layout.frame.top - 1)
+  expect(layout.screen.right).toBeLessThanOrEqual(layout.frame.right + 1)
+  expect(layout.screen.bottom).toBeLessThanOrEqual(layout.frame.bottom + 1)
 
   if (testInfo.project.name !== 'desktop') {
     const mobileLayout = await page.evaluate(() => {
       const view = document.querySelector<HTMLElement>('.terminal-view')!
       const frame = document.querySelector<HTMLElement>('.terminal-frame')!
+      const keybarShell = document.querySelector<HTMLElement>('.mobile-keybar-shell')!
       const keybar = document.querySelector<HTMLElement>('.mobile-keybar')!
       const frameBox = frame.getBoundingClientRect()
+      const keybarShellBox = keybarShell.getBoundingClientRect()
       const keybarBox = keybar.getBoundingClientRect()
+      const visualViewport = window.visualViewport
       return {
         viewOverflow: view.scrollHeight - view.clientHeight,
         frameBottom: frameBox.bottom,
+        keybarShellTop: keybarShellBox.top,
+        keybarShellBottom: keybarShellBox.bottom,
+        keybarShellLeft: keybarShellBox.left,
+        keybarShellRight: keybarShellBox.right,
         keybarTop: keybarBox.top,
         keybarBottom: keybarBox.bottom,
-        keybarPosition: getComputedStyle(keybar).position,
-        viewportHeight: window.innerHeight,
+        keybarLeft: keybarBox.left,
+        keybarRight: keybarBox.right,
+        keybarShellPosition: getComputedStyle(keybarShell).position,
+        viewportLeft: visualViewport?.offsetLeft ?? 0,
+        viewportWidth: visualViewport?.width ?? window.innerWidth,
+        viewportHeight: visualViewport?.height ?? window.innerHeight,
       }
     })
     expect(mobileLayout.viewOverflow).toBeLessThanOrEqual(1)
-    expect(mobileLayout.frameBottom).toBeLessThanOrEqual(mobileLayout.keybarTop + 1)
-    expect(mobileLayout.keybarBottom).toBeLessThanOrEqual(mobileLayout.viewportHeight + 1)
-    expect(mobileLayout.keybarPosition).toBe('static')
+    expect(mobileLayout.frameBottom).toBeLessThanOrEqual(mobileLayout.keybarShellTop + 1)
+    expect(mobileLayout.keybarShellBottom).toBeGreaterThanOrEqual(mobileLayout.viewportHeight - 1)
+    expect(mobileLayout.keybarShellBottom).toBeLessThanOrEqual(mobileLayout.viewportHeight + 1)
+    expect(mobileLayout.keybarShellLeft).toBeGreaterThanOrEqual(mobileLayout.viewportLeft - 1)
+    expect(mobileLayout.keybarShellRight).toBeLessThanOrEqual(mobileLayout.viewportLeft + mobileLayout.viewportWidth + 1)
+    expect(mobileLayout.keybarLeft).toBeGreaterThanOrEqual(mobileLayout.keybarShellLeft - 1)
+    expect(mobileLayout.keybarRight).toBeLessThanOrEqual(mobileLayout.keybarShellRight + 1)
+    expect(mobileLayout.keybarTop).toBeGreaterThanOrEqual(mobileLayout.keybarShellTop - 1)
+    expect(mobileLayout.keybarBottom).toBeLessThanOrEqual(mobileLayout.keybarShellBottom + 1)
+    expect(mobileLayout.keybarShellPosition).toBe('static')
 
     const keybar = page.locator('.mobile-keybar')
     await keybar.evaluate((element) => { element.scrollLeft = 0 })
@@ -663,8 +735,15 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
     expect(pageAfterVerticalKeybarDrag).toEqual(pageBeforeKeybarDrag)
 
     await dispatchTouchSequence(page, [
-      { type: 'touchStart', points: [{ id: 21, x: keybarBox!.x + keybarBox!.width - 20, y: keybarCenter.y }] },
-      { type: 'touchMove', points: [{ id: 21, x: keybarBox!.x + 20, y: keybarCenter.y }] },
+      { type: 'touchStart', points: [{ id: 21, x: keybarBox!.x + 20, y: keybarCenter.y }] },
+      { type: 'touchMove', points: [{ id: 21, x: keybarBox!.x + keybarBox!.width - 20, y: keybarCenter.y }] },
+      { type: 'touchEnd', points: [] },
+    ])
+    expect(await mobilePageGeometry(page)).toEqual(pageAfterVerticalKeybarDrag)
+
+    await dispatchTouchSequence(page, [
+      { type: 'touchStart', points: [{ id: 22, x: keybarBox!.x + keybarBox!.width - 20, y: keybarCenter.y }] },
+      { type: 'touchMove', points: [{ id: 22, x: keybarBox!.x + 20, y: keybarCenter.y }] },
       { type: 'touchEnd', points: [] },
     ])
     const pageAfterHorizontalKeybarDrag = await mobilePageGeometry(page)
@@ -675,8 +754,17 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
     if (keybarOverflow > 1) expect(afterScroll).toBeGreaterThan(0)
     else expect(afterScroll).toBe(0)
     expect(fixedAfterHorizontalDrag).toEqual(fixedBeforeHorizontalDrag)
-    expect(pageAfterHorizontalKeybarDrag.keybar.bottom)
-      .toBeLessThanOrEqual((await page.evaluate(() => window.visualViewport?.height ?? window.innerHeight)) + 1)
+    expect(pageAfterHorizontalKeybarDrag.keybarShell.bottom)
+      .toBeGreaterThanOrEqual((await page.evaluate(() => window.visualViewport?.height ?? window.innerHeight)) - 1)
+
+    await keybar.evaluate((element) => { element.scrollLeft = element.scrollWidth })
+    const pageAtRightBoundary = await mobilePageGeometry(page)
+    await dispatchTouchSequence(page, [
+      { type: 'touchStart', points: [{ id: 23, x: keybarBox!.x + keybarBox!.width - 20, y: keybarCenter.y }] },
+      { type: 'touchMove', points: [{ id: 23, x: keybarBox!.x + 20, y: keybarCenter.y }] },
+      { type: 'touchEnd', points: [] },
+    ])
+    expect(await mobilePageGeometry(page)).toEqual(pageAtRightBoundary)
 
     if (!mobilePanes) mobilePanes = await ensureTwoPanes(page)
     const currentPanes = (await panesForTerm(page)).toSorted((left, right) => left.left - right.left)
