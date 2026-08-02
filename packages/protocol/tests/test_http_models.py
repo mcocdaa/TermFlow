@@ -1,3 +1,5 @@
+import base64
+import json
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -46,14 +48,21 @@ from termflow_protocol import (
     TotpStatusResponse,
 )
 
+
+def base64url(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
 VALID_JWK = {
     "kty": "EC",
     "crv": "P-256",
     "alg": "ES256",
-    "x": "A" * 43,
-    "y": "B" * 43,
+    "x": base64url(bytes(32)),
+    "y": base64url(bytes([1]) * 32),
 }
 VALID_SCOPES = ["terminal.read", "terminal.write"]
+VALID_SETUP_KEY = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+VALID_THUMBPRINT = base64url(bytes([2]) * 32)
 
 
 def valid_authorization_request(**overrides: object) -> dict[str, object]:
@@ -66,7 +75,7 @@ def valid_authorization_request(**overrides: object) -> dict[str, object]:
         "state": "state-" + "s" * 38,
         "code_challenge": "c" * 43,
         "code_challenge_method": "S256",
-        "dpop_jkt": "d" * 43,
+        "dpop_jkt": VALID_THUMBPRINT,
         "public_jwk": VALID_JWK,
         "scopes": VALID_SCOPES,
     }
@@ -172,6 +181,24 @@ def test_totp_codes_are_exactly_six_ascii_digits(
         model(code=code, **payload)  # type: ignore[operator]
 
 
+@pytest.mark.parametrize("value", [123456, None, [], {}])
+def test_totp_json_types_fail_as_validation_errors(value: object) -> None:
+    with pytest.raises(ValidationError):
+        BrowserSessionTotpRequest.model_validate_json(json.dumps({"code": value}))
+
+
+@pytest.mark.parametrize("value", [123456, None, [], {}])
+def test_pkce_json_types_fail_as_validation_errors(value: object) -> None:
+    payload = {
+        "grant_type": "authorization_code",
+        "transaction_id": str(uuid4()),
+        "code_verifier": value,
+        "public_jwk": VALID_JWK,
+    }
+    with pytest.raises(ValidationError):
+        OAuthTokenRequest.model_validate_json(json.dumps(payload))
+
+
 def test_submitted_totp_and_admin_credentials_do_not_leak_from_repr() -> None:
     admin_token = "admin-" + "a" * 40
     requests = [
@@ -189,11 +216,11 @@ def test_submitted_totp_and_admin_credentials_do_not_leak_from_repr() -> None:
 
 
 def test_totp_setup_response_exposes_once_only_material_without_repr_leak() -> None:
-    setup_key = "JBSWY3DPEHPK3PXP"
+    setup_key = VALID_SETUP_KEY
     response = TotpSetupResponse(
         setup_id=uuid4(),
         provisioning_uri=(
-            "otpauth://totp/TermFlow%3Aadmin?secret=JBSWY3DPEHPK3PXP"
+            f"otpauth://totp/TermFlow%3Aadmin?secret={setup_key}"
             "&issuer=TermFlow&algorithm=SHA1&digits=6&period=30"
         ),
         setup_key=setup_key,
@@ -202,6 +229,40 @@ def test_totp_setup_response_exposes_once_only_material_without_repr_leak() -> N
 
     assert response.model_dump()["setup_key"] == setup_key
     assert setup_key not in repr(response)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        f"secret={VALID_SETUP_KEY}&secret=OTHER&issuer=TermFlow&algorithm=SHA1&digits=6&period=30",
+        f"secret={VALID_SETUP_KEY}&algorithm=SHA1&digits=6&period=30",
+        f"secret={VALID_SETUP_KEY}&issuer=TermFlow&algorithm=SHA256&digits=6&period=30",
+        f"secret={VALID_SETUP_KEY}&issuer=TermFlow&algorithm=SHA1&digits=8&period=30",
+        f"secret={VALID_SETUP_KEY}&issuer=TermFlow&algorithm=SHA1&digits=6&period=60",
+        f"secret={VALID_SETUP_KEY}&issuer=TermFlow&algorithm=SHA1&digits=6&period=30&extra=value",
+    ],
+)
+def test_totp_provisioning_uri_requires_unique_fixed_v1_parameters(query: str) -> None:
+    with pytest.raises(ValidationError):
+        TotpSetupResponse(
+            setup_id=uuid4(),
+            provisioning_uri=f"otpauth://totp/TermFlow%3Aadmin?{query}",
+            setup_key=VALID_SETUP_KEY,
+            expires_at=datetime.now(UTC),
+        )
+
+
+def test_totp_provisioning_uri_secret_matches_displayed_setup_key() -> None:
+    with pytest.raises(ValidationError):
+        TotpSetupResponse(
+            setup_id=uuid4(),
+            provisioning_uri=(
+                "otpauth://totp/TermFlow%3Aadmin?secret=FIRST&issuer=TermFlow"
+                "&algorithm=SHA1&digits=6&period=30"
+            ),
+            setup_key="SECOND-SETUP-KEY",
+            expires_at=datetime.now(UTC),
+        )
 
 
 @pytest.mark.parametrize(
@@ -226,6 +287,8 @@ def test_native_authorization_accepts_safe_redirect_uris(redirect_uri: str) -> N
         "termflow://auth/other",
         "termflow://other/callback",
         "termflow://auth/callback?code=leak",
+        "https://mobile.example/oauth/callback?state=not-registered-here",
+        "http://127.0.0.1:49152/oauth/callback?state=not-registered-here",
         "http://example.com:49152/callback",
         "http://127.0.0.1/callback",
         "http://127.0.0.1:8080/callback",
@@ -255,6 +318,12 @@ def test_native_authorization_requires_pkce_s256(field: str, value: str) -> None
         OAuthAuthorizationRequest.model_validate(valid_authorization_request(**{field: value}))
 
 
+@pytest.mark.parametrize("state", ["!" + "s" * 43, "s" * 43 + "!", "s" * 43 + "\n"])
+def test_native_authorization_state_requires_a_full_ascii_match(state: str) -> None:
+    with pytest.raises(ValidationError):
+        OAuthAuthorizationRequest.model_validate(valid_authorization_request(state=state))
+
+
 @pytest.mark.parametrize(
     "jwk",
     [
@@ -264,6 +333,7 @@ def test_native_authorization_requires_pkce_s256(field: str, value: str) -> None
         {**VALID_JWK, "alg": "ES384"},
         {**VALID_JWK, "x": "A" * 42},
         {**VALID_JWK, "y": "not/base64url"},
+        {**VALID_JWK, "x": VALID_JWK["x"][:-1] + "B"},
     ],
 )
 def test_native_authorization_accepts_only_public_es256_p256_jwk(
@@ -317,7 +387,7 @@ def test_oauth_metadata_and_browser_preview_are_public_contracts() -> None:
         client_name="TermFlow Desktop",
         platform="linux",
         client_version="0.2.0",
-        key_fingerprint="d" * 43,
+        key_fingerprint=VALID_THUMBPRINT,
         scopes=VALID_SCOPES,
         redirect_uri="termflow://auth/callback",
         totp_required=True,
@@ -445,7 +515,7 @@ def test_native_client_list_update_and_delete_contracts_are_strict() -> None:
         display_name="TermFlow Phone",
         platform="ios",
         client_version="0.2.0",
-        key_thumbprint="k" * 43,
+        key_thumbprint=VALID_THUMBPRINT,
         scopes=["terminal.read"],
         created_at=now,
         last_used_at=None,

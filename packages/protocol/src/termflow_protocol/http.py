@@ -1,6 +1,7 @@
 """HTTP request and response DTOs for TermFlow V1."""
 
 import base64
+import binascii
 import ipaddress
 import re
 from datetime import datetime
@@ -52,17 +53,33 @@ def validate_client_name(value: str) -> str:
     return value
 
 
-def validate_totp_code(value: str | SecretStr) -> str | SecretStr:
-    raw_value = value.get_secret_value() if isinstance(value, SecretStr) else value
+def validate_totp_code(value: object) -> str | SecretStr:
+    if isinstance(value, SecretStr):
+        raw_value = value.get_secret_value()
+    elif isinstance(value, str):
+        raw_value = value
+    else:
+        raise ValueError("TOTP code must be a string")
     if _ASCII_TOTP.fullmatch(raw_value) is None:
         raise ValueError("TOTP code must contain exactly six ASCII digits")
     return value
 
 
-def validate_pkce_value(value: str | SecretStr) -> str | SecretStr:
-    raw_value = value.get_secret_value() if isinstance(value, SecretStr) else value
+def validate_pkce_value(value: object) -> str | SecretStr:
+    if isinstance(value, SecretStr):
+        raw_value = value.get_secret_value()
+    elif isinstance(value, str):
+        raw_value = value
+    else:
+        raise ValueError("PKCE value must be a string")
     if _PKCE_VALUE.fullmatch(raw_value) is None:
         raise ValueError("PKCE value must be 43-128 unreserved ASCII characters")
+    return value
+
+
+def validate_oauth_state(value: str) -> str:
+    if _OPAQUE_STATE.fullmatch(value) is None:
+        raise ValueError("state must be 16-256 unreserved ASCII characters")
     return value
 
 
@@ -71,10 +88,13 @@ def validate_base64url_256(value: str) -> str:
         raise ValueError("value must be unpadded base64url for 32 bytes")
     try:
         decoded = base64.b64decode(value + "=", altchars=b"-_", validate=True)
-    except ValueError as exc:
+    except (binascii.Error, ValueError) as exc:
         raise ValueError("value must be unpadded base64url for 32 bytes") from exc
     if len(decoded) != 32:
         raise ValueError("value must be unpadded base64url for 32 bytes")
+    canonical = base64.urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii")
+    if canonical != value:
+        raise ValueError("value must use canonical unpadded base64url encoding")
     return value
 
 
@@ -96,8 +116,13 @@ def validate_redirect_uri(value: str) -> str:
         port = parsed.port
     except ValueError as exc:
         raise ValueError("redirect URI is malformed") from exc
-    if parsed.username is not None or parsed.password is not None or parsed.fragment:
-        raise ValueError("redirect URI must not contain credentials or a fragment")
+    if (
+        parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("redirect URI must not contain credentials, a query, or a fragment")
     if parsed.scheme == "https" and parsed.hostname:
         return value
     if parsed.scheme != "http" or not parsed.hostname or port is None:
@@ -119,8 +144,7 @@ def validate_callback_uri(value: str) -> str:
     ):
         raise ValueError("callback URI must contain only state and transaction_id")
     state = query["state"][0]
-    if _OPAQUE_STATE.fullmatch(state) is None:
-        raise ValueError("callback state is malformed")
+    validate_oauth_state(state)
     try:
         UUID(query["transaction_id"][0])
     except ValueError as exc:
@@ -249,7 +273,7 @@ class BrowserSessionTotpRequest(HttpModel):
 
     @field_validator("code", mode="before")
     @classmethod
-    def valid_totp_code(cls, value: str | SecretStr) -> str | SecretStr:
+    def valid_totp_code(cls, value: object) -> str | SecretStr:
         return validate_totp_code(value)
 
 
@@ -264,7 +288,7 @@ class TotpSetupRequest(HttpModel):
 
     @field_validator("totp_code", mode="before")
     @classmethod
-    def valid_totp_code(cls, value: str | SecretStr | None) -> str | SecretStr | None:
+    def valid_totp_code(cls, value: object) -> str | SecretStr | None:
         return validate_totp_code(value) if value is not None else None
 
 
@@ -278,15 +302,30 @@ class TotpSetupResponse(HttpModel):
     @classmethod
     def valid_provisioning_uri(cls, value: str) -> str:
         parsed = urlsplit(value)
-        query = parse_qs(parsed.query)
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        expected_parameters = {"secret", "issuer", "algorithm", "digits", "period"}
         if (
             parsed.scheme != "otpauth"
             or parsed.netloc != "totp"
             or not parsed.path
-            or not query.get("secret", [""])[0]
+            or parsed.fragment
+            or set(query) != expected_parameters
+            or any(len(values) != 1 for values in query.values())
+            or not query["secret"][0]
+            or not query["issuer"][0]
+            or query["algorithm"][0] != "SHA1"
+            or query["digits"][0] != "6"
+            or query["period"][0] != "30"
         ):
-            raise ValueError("provisioning URI must be an otpauth TOTP URI with a secret")
+            raise ValueError("provisioning URI must use the fixed TermFlow V1 TOTP parameters")
         return value
+
+    @model_validator(mode="after")
+    def provisioning_secret_matches_setup_key(self) -> "TotpSetupResponse":
+        secret = parse_qs(urlsplit(self.provisioning_uri).query)["secret"][0]
+        if secret != self.setup_key:
+            raise ValueError("provisioning URI secret must match setup_key")
+        return self
 
 
 class TotpConfirmRequest(HttpModel):
@@ -294,7 +333,7 @@ class TotpConfirmRequest(HttpModel):
 
     @field_validator("code", mode="before")
     @classmethod
-    def valid_totp_code(cls, value: str | SecretStr) -> str | SecretStr:
+    def valid_totp_code(cls, value: object) -> str | SecretStr:
         return validate_totp_code(value)
 
 
@@ -304,7 +343,7 @@ class TotpDisableRequest(HttpModel):
 
     @field_validator("code", mode="before")
     @classmethod
-    def valid_totp_code(cls, value: str | SecretStr) -> str | SecretStr:
+    def valid_totp_code(cls, value: object) -> str | SecretStr:
         return validate_totp_code(value)
 
 
@@ -344,7 +383,7 @@ class OAuthAuthorizationRequest(HttpModel):
     platform: str = Field(min_length=1, max_length=128)
     client_version: str | None = Field(default=None, min_length=1, max_length=64)
     redirect_uri: str
-    state: str = Field(min_length=16, max_length=256, pattern=r"[A-Za-z0-9._~-]+")
+    state: str
     code_challenge: str
     code_challenge_method: Literal["S256"] = "S256"
     dpop_jkt: str
@@ -360,6 +399,11 @@ class OAuthAuthorizationRequest(HttpModel):
     @classmethod
     def safe_redirect_uri(cls, value: str) -> str:
         return validate_redirect_uri(value)
+
+    @field_validator("state")
+    @classmethod
+    def valid_state(cls, value: str) -> str:
+        return validate_oauth_state(value)
 
     @field_validator("code_challenge")
     @classmethod
@@ -420,7 +464,7 @@ class OAuthAuthorizationDecisionRequest(HttpModel):
 
     @field_validator("totp_code", mode="before")
     @classmethod
-    def valid_totp_code(cls, value: str | SecretStr | None) -> str | SecretStr | None:
+    def valid_totp_code(cls, value: object) -> str | SecretStr | None:
         return validate_totp_code(value) if value is not None else None
 
 
@@ -443,7 +487,7 @@ class OAuthTokenRequest(HttpModel):
 
     @field_validator("code_verifier", mode="before")
     @classmethod
-    def valid_code_verifier(cls, value: str | SecretStr | None) -> str | SecretStr | None:
+    def valid_code_verifier(cls, value: object) -> str | SecretStr | None:
         return validate_pkce_value(value) if value is not None else None
 
     @model_validator(mode="after")
@@ -491,7 +535,7 @@ class CliTokenRequest(HttpModel):
 
     @field_validator("totp_code", mode="before")
     @classmethod
-    def valid_totp_code(cls, value: str | SecretStr | None) -> str | SecretStr | None:
+    def valid_totp_code(cls, value: object) -> str | SecretStr | None:
         return validate_totp_code(value) if value is not None else None
 
     @field_validator("scopes")
