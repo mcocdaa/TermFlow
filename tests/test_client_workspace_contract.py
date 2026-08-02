@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -110,7 +109,10 @@ def test_client_persistence_is_limited_to_browser_theme_preferences() -> None:
     references = [
         path.relative_to(ROOT).as_posix()
         for path in _client_production_files()
-        if any(token in path.read_text().lower() for token in ("localstorage", "sessionstorage", "indexeddb"))
+        if any(
+            token in path.read_text().lower()
+            for token in ("localstorage", "sessionstorage", "indexeddb")
+        )
     ]
     assert references == ["apps/clients/web/src/adapters/browserThemePreferences.ts"]
 
