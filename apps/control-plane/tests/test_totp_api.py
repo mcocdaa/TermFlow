@@ -104,7 +104,9 @@ def _enable_totp(client: TestClient, *, confirm_offset: int = -1) -> bytes:
     return secret
 
 
-def test_totp_status_and_setup_are_web_cookie_only_and_exact_origin(totp_client) -> None:
+def test_totp_status_accepts_browser_get_without_origin_and_setup_requires_exact_origin(
+    totp_client,
+) -> None:
     assert _login(totp_client).status_code == 201
 
     status = totp_client.get("/api/v1/admin/totp", headers={"Origin": ORIGIN})
@@ -114,7 +116,9 @@ def test_totp_status_and_setup_are_web_cookie_only_and_exact_origin(totp_client)
         "enabled": False,
         "available": True,
     }
-    assert totp_client.get("/api/v1/admin/totp").status_code == 403
+    browser_status = totp_client.get("/api/v1/admin/totp")
+    assert browser_status.status_code == 200
+    assert browser_status.json() == status.json()
     assert (
         totp_client.get(
             "/api/v1/admin/totp",

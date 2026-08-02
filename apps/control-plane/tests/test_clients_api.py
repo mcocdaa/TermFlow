@@ -28,13 +28,17 @@ def _web_login(client) -> None:
 def test_native_clients_are_managed_only_by_same_origin_web_session(client, admin_headers) -> None:
     _register_client(client)
 
-    assert client.get("/api/v1/admin/clients", headers=admin_headers).status_code == 403
+    assert client.get("/api/v1/admin/clients", headers=admin_headers).status_code == 401
     _web_login(client)
-    listed = client.get("/api/v1/admin/clients", headers={"Origin": ORIGIN})
+    listed = client.get("/api/v1/admin/clients")
     assert listed.status_code == 200
     [registered] = listed.json()["clients"]
     assert registered["display_name"] == "Desktop C"
     client_id = registered["client_id"]
+
+    assert client.get(
+        "/api/v1/admin/clients", headers={"Origin": "https://evil.example"}
+    ).status_code == 403
 
     assert client.patch(
         f"/api/v1/admin/clients/{client_id}",

@@ -182,9 +182,12 @@ async def require_web_admin(
     sessions: Annotated[BrowserSessionStore, Depends(get_browser_sessions)],
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
 ) -> None:
-    """Require an epoch-current Web Cookie and exact Origin for security APIs."""
+    """Require an epoch-current Web Cookie and exact Origin on unsafe requests."""
 
-    if not origin_allowed(request.headers.get("origin"), settings):
+    origin = request.headers.get("origin")
+    if (origin is None and request.method not in {"GET", "HEAD", "OPTIONS"}) or (
+        origin is not None and not origin_allowed(origin, settings)
+    ):
         raise TermFlowError("origin_not_allowed", 403, "The browser Origin is not allowed.")
     state = await repositories.auth_state.get()
     policy = browser_cookie_policy(settings)
