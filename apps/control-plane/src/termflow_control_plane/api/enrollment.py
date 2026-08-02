@@ -42,8 +42,14 @@ async def create_enrollment_token(
         expires_at,
         display_name=request.display_name if request is not None else None,
     )
+    server_url = str(settings.public_base_url).rstrip("/")
     response.headers["Cache-Control"] = "no-store"
-    return EnrollmentCreateResponse(token=raw_token, expires_at=expires_at)
+    return EnrollmentCreateResponse(
+        token=raw_token,
+        expires_at=expires_at,
+        server_url=server_url,
+        login_command=f"termflow login --server {server_url} --code {raw_token}",
+    )
 
 
 @router.post(

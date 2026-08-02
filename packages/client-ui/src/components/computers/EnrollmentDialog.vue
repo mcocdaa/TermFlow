@@ -48,6 +48,7 @@ const busy = ref(false)
 const copied = ref(false)
 const displayName = ref('')
 const code = ref<string | null>(null)
+const command = ref('')
 const expiresAt = ref<number | null>(null)
 const now = ref(runtime.clock.now())
 const message = ref('')
@@ -58,10 +59,8 @@ const returnFocus = document.activeElement instanceof HTMLElement ? document.act
 let timer: unknown | null = null
 
 const secondsRemaining = computed(() => expiresAt.value === null ? 0 : Math.max(0, Math.ceil((expiresAt.value - now.value) / 1000)))
-const command = computed(() => code.value ? `termflow login --server ${runtime.canonicalServerUrl} --code ${code.value}` : '')
-
 function stopTimer() { if (timer !== null) runtime.clock.clearInterval(timer); timer = null }
-function clearSecret() { code.value = null; expiresAt.value = null; copied.value = false; stopTimer() }
+function clearSecret() { code.value = null; command.value = ''; expiresAt.value = null; copied.value = false; stopTimer() }
 function close() {
   clearSecret()
   open.value = false
@@ -107,6 +106,7 @@ async function create(automatic = false) {
     const enrollment = await runtime.api.computers.createEnrollment(displayName.value)
     if (!open.value) return
     code.value = enrollment.token
+    command.value = enrollment.login_command
     expiresAt.value = new Date(enrollment.expires_at).getTime()
     now.value = runtime.clock.now()
     copied.value = false

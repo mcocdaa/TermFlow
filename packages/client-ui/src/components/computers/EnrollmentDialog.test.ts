@@ -11,15 +11,21 @@ function mountEnrollment(runtime = createFakeRuntime()) {
 }
 
 describe('EnrollmentDialog', () => {
-  it('creates through runtime, builds from the canonical URL, copies through runtime, and clears on close', async () => {
+  it('uses and copies the env-authoritative command returned by the server', async () => {
     const code = 'JOIN-7P4W-SECRET'
-    const createEnrollment = vi.fn().mockResolvedValue({ token: code, expires_at: '2026-08-01T00:10:00Z' })
+    const command = `termflow login --server https://relay.example.com --code ${code}`
+    const createEnrollment = vi.fn().mockResolvedValue({
+      token: code,
+      expires_at: '2026-08-01T00:10:00Z',
+      server_url: 'https://relay.example.com',
+      login_command: command,
+    })
     const writeText = vi.fn().mockResolvedValue(undefined)
     const runtime = createFakeRuntime({
       api: { computers: { createEnrollment } } as unknown as ClientRuntime['api'],
       clipboard: { writeText },
       clock: { now: () => Date.parse('2026-08-01T00:00:00Z'), setTimeout: () => 1, clearTimeout: () => undefined, setInterval: () => 2, clearInterval: () => undefined },
-      canonicalServerUrl: 'https://b.termflow.test',
+      canonicalServerUrl: 'https://deliberately-wrong.example.com',
     })
     const wrapper = mountEnrollment(runtime)
 
@@ -33,7 +39,6 @@ describe('EnrollmentDialog', () => {
     await flushPromises()
 
     expect(createEnrollment).toHaveBeenCalledWith('跑步工作站')
-    const command = `termflow login --server https://b.termflow.test --code ${code}`
     expect(wrapper.get('[data-enrollment-field="code"] h3').text()).toBe('注册码')
     expect(wrapper.get('[data-enrollment-field="command"] h3').text()).toBe('终端执行')
     expect(wrapper.get('[data-help="login-command"]').attributes('aria-label')).toBe('终端执行说明')
@@ -51,8 +56,18 @@ describe('EnrollmentDialog', () => {
     let now = Date.parse('2026-08-01T00:00:00Z')
     let tick: (() => void) | undefined
     const createEnrollment = vi.fn()
-      .mockResolvedValueOnce({ token: 'EXPIRES-NOW', expires_at: '2026-08-01T00:00:01Z' })
-      .mockResolvedValueOnce({ token: 'FRESH-CODE', expires_at: '2026-08-01T00:01:01Z' })
+      .mockResolvedValueOnce({
+        token: 'EXPIRES-NOW',
+        expires_at: '2026-08-01T00:00:01Z',
+        server_url: 'https://relay.example.com',
+        login_command: 'termflow login --server https://relay.example.com --code EXPIRES-NOW',
+      })
+      .mockResolvedValueOnce({
+        token: 'FRESH-CODE',
+        expires_at: '2026-08-01T00:01:01Z',
+        server_url: 'https://relay.example.com',
+        login_command: 'termflow login --server https://relay.example.com --code FRESH-CODE',
+      })
     const runtime = createFakeRuntime({
       api: { computers: { createEnrollment } } as unknown as ClientRuntime['api'],
       clock: {
@@ -62,7 +77,7 @@ describe('EnrollmentDialog', () => {
         setInterval: (callback) => { tick = callback; return 2 },
         clearInterval: () => undefined,
       },
-      canonicalServerUrl: 'https://b.termflow.test',
+      canonicalServerUrl: 'https://deliberately-wrong.example.com',
     })
     const wrapper = mountEnrollment(runtime)
     await wrapper.get('input[name="computer-name"]').setValue('自动刷新工作站')
@@ -76,7 +91,7 @@ describe('EnrollmentDialog', () => {
 
     expect(wrapper.html()).not.toContain('EXPIRES-NOW')
     expect(wrapper.text()).toContain('FRESH-CODE')
-    expect(wrapper.text()).toContain('termflow login --server https://b.termflow.test --code FRESH-CODE')
+    expect(wrapper.text()).toContain('termflow login --server https://relay.example.com --code FRESH-CODE')
     expect(createEnrollment).toHaveBeenCalledTimes(2)
     expect(createEnrollment.mock.calls).toEqual([['自动刷新工作站'], ['自动刷新工作站']])
     wrapper.unmount()

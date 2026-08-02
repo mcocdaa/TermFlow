@@ -1,6 +1,30 @@
 from datetime import UTC, datetime
 
+from fastapi.testclient import TestClient
+from termflow_control_plane.app import create_app
 from termflow_control_plane.auth.tokens import hash_token
+from termflow_control_plane.config import Settings
+from termflow_control_plane.persistence.database import Database
+
+
+def test_enrollment_command_uses_public_relay_url(tmp_path, admin_headers) -> None:
+    settings = Settings(
+        admin_token="admin-token-that-is-long-enough-for-tests",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'relay-url.db'}",
+        public_base_url="https://relay.example.com",
+        allow_insecure_loopback=True,
+    )
+    app = create_app(settings=settings, database=Database(settings.database_url))
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/enrollment-tokens", headers=admin_headers)
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["server_url"] == "https://relay.example.com"
+    assert body["login_command"] == (
+        f"termflow login --server https://relay.example.com --code {body['token']}"
+    )
 
 
 def test_health_does_not_require_authentication(client) -> None:
