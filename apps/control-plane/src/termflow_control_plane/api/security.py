@@ -208,7 +208,12 @@ async def confirm_totp_setup(
     limiter.record_success("totp_setup_confirm", source)
     await _audit_ok(http_request)
     _no_store(response)
-    return TotpStatusResponse(configured=True, enabled=False, available=True)
+    configured, enabled, available = await authentication.totp_status()
+    return TotpStatusResponse(
+        configured=configured,
+        enabled=enabled,
+        available=available,
+    )
 
 
 @router.post("/enable", response_model=TotpStatusResponse)

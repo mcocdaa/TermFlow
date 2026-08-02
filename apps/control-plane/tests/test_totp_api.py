@@ -363,6 +363,11 @@ def test_reconfigure_requires_current_totp_and_replaces_the_old_secret(totp_clie
         json={"code": _code(replacement_secret, _counter())},
     )
     assert confirmed.status_code == 200
+    assert confirmed.json() == {
+        "configured": True,
+        "enabled": True,
+        "available": True,
+    }
 
     old_authenticator = totp_client.post(
         "/api/v1/admin/totp/setups",
