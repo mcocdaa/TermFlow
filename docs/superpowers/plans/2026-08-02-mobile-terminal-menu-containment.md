@@ -295,7 +295,9 @@ expect(css).toContain('grid-row: 3;')
 expect(css).toContain('overflow: hidden;')
 expect(css).toContain('.mobile-keybar {')
 expect(css).toContain('overscroll-behavior-x: none;')
+expect(css).toContain('overscroll-behavior-y: none;')
 expect(css).not.toContain('overscroll-behavior-inline: contain;')
+expect(css).not.toContain('overscroll-behavior-block: none;')
 expect(appCss).toContain('.mobile-keybar-shell, .mobile-keybar { display: none; }')
 ```
 

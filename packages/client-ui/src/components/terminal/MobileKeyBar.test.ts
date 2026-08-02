@@ -11,6 +11,15 @@ const mountKeyBar = (props: InstanceType<typeof MobileKeyBar>['$props']) => moun
 })
 
 describe('MobileKeyBar', () => {
+  it('separates viewport coverage from horizontal key scrolling', () => {
+    const wrapper = mountKeyBar({ prefix: 'C-a', controller: new MobileModifierController() })
+    const shell = wrapper.get('.mobile-keybar-shell')
+    const scroller = shell.get('.mobile-keybar')
+    expect(shell.attributes('aria-hidden')).toBeUndefined()
+    expect(scroller.attributes('aria-label')).toBe('移动端修饰键')
+    expect(scroller.findAll('button')).toHaveLength(6)
+  })
+
   it('keeps the platform-neutral modifier state reactive in Vue', async () => {
     const wrapper = mountKeyBar({ prefix: 'C-a', controller: new MobileModifierController() })
     const ctrl = wrapper.findAll('button')[0]

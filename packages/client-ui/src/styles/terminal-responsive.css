@@ -13,7 +13,8 @@
     .titlebar-button { width: 2.35rem; min-width: 2.35rem; padding: 0; justify-content: center; }
     .terminal-overlay { max-width: calc(100% - 2 * var(--space-4)); white-space: nowrap; }
     .desktop-action-menu { display: block; }
-    .mobile-keybar { position: static; grid-row: 3; z-index: 40; min-width: 0; display: flex; gap: var(--space-1); overflow-x: auto; touch-action: pan-x; overscroll-behavior-inline: contain; overscroll-behavior-block: none; padding: var(--space-2) max(var(--space-2), env(safe-area-inset-right)) var(--space-2) max(var(--space-2), env(safe-area-inset-left)); padding-block-end: max(var(--space-2), env(safe-area-inset-bottom)); border-block-start: 1px solid var(--color-border); background: var(--color-panel); }
+    .mobile-keybar-shell { position: static; grid-row: 3; z-index: 40; min-width: 0; width: 100%; max-width: 100%; display: block; overflow: hidden; padding: var(--space-2) max(var(--space-2), env(safe-area-inset-right)) var(--space-2) max(var(--space-2), env(safe-area-inset-left)); padding-block-end: max(var(--space-2), env(safe-area-inset-bottom)); border-block-start: 1px solid var(--color-border); background: var(--color-panel); }
+    .mobile-keybar { min-width: 0; width: 100%; max-width: 100%; display: flex; gap: var(--space-1); overflow-x: auto; overflow-y: hidden; touch-action: pan-x; overscroll-behavior-x: none; overscroll-behavior-y: none; }
     .mobile-keybar button { flex: 1 0 auto; min-width: 3.25rem; min-height: 2.6rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-elevated); }
     .mobile-keybar button[aria-pressed='true'] { border-color: var(--color-accent); background: var(--color-accent); color: var(--color-accent-contrast); }
   }
