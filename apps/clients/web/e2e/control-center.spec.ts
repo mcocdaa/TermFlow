@@ -685,6 +685,9 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
   expect(layout.screen.bottom).toBeLessThanOrEqual(layout.frame.bottom + 1)
 
   if (testInfo.project.name !== 'desktop') {
+    if (testInfo.project.name === 'mobile-portrait') {
+      await page.setViewportSize({ width: 320, height: page.viewportSize()?.height ?? 844 })
+    }
     const mobileLayout = await page.evaluate(() => {
       const view = document.querySelector<HTMLElement>('.terminal-view')!
       const frame = document.querySelector<HTMLElement>('.terminal-frame')!
@@ -730,6 +733,7 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
     const keybar = page.locator('.mobile-keybar')
     await keybar.evaluate((element) => { element.scrollLeft = 0 })
     const keybarOverflow = await keybar.evaluate((element) => element.scrollWidth - element.clientWidth)
+    if (testInfo.project.name === 'mobile-portrait') expect(keybarOverflow).toBeGreaterThan(1)
     const keybarBox = await keybar.boundingBox()
     expect(keybarBox).not.toBeNull()
     const keybarCenter = {
@@ -762,7 +766,8 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
     const { keybarScrollLeft: afterScroll, ...fixedAfterHorizontalDrag } = pageAfterHorizontalKeybarDrag
     expect(beforeScroll).toBe(0)
     expect(afterScroll).toBe(pageAfterHorizontalKeybarDrag.keybarScrollLeft)
-    if (keybarOverflow > 1) expect(afterScroll).toBeGreaterThan(0)
+    if (testInfo.project.name === 'mobile-portrait') expect(afterScroll).toBeGreaterThan(0)
+    else if (keybarOverflow > 1) expect(afterScroll).toBeGreaterThan(0)
     else expect(afterScroll).toBe(0)
     expect(fixedAfterHorizontalDrag).toEqual(fixedBeforeHorizontalDrag)
     expect(pageAfterHorizontalKeybarDrag.keybarShell.bottom)
