@@ -31,6 +31,7 @@ def test_control_plane_defaults_are_single_process_friendly() -> None:
     assert settings.allowed_web_origins == ("http://127.0.0.1:8000",)
     assert settings.auth_challenge_ttl_seconds == 5 * 60
     assert settings.oauth_authorization_ttl_seconds == 5 * 60
+    assert settings.oauth_authorization_code_ttl_seconds == 60
     assert settings.auth_access_token_ttl_seconds == 10 * 60
     assert settings.auth_refresh_token_ttl_seconds == 30 * 24 * 60 * 60
     assert settings.auth_cli_token_ttl_seconds == 15 * 60

@@ -83,6 +83,7 @@ class AuthenticationState(Base):
     totp_aad_version: Mapped[int | None] = mapped_column(Integer, default=None)
     totp_enabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     totp_last_accepted_counter: Mapped[int | None] = mapped_column(Integer, default=None)
+    totp_generation: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
@@ -128,6 +129,7 @@ class NativeClient(Base):
     public_jwk: Mapped[str] = mapped_column(Text)
     key_thumbprint: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     platform: Mapped[str | None] = mapped_column(String(64), default=None)
+    client_version: Mapped[str | None] = mapped_column(String(64), default=None)
     scopes: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
@@ -155,6 +157,7 @@ class OAuthAuthorization(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     code_issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    code_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 

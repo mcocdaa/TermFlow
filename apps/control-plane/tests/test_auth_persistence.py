@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import func, inspect, select, text
+from sqlalchemy.exc import IntegrityError
 from termflow_control_plane.auth.secret_box import AesGcmSecretBox
 from termflow_control_plane.persistence.database import Database, UnrecognizedDatabaseSchema
 from termflow_control_plane.persistence.models import (
@@ -17,7 +18,12 @@ from termflow_control_plane.persistence.models import (
     OAuthAuthorization,
     TotpSetup,
 )
-from termflow_control_plane.persistence.repositories import RepositoryBundle, digest_secret
+from termflow_control_plane.persistence.repositories import (
+    AuthenticationStateChanged,
+    NativeClientRevoked,
+    RepositoryBundle,
+    digest_secret,
+)
 
 
 @pytest.fixture
@@ -94,19 +100,70 @@ async def test_totp_secret_and_counter_are_persisted_without_plaintext(
         assert state.totp_aad_version == encrypted.aad_version
         assert state.totp_enabled_at is not None
         assert state.totp_last_accepted_counter == 100
+        assert state.totp_generation == 1
 
         results = await asyncio.gather(
-            repositories.auth_state.accept_totp_counter(101),
-            repositories.auth_state.accept_totp_counter(101),
+            repositories.auth_state.accept_totp_counter(
+                101,
+                epoch=state.epoch,
+                generation=state.totp_generation,
+            ),
+            repositories.auth_state.accept_totp_counter(
+                101,
+                epoch=state.epoch,
+                generation=state.totp_generation,
+            ),
         )
         assert sorted(results) == [False, True]
-        assert await repositories.auth_state.accept_totp_counter(100) is False
+        assert (
+            await repositories.auth_state.accept_totp_counter(
+                100,
+                epoch=state.epoch,
+                generation=state.totp_generation,
+            )
+            is False
+        )
     finally:
         await database.dispose()
 
     with sqlite3.connect(path) as connection:
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     assert raw_secret not in path.read_bytes()
+
+
+@pytest.mark.asyncio
+async def test_old_totp_generation_cannot_advance_a_reconfigured_authenticator(
+    tmp_path,
+    secret_box: AesGcmSecretBox,
+) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'totp-generation.db'}")
+    await database.initialize()
+    repositories = RepositoryBundle(database.session_factory)
+    try:
+        first = secret_box.encrypt(b"first", purpose="totp-authenticator")
+        await repositories.auth_state.enable_totp(first, counter=10, expected_epoch=1)
+        first_state = await repositories.auth_state.get()
+
+        second = secret_box.encrypt(b"second", purpose="totp-authenticator")
+        await repositories.auth_state.enable_totp(second, counter=20, expected_epoch=1)
+        second_state = await repositories.auth_state.get()
+        assert second_state.totp_generation == first_state.totp_generation + 1
+
+        assert (
+            await repositories.auth_state.accept_totp_counter(
+                21,
+                epoch=first_state.epoch,
+                generation=first_state.totp_generation,
+            )
+            is False
+        )
+        assert await repositories.auth_state.accept_totp_counter(
+            21,
+            epoch=second_state.epoch,
+            generation=second_state.totp_generation,
+        )
+    finally:
+        await database.dispose()
 
 
 @pytest.mark.asyncio
@@ -271,8 +328,26 @@ async def test_oauth_code_and_refresh_rotation_have_one_winner_and_store_digests
         assert pending.id == authorization_id
         await repositories.oauth_authorizations.issue_code(authorization_id, raw_code)
         code_results = await asyncio.gather(
-            repositories.oauth_authorizations.consume_code(raw_code, epoch=1),
-            repositories.oauth_authorizations.consume_code(raw_code, epoch=1),
+            repositories.oauth_authorizations.exchange_code(
+                raw_code,
+                epoch=1,
+                raw_access_token="exchange-access-one",
+                raw_refresh_token="exchange-refresh-one",
+                key_thumbprint="thumbprint",
+                pkce_challenge="pkce-challenge",
+                access_expires_at=now + timedelta(minutes=10),
+                refresh_expires_at=now + timedelta(days=30),
+            ),
+            repositories.oauth_authorizations.exchange_code(
+                raw_code,
+                epoch=1,
+                raw_access_token="exchange-access-two",
+                raw_refresh_token="exchange-refresh-two",
+                key_thumbprint="thumbprint",
+                pkce_challenge="pkce-challenge",
+                access_expires_at=now + timedelta(minutes=10),
+                refresh_expires_at=now + timedelta(days=30),
+            ),
         )
         assert sum(result is not None for result in code_results) == 1
 
@@ -371,11 +446,24 @@ async def test_reset_increments_epoch_and_invalidates_auth_artifacts_but_keeps_c
         assert state.epoch == 2
         assert state.totp_ciphertext is None
         assert await repositories.auth_tokens.get_active("cli-secret", epoch=2) is None
+        with pytest.raises(AuthenticationStateChanged):
+            await repositories.auth_tokens.issue(
+                "stale-epoch-token",
+                kind="cli",
+                scopes=("terminal.read",),
+                key_thumbprint=None,
+                expires_at=datetime.now(UTC) + timedelta(minutes=15),
+                epoch=1,
+            )
         client = await repositories.native_clients.get(client_id)
         assert client is not None
         assert client.revoked_at is None
         async with database.session_factory() as session:
             assert await session.scalar(select(func.count(TotpSetup.id))) == 0
+        audit = await repositories.auth_audit.list_all()
+        assert [(event.operation, event.result) for event in audit] == [
+            ("auth.reset", "reset")
+        ]
     finally:
         await database.dispose()
 
@@ -395,11 +483,18 @@ async def test_native_client_lifecycle_and_auth_audit_are_separate_from_terminal
             public_jwk='{"kty":"EC"}',
             key_thumbprint="desktop-thumbprint",
             platform="macos",
+            client_version="0.1.0",
             scopes=("terminal.write", "terminal.read"),
         )
         assert client.created_at is not None
         assert client.updated_at is not None
         assert client.last_used_at is None
+        assert client.client_version == "0.1.0"
+        touched_at = datetime.now(UTC)
+        assert await repositories.native_clients.touch(client_id, now=touched_at)
+        touched = await repositories.native_clients.get(client_id)
+        assert touched is not None
+        assert touched.last_used_at is not None
         renamed = await repositories.native_clients.rename(client_id, "Work Mac")
         assert renamed is not None
         assert renamed.display_name == "Work Mac"
@@ -414,6 +509,209 @@ async def test_native_client_lifecycle_and_auth_audit_are_separate_from_terminal
         assert event.source_digest == digest_secret("127.0.0.1")
         assert len(await repositories.auth_audit.list_all()) == 1
         assert await repositories.audit.list_all() == []
+    finally:
+        await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_revoked_native_client_cannot_receive_a_new_token(tmp_path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'revoked-client.db'}")
+    await database.initialize()
+    repositories = RepositoryBundle(database.session_factory)
+    client_id = uuid4()
+    try:
+        await repositories.native_clients.create(
+            client_id=client_id,
+            display_name="Revoked",
+            public_jwk='{"kty":"EC"}',
+            key_thumbprint="revoked-thumbprint",
+            platform="linux",
+            scopes=("terminal.read",),
+        )
+        assert await repositories.native_clients.revoke(client_id)
+        with pytest.raises(NativeClientRevoked):
+            await repositories.auth_tokens.issue(
+                "must-not-be-issued",
+                kind="access",
+                scopes=("terminal.read",),
+                key_thumbprint="revoked-thumbprint",
+                expires_at=datetime.now(UTC) + timedelta(minutes=10),
+                epoch=1,
+                client_id=client_id,
+            )
+        assert await repositories.auth_tokens.get_active("must-not-be-issued", epoch=1) is None
+    finally:
+        await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_refresh_replay_revokes_the_entire_token_family(tmp_path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'refresh-replay.db'}")
+    await database.initialize()
+    repositories = RepositoryBundle(database.session_factory)
+    now = datetime.now(UTC)
+    try:
+        await repositories.auth_tokens.issue(
+            "refresh-original",
+            kind="refresh",
+            scopes=("terminal.read",),
+            key_thumbprint="thumbprint",
+            expires_at=now + timedelta(days=30),
+            epoch=1,
+        )
+        assert (
+            await repositories.auth_tokens.rotate_refresh(
+                "refresh-original",
+                "refresh-replacement",
+                expires_at=now + timedelta(days=30),
+                epoch=1,
+            )
+            is not None
+        )
+        assert (
+            await repositories.auth_tokens.rotate_refresh(
+                "refresh-original",
+                "attacker-replacement",
+                expires_at=now + timedelta(days=30),
+                epoch=1,
+            )
+            is None
+        )
+        assert (
+            await repositories.auth_tokens.get_active("refresh-replacement", epoch=1)
+            is None
+        )
+    finally:
+        await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_authorization_code_expires_sixty_seconds_after_issue(tmp_path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'code-ttl.db'}")
+    await database.initialize()
+    repositories = RepositoryBundle(database.session_factory)
+    client_id = uuid4()
+    try:
+        await repositories.native_clients.create(
+            client_id=client_id,
+            display_name="Desktop",
+            public_jwk='{"kty":"EC"}',
+            key_thumbprint="code-thumbprint",
+            platform="linux",
+            scopes=("terminal.read",),
+        )
+        authorization_id = await repositories.oauth_authorizations.create(
+            transaction_secret="code-ttl-transaction",
+            client_id=client_id,
+            redirect_uri="termflow://oauth/callback",
+            scopes=("terminal.read",),
+            pkce_challenge="challenge",
+            expires_at=datetime.now(UTC) + timedelta(minutes=5),
+            epoch=1,
+        )
+        assert await repositories.oauth_authorizations.issue_code(
+            authorization_id,
+            "short-code",
+        )
+        async with database.session_factory() as session:
+            issued_at = await session.scalar(
+                select(OAuthAuthorization.code_issued_at).where(
+                    OAuthAuthorization.id == authorization_id
+                )
+            )
+        assert issued_at is not None
+        assert (
+            await repositories.oauth_authorizations.exchange_code(
+                "short-code",
+                epoch=1,
+                raw_access_token="expired-access",
+                raw_refresh_token="expired-refresh",
+                key_thumbprint="code-thumbprint",
+                pkce_challenge="challenge",
+                access_expires_at=datetime.now(UTC) + timedelta(minutes=10),
+                refresh_expires_at=datetime.now(UTC) + timedelta(days=30),
+                now=issued_at.replace(tzinfo=UTC) + timedelta(seconds=61),
+            )
+            is None
+        )
+    finally:
+        await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_code_consumption_and_token_inserts_share_one_transaction(tmp_path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'atomic-exchange.db'}")
+    await database.initialize()
+    repositories = RepositoryBundle(database.session_factory)
+    client_id = uuid4()
+    now = datetime.now(UTC)
+    try:
+        await repositories.native_clients.create(
+            client_id=client_id,
+            display_name="Desktop",
+            public_jwk='{"kty":"EC"}',
+            key_thumbprint="exchange-thumbprint",
+            platform="linux",
+            scopes=("terminal.read",),
+        )
+        authorization_id = await repositories.oauth_authorizations.create(
+            transaction_secret="exchange-transaction",
+            client_id=client_id,
+            redirect_uri="termflow://oauth/callback",
+            scopes=("terminal.read",),
+            pkce_challenge="challenge",
+            expires_at=now + timedelta(minutes=5),
+            epoch=1,
+        )
+        assert await repositories.oauth_authorizations.issue_code(
+            authorization_id,
+            "exchange-code",
+        )
+        await repositories.auth_tokens.issue(
+            "digest-collision",
+            kind="cli",
+            scopes=("terminal.read",),
+            key_thumbprint=None,
+            expires_at=now + timedelta(minutes=15),
+            epoch=1,
+        )
+
+        assert (
+            await repositories.oauth_authorizations.exchange_code(
+                "exchange-code",
+                epoch=1,
+                raw_access_token="wrong-proof-access",
+                raw_refresh_token="wrong-proof-refresh",
+                key_thumbprint="exchange-thumbprint",
+                pkce_challenge="wrong-challenge",
+                access_expires_at=now + timedelta(minutes=10),
+                refresh_expires_at=now + timedelta(days=30),
+            )
+            is None
+        )
+
+        with pytest.raises(IntegrityError):
+            await repositories.oauth_authorizations.exchange_code(
+                "exchange-code",
+                epoch=1,
+                raw_access_token="digest-collision",
+                raw_refresh_token="new-refresh",
+                key_thumbprint="exchange-thumbprint",
+                pkce_challenge="challenge",
+                access_expires_at=now + timedelta(minutes=10),
+                refresh_expires_at=now + timedelta(days=30),
+            )
+        exchanged = await repositories.oauth_authorizations.exchange_code(
+            "exchange-code",
+            epoch=1,
+            raw_access_token="valid-access",
+            raw_refresh_token="valid-refresh",
+            key_thumbprint="exchange-thumbprint",
+            pkce_challenge="challenge",
+            access_expires_at=now + timedelta(minutes=10),
+            refresh_expires_at=now + timedelta(days=30),
+        )
+        assert exchanged is not None
     finally:
         await database.dispose()
 
@@ -440,7 +738,8 @@ async def test_unversioned_current_database_is_stamped_then_upgraded(tmp_path) -
             CREATE TABLE instances (
               id CHAR(32) PRIMARY KEY, installation_id CHAR(32) NOT NULL,
               name VARCHAR(128) NOT NULL, token_hash VARCHAR(64) NOT NULL,
-              last_seen_at DATETIME, created_at DATETIME NOT NULL, revoked_at DATETIME
+              last_seen_at DATETIME, created_at DATETIME NOT NULL, revoked_at DATETIME,
+              FOREIGN KEY(installation_id) REFERENCES installations(id)
             );
             CREATE UNIQUE INDEX ix_instances_token_hash ON instances(token_hash);
             CREATE TABLE audit_events (
@@ -472,7 +771,6 @@ async def test_unrecognized_unversioned_database_fails_closed(tmp_path) -> None:
     with pytest.raises(UnrecognizedDatabaseSchema, match="unrecognized"):
         await database.initialize()
     await database.dispose()
-
 
 @pytest.mark.asyncio
 async def test_unversioned_database_with_unknown_core_columns_fails_closed(tmp_path) -> None:
@@ -548,6 +846,17 @@ async def test_unversioned_database_that_violates_v2_uniqueness_fails_closed(tmp
     with pytest.raises(UnrecognizedDatabaseSchema, match="unrecognized"):
         await database.initialize()
     await database.dispose()
+
+    with sqlite3.connect(path) as connection:
+        table_names = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(enrollment_tokens)")}
+    assert "audit_events" not in table_names
+    assert "display_name" not in columns
 
 
 def test_auth_models_have_metadata_or_ciphertext_only() -> None:

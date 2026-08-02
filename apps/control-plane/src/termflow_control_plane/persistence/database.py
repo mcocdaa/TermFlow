@@ -55,6 +55,34 @@ _V2_ADDITIONS: dict[str, dict[str, str]] = {
     },
     "instances": {"last_seen_at": "DATETIME"},
 }
+_V1_TYPES: dict[str, dict[str, str]] = {
+    "enrollment_tokens": {
+        "id": "CHAR(32)",
+        "token_hash": "VARCHAR(64)",
+        "expires_at": "DATETIME",
+        "used_at": "DATETIME",
+        "created_at": "DATETIME",
+    },
+    "installations": {
+        "id": "CHAR(32)",
+        "token_hash": "VARCHAR(64)",
+        "created_at": "DATETIME",
+        "revoked_at": "DATETIME",
+    },
+    "instances": {
+        "id": "CHAR(32)",
+        "installation_id": "CHAR(32)",
+        "name": "VARCHAR(128)",
+        "token_hash": "VARCHAR(64)",
+        "created_at": "DATETIME",
+        "revoked_at": "DATETIME",
+    },
+}
+_V1_NOT_NULL: dict[str, set[str]] = {
+    "enrollment_tokens": {"token_hash", "expires_at", "created_at"},
+    "installations": {"token_hash", "created_at"},
+    "instances": {"installation_id", "name", "token_hash", "created_at"},
+}
 
 
 def _migration_config(connection: Connection) -> Config:
@@ -81,6 +109,75 @@ def _validate_known_unversioned_schema(connection: Connection) -> None:
             raise UnrecognizedDatabaseSchema(
                 "unrecognized unversioned Control Plane database schema; refusing automatic upgrade"
             )
+        if connection.dialect.name == "sqlite":
+            inspected = {column["name"]: column for column in inspector.get_columns(table_name)}
+            for column_name, expected_type in _V1_TYPES[table_name].items():
+                column = inspected[column_name]
+                if str(column["type"]).upper() != expected_type:
+                    raise UnrecognizedDatabaseSchema(
+                        "unrecognized unversioned Control Plane database schema; "
+                        "refusing automatic upgrade"
+                    )
+                if column_name in _V1_NOT_NULL[table_name] and column["nullable"]:
+                    raise UnrecognizedDatabaseSchema(
+                        "unrecognized unversioned Control Plane database schema; "
+                        "refusing automatic upgrade"
+                    )
+            for column_name, expected_type in _V2_ADDITIONS[table_name].items():
+                if (
+                    column_name in inspected
+                    and str(inspected[column_name]["type"]).upper() != expected_type
+                ):
+                    raise UnrecognizedDatabaseSchema(
+                        "unrecognized unversioned Control Plane database schema; "
+                        "refusing automatic upgrade"
+                    )
+
+    if "audit_events" in table_names:
+        audit_columns = {column["name"] for column in inspector.get_columns("audit_events")}
+        if audit_columns != {column.name for column in _CORE_TABLES["audit_events"].columns}:
+            raise UnrecognizedDatabaseSchema(
+                "unrecognized unversioned Control Plane database schema; "
+                "refusing automatic upgrade"
+            )
+
+    v2_instance_columns = {
+        column["name"] for column in inspector.get_columns("instances")
+    }
+    if set(_V2_ADDITIONS["instances"]) <= v2_instance_columns:
+        ownership_foreign_keys = inspector.get_foreign_keys("instances")
+        if ownership_foreign_keys and not any(
+            foreign_key.get("referred_table") == "installations"
+            and foreign_key.get("constrained_columns") == ["installation_id"]
+            for foreign_key in ownership_foreign_keys
+        ):
+            raise UnrecognizedDatabaseSchema(
+                "unrecognized unversioned Control Plane database schema; "
+                "refusing automatic upgrade"
+            )
+    for table_name in _REQUIRED_UNVERSIONED_TABLES:
+        duplicate = connection.execute(
+            text(
+                f"SELECT 1 FROM {table_name} GROUP BY token_hash "
+                "HAVING COUNT(*) > 1 LIMIT 1"
+            )
+        ).first()
+        if duplicate is not None:
+            raise UnrecognizedDatabaseSchema(
+                "unrecognized unversioned Control Plane database schema; "
+                "refusing automatic upgrade"
+            )
+    orphan = connection.execute(
+        text(
+            "SELECT 1 FROM instances LEFT JOIN installations "
+            "ON installations.id = instances.installation_id "
+            "WHERE installations.id IS NULL LIMIT 1"
+        )
+    ).first()
+    if orphan is not None:
+        raise UnrecognizedDatabaseSchema(
+            "unrecognized unversioned Control Plane database schema; refusing automatic upgrade"
+        )
 
 
 def _prepare_unversioned_v2(connection: Connection) -> None:
@@ -92,6 +189,40 @@ def _prepare_unversioned_v2(connection: Connection) -> None:
                 connection.execute(
                     text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {sql_type}")
                 )
+    if connection.dialect.name == "sqlite" and not inspect(connection).get_foreign_keys(
+        "instances"
+    ):
+        connection.execute(
+            text(
+                """
+                CREATE TABLE instances__termflow_v2 (
+                  id CHAR(32) NOT NULL PRIMARY KEY,
+                  installation_id CHAR(32) NOT NULL,
+                  name VARCHAR(128) NOT NULL,
+                  token_hash VARCHAR(64) NOT NULL,
+                  last_seen_at DATETIME,
+                  created_at DATETIME NOT NULL,
+                  revoked_at DATETIME,
+                  FOREIGN KEY(installation_id) REFERENCES installations(id)
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO instances__termflow_v2 (
+                  id, installation_id, name, token_hash, last_seen_at, created_at, revoked_at
+                )
+                SELECT id, installation_id, name, token_hash, last_seen_at, created_at, revoked_at
+                FROM instances
+                """
+            )
+        )
+        connection.execute(text("DROP TABLE instances"))
+        connection.execute(
+            text("ALTER TABLE instances__termflow_v2 RENAME TO instances")
+        )
     cast(Table, AuditEvent.__table__).create(connection, checkfirst=True)
     for table_name, table in _CORE_TABLES.items():
         for index in table.indexes:
@@ -113,9 +244,63 @@ def _validate_head_schema(connection: Connection) -> None:
             "unrecognized versioned Control Plane database schema; refusing to start"
         )
     for table_name, table in Base.metadata.tables.items():
-        actual_columns = {column["name"] for column in inspector.get_columns(table_name)}
+        inspected_columns = {
+            column["name"]: column for column in inspector.get_columns(table_name)
+        }
+        actual_columns = set(inspected_columns)
         expected_columns = {column.name for column in table.columns}
         if actual_columns != expected_columns:
+            raise UnrecognizedDatabaseSchema(
+                "unrecognized versioned Control Plane database schema; refusing to start"
+            )
+        for column in table.columns:
+            inspected_column = inspected_columns[column.name]
+            if str(inspected_column["type"]).upper() != str(column.type).upper():
+                raise UnrecognizedDatabaseSchema(
+                    "unrecognized versioned Control Plane database schema; refusing to start"
+                )
+            if not column.primary_key and inspected_column["nullable"] != column.nullable:
+                raise UnrecognizedDatabaseSchema(
+                    "unrecognized versioned Control Plane database schema; refusing to start"
+                )
+        primary_key = inspector.get_pk_constraint(table_name).get("constrained_columns")
+        if primary_key != [column.name for column in table.primary_key.columns]:
+            raise UnrecognizedDatabaseSchema(
+                "unrecognized versioned Control Plane database schema; refusing to start"
+            )
+        expected_foreign_keys = {
+            (
+                tuple(element.parent.name for element in constraint.elements),
+                constraint.referred_table.name,
+                tuple(element.column.name for element in constraint.elements),
+            )
+            for constraint in table.foreign_key_constraints
+        }
+        actual_foreign_keys = {
+            (
+                tuple(foreign_key["constrained_columns"] or ()),
+                str(foreign_key["referred_table"]),
+                tuple(foreign_key["referred_columns"] or ()),
+            )
+            for foreign_key in inspector.get_foreign_keys(table_name)
+        }
+        if actual_foreign_keys != expected_foreign_keys:
+            raise UnrecognizedDatabaseSchema(
+                "unrecognized versioned Control Plane database schema; refusing to start"
+            )
+        expected_indexes = {
+            index.name: (tuple(column.name for column in index.columns), index.unique)
+            for index in table.indexes
+            if index.name is not None
+        }
+        actual_indexes = {
+            index["name"]: (tuple(index["column_names"]), bool(index["unique"]))
+            for index in inspector.get_indexes(table_name)
+        }
+        if any(
+            actual_indexes.get(name) != signature
+            for name, signature in expected_indexes.items()
+        ):
             raise UnrecognizedDatabaseSchema(
                 "unrecognized versioned Control Plane database schema; refusing to start"
             )

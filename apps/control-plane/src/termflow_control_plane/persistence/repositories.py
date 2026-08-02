@@ -5,10 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import case, delete, func, or_, select, update
+from sqlalchemy import case, delete, exists, func, insert, literal, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from termflow_control_plane.auth.secret_box import EncryptedSecret
@@ -37,7 +37,93 @@ def _encode_scopes(scopes: tuple[str, ...]) -> str:
     return json.dumps(sorted(set(scopes)), separators=(",", ":"))
 
 
+async def _insert_auth_token(
+    session: AsyncSession,
+    *,
+    raw_token: str,
+    kind: str,
+    encoded_scopes: str,
+    key_thumbprint: str | None,
+    expires_at: datetime,
+    epoch: int,
+    client_id: UUID | None = None,
+    family_id: UUID | None = None,
+    parent_token_id: UUID | None = None,
+    now: datetime | None = None,
+) -> AuthToken | None:
+    observed_at = now or datetime.now(UTC)
+    token_id = uuid4()
+    effective_family_id = family_id or (uuid4() if kind == "refresh" else None)
+    conditions = [
+        exists(
+            select(AuthenticationState.id).where(
+                AuthenticationState.id == 1,
+                AuthenticationState.epoch == epoch,
+            )
+        )
+    ]
+    if client_id is not None:
+        conditions.append(
+            exists(
+                select(NativeClient.id).where(
+                    NativeClient.id == client_id,
+                    NativeClient.key_thumbprint == key_thumbprint,
+                    NativeClient.revoked_at.is_(None),
+                )
+            )
+        )
+    source = select(
+        literal(token_id),
+        literal(digest_secret(raw_token)),
+        literal(kind),
+        literal(client_id),
+        literal(encoded_scopes),
+        literal(key_thumbprint),
+        literal(effective_family_id),
+        literal(parent_token_id),
+        literal(epoch),
+        literal(expires_at),
+        literal(observed_at),
+    ).where(*conditions)
+    result = await session.execute(
+        insert(AuthToken)
+        .from_select(
+            [
+                AuthToken.id,
+                AuthToken.token_digest,
+                AuthToken.kind,
+                AuthToken.client_id,
+                AuthToken.scopes,
+                AuthToken.key_thumbprint,
+                AuthToken.family_id,
+                AuthToken.parent_token_id,
+                AuthToken.epoch,
+                AuthToken.expires_at,
+                AuthToken.created_at,
+            ],
+            source,
+        )
+        .returning(AuthToken)
+    )
+    token = result.scalar_one_or_none()
+    if token is not None:
+        await session.execute(
+            update(NativeClient)
+            .where(NativeClient.id == client_id, NativeClient.revoked_at.is_(None))
+            .values(last_used_at=observed_at, updated_at=observed_at)
+        )
+    return token
+
+
 class InstanceOwnershipError(RuntimeError):
+    pass
+
+
+class NativeClientRevoked(RuntimeError):
+    pass
+
+
+class AuthenticationStateChanged(RuntimeError):
     pass
 
 
@@ -45,6 +131,13 @@ class InstanceOwnershipError(RuntimeError):
 class ConsumedEnrollment:
     id: UUID
     display_name: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ExchangedAuthorization:
+    authorization: OAuthAuthorization
+    access_token: AuthToken
+    refresh_token: AuthToken
 
 
 class EnrollmentRepository:
@@ -320,6 +413,7 @@ class AuthStateRepository:
                     totp_aad_version=encrypted.aad_version,
                     totp_enabled_at=observed_at,
                     totp_last_accepted_counter=counter,
+                    totp_generation=AuthenticationState.totp_generation + 1,
                     updated_at=observed_at,
                 )
                 .returning(AuthenticationState.id)
@@ -330,13 +424,21 @@ class AuthStateRepository:
             await session.commit()
             return updated is not None
 
-    async def accept_totp_counter(self, counter: int) -> bool:
+    async def accept_totp_counter(
+        self,
+        counter: int,
+        *,
+        epoch: int,
+        generation: int,
+    ) -> bool:
         observed_at = datetime.now(UTC)
         async with self._sessions() as session:
             result = await session.execute(
                 update(AuthenticationState)
                 .where(
                     AuthenticationState.id == 1,
+                    AuthenticationState.epoch == epoch,
+                    AuthenticationState.totp_generation == generation,
                     AuthenticationState.totp_enabled_at.is_not(None),
                     or_(
                         AuthenticationState.totp_last_accepted_counter.is_(None),
@@ -350,7 +452,11 @@ class AuthStateRepository:
             await session.commit()
             return accepted
 
-    async def reset_and_increment_epoch(self) -> int:
+    async def reset_and_increment_epoch(
+        self,
+        *,
+        audit_source_digest: str | None = None,
+    ) -> int:
         observed_at = datetime.now(UTC)
         async with self._sessions() as session:
             result = await session.execute(
@@ -381,6 +487,15 @@ class AuthStateRepository:
                 update(AuthToken)
                 .where(AuthToken.revoked_at.is_(None))
                 .values(revoked_at=observed_at)
+            )
+            session.add(
+                AuthAuditEvent(
+                    operation="auth.reset",
+                    result="reset",
+                    source_digest=audit_source_digest
+                    or digest_secret("local-control-plane"),
+                    created_at=observed_at,
+                )
             )
             await session.commit()
             return int(epoch)
@@ -603,6 +718,7 @@ class NativeClientRepository:
         platform: str | None,
         scopes: tuple[str, ...],
         client_id: UUID | None = None,
+        client_version: str | None = None,
     ) -> NativeClient:
         async with self._sessions() as session:
             client = NativeClient(
@@ -611,6 +727,7 @@ class NativeClientRepository:
                 public_jwk=public_jwk,
                 key_thumbprint=key_thumbprint,
                 platform=platform,
+                client_version=client_version,
                 scopes=_encode_scopes(scopes),
             )
             session.add(client)
@@ -635,6 +752,24 @@ class NativeClientRepository:
         async with self._sessions() as session:
             rows = await session.scalars(select(NativeClient).order_by(NativeClient.created_at))
             return list(rows)
+
+    async def touch(
+        self,
+        client_id: UUID,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(NativeClient)
+                .where(NativeClient.id == client_id, NativeClient.revoked_at.is_(None))
+                .values(last_used_at=observed_at, updated_at=observed_at)
+                .returning(NativeClient.id)
+            )
+            touched = result.scalar_one_or_none() is not None
+            await session.commit()
+            return touched
 
     async def rename(self, client_id: UUID, display_name: str) -> NativeClient | None:
         async with self._sessions() as session:
@@ -713,24 +848,57 @@ class OAuthAuthorizationRepository:
                     OAuthAuthorization.epoch == epoch,
                     OAuthAuthorization.expires_at > observed_at,
                     OAuthAuthorization.consumed_at.is_(None),
+                    exists(
+                        select(AuthenticationState.id).where(
+                            AuthenticationState.id == 1,
+                            AuthenticationState.epoch == epoch,
+                        )
+                    ),
+                    exists(
+                        select(NativeClient.id).where(
+                            NativeClient.id == OAuthAuthorization.client_id,
+                            NativeClient.revoked_at.is_(None),
+                        )
+                    ),
                 )
             )
             return authorization
 
-    async def issue_code(self, authorization_id: UUID, raw_code: str) -> bool:
+    async def issue_code(
+        self,
+        authorization_id: UUID,
+        raw_code: str,
+        *,
+        epoch: int = 1,
+        code_ttl_seconds: int = 60,
+    ) -> bool:
         observed_at = datetime.now(UTC)
         async with self._sessions() as session:
             result = await session.execute(
                 update(OAuthAuthorization)
                 .where(
                     OAuthAuthorization.id == authorization_id,
+                    OAuthAuthorization.epoch == epoch,
                     OAuthAuthorization.authorization_code_digest.is_(None),
                     OAuthAuthorization.consumed_at.is_(None),
                     OAuthAuthorization.expires_at > observed_at,
+                    exists(
+                        select(AuthenticationState.id).where(
+                            AuthenticationState.id == 1,
+                            AuthenticationState.epoch == epoch,
+                        )
+                    ),
+                    exists(
+                        select(NativeClient.id).where(
+                            NativeClient.id == OAuthAuthorization.client_id,
+                            NativeClient.revoked_at.is_(None),
+                        )
+                    ),
                 )
                 .values(
                     authorization_code_digest=digest_secret(raw_code),
                     code_issued_at=observed_at,
+                    code_expires_at=observed_at + timedelta(seconds=code_ttl_seconds),
                     approved_at=func.coalesce(OAuthAuthorization.approved_at, observed_at),
                 )
                 .returning(OAuthAuthorization.id)
@@ -739,29 +907,84 @@ class OAuthAuthorizationRepository:
             await session.commit()
             return issued
 
-    async def consume_code(
+    async def exchange_code(
         self,
         raw_code: str,
         *,
         epoch: int,
+        raw_access_token: str,
+        raw_refresh_token: str,
+        key_thumbprint: str,
+        pkce_challenge: str,
+        access_expires_at: datetime,
+        refresh_expires_at: datetime,
         now: datetime | None = None,
-    ) -> OAuthAuthorization | None:
+    ) -> ExchangedAuthorization | None:
         observed_at = now or datetime.now(UTC)
+        active_client = exists(
+            select(NativeClient.id).where(
+                NativeClient.id == OAuthAuthorization.client_id,
+                NativeClient.key_thumbprint == key_thumbprint,
+                NativeClient.revoked_at.is_(None),
+            )
+        )
         async with self._sessions() as session:
             result = await session.execute(
                 update(OAuthAuthorization)
                 .where(
-                    OAuthAuthorization.authorization_code_digest == digest_secret(raw_code),
+                    OAuthAuthorization.authorization_code_digest
+                    == digest_secret(raw_code),
                     OAuthAuthorization.epoch == epoch,
+                    OAuthAuthorization.pkce_challenge == pkce_challenge,
                     OAuthAuthorization.expires_at > observed_at,
+                    OAuthAuthorization.code_expires_at > observed_at,
                     OAuthAuthorization.consumed_at.is_(None),
+                    exists(
+                        select(AuthenticationState.id).where(
+                            AuthenticationState.id == 1,
+                            AuthenticationState.epoch == epoch,
+                        )
+                    ),
+                    active_client,
                 )
                 .values(consumed_at=observed_at)
                 .returning(OAuthAuthorization)
             )
             authorization = result.scalar_one_or_none()
+            if authorization is None:
+                await session.commit()
+                return None
+            access = await _insert_auth_token(
+                session,
+                raw_token=raw_access_token,
+                kind="access",
+                encoded_scopes=authorization.scopes,
+                key_thumbprint=key_thumbprint,
+                expires_at=access_expires_at,
+                epoch=epoch,
+                client_id=authorization.client_id,
+                now=observed_at,
+            )
+            refresh = await _insert_auth_token(
+                session,
+                raw_token=raw_refresh_token,
+                kind="refresh",
+                encoded_scopes=authorization.scopes,
+                key_thumbprint=key_thumbprint,
+                expires_at=refresh_expires_at,
+                epoch=epoch,
+                client_id=authorization.client_id,
+                now=observed_at,
+            )
+            if access is None or refresh is None:
+                await session.rollback()
+                return None
             await session.commit()
-            return authorization
+            return ExchangedAuthorization(
+                authorization=authorization,
+                access_token=access,
+                refresh_token=refresh,
+            )
 
 
 class AuthTokenRepository:
@@ -784,18 +1007,25 @@ class AuthTokenRepository:
         if kind not in {"access", "refresh", "cli"}:
             raise ValueError("unsupported authentication token kind")
         async with self._sessions() as session:
-            token = AuthToken(
-                token_digest=digest_secret(raw_token),
+            token = await _insert_auth_token(
+                session,
+                raw_token=raw_token,
                 kind=kind,
-                scopes=_encode_scopes(scopes),
+                encoded_scopes=_encode_scopes(scopes),
                 key_thumbprint=key_thumbprint,
                 expires_at=expires_at,
                 epoch=epoch,
                 client_id=client_id,
-                family_id=family_id or (uuid4() if kind == "refresh" else None),
+                family_id=family_id,
                 parent_token_id=parent_token_id,
             )
-            session.add(token)
+            if token is None:
+                state = await session.get(AuthenticationState, 1)
+                epoch_changed = state is None or state.epoch != epoch
+                await session.rollback()
+                if epoch_changed:
+                    raise AuthenticationStateChanged("authentication epoch changed")
+                raise NativeClientRevoked("native client is missing, revoked, or key-mismatched")
             await session.commit()
             return token
 
@@ -814,9 +1044,27 @@ class AuthTokenRepository:
             AuthToken.expires_at > observed_at,
             AuthToken.revoked_at.is_(None),
             AuthToken.rotated_at.is_(None),
+            exists(
+                select(AuthenticationState.id).where(
+                    AuthenticationState.id == 1,
+                    AuthenticationState.epoch == epoch,
+                )
+            ),
         ]
         if kind is not None:
             conditions.append(AuthToken.kind == kind)
+        conditions.append(
+            or_(
+                AuthToken.client_id.is_(None),
+                exists(
+                    select(NativeClient.id).where(
+                        NativeClient.id == AuthToken.client_id,
+                        NativeClient.key_thumbprint == AuthToken.key_thumbprint,
+                        NativeClient.revoked_at.is_(None),
+                    )
+                ),
+            )
+        )
         async with self._sessions() as session:
             token: AuthToken | None = await session.scalar(select(AuthToken).where(*conditions))
             return token
@@ -853,20 +1101,45 @@ class AuthTokenRepository:
             )
             row = result.one_or_none()
             if row is None:
+                replay_family = await session.scalar(
+                    select(AuthToken.family_id).where(
+                        AuthToken.token_digest == digest_secret(raw_refresh),
+                        AuthToken.kind == "refresh",
+                        AuthToken.epoch == epoch,
+                        AuthToken.rotated_at.is_not(None),
+                    )
+                )
+                if replay_family is not None:
+                    await session.execute(
+                        update(AuthToken)
+                        .where(
+                            AuthToken.family_id == replay_family,
+                            AuthToken.revoked_at.is_(None),
+                        )
+                        .values(revoked_at=observed_at)
+                    )
                 await session.commit()
                 return None
-            token = AuthToken(
-                token_digest=digest_secret(replacement),
+            token = await _insert_auth_token(
+                session,
+                raw_token=replacement,
                 kind="refresh",
                 client_id=row[1],
-                scopes=row[2],
+                encoded_scopes=row[2],
                 key_thumbprint=row[3],
                 family_id=row[4],
                 parent_token_id=row[0],
                 epoch=epoch,
                 expires_at=expires_at,
+                now=observed_at,
             )
-            session.add(token)
+            if token is None:
+                state = await session.get(AuthenticationState, 1)
+                epoch_changed = state is None or state.epoch != epoch
+                await session.rollback()
+                if epoch_changed:
+                    raise AuthenticationStateChanged("authentication epoch changed")
+                raise NativeClientRevoked("native client was revoked during refresh rotation")
             await session.commit()
             return token
 

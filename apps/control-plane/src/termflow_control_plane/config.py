@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     totp_setup_ttl_seconds: int = Field(default=10 * 60, ge=60, le=60 * 60)
     auth_challenge_ttl_seconds: int = Field(default=5 * 60, ge=30, le=15 * 60)
     oauth_authorization_ttl_seconds: int = Field(default=5 * 60, ge=30, le=15 * 60)
+    oauth_authorization_code_ttl_seconds: int = Field(default=60, ge=30, le=120)
     auth_access_token_ttl_seconds: int = Field(default=10 * 60, ge=60, le=60 * 60)
     auth_refresh_token_ttl_seconds: int = Field(
         default=30 * 24 * 60 * 60,
