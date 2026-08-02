@@ -37,10 +37,11 @@ GMT、UTC 或其他时区后缀；B、A 和 C 位于不同时区时仍保持同�
 
 ## 手机与横屏
 
-手机支持双指缩放、单指拖动和基于拓扑几何的“聚焦 Pane”。这些只改变本地 viewport，
-不会改变 A 的 rows/cols，也不会自动触发 tmux zoom。横屏沿用与竖屏相同的缩放和操作
-逻辑。Ctrl、Alt、Shift、Esc、Tab、tmux Prefix 和常用动作位于可点击展开/收起的悬浮栏；
-关闭 Pane 必须二次确认。
+手机端隐藏 Computer 名称，并在右上使用“显示”“聚焦 Pane”“tmux 操作”和“锁定画布”
+四个 SVG 图标。锁定默认关闭：单指平移本地画布，双指缩放，且不产生终端鼠标输入；
+锁定开启后，轻点和拖动通过 xterm 发送 tmux 鼠标，长按约 500ms 进入 xterm 文本选择。
+旋转屏幕保留当前锁定状态，离开并重新进入 Term 后恢复未锁定。底部 Ctrl、Alt、Shift、
+Esc、Tab 和 Prefix 是独立布局行，不覆盖 terminal 画布；关闭 Pane 仍必须二次确认。
 
 ## 主题
 
