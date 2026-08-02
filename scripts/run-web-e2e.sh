@@ -68,8 +68,18 @@ for _ in $(seq 1 100); do
 done
 curl -fsS "$TERMFLOW_E2E_BASE_URL/healthz" >/dev/null
 
-TERM_ID=$("$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/scripts/web_e2e_fixture.py")
+FIXTURE_JSON=$("$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/scripts/web_e2e_fixture.py")
+TERM_ID=$(
+  "$REPO_ROOT/.venv/bin/python" -c \
+    'import json,sys; print(json.load(sys.stdin)["online_term_id"])' <<<"$FIXTURE_JSON"
+)
 export TERMFLOW_E2E_TERM_ID="$TERM_ID"
+TERMFLOW_E2E_OFFLINE_TERM_IDS=$(
+  "$REPO_ROOT/.venv/bin/python" -c \
+    'import json,sys; print(json.dumps(json.load(sys.stdin)["offline_term_ids"], separators=(",", ":")))' \
+    <<<"$FIXTURE_JSON"
+)
+export TERMFLOW_E2E_OFFLINE_TERM_IDS
 
 for _ in $(seq 1 100); do
   if curl -fsS -H "Authorization: Bearer $TERMFLOW_E2E_ADMIN_TOKEN" \

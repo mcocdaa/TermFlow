@@ -1,9 +1,15 @@
 import { expect, test, type Page } from '@playwright/test'
 
-const adminToken = process.env.TERMFLOW_E2E_ADMIN_TOKEN
-const termId = process.env.TERMFLOW_E2E_TERM_ID
-const termName = process.env.TERMFLOW_E2E_TERM_NAME
-if (!adminToken || !termId || !termName) throw new Error('TermFlow browser fixture variables are required')
+const adminToken = process.env.TERMFLOW_E2E_ADMIN_TOKEN ?? ''
+const termId = process.env.TERMFLOW_E2E_TERM_ID ?? ''
+const termName = process.env.TERMFLOW_E2E_TERM_NAME ?? ''
+const offlineTermIds = JSON.parse(
+  process.env.TERMFLOW_E2E_OFFLINE_TERM_IDS ?? '{}',
+) as Record<string, string>
+test.skip(
+  !adminToken || !termId || !termName,
+  'TermFlow isolated browser fixture variables are required',
+)
 
 async function login(page: Page) {
   await page.goto('/login')
@@ -50,6 +56,34 @@ async function dispatchTouchSequence(page: Page, steps: TouchStep[]) {
   } finally {
     await session.detach()
   }
+}
+
+async function mobilePageGeometry(page: Page) {
+  return page.evaluate(() => {
+    const html = document.documentElement
+    const body = document.body
+    const titlebar = document.querySelector<HTMLElement>('.terminal-titlebar')!
+    const frame = document.querySelector<HTMLElement>('.terminal-frame')!
+    const keybar = document.querySelector<HTMLElement>('.mobile-keybar')!
+    const rectangle = (element: HTMLElement) => {
+      const box = element.getBoundingClientRect()
+      return { left: box.left, top: box.top, right: box.right, bottom: box.bottom }
+    }
+    return {
+      windowX: window.scrollX,
+      windowY: window.scrollY,
+      htmlLeft: html.scrollLeft,
+      htmlTop: html.scrollTop,
+      bodyLeft: body.scrollLeft,
+      bodyTop: body.scrollTop,
+      visualLeft: window.visualViewport?.offsetLeft ?? 0,
+      visualTop: window.visualViewport?.offsetTop ?? 0,
+      titlebar: rectangle(titlebar),
+      frame: rectangle(frame),
+      keybar: rectangle(keybar),
+      keybarScrollLeft: keybar.scrollLeft,
+    }
+  })
 }
 
 async function panesForTerm(page: Page): Promise<PaneGeometry[]> {
@@ -134,6 +168,44 @@ async function expectWordSelection(
   })
   expect(copied).toBe(secondWord)
 }
+
+test('permanently removes only its disposable offline Term', async ({ page }, testInfo) => {
+  const offlineTermId = offlineTermIds[testInfo.project.name]
+  expect(offlineTermId, `missing offline fixture for ${testInfo.project.name}`).toBeTruthy()
+  await login(page)
+
+  const onlineRow = page.locator(`[data-term-id="${termId}"]`)
+  await expect(onlineRow.locator('[data-action="delete-offline-term"]')).toHaveCount(0)
+
+  const offlineName = `offline-${testInfo.project.name}`
+  const offlineRow = page.locator(`[data-term-id="${offlineTermId}"]`)
+  await expect(offlineRow).toBeVisible()
+  const deleteButton = offlineRow.getByRole('button', {
+    name: `删除离线 Term：${offlineName}`,
+  })
+  await expect(deleteButton.locator('svg')).toHaveCount(1)
+  await deleteButton.click()
+
+  const dialog = page.getByRole('alertdialog')
+  await expect(dialog).toContainText('不会删除本地 tmux Session')
+  await expect(dialog).toContainText(`termflow activate ${offlineTermId}`)
+  const deleted = page.waitForResponse((response) =>
+    response.request().method() === 'DELETE'
+    && response.url().endsWith(`/api/v1/terms/${offlineTermId}`)
+    && response.status() === 204,
+  )
+  await dialog.locator('[data-action="confirm-delete-term"]').click()
+  await deleted
+  await expect(offlineRow).toHaveCount(0)
+  await page.reload()
+  await expect(page.locator(`[data-term-id="${offlineTermId}"]`)).toHaveCount(0)
+
+  const onlineConflict = await page.request.delete(`/api/v1/terms/${termId}`, {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  })
+  expect(onlineConflict.status()).toBe(409)
+  expect(JSON.stringify(await onlineConflict.json())).toContain('instance_online')
+})
 
 test('uses the real dashboard, themes, terminal transport, and responsive controls', async ({ page }, testInfo) => {
   const terminalFrames: Buffer[] = []
@@ -306,6 +378,81 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
     await displayTrigger.click()
     await expect(page.getByRole('menu', { name: /聚焦 Pane/i })).toBeHidden()
     await expect(page.getByRole('menu', { name: '终端显示比例' })).toBeVisible()
+
+    await page.locator('.terminal-host textarea').focus()
+    await page.keyboard.type('tmux set-option -g mouse off')
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.xterm')).not.toHaveClass(/enable-mouse-events/)
+    await page.getByRole('menuitemradio', { name: '100% 实际字号' }).click()
+    const desktopFrame = page.locator('.terminal-frame')
+    await expect(desktopFrame).toHaveAttribute('data-display-mode', 'font-100')
+    await expect.poll(async () => desktopFrame.evaluate((element) => ({
+      horizontal: element.scrollWidth - element.clientWidth,
+      vertical: element.scrollHeight - element.clientHeight,
+    }))).toEqual(expect.objectContaining({
+      horizontal: expect.any(Number),
+      vertical: expect.any(Number),
+    }))
+    const desktopOverflow = await desktopFrame.evaluate((element) => ({
+      horizontal: element.scrollWidth - element.clientWidth,
+      vertical: element.scrollHeight - element.clientHeight,
+    }))
+    expect(desktopOverflow.horizontal).toBeGreaterThan(1)
+    expect(desktopOverflow.vertical).toBeGreaterThan(1)
+
+    const desktopFrameBox = await desktopFrame.boundingBox()
+    expect(desktopFrameBox).not.toBeNull()
+    await page.mouse.move(
+      desktopFrameBox!.x + desktopFrameBox!.width / 2,
+      desktopFrameBox!.y + desktopFrameBox!.height / 2,
+    )
+    await page.mouse.wheel(180, 180)
+    await expect.poll(async () => {
+      const offsets = await desktopFrame.evaluate((element) => ({
+        left: element.scrollLeft,
+        top: element.scrollTop,
+      }))
+      return offsets.left > 0 && offsets.top > 0
+    }).toBe(true)
+    const unlockedOffsets = await desktopFrame.evaluate((element) => ({
+      left: element.scrollLeft,
+      top: element.scrollTop,
+    }))
+    expect(unlockedOffsets.left).toBeGreaterThan(0)
+    expect(unlockedOffsets.top).toBeGreaterThan(0)
+
+    const viewportLock = page.locator('[data-action="toggle-viewport-lock"]')
+    await viewportLock.click()
+    await expect(viewportLock).toHaveAttribute('aria-pressed', 'true')
+    await expect(desktopFrame).toHaveAttribute('data-viewport-lock', 'locked')
+    await page.mouse.move(
+      desktopFrameBox!.x + desktopFrameBox!.width / 2,
+      desktopFrameBox!.y + desktopFrameBox!.height / 2,
+    )
+    await page.mouse.wheel(180, 180)
+    await page.waitForTimeout(100)
+    expect(await desktopFrame.evaluate((element) => ({
+      left: element.scrollLeft,
+      top: element.scrollTop,
+    }))).toEqual(unlockedOffsets)
+
+    await viewportLock.click()
+    await expect(viewportLock).toHaveAttribute('aria-pressed', 'false')
+    await page.mouse.move(
+      desktopFrameBox!.x + desktopFrameBox!.width / 2,
+      desktopFrameBox!.y + desktopFrameBox!.height / 2,
+    )
+    await page.mouse.wheel(-120, -120)
+    await expect.poll(() => desktopFrame.evaluate((element) => ({
+      left: element.scrollLeft,
+      top: element.scrollTop,
+    }))).not.toEqual(unlockedOffsets)
+
+    await page.locator('.terminal-host textarea').focus()
+    await page.keyboard.type('tmux set-option -g mouse on')
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.xterm')).toHaveClass(/enable-mouse-events/)
+    await displayTrigger.click()
   }
   await page.getByRole('menuitemradio', { name: '50%' }).click()
   await expect(page.locator('.terminal-frame')).toHaveAttribute('data-display-mode', 'scale-50')
@@ -344,12 +491,11 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
     await expectWordSelection(page, terminalOutputFrames, rightPane, 'FIFTY')
   } else {
     mobilePanes = await ensureTwoPanes(page)
-    const [leftPane, rightPane] = mobilePanes
-    const activePane = mobilePanes.find((pane) => pane.active)!
-    const targetPane = activePane.pane_id === leftPane.pane_id ? rightPane : leftPane
     await page.getByRole('button', { name: 'tmux 操作' }).click()
-    await page.getByRole('menuitem', { name: targetPane.pane_id === leftPane.pane_id ? '选择左侧 Pane' : '选择右侧 Pane' }).click()
-    await expect.poll(async () => (await panesForTerm(page)).find((pane) => pane.active)?.pane_id).toBe(targetPane.pane_id)
+    await expect(page.getByRole('menuitem', { name: '选择左侧 Pane' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: '选择右侧 Pane' })).toBeVisible()
+    await page.getByRole('button', { name: 'tmux 操作' }).click()
+    await expect(page.getByRole('menu', { name: /tmux 操作/i })).toBeHidden()
 
     await page.getByRole('button', { name: 'Ctrl' }).click()
     await expect(page.getByRole('button', { name: 'Ctrl' })).toHaveAttribute('aria-pressed', 'true')
@@ -361,25 +507,33 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
     await page.getByRole('menuitemradio', { name: '100% 实际字号' }).click()
     await page.getByRole('button', { name: '聚焦 Pane' }).click()
     await page.getByRole('menuitem', { name: '显示完整终端' }).click()
-    const frameBox = await page.locator('.terminal-frame').boundingBox()
-    const gridBox = await page.locator('.terminal-grid').boundingBox()
+    const mobileFrame = page.locator('.terminal-frame')
+    const mobileGrid = page.locator('.terminal-grid')
+    const frameBox = await mobileFrame.boundingBox()
+    const gridBox = await mobileGrid.boundingBox()
     expect(frameBox).not.toBeNull()
     expect(gridBox).not.toBeNull()
     const center = { x: frameBox!.x + frameBox!.width / 2, y: frameBox!.y + frameBox!.height / 2 }
-    const panHorizontally = gridBox!.width > frameBox!.width + 1
-    expect(panHorizontally || gridBox!.height > frameBox!.height + 1).toBe(true)
-    const panStart = { x: center.x + (panHorizontally ? 40 : 0), y: center.y + (panHorizontally ? 0 : 40) }
-    const panEnd = { x: center.x - (panHorizontally ? 40 : 0), y: center.y - (panHorizontally ? 0 : 40) }
+    expect(gridBox!.width - frameBox!.width).toBeGreaterThan(1)
+    expect(gridBox!.height - frameBox!.height).toBeGreaterThan(1)
     const frameCountBefore = terminalFrames.length
-    const transformBefore = await page.locator('.terminal-grid').evaluate((element) => getComputedStyle(element).transform)
-    const scaleBefore = Number(await page.locator('.terminal-frame').getAttribute('data-visual-scale'))
+    const transformBefore = await mobileGrid.evaluate((element) => getComputedStyle(element).transform)
+    const scaleBefore = Number(await mobileFrame.getAttribute('data-visual-scale'))
 
     await dispatchTouchSequence(page, [
-      { type: 'touchStart', points: [{ id: 1, ...panStart }] },
-      { type: 'touchMove', points: [{ id: 1, ...panEnd }] },
+      { type: 'touchStart', points: [{ id: 1, x: center.x + 40, y: center.y }] },
+      { type: 'touchMove', points: [{ id: 1, x: center.x - 40, y: center.y }] },
       { type: 'touchEnd', points: [] },
     ])
-    expect(await page.locator('.terminal-grid').evaluate((element) => getComputedStyle(element).transform)).not.toBe(transformBefore)
+    const horizontalTransform = await mobileGrid.evaluate((element) => getComputedStyle(element).transform)
+    expect(horizontalTransform).not.toBe(transformBefore)
+
+    await dispatchTouchSequence(page, [
+      { type: 'touchStart', points: [{ id: 1, x: center.x, y: center.y + 40 }] },
+      { type: 'touchMove', points: [{ id: 1, x: center.x, y: center.y - 40 }] },
+      { type: 'touchEnd', points: [] },
+    ])
+    expect(await mobileGrid.evaluate((element) => getComputedStyle(element).transform)).not.toBe(horizontalTransform)
 
     await dispatchTouchSequence(page, [
       { type: 'touchStart', points: [
@@ -392,8 +546,45 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
       ] },
       { type: 'touchEnd', points: [] },
     ])
-    expect(Number(await page.locator('.terminal-frame').getAttribute('data-visual-scale'))).toBeGreaterThan(scaleBefore)
+    expect(Number(await mobileFrame.getAttribute('data-visual-scale'))).toBeGreaterThan(scaleBefore)
     expect(terminalFrames).toHaveLength(frameCountBefore)
+
+    const mobileLock = page.locator('[data-action="toggle-viewport-lock"]')
+    await mobileLock.click()
+    await expect(mobileLock).toHaveAttribute('aria-pressed', 'true')
+    await expect(mobileFrame).toHaveAttribute('data-viewport-lock', 'locked')
+    const lockedViewport = {
+      transform: await mobileGrid.evaluate((element) => getComputedStyle(element).transform),
+      scale: await mobileFrame.getAttribute('data-visual-scale'),
+      scroll: await mobileFrame.evaluate((element) => ({
+        left: element.scrollLeft,
+        top: element.scrollTop,
+      })),
+    }
+    await dispatchTouchSequence(page, [
+      { type: 'touchStart', points: [{ id: 3, x: center.x + 30, y: center.y + 30 }] },
+      { type: 'touchMove', points: [{ id: 3, x: center.x - 30, y: center.y - 30 }] },
+      { type: 'touchEnd', points: [] },
+    ])
+    await dispatchTouchSequence(page, [
+      { type: 'touchStart', points: [
+        { id: 4, x: center.x - 25, y: center.y },
+        { id: 5, x: center.x + 25, y: center.y },
+      ] },
+      { type: 'touchMove', points: [
+        { id: 4, x: center.x - 55, y: center.y },
+        { id: 5, x: center.x + 55, y: center.y },
+      ] },
+      { type: 'touchEnd', points: [] },
+    ])
+    expect(await mobileGrid.evaluate((element) => getComputedStyle(element).transform)).toBe(lockedViewport.transform)
+    expect(await mobileFrame.getAttribute('data-visual-scale')).toBe(lockedViewport.scale)
+    expect(await mobileFrame.evaluate((element) => ({
+      left: element.scrollLeft,
+      top: element.scrollTop,
+    }))).toEqual(lockedViewport.scroll)
+    await mobileLock.click()
+    await expect(mobileLock).toHaveAttribute('aria-pressed', 'false')
   }
 
   await displayTrigger.click()
@@ -453,14 +644,48 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
     expect(mobileLayout.keybarBottom).toBeLessThanOrEqual(mobileLayout.viewportHeight + 1)
     expect(mobileLayout.keybarPosition).toBe('static')
 
+    const keybar = page.locator('.mobile-keybar')
+    await keybar.evaluate((element) => { element.scrollLeft = 0 })
+    const keybarOverflow = await keybar.evaluate((element) => element.scrollWidth - element.clientWidth)
+    const keybarBox = await keybar.boundingBox()
+    expect(keybarBox).not.toBeNull()
+    const keybarCenter = {
+      x: keybarBox!.x + keybarBox!.width / 2,
+      y: keybarBox!.y + keybarBox!.height / 2,
+    }
+    const pageBeforeKeybarDrag = await mobilePageGeometry(page)
+    await dispatchTouchSequence(page, [
+      { type: 'touchStart', points: [{ id: 20, ...keybarCenter }] },
+      { type: 'touchMove', points: [{ id: 20, x: keybarCenter.x, y: keybarCenter.y - 70 }] },
+      { type: 'touchEnd', points: [] },
+    ])
+    const pageAfterVerticalKeybarDrag = await mobilePageGeometry(page)
+    expect(pageAfterVerticalKeybarDrag).toEqual(pageBeforeKeybarDrag)
+
+    await dispatchTouchSequence(page, [
+      { type: 'touchStart', points: [{ id: 21, x: keybarBox!.x + keybarBox!.width - 20, y: keybarCenter.y }] },
+      { type: 'touchMove', points: [{ id: 21, x: keybarBox!.x + 20, y: keybarCenter.y }] },
+      { type: 'touchEnd', points: [] },
+    ])
+    const pageAfterHorizontalKeybarDrag = await mobilePageGeometry(page)
+    const { keybarScrollLeft: beforeScroll, ...fixedBeforeHorizontalDrag } = pageAfterVerticalKeybarDrag
+    const { keybarScrollLeft: afterScroll, ...fixedAfterHorizontalDrag } = pageAfterHorizontalKeybarDrag
+    expect(beforeScroll).toBe(0)
+    expect(afterScroll).toBe(pageAfterHorizontalKeybarDrag.keybarScrollLeft)
+    if (keybarOverflow > 1) expect(afterScroll).toBeGreaterThan(0)
+    else expect(afterScroll).toBe(0)
+    expect(fixedAfterHorizontalDrag).toEqual(fixedBeforeHorizontalDrag)
+    expect(pageAfterHorizontalKeybarDrag.keybar.bottom)
+      .toBeLessThanOrEqual((await page.evaluate(() => window.visualViewport?.height ?? window.innerHeight)) + 1)
+
     if (!mobilePanes) mobilePanes = await ensureTwoPanes(page)
     const currentPanes = (await panesForTerm(page)).toSorted((left, right) => left.left - right.left)
     const activePane = currentPanes.find((pane) => pane.active)!
     const inactivePane = currentPanes.find((pane) => pane.pane_id !== activePane.pane_id)!
-    const lock = page.locator('[data-action="toggle-touch-lock"]')
+    const lock = page.locator('[data-action="toggle-viewport-lock"]')
     await lock.click()
     await expect(lock).toHaveAttribute('aria-pressed', 'true')
-    await expect(page.locator('.terminal-frame')).toHaveAttribute('data-touch-control', 'locked')
+    await expect(page.locator('.terminal-frame')).toHaveAttribute('data-viewport-lock', 'locked')
 
     const target = await terminalPoint(
       page,

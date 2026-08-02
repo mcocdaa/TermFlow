@@ -3,13 +3,16 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 import pexpect  # type: ignore[import-untyped]
+from termflow_node.config.store import ConfigStore
 from termflow_node.instances.store import InstanceStore
 from termflow_node.tmux.runner import TmuxRunner
 
@@ -66,8 +69,35 @@ def main() -> None:
         raise TimeoutError("disposable Term did not become ready")
     child.send(b"\x02d")
     child.expect(pexpect.EOF, timeout=5)
-    TmuxRunner(instance.socket_path).run_command("set-option", "-g", "mouse", "on")
-    print(instance.instance_id, flush=True)
+    tmux = TmuxRunner(instance.socket_path)
+    tmux.run_command("resize-window", "-x", "240", "-y", "80")
+    tmux.run_command("set-option", "-g", "mouse", "on")
+
+    offline_ids: dict[str, str] = {}
+    installation = ConfigStore.default().load()
+    for project in ("desktop", "mobile-portrait", "mobile-landscape"):
+        offline_id = uuid4()
+        registration = httpx.post(
+            f"{base_url}/api/v1/instances/register",
+            headers={
+                "Authorization": "Bearer "
+                + installation.installation_token.get_secret_value()
+            },
+            json={"instance_id": str(offline_id), "name": f"offline-{project}"},
+            timeout=3,
+        )
+        registration.raise_for_status()
+        offline_ids[project] = str(offline_id)
+
+    print(
+        json.dumps(
+            {
+                "online_term_id": str(instance.instance_id),
+                "offline_term_ids": offline_ids,
+            }
+        ),
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
