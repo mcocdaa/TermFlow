@@ -12,16 +12,16 @@ export type TerminalTransportEvent =
   | { type: 'close', code: number }
 
 export interface TerminalConnection {
-  sendText(data: string): void
-  sendBinary(data: Uint8Array): void
-  close(code: number, reason: string): void
+  sendText(data: string): Promise<void>
+  sendBinary(data: Uint8Array): Promise<void>
+  close(code: number, reason: string): Promise<void>
 }
 
 export interface TerminalTransport {
-  connect(request: TerminalConnectRequest, emit: (event: TerminalTransportEvent) => void): TerminalConnection
+  connect(request: TerminalConnectRequest, emit: (event: TerminalTransportEvent) => void): Promise<TerminalConnection>
 }
 
 export interface TerminalScheduler {
-  set(callback: () => void, delayMs: number): unknown
+  set(callback: () => void | Promise<void>, delayMs: number): unknown
   clear(handle: unknown): void
 }

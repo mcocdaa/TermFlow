@@ -7,7 +7,7 @@ import { createThemeState } from './theme/theme'
 
 const fakeRuntime = (): ClientRuntime => ({
   api: {} as ClientRuntime['api'],
-  createTerminal: () => ({ connect() {}, sendInput() {}, sendAction() {}, dispose() {} }),
+  createTerminal: () => ({ async connect() {}, async sendInput() {}, async sendAction() {}, async dispose() {} }),
   clipboard: { writeText: async () => undefined },
   clock: {
     now: () => 0,

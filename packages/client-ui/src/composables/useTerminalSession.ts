@@ -51,7 +51,7 @@ export function useTerminalSession(
     onReady: (control) => {
       dimensions.value = { rows: control.rows, cols: control.cols }
       if (!adapter && host.value) {
-        adapter = adapterFactory(host.value, dimensions.value, (data) => terminal.sendInput(transformInput ? transformInput(data) : data), runtime.platform)
+        adapter = adapterFactory(host.value, dimensions.value, (data) => { void terminal.sendInput(transformInput ? transformInput(data) : data) }, runtime.platform)
         adapter.setInputEnabled(true)
         for (const bytes of pendingOutput.splice(0)) adapter.write(bytes)
         adapter.focus()
@@ -67,8 +67,8 @@ export function useTerminalSession(
     onAuthenticationRequired: () => { authenticationRequired.value += 1 },
   }
   const terminal = (terminalFactory ?? runtime.createTerminal)(termId, callbacks)
-  onMounted(() => terminal.connect())
-  onBeforeUnmount(() => { adapter?.dispose(); adapter = null; pendingOutput.length = 0; terminal.dispose() })
+  onMounted(() => { void terminal.connect() })
+  onBeforeUnmount(() => { adapter?.dispose(); adapter = null; pendingOutput.length = 0; void terminal.dispose() })
 
   return {
     status, dimensions, bindings, terminalError, lastActionResult, resetKey, authenticationRequired,

@@ -15,7 +15,7 @@ export function createFakeRuntime(overrides: Partial<ClientRuntime> = {}): Clien
         rename: async (id: string, name: string) => ({ instance_id: id, name, online: true, window_count: 0, pane_count: 0, active_pane_count: 0, current_command: null, last_seen_at: null }),
       },
     } as unknown as ClientRuntime['api'],
-    createTerminal: () => ({ connect() {}, sendInput() {}, sendAction() {}, dispose() {} }),
+    createTerminal: () => ({ async connect() {}, async sendInput() {}, async sendAction() {}, async dispose() {} }),
     clipboard: { writeText: async () => undefined },
     clock: {
       now: () => 0,

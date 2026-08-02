@@ -16,14 +16,14 @@ class FakeWebSocket {
 }
 
 describe('createBrowserTerminalTransport', () => {
-  it('builds the same-origin WebSocket URL with the exact resume tuple', () => {
+  it('builds the same-origin WebSocket URL with the exact resume tuple', async () => {
     let socket!: FakeWebSocket
     const events: TerminalTransportEvent[] = []
     const transport = createBrowserTerminalTransport({
       baseUrl: new URL('https://control.example/app'),
       createWebSocket: (url) => { socket = new FakeWebSocket(url); return socket as unknown as WebSocket },
     })
-    const connection = transport.connect({
+    const connection = await transport.connect({
       termId: 'term /7',
       terminalId: '11111111-1111-4111-8111-111111111111',
       streamId: '22222222-2222-4222-8222-222222222222',
@@ -32,20 +32,21 @@ describe('createBrowserTerminalTransport', () => {
 
     expect(socket.url).toBe('wss://control.example/api/v1/terms/term%20%2F7/terminal?terminal_id=11111111-1111-4111-8111-111111111111&stream_id=22222222-2222-4222-8222-222222222222&after_seq=9')
     expect(socket.binaryType).toBe('arraybuffer')
-    connection.sendText('text')
-    connection.sendBinary(Uint8Array.of(1, 2))
-    connection.close(1000, 'done')
+    await connection.sendText('text')
+    await connection.sendBinary(Uint8Array.of(1, 2))
+    await connection.close(1000, 'done')
     expect(socket.sent).toEqual(['text', Uint8Array.of(1, 2)])
     expect(socket.closes).toEqual([{ code: 1000, reason: 'done' }])
   })
 
-  it('maps browser events into platform-neutral transport events', () => {
+  it('maps browser events into platform-neutral transport events', async () => {
     let socket!: FakeWebSocket
     const emit = vi.fn()
     createBrowserTerminalTransport({
       baseUrl: new URL('http://127.0.0.1:8000/'),
       createWebSocket: (url) => { socket = new FakeWebSocket(url); return socket as unknown as WebSocket },
     }).connect({ termId: 'term-1' }, emit)
+    await Promise.resolve()
 
     socket.onopen?.(new Event('open'))
     socket.onmessage?.(new MessageEvent('message', { data: 'control' }))
