@@ -22,15 +22,15 @@
       <DisplayMenu :model-value="displayMode" :open="displayMenuOpen ?? false" @update:model-value="$emit('update:displayMode', $event)" @update:open="$emit('update:displayMenuOpen', $event)" />
       <slot />
       <button
-        data-action="toggle-touch-lock"
-        class="titlebar-button touch-lock-button"
+        data-action="toggle-viewport-lock"
+        class="titlebar-button viewport-lock-button"
         type="button"
-        :aria-label="touchControlLocked ? '解除画布锁定' : '锁定画布'"
-        :title="touchControlLocked ? '解除画布锁定' : '锁定画布'"
-        :aria-pressed="touchControlLocked"
-        @click="emit('update:touchControlLocked', !touchControlLocked)"
+        :aria-label="viewportLocked ? '解除画布锁定' : '锁定画布'"
+        :title="viewportLocked ? '解除画布锁定' : '锁定画布'"
+        :aria-pressed="viewportLocked"
+        @click="emit('update:viewportLocked', !viewportLocked)"
       >
-        <Lock v-if="touchControlLocked" :size="16" aria-hidden="true" />
+        <Lock v-if="viewportLocked" :size="16" aria-hidden="true" />
         <Unlock v-else :size="16" aria-hidden="true" />
       </button>
     </div>
@@ -44,8 +44,8 @@ import { RouterLink } from 'vue-router'
 import type { TerminalConnectionStatus } from '@termflow/client-core'
 import type { DisplayMode } from '../../terminal/viewport'
 import DisplayMenu from './DisplayMenu.vue'
-const props = withDefaults(defineProps<{ title: string; computerName?: string; status?: TerminalConnectionStatus; displayMode: DisplayMode; displayMenuOpen?: boolean; touchControlLocked?: boolean }>(), { computerName: 'Computer 未报告', status: 'connecting', displayMenuOpen: false, touchControlLocked: false })
-const emit = defineEmits<{ 'update:displayMode': [mode: DisplayMode]; 'update:displayMenuOpen': [open: boolean]; 'update:touchControlLocked': [locked: boolean]; rename: [name: string] }>()
+const props = withDefaults(defineProps<{ title: string; computerName?: string; status?: TerminalConnectionStatus; displayMode: DisplayMode; displayMenuOpen?: boolean; viewportLocked?: boolean }>(), { computerName: 'Computer 未报告', status: 'connecting', displayMenuOpen: false, viewportLocked: false })
+const emit = defineEmits<{ 'update:displayMode': [mode: DisplayMode]; 'update:displayMenuOpen': [open: boolean]; 'update:viewportLocked': [locked: boolean]; rename: [name: string] }>()
 const editing = ref(false)
 const draft = ref('')
 const validationError = ref('')

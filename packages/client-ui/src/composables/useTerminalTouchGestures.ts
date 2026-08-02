@@ -60,12 +60,13 @@ export function createTerminalTouchGestures(options: TerminalTouchGestureOptions
   }
 
   function pointerDown(point: PointerSample) {
-    if (!options.locked() || !options.connected()) {
+    if (!options.locked()) {
       viewportPointers.add(point.pointerId)
       options.viewport.pointerDown(point)
       return
     }
     lockedPointers.add(point.pointerId)
+    if (!options.connected()) return
     if (lockedBlocked) return
     if (active) {
       finishLocked()

@@ -5,17 +5,24 @@ const point = (pointerId: number, x: number, y: number) => ({ pointerId, x, y })
 
 function harness(locked = false) {
   let currentLocked = locked
+  let currentConnected = true
   const viewport = { pointerDown: vi.fn(), pointerMove: vi.fn(), pointerUp: vi.fn() }
   const dispatchMouse = vi.fn()
   const gestures = createTerminalTouchGestures({
     locked: () => currentLocked,
-    connected: () => true,
+    connected: () => currentConnected,
     viewport,
     dispatchMouse,
     longPressMs: 500,
     moveSlop: 8,
   })
-  return { gestures, viewport, dispatchMouse, setLocked: (value: boolean) => { currentLocked = value } }
+  return {
+    gestures,
+    viewport,
+    dispatchMouse,
+    setLocked: (value: boolean) => { currentLocked = value },
+    setConnected: (value: boolean) => { currentConnected = value },
+  }
 }
 
 afterEach(() => vi.useRealTimers())
@@ -54,6 +61,17 @@ describe('terminal touch gestures', () => {
     gestures.pointerMove(point(1, 100, 60))
     gestures.pointerUp(1, point(1, 100, 60))
     expect(dispatchMouse.mock.calls.every(([event]) => event.forceSelection === true)).toBe(true)
+  })
+
+  it('does not pan a locked viewport while disconnected', () => {
+    const { gestures, viewport, dispatchMouse, setConnected } = harness(true)
+    setConnected(false)
+    gestures.pointerDown(point(1, 100, 100))
+    gestures.pointerMove(point(1, 40, 40))
+    gestures.pointerUp(1, point(1, 40, 40))
+    expect(viewport.pointerDown).not.toHaveBeenCalled()
+    expect(viewport.pointerMove).not.toHaveBeenCalled()
+    expect(dispatchMouse).not.toHaveBeenCalled()
   })
 
   it('cancels timers and releases an active button on a second touch or mode change', () => {

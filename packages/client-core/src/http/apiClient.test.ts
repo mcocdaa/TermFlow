@@ -48,6 +48,13 @@ describe('createApiClient', () => {
     expect(error.message).not.toContain('secret')
   })
 
+  it('removes a Term through DELETE and accepts 204', async () => {
+    const request = vi.fn().mockResolvedValue(response(204, undefined, ''))
+
+    await expect(createApiClient({ request }).terms.remove('term /2')).resolves.toBeUndefined()
+    expect(request).toHaveBeenCalledWith('/api/v1/terms/term%20%2F2', { method: 'DELETE' })
+  })
+
   it.each([
     ['aborted', 'aborted'],
     ['offline', 'offline'],
@@ -70,6 +77,7 @@ describe('createApiClient', () => {
     await api.computers.createEnrollment('Studio')
     await api.terms.topology('term /1')
     await api.terms.rename('term-1', 'Editor')
+    await api.terms.remove('term /2')
 
     expect(request.mock.calls).toEqual([
       ['/api/v1/admin/sessions', { method: 'POST', body: { admin_token: 'admin-secret' } }],
@@ -80,6 +88,7 @@ describe('createApiClient', () => {
       ['/api/v1/enrollment-tokens', { method: 'POST', body: { display_name: 'Studio' } }],
       ['/api/v1/instances/term%20%2F1/topology', { method: 'GET' }],
       ['/api/v1/terms/term-1', { method: 'PATCH', body: { name: 'Editor' } }],
+      ['/api/v1/terms/term%20%2F2', { method: 'DELETE' }],
     ])
   })
 })

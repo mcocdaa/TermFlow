@@ -4,7 +4,7 @@
       <div><p class="eyebrow">Computer</p><h2>{{ computer.display_name }}</h2><p v-if="metadata" class="muted">{{ metadata }}</p></div>
       <StatusPill :online="computer.online" />
     </header>
-    <div v-if="computer.terms.length" class="term-list"><TermRow v-for="term in computer.terms" :key="term.instance_id" :term="term" /></div>
+    <div v-if="computer.terms.length" class="term-list"><TermRow v-for="term in computer.terms" :key="term.instance_id" :term="term" @request-delete="$emit('request-delete', $event)" /></div>
     <p v-else class="empty-state">这台 Computer 还没有 Term。</p>
   </article>
 </template>
@@ -15,5 +15,6 @@ import type { ComputerSummary } from '../../types'
 import StatusPill from './StatusPill.vue'
 import TermRow from './TermRow.vue'
 const props = defineProps<{ computer: ComputerSummary }>()
+defineEmits<{ 'request-delete': [term: ComputerSummary['terms'][number]] }>()
 const metadata = computed(() => [props.computer.hostname, props.computer.platform].filter(Boolean).join(' · '))
 </script>

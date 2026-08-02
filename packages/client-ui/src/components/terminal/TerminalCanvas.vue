@@ -1,5 +1,5 @@
 <template>
-  <div ref="frameElement" class="terminal-frame" :data-status="status" :data-display-mode="displayMode" :data-touch-control="touchControlLocked ? 'locked' : 'viewport'" :data-focused-pane="pointer.state.focusedPaneId ?? undefined" :data-cell-width="renderedCellMetrics?.width" :data-cell-height="renderedCellMetrics?.height" :data-visual-scale="appliedVisualScale" @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerCancel">
+  <div ref="frameElement" class="terminal-frame" :data-status="status" :data-display-mode="displayMode" :data-viewport-lock="viewportLocked ? 'locked' : 'unlocked'" :data-focused-pane="pointer.state.focusedPaneId ?? undefined" :data-cell-width="renderedCellMetrics?.width" :data-cell-height="renderedCellMetrics?.height" :data-visual-scale="appliedVisualScale" @wheel.capture="onWheel" @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerCancel">
     <div class="terminal-viewport-content" :style="contentStyle">
       <div class="terminal-grid" :style="gridStyle"><div ref="host" class="terminal-host" role="application" :aria-label="`Term ${termId} 终端`" /></div>
     </div>
@@ -21,7 +21,7 @@ import { createPointerViewport, type PointerViewportSnapshot } from '../../compo
 import { createTerminalTouchGestures } from '../../composables/useTerminalTouchGestures'
 import { useTheme } from '../../theme/theme'
 
-const props = withDefaults(defineProps<{ termId: string; displayMode?: DisplayMode; selectionActive?: boolean; mouseReportingActive?: boolean; touchControlLocked?: boolean; transformInput?: (value: string | Uint8Array) => string | Uint8Array; createTerminal?: TerminalFactory; createAdapter?: TerminalAdapterFactory }>(), { displayMode: 'font-100', selectionActive: false, mouseReportingActive: false, touchControlLocked: false })
+const props = withDefaults(defineProps<{ termId: string; displayMode?: DisplayMode; selectionActive?: boolean; mouseReportingActive?: boolean; viewportLocked?: boolean; transformInput?: (value: string | Uint8Array) => string | Uint8Array; createTerminal?: TerminalFactory; createAdapter?: TerminalAdapterFactory }>(), { displayMode: 'font-100', selectionActive: false, mouseReportingActive: false, viewportLocked: false })
 const emit = defineEmits<{ bindings: [value: { prefix: string; prefix2?: string | null; bindings: Array<{ action: TerminalActionId; key: string | null; tooltip: string }> }]; 'reset-input': [key: number]; status: [value: TerminalConnectionStatus]; 'authentication-required': []; 'action-result': [value: TerminalActionResultFrame] }>()
 const { active: activeTheme } = useTheme()
 const host = ref<HTMLElement | null>(null)
@@ -35,7 +35,7 @@ const { status, dimensions, bindings, terminalError, lastActionResult, resetKey,
 const presentation = computed(() => dimensions.value && baselineCellMetrics.value ? displayPresentation(props.displayMode, dimensions.value, frame.value, { cellWidth: baselineCellMetrics.value.width, cellHeight: baselineCellMetrics.value.height }) : null)
 const pointer = createPointerViewport({ viewport: frame.value, content: frame.value, canPan: () => !props.selectionActive && !props.mouseReportingActive && session.canClientPan() })
 const touchGestures = createTerminalTouchGestures({
-  locked: () => props.touchControlLocked,
+  locked: () => props.viewportLocked,
   connected: () => status.value === 'connected',
   viewport: pointer,
   dispatchMouse: session.dispatchMouse,
@@ -100,7 +100,7 @@ watch(authenticationRequired, () => emit('authentication-required'))
 watch(lastActionResult, (value) => { if (value) emit('action-result', value) })
 watch(activeTheme, () => session.refreshTheme())
 watch(dimensions, () => { void nextTick(refreshCellMetrics) })
-watch([() => props.touchControlLocked, status], () => touchGestures.cancelAll())
+watch([() => props.viewportLocked, status], () => touchGestures.cancelAll())
 function refreshCellMetrics() {
   const measured = session.measureCell()
   if (!measured) return
@@ -109,6 +109,23 @@ function refreshCellMetrics() {
   if (pendingFocusPane) applyPaneFocus(pendingFocusPane)
 }
 function point(event: PointerEvent) { return { pointerId: event.pointerId, x: event.clientX, y: event.clientY } }
+function onWheel(event: WheelEvent) {
+  const element = frameElement.value
+  if (!element || props.viewportLocked || props.displayMode === 'fit' || !session.canClientPan()) return
+  const left = Math.min(
+    Math.max(0, element.scrollWidth - element.clientWidth),
+    Math.max(0, element.scrollLeft + event.deltaX),
+  )
+  const top = Math.min(
+    Math.max(0, element.scrollHeight - element.clientHeight),
+    Math.max(0, element.scrollTop + event.deltaY),
+  )
+  if (left === element.scrollLeft && top === element.scrollTop) return
+  element.scrollLeft = left
+  element.scrollTop = top
+  event.preventDefault()
+  event.stopPropagation()
+}
 function onPointerDown(event: PointerEvent) {
   if (event.pointerType === 'mouse') return
   event.preventDefault()
@@ -143,7 +160,14 @@ function applyPaneFocus(pane: PaneTopology) {
   pointer.focusPane(pane, { cellWidth: baselineCellMetrics.value.width * scale, cellHeight: baselineCellMetrics.value.height * scale })
   pendingFocusPane = null
 }
-function resetViewport() { pendingFocusPane = null; pointer.reset() }
+function resetViewport() {
+  pendingFocusPane = null
+  pointer.reset()
+  if (frameElement.value) {
+    frameElement.value.scrollLeft = 0
+    frameElement.value.scrollTop = 0
+  }
+}
 function restoreViewport(value: PointerViewportSnapshot) { pendingFocusPane = null; pointer.restore(value) }
 defineExpose({ dimensions, bindings, lastActionResult, sendAction: session.sendAction, sendInput: session.sendInput, focus: session.focus, focusPane, resetViewport, captureViewport: pointer.snapshot, restoreViewport })
 </script>

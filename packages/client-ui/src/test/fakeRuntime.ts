@@ -13,6 +13,7 @@ export function createFakeRuntime(overrides: Partial<ClientRuntime> = {}): Clien
       terms: {
         topology: async (id: string) => ({ instance_id: id, topology: { session_id: '$0', session_name: `Term · ${id}`, revision: 0, windows: [] } }),
         rename: async (id: string, name: string) => ({ instance_id: id, name, online: true, window_count: 0, pane_count: 0, active_pane_count: 0, current_command: null, last_seen_at: null }),
+        remove: async () => undefined,
       },
     } as unknown as ClientRuntime['api'],
     createTerminal: () => ({ connect() {}, sendInput() {}, sendAction() {}, dispose() {} }),

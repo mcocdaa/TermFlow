@@ -25,12 +25,12 @@ function adapterDouble(overrides: Partial<TerminalAdapter> = {}): TerminalAdapte
   }
 }
 
-function mountTouchCanvas(touchControlLocked: boolean) {
+function mountTouchCanvas(viewportLocked: boolean) {
   const session = terminalRuntime()
   const adapter = adapterDouble()
   const createAdapter: TerminalAdapterFactory = vi.fn(() => adapter)
   const wrapper = mount(TerminalCanvas, {
-    props: { termId: 'term-touch', touchControlLocked, createAdapter },
+    props: { termId: 'term-touch', viewportLocked, createAdapter },
     global: { plugins: [createClientUi(session.runtime)] },
   })
   const ready = () => session.callbacks().onReady({
@@ -53,6 +53,64 @@ describe('TerminalCanvas', () => {
     expect(dispatchMouse).not.toHaveBeenCalled()
     expect(terminal.sendInput).not.toHaveBeenCalled()
     expect(wrapper.vm.captureViewport().panX).toBeLessThan(0)
+  })
+
+  it('preserves native scroll offsets across locking and resets them only on viewport reset', async () => {
+    const { wrapper, ready } = mountTouchCanvas(false)
+    ready()
+    await flushPromises()
+    const frame = wrapper.get('.terminal-frame').element as HTMLElement
+    frame.scrollLeft = 120
+    frame.scrollTop = 80
+    Object.defineProperty(frame, 'scrollTo', {
+      configurable: true,
+      value: vi.fn(({ left, top }: ScrollToOptions) => {
+        if (left !== undefined) frame.scrollLeft = left
+        if (top !== undefined) frame.scrollTop = top
+      }),
+    })
+
+    await wrapper.setProps({ viewportLocked: true })
+    expect(wrapper.get('.terminal-frame').attributes('data-viewport-lock')).toBe('locked')
+    expect([frame.scrollLeft, frame.scrollTop]).toEqual([120, 80])
+    await wrapper.setProps({ viewportLocked: false })
+    expect(wrapper.get('.terminal-frame').attributes('data-viewport-lock')).toBe('unlocked')
+    expect([frame.scrollLeft, frame.scrollTop]).toEqual([120, 80])
+
+    wrapper.vm.resetViewport()
+    expect([frame.scrollLeft, frame.scrollTop]).toEqual([0, 0])
+  })
+
+  it('routes native wheel overflow only while the viewport is unlocked and xterm mouse is inactive', async () => {
+    const { wrapper, ready } = mountTouchCanvas(false)
+    ready()
+    await flushPromises()
+    const frame = wrapper.get('.terminal-frame').element as HTMLElement
+    Object.defineProperties(frame, {
+      clientWidth: { configurable: true, value: 300 },
+      clientHeight: { configurable: true, value: 200 },
+      scrollWidth: { configurable: true, value: 700 },
+      scrollHeight: { configurable: true, value: 500 },
+    })
+
+    const unlockedWheel = new WheelEvent('wheel', {
+      bubbles: true, cancelable: true, deltaX: 90, deltaY: 70,
+    })
+    frame.dispatchEvent(unlockedWheel)
+    expect([frame.scrollLeft, frame.scrollTop]).toEqual([90, 70])
+    expect(unlockedWheel.defaultPrevented).toBe(true)
+
+    await wrapper.setProps({ viewportLocked: true })
+    frame.dispatchEvent(new WheelEvent('wheel', {
+      bubbles: true, cancelable: true, deltaX: 50, deltaY: 40,
+    }))
+    expect([frame.scrollLeft, frame.scrollTop]).toEqual([90, 70])
+
+    await wrapper.setProps({ viewportLocked: false, displayMode: 'fit' })
+    frame.dispatchEvent(new WheelEvent('wheel', {
+      bubbles: true, cancelable: true, deltaX: 50, deltaY: 40,
+    }))
+    expect([frame.scrollLeft, frame.scrollTop]).toEqual([90, 70])
   })
 
   it('routes locked touch through xterm and preserves long-press selection', async () => {
@@ -81,7 +139,7 @@ describe('TerminalCanvas', () => {
     await frame.trigger('pointerdown', { pointerId: 3, pointerType: 'touch', clientX: 100, clientY: 120 })
     await frame.trigger('pointermove', { pointerId: 3, pointerType: 'touch', clientX: 70, clientY: 120 })
     expect(dispatchMouse).not.toHaveBeenCalled()
-    expect(wrapper.vm.captureViewport().panX).toBeLessThan(0)
+    expect(wrapper.vm.captureViewport().panX).toBe(0)
   })
 
   it('renders scaled modes through xterm geometry without scaling the mouse event surface', async () => {

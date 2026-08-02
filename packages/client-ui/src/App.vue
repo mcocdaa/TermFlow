@@ -36,12 +36,14 @@ import { computed } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import ThemePicker from './components/settings/ThemePicker.vue'
 import { useSession } from './composables/useSession'
+import { useTerminalPageLock } from './composables/useTerminalPageLock'
 
 const router = useRouter()
 const route = useRoute()
 const { logoutSession, sessionState } = useSession()
 const terminalLayout = computed(() => route.meta.terminal === true)
 const bareLayout = computed(() => route.meta.bare === true)
+useTerminalPageLock(terminalLayout)
 const routeViewKey = computed(() => terminalLayout.value ? `term:${String(route.params.termId)}` : 'shared-client-route')
 async function logout() {
   await logoutSession()

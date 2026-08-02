@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import type { TerminalSessionLike } from '@termflow/client-core'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
 import { createClientUi } from './runtime'
 import { clientRoutes } from './router/routes'
@@ -15,7 +15,36 @@ async function renderAt(path: string) {
   return { wrapper: mount(App, { global: { plugins: [router, clientUi] } }), clientUi }
 }
 
+beforeEach(() => { vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined) })
+afterEach(() => { vi.restoreAllMocks() })
+
 describe('shared application routes', () => {
+  it('adds the page lock roots only for the terminal route', async () => {
+    const root = document.createElement('div')
+    root.id = 'app'
+    document.body.append(root)
+    const router = createRouter({ history: createMemoryHistory(), routes: clientRoutes })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(App, {
+      attachTo: root,
+      global: { plugins: [router, createClientUi(createFakeRuntime())] },
+    })
+    const roots = [document.documentElement, document.body, root]
+    expect(roots.every((element) => !element.classList.contains('termflow-terminal-route'))).toBe(true)
+
+    await router.push('/terms/term-7')
+    await flushPromises()
+    expect(roots.every((element) => element.classList.contains('termflow-terminal-route'))).toBe(true)
+
+    await router.push('/')
+    await flushPromises()
+    expect(roots.every((element) => !element.classList.contains('termflow-terminal-route'))).toBe(true)
+    expect(window.scrollTo).toHaveBeenCalledOnce()
+    wrapper.unmount()
+    root.remove()
+  })
+
   it('replaces the terminal session when navigating between Term route parameters', async () => {
     const first: TerminalSessionLike = { connect: vi.fn(), sendInput: vi.fn(), sendAction: vi.fn(), dispose: vi.fn() }
     const second: TerminalSessionLike = { connect: vi.fn(), sendInput: vi.fn(), sendAction: vi.fn(), dispose: vi.fn() }

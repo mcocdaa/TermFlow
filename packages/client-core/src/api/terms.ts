@@ -13,5 +13,8 @@ export function createTermsApi(request: ApiRequest) {
       method: 'PATCH',
       body: { name },
     }, signal)),
+    remove: (id: string, signal?: AbortSignal) => request<void>(`/api/v1/terms/${encodeURIComponent(id)}`, withSignal({
+      method: 'DELETE',
+    }, signal)),
   }
 }

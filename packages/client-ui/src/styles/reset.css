@@ -2,6 +2,10 @@
   *, *::before, *::after { box-sizing: border-box; }
   html, body, #app { min-height: 100%; margin: 0; }
   body { min-width: 20rem; }
+  html.termflow-terminal-route,
+  body.termflow-terminal-route,
+  #app.termflow-terminal-route { width: 100%; height: 100dvh; min-height: 0; overflow: hidden; overscroll-behavior: none; }
+  body.termflow-terminal-route { position: fixed; inset: 0; }
   button, input, textarea { color: inherit; font: inherit; }
   button, a { -webkit-tap-highlight-color: transparent; }
   button { cursor: pointer; }

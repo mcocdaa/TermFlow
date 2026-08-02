@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { describe, expect, it, vi } from 'vitest'
+import { ApiError } from '@termflow/client-core'
 import type { ClientRuntime } from '../runtime'
 import { createClientUi } from '../runtime'
 import { createFakeRuntime } from '../test/fakeRuntime'
@@ -25,6 +26,13 @@ const dashboard: DashboardSnapshot = {
       terms: [{ instance_id: 'term-3', name: '数据任务', online: true, window_count: 1, pane_count: 1, active_pane_count: 1, current_command: 'make', last_seen_at: '2026-08-01T05:10:00Z' }],
     },
   ],
+}
+
+const withoutOfflineTerm: DashboardSnapshot = {
+  metrics: { ...dashboard.metrics, total_terms: 2 },
+  computers: dashboard.computers.map((computer) => computer.installation_id === 'computer-1'
+    ? { ...computer, terms: computer.terms.filter((term) => term.instance_id !== 'term-2') }
+    : computer),
 }
 
 async function mountDashboard(runtime: ClientRuntime) {
@@ -74,8 +82,85 @@ describe('DashboardView', () => {
     expect(wrapper.find('a[href="/terms/term-2"]').exists()).toBe(false)
     const offlineTerm = wrapper.get('[data-term-id="term-2"]')
     expect(offlineTerm.element.tagName).toBe('ARTICLE')
-    expect(offlineTerm.find('button').exists()).toBe(false)
+    expect(offlineTerm.attributes('aria-disabled')).toBeUndefined()
+    expect(offlineTerm.get('[data-action="delete-offline-term"]').attributes('aria-label')).toBe('删除离线 Term：离线维护')
+    expect(offlineTerm.find('[data-action="delete-offline-term"] svg').exists()).toBe(true)
     expect(offlineTerm.find('a').exists()).toBe(false)
+    expect(onlineTerm.find('[data-action="delete-offline-term"]').exists()).toBe(false)
+  })
+
+  it('waits for DELETE, prevents duplicate submission, then refreshes the authoritative dashboard', async () => {
+    let resolveDelete!: () => void
+    const remove = vi.fn(() => new Promise<void>((resolve) => { resolveDelete = resolve }))
+    const get = vi.fn().mockResolvedValueOnce(dashboard).mockResolvedValueOnce(withoutOfflineTerm)
+    const runtime = createFakeRuntime({
+      api: { dashboard: { get }, terms: { remove } } as unknown as ClientRuntime['api'],
+    })
+    const wrapper = await mountDashboard(runtime)
+    await flushPromises()
+
+    await wrapper.get('[data-term-id="term-2"] [data-action="delete-offline-term"]').trigger('click')
+    await wrapper.get('[data-action="confirm-delete-term"]').trigger('click')
+    await wrapper.get('[data-action="confirm-delete-term"]').trigger('click')
+    expect(wrapper.find('[data-term-id="term-2"]').exists()).toBe(true)
+    expect(wrapper.get('[data-action="confirm-delete-term"]').attributes('disabled')).toBeDefined()
+    expect(remove).toHaveBeenCalledTimes(1)
+
+    resolveDelete()
+    await flushPromises()
+    expect(remove).toHaveBeenCalledWith('term-2')
+    expect(get).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[data-term-id="term-2"]').exists()).toBe(false)
+    expect(wrapper.find('[data-computer-id="computer-1"]').exists()).toBe(true)
+    expect(wrapper.find('[role="alertdialog"]').exists()).toBe(false)
+  })
+
+  it('keeps an empty Computer after its last offline Term is removed', async () => {
+    const onlyOffline: DashboardSnapshot = {
+      metrics: { online_terms: 0, total_terms: 1, active_panes: 0, interactions_24h: 0, computers: 1 },
+      computers: [{ ...dashboard.computers[0]!, terms: [dashboard.computers[0]!.terms[1]!] }],
+    }
+    const afterDelete: DashboardSnapshot = {
+      metrics: { ...onlyOffline.metrics, total_terms: 0 },
+      computers: [{ ...onlyOffline.computers[0]!, terms: [] }],
+    }
+    const get = vi.fn().mockResolvedValueOnce(onlyOffline).mockResolvedValueOnce(afterDelete)
+    const runtime = createFakeRuntime({
+      api: { dashboard: { get }, terms: { remove: vi.fn().mockResolvedValue(undefined) } } as unknown as ClientRuntime['api'],
+    })
+    const wrapper = await mountDashboard(runtime)
+    await flushPromises()
+
+    await wrapper.get('[data-action="delete-offline-term"]').trigger('click')
+    await wrapper.get('[data-action="confirm-delete-term"]').trigger('click')
+    await flushPromises()
+
+    const computer = wrapper.get('[data-computer-id="computer-1"]')
+    expect(computer.text()).toContain('这台 Computer 还没有 Term。')
+  })
+
+  it.each([
+    [new ApiError('validation', { status: 409, code: 'instance_online' }), 'Term 已重新上线，无法删除。', 1],
+    [new ApiError('validation', { status: 404, code: 'instance_not_found' }), 'Term 已不存在；列表已按服务器状态刷新。', 2],
+    [new ApiError('server', { status: 500 }), '服务暂时不可用，请稍后重试。', 1],
+    [new Error('unsafe raw failure'), '无法删除 Term，请重试。', 1],
+  ])('keeps the row and exposes a safe retryable deletion error', async (failure, expected, expectedGets) => {
+    const get = vi.fn().mockResolvedValue(dashboard)
+    const remove = vi.fn().mockRejectedValue(failure)
+    const runtime = createFakeRuntime({
+      api: { dashboard: { get }, terms: { remove } } as unknown as ClientRuntime['api'],
+    })
+    const wrapper = await mountDashboard(runtime)
+    await flushPromises()
+
+    await wrapper.get('[data-action="delete-offline-term"]').trigger('click')
+    await wrapper.get('[data-action="confirm-delete-term"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[role="alertdialog"] [role="alert"]').text()).toBe(expected)
+    expect(wrapper.find('[data-term-id="term-2"]').exists()).toBe(true)
+    expect(wrapper.get('[data-action="confirm-delete-term"]').attributes('disabled')).toBeUndefined()
+    expect(get).toHaveBeenCalledTimes(expectedGets)
   })
 
   it('does not render an isolated metadata separator for an unnamed host', async () => {

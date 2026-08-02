@@ -1,5 +1,5 @@
 <template>
-  <div class="mobile-keybar" aria-label="移动端修饰键">
+  <div class="mobile-keybar" aria-label="移动端修饰键" @pointermove.stop>
     <button v-for="key in modifierKeys" :key="key.id" type="button" :disabled="disabled" :aria-pressed="controller.state[key.id] !== 'off'" @click="controller.press(key.id)">{{ key.label }}<span v-if="controller.state[key.id] === 'sticky'" class="locked-indicator" aria-label="已锁定" /></button>
     <button type="button" :disabled="disabled" @click="special('Escape')">Esc</button>
     <button type="button" :disabled="disabled" @click="special('Tab')">Tab</button>
