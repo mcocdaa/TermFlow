@@ -15,6 +15,8 @@ class EventSubscriber:
     queue: asyncio.Queue[WireMessage]
     id: UUID = field(default_factory=uuid4)
     closed: asyncio.Event = field(default_factory=asyncio.Event)
+    close_code: int = 4410
+    close_reason: str = "Subscriber too slow"
 
 
 class EventHub:
@@ -22,14 +24,25 @@ class EventHub:
         self._queue_size = queue_size
         self._subscribers: dict[UUID, EventSubscriber] = {}
         self._lock = asyncio.Lock()
+        self._auth_epoch = 1
 
-    async def subscribe(self, instance_id: UUID | None) -> EventSubscriber:
+    async def subscribe(
+        self,
+        instance_id: UUID | None,
+        *,
+        auth_epoch: int = 1,
+    ) -> EventSubscriber:
         subscriber = EventSubscriber(
             instance_id=instance_id,
             queue=asyncio.Queue(maxsize=self._queue_size),
         )
         async with self._lock:
-            self._subscribers[subscriber.id] = subscriber
+            if auth_epoch == self._auth_epoch:
+                self._subscribers[subscriber.id] = subscriber
+            else:
+                subscriber.close_code = 4401
+                subscriber.close_reason = "Authentication epoch changed"
+                subscriber.closed.set()
         return subscriber
 
     async def unsubscribe(self, subscriber: EventSubscriber) -> bool:
@@ -54,3 +67,37 @@ class EventHub:
                     subscriber.closed.set()
                     dropped.append(subscriber_id)
         return dropped
+
+    async def close_all(
+        self,
+        *,
+        code: int,
+        reason: str,
+    ) -> int:
+        """Close current subscribers during bounded process shutdown."""
+
+        async with self._lock:
+            subscribers = tuple(self._subscribers.values())
+            self._subscribers.clear()
+            for subscriber in subscribers:
+                subscriber.close_code = code
+                subscriber.close_reason = reason
+                subscriber.closed.set()
+        return len(subscribers)
+
+    async def synchronize_epoch(self, epoch: int) -> int:
+        """Atomically reject stale subscriptions and close current subscribers."""
+
+        if epoch < 1:
+            raise ValueError("authentication epoch must be positive")
+        async with self._lock:
+            if epoch == self._auth_epoch:
+                return 0
+            self._auth_epoch = epoch
+            subscribers = tuple(self._subscribers.values())
+            self._subscribers.clear()
+            for subscriber in subscribers:
+                subscriber.close_code = 4401
+                subscriber.close_reason = "Authentication epoch changed"
+                subscriber.closed.set()
+        return len(subscribers)

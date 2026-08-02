@@ -1,10 +1,12 @@
-"""Web-only TOTP security settings."""
+"""Web-only TOTP settings and root-to-CLI credential exchange."""
 
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response, status
 from termflow_protocol import (
+    CliTokenRequest,
+    CliTokenResponse,
     TotpConfirmRequest,
     TotpDisableRequest,
     TotpSetupRequest,
@@ -33,32 +35,43 @@ router = APIRouter(
     tags=["security"],
     dependencies=[Depends(require_web_admin)],
 )
+cli_router = APIRouter(prefix="/api/v1/admin", tags=["security"])
 
 
 def _no_store(response: Response) -> None:
     response.headers["Cache-Control"] = "no-store"
 
 
-async def _audit_rejected(request: Request) -> None:
+async def _audit_rejected(
+    request: Request,
+    operation: AuthAuditOperation = AuthAuditOperation.TOTP_VERIFICATION,
+) -> None:
     audit: AuthenticationAudit = request.app.state.auth_audit
     await audit.record(
-        AuthAuditOperation.TOTP_VERIFICATION,
+        operation,
         AuthAuditResult.REJECTED,
         direct_peer_source(request),
         error_code=AuthAuditErrorCode.INVALID_CREDENTIALS,
     )
 
 
-async def _audit_ok(request: Request) -> None:
+async def _audit_ok(
+    request: Request,
+    operation: AuthAuditOperation = AuthAuditOperation.TOTP_VERIFICATION,
+) -> None:
     audit: AuthenticationAudit = request.app.state.auth_audit
     await audit.record(
-        AuthAuditOperation.TOTP_VERIFICATION,
+        operation,
         AuthAuditResult.OK,
         direct_peer_source(request),
     )
 
 
-async def _limiter(request: Request, purpose: str) -> tuple[AuthRateLimiter, str]:
+async def _limiter(
+    request: Request,
+    purpose: str,
+    operation: AuthAuditOperation = AuthAuditOperation.TOTP_VERIFICATION,
+) -> tuple[AuthRateLimiter, str]:
     limiter: AuthRateLimiter = request.app.state.auth_rate_limiter
     source = direct_peer_source(request)
     try:
@@ -66,7 +79,7 @@ async def _limiter(request: Request, purpose: str) -> tuple[AuthRateLimiter, str
     except TermFlowError:
         audit: AuthenticationAudit = request.app.state.auth_audit
         await audit.record(
-            AuthAuditOperation.TOTP_VERIFICATION,
+            operation,
             AuthAuditResult.RATE_LIMITED,
             source,
             error_code=AuthAuditErrorCode.RATE_LIMITED,
@@ -77,6 +90,42 @@ async def _limiter(request: Request, purpose: str) -> tuple[AuthRateLimiter, str
 
 def _authentication_failed() -> TermFlowError:
     return TermFlowError("authentication_failed", 401, "Authentication failed.")
+
+
+@cli_router.post(
+    "/cli-tokens",
+    response_model=CliTokenResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_cli_token(
+    request: CliTokenRequest,
+    http_request: Request,
+    response: Response,
+    authentication: Annotated[AuthenticationService, Depends(get_authentication_service)],
+) -> CliTokenResponse:
+    operation = AuthAuditOperation.CLI_LOGIN
+    limiter, source = await _limiter(http_request, "cli_token", operation)
+    try:
+        async with limiter.verification_slot():
+            issued = await authentication.issue_cli_token(
+                request.admin_token.get_secret_value(),
+                request.totp_code.get_secret_value()
+                if request.totp_code is not None
+                else None,
+                tuple(request.scopes),
+            )
+    except AuthenticationRejected as exc:
+        limiter.record_failure("cli_token", source)
+        await _audit_rejected(http_request, operation)
+        raise _authentication_failed() from exc
+    limiter.record_success("cli_token", source)
+    await _audit_ok(http_request, operation)
+    _no_store(response)
+    return CliTokenResponse(
+        access_token=issued.access_token,
+        expires_in=issued.expires_in,
+        scopes=request.scopes,
+    )
 
 
 @router.get("", response_model=TotpStatusResponse)

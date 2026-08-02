@@ -24,7 +24,11 @@ from termflow_control_plane.connections.registry import (
     InstanceOffline,
     LiveInstanceRegistry,
 )
-from termflow_control_plane.connections.terminal_hub import BrowserTerminal, TerminalHub
+from termflow_control_plane.connections.terminal_hub import (
+    AuthenticationEpochChanged,
+    BrowserTerminal,
+    TerminalHub,
+)
 
 
 class AuditWriter(Protocol):
@@ -123,6 +127,7 @@ class TerminalRouter:
         instance_id: UUID,
         *,
         session_key: str | None,
+        auth_epoch: int = 1,
     ) -> BrowserTerminal:
         try:
             connection = await self._registry.get(instance_id)
@@ -138,7 +143,14 @@ class TerminalRouter:
         if "full_terminal" not in connection.capabilities:
             self._record_open_rejection(instance_id, "capability_unavailable")
             raise TerminalRouteError("capability_unavailable")
-        terminal = await self._hub.register(instance_id, session_key=session_key)
+        try:
+            terminal = await self._hub.register(
+                instance_id,
+                session_key=session_key,
+                auth_epoch=auth_epoch,
+            )
+        except AuthenticationEpochChanged as exc:
+            raise TerminalRouteError("authentication_changed") from exc
         request = TerminalOpenPayload(terminal_id=terminal.terminal_id)
         try:
             await self._enqueue(
@@ -166,6 +178,7 @@ class TerminalRouter:
         terminal_id: UUID,
         stream_id: UUID,
         after_seq: int,
+        auth_epoch: int = 1,
     ) -> BrowserTerminal | None:
         terminal = await self._hub.resume(
             instance_id,
@@ -173,6 +186,7 @@ class TerminalRouter:
             terminal_id=terminal_id,
             stream_id=stream_id,
             after_seq=after_seq,
+            auth_epoch=auth_epoch,
         )
         if terminal is None:
             return None

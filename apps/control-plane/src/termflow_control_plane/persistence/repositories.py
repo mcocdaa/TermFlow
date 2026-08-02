@@ -521,6 +521,7 @@ class AuthStateRepository:
                     totp_aad_version=None,
                     totp_enabled_at=None,
                     totp_last_accepted_counter=None,
+                    totp_generation=AuthenticationState.totp_generation + 1,
                     updated_at=observed_at,
                 )
                 .returning(AuthenticationState.epoch)
@@ -538,6 +539,11 @@ class AuthStateRepository:
                 update(AuthToken)
                 .where(AuthToken.revoked_at.is_(None))
                 .values(revoked_at=observed_at)
+            )
+            await session.execute(
+                update(OAuthAuthorization)
+                .where(OAuthAuthorization.consumed_at.is_(None))
+                .values(consumed_at=observed_at)
             )
             session.add(
                 AuthAuditEvent(

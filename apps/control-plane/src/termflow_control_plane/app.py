@@ -26,6 +26,7 @@ from termflow_control_plane.api.enrollment import router as enrollment_router
 from termflow_control_plane.api.events import router as events_router
 from termflow_control_plane.api.instances import router as instances_router
 from termflow_control_plane.api.oauth import router as oauth_router
+from termflow_control_plane.api.security import cli_router
 from termflow_control_plane.api.security import router as security_router
 from termflow_control_plane.api.sessions import router as sessions_router
 from termflow_control_plane.api.terminal import router as terminal_router_api
@@ -95,6 +96,24 @@ async def _browser_session_expiry_loop(store: BrowserSessionStore) -> None:
         store.prune_expired()
 
 
+async def _authentication_epoch_loop(
+    repositories: RepositoryBundle,
+    browser_sessions: BrowserSessionStore,
+    terminal_hub: TerminalHub,
+    event_hub: EventHub,
+) -> None:
+    """Observe reset commands running in another process through persisted epoch state."""
+
+    while True:
+        await asyncio.sleep(1)
+        state = await repositories.auth_state.get()
+        if state.epoch == browser_sessions.epoch:
+            continue
+        browser_sessions.synchronize_epoch(state.epoch)
+        await terminal_hub.synchronize_epoch(state.epoch)
+        await event_hub.synchronize_epoch(state.epoch)
+
+
 async def _verify_oauth_totp(service: AuthenticationService, code: str) -> bool:
     """Convert unavailable or invalid TOTP state into a closed authorization denial."""
 
@@ -113,6 +132,8 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         app.state.repositories = RepositoryBundle(active_database.session_factory)
         auth_state = await app.state.repositories.auth_state.get()
         app.state.browser_sessions.synchronize_epoch(auth_state.epoch)
+        await app.state.terminal_hub.synchronize_epoch(auth_state.epoch)
+        await app.state.event_hub.synchronize_epoch(auth_state.epoch)
         master_key = settings.totp_master_key_bytes
         secret_box = (
             AesGcmSecretBox(master_key, key_version=settings.totp_master_key_version)
@@ -151,15 +172,31 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         session_expiry_task = asyncio.create_task(
             _browser_session_expiry_loop(app.state.browser_sessions)
         )
+        auth_epoch_task = asyncio.create_task(
+            _authentication_epoch_loop(
+                app.state.repositories,
+                app.state.browser_sessions,
+                app.state.terminal_hub,
+                app.state.event_hub,
+            )
+        )
         try:
             yield
         finally:
+            await app.state.terminal_hub.terminate_all()
+            await app.state.event_hub.close_all(
+                code=1012,
+                reason="Control Plane shutting down",
+            )
             expiry_task.cancel()
             session_expiry_task.cancel()
+            auth_epoch_task.cancel()
             with suppress(asyncio.CancelledError):
                 await expiry_task
             with suppress(asyncio.CancelledError):
                 await session_expiry_task
+            with suppress(asyncio.CancelledError):
+                await auth_epoch_task
             try:
                 await app.state.terminal_audit.close()
             finally:
@@ -244,6 +281,7 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
     app.include_router(enrollment_router)
     app.include_router(sessions_router)
     app.include_router(security_router)
+    app.include_router(cli_router)
     app.include_router(oauth_router)
     app.include_router(clients_router)
     app.include_router(dashboard_router)

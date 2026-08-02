@@ -12,11 +12,14 @@ from urllib.parse import quote, urlencode, urlsplit
 from uuid import UUID
 
 from termflow_control_plane.auth.secret_box import AesGcmSecretBox, EncryptedSecret
-from termflow_control_plane.auth.tokens import secret_text_matches
+from termflow_control_plane.auth.tokens import issue_token, secret_text_matches
 from termflow_control_plane.auth.totp import match_totp_counter
 from termflow_control_plane.config import Settings
 from termflow_control_plane.persistence.models import AuthenticationState
-from termflow_control_plane.persistence.repositories import RepositoryBundle
+from termflow_control_plane.persistence.repositories import (
+    AuthenticationStateChanged,
+    RepositoryBundle,
+)
 
 _SETUP_PURPOSE = "totp-setup"
 _AUTHENTICATOR_PURPOSE = "totp-authenticator"
@@ -45,6 +48,14 @@ class TotpSetupMaterial:
     expires_at: datetime
     setup_key: str = field(repr=False)
     provisioning_uri: str = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class IssuedCliToken:
+    access_token: str = field(repr=False)
+    expires_at: datetime
+    expires_in: int
+    scopes: tuple[str, ...]
 
 
 class AuthenticationService:
@@ -155,6 +166,53 @@ class AuthenticationService:
 
     async def verify_fresh_totp(self, code: str) -> bool:
         state = await self._repositories.auth_state.get()
+        return await self._verify_fresh_totp_for_state(state, code)
+
+    async def issue_cli_token(
+        self,
+        admin_token: str,
+        totp_code: str | None,
+        scopes: tuple[str, ...],
+    ) -> IssuedCliToken:
+        """Exchange root credentials for one epoch-bound, short-lived CLI token."""
+
+        state = await self._repositories.auth_state.get()
+        if not self.primary_token_matches(admin_token):
+            raise AuthenticationRejected
+        if state.totp_enabled_at is not None and (
+            totp_code is None
+            or not await self._verify_fresh_totp_for_state(state, totp_code)
+        ):
+            raise AuthenticationRejected
+        if not scopes or len(scopes) != len(set(scopes)):
+            raise AuthenticationRejected
+        raw_token = issue_token()
+        expires_at = self._clock() + timedelta(
+            seconds=self._settings.auth_cli_token_ttl_seconds
+        )
+        try:
+            await self._repositories.auth_tokens.issue(
+                raw_token,
+                kind="cli",
+                scopes=scopes,
+                key_thumbprint=None,
+                expires_at=expires_at,
+                epoch=state.epoch,
+            )
+        except AuthenticationStateChanged as exc:
+            raise AuthenticationRejected from exc
+        return IssuedCliToken(
+            access_token=raw_token,
+            expires_at=expires_at,
+            expires_in=self._settings.auth_cli_token_ttl_seconds,
+            scopes=scopes,
+        )
+
+    async def _verify_fresh_totp_for_state(
+        self,
+        state: AuthenticationState,
+        code: str,
+    ) -> bool:
         box = self._required_box(authentication=True)
         secret = self._enabled_secret(state, box)
         if secret is None:

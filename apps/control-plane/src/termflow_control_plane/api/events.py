@@ -13,7 +13,7 @@ from termflow_protocol import MessageType, PaneReplayRequestPayload, WireMessage
 from termflow_control_plane.auth.dpop import DpopVerifier
 from termflow_control_plane.auth.sessions import (
     BrowserSessionStore,
-    websocket_admin_close_code,
+    authenticate_admin_websocket,
 )
 from termflow_control_plane.config import Settings
 from termflow_control_plane.connections.event_hub import EventHub, EventSubscriber
@@ -27,23 +27,42 @@ from termflow_control_plane.persistence.repositories import RepositoryBundle
 router = APIRouter(tags=["events"])
 
 
-async def _send_subscription(websocket: WebSocket, subscriber: EventSubscriber) -> None:
-    while True:
-        next_event = asyncio.create_task(subscriber.queue.get())
-        closed = asyncio.create_task(subscriber.closed.wait())
-        done, pending = await asyncio.wait(
-            {next_event, closed},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for task in pending:
-            task.cancel()
-        for task in pending:
-            with suppress(asyncio.CancelledError):
-                await task
-        if closed in done:
-            await websocket.close(code=4410, reason="Subscriber too slow")
-            return
-        await websocket.send_text(next_event.result().model_dump_json())
+async def _send_subscription(
+    websocket: WebSocket,
+    subscriber: EventSubscriber,
+    repositories: RepositoryBundle,
+    auth_epoch: int,
+) -> None:
+    disconnected = asyncio.create_task(websocket.receive())
+    try:
+        while True:
+            next_event = asyncio.create_task(subscriber.queue.get())
+            closed = asyncio.create_task(subscriber.closed.wait())
+            done, pending = await asyncio.wait(
+                {next_event, closed, disconnected},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending - {disconnected}:
+                task.cancel()
+            for task in pending - {disconnected}:
+                with suppress(asyncio.CancelledError):
+                    await task
+            if disconnected in done:
+                return
+            if closed in done:
+                await websocket.close(
+                    code=subscriber.close_code,
+                    reason=subscriber.close_reason,
+                )
+                return
+            if (await repositories.auth_state.get()).epoch != auth_epoch:
+                await websocket.close(code=4401, reason="Authentication epoch changed")
+                return
+            await websocket.send_text(next_event.result().model_dump_json())
+    finally:
+        disconnected.cancel()
+        with suppress(asyncio.CancelledError):
+            await disconnected
 
 
 @router.websocket("/api/v1/events")
@@ -60,7 +79,7 @@ async def subscribe_events(
     registry = cast(LiveInstanceRegistry, websocket.app.state.registry)
     hub = cast(EventHub, websocket.app.state.event_hub)
     dpop = cast(DpopVerifier, websocket.app.state.dpop_verifier)
-    auth_close_code = await websocket_admin_close_code(
+    authentication = await authenticate_admin_websocket(
         websocket,
         settings,
         sessions,
@@ -68,10 +87,16 @@ async def subscribe_events(
         dpop,
         required_scope="terminal.read",
     )
-    if auth_close_code is not None:
-        reason = "Origin not allowed" if auth_close_code == 4403 else "Authentication required"
-        await websocket.close(code=auth_close_code, reason=reason)
+    if authentication.close_code is not None:
+        reason = (
+            "Origin not allowed"
+            if authentication.close_code == 4403
+            else "Authentication required"
+        )
+        await websocket.close(code=authentication.close_code, reason=reason)
         return
+    assert authentication.epoch is not None
+    auth_epoch = authentication.epoch
     if await repositories.instances.get(instance_id) is None:
         await websocket.close(code=4404, reason="Instance not found")
         return
@@ -85,8 +110,17 @@ async def subscribe_events(
     if after_seq is not None and after_seq < 0:
         await websocket.close(code=4400, reason="Replay cursor is invalid")
         return
+    if (await repositories.auth_state.get()).epoch != auth_epoch:
+        await websocket.close(code=4401, reason="Authentication epoch changed")
+        return
 
-    subscriber = await hub.subscribe(instance_id)
+    subscriber = await hub.subscribe(instance_id, auth_epoch=auth_epoch)
+    if subscriber.closed.is_set():
+        await websocket.close(
+            code=subscriber.close_code,
+            reason=subscriber.close_reason,
+        )
+        return
     await websocket.accept()
     try:
         if pane_id is not None and stream_id is not None and after_seq is not None:
@@ -110,6 +144,6 @@ async def subscribe_events(
             except ConnectionBackpressure:
                 await websocket.close(code=4429, reason="Bridge queue full")
                 return
-        await _send_subscription(websocket, subscriber)
+        await _send_subscription(websocket, subscriber, repositories, auth_epoch)
     finally:
         await hub.unsubscribe(subscriber)

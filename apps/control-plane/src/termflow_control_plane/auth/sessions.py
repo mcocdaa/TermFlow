@@ -31,6 +31,12 @@ class BrowserCookiePolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class WebSocketAuthentication:
+    close_code: int | None
+    epoch: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class _BrowserSession:
     expires_at: datetime
     epoch: int
@@ -175,7 +181,7 @@ def _websocket_authorization(websocket: WebSocket) -> tuple[str, str] | None:
     return normalized_scheme, token
 
 
-async def websocket_admin_close_code(
+async def authenticate_admin_websocket(
     websocket: WebSocket,
     settings: Settings,
     store: BrowserSessionStore,
@@ -183,33 +189,35 @@ async def websocket_admin_close_code(
     dpop: DpopVerifier,
     *,
     required_scope: str,
-) -> int | None:
-    """Apply the HTTP credential policy to a protected WebSocket handshake."""
+) -> WebSocketAuthentication:
+    """Apply the HTTP credential policy and return its exact persisted epoch."""
 
     limiter: AuthRateLimiter = websocket.app.state.auth_rate_limiter
     source = websocket.client.host if websocket.client is not None else "unknown-peer"
     try:
         limiter.check("protected_websocket", source)
     except TermFlowError:
-        return 4429
+        return WebSocketAuthentication(close_code=4429, epoch=None)
     authorization = _websocket_authorization(websocket)
     origin = websocket.headers.get("origin")
     state = await repositories.auth_state.get()
     if origin is not None:
         if not origin_allowed(origin, settings):
-            return 4403
+            return WebSocketAuthentication(close_code=4403, epoch=None)
         policy = browser_cookie_policy(settings)
-        return (
-            None
-            if store.authenticate(
+        accepted = (
+            store.authenticate(
                 websocket.cookies.get(policy.name),
                 epoch=state.epoch,
             )
             is not None
-            else 4401
+        )
+        return WebSocketAuthentication(
+            close_code=None if accepted else 4401,
+            epoch=state.epoch if accepted else None,
         )
     if authorization is None:
-        return 4401
+        return WebSocketAuthentication(close_code=4401, epoch=None)
     scheme, bearer = authorization
     expected = settings.admin_token.get_secret_value()
     if (
@@ -217,7 +225,7 @@ async def websocket_admin_close_code(
         and state.totp_enabled_at is None
         and secret_text_matches(bearer, expected)
     ):
-        return None
+        return WebSocketAuthentication(close_code=None, epoch=state.epoch)
     if scheme == "bearer":
         cli_token = await repositories.auth_tokens.get_active(
             bearer,
@@ -228,24 +236,28 @@ async def websocket_admin_close_code(
             try:
                 cli_scopes = json.loads(cli_token.scopes)
             except (TypeError, ValueError):
-                return 4401
-            return None if isinstance(cli_scopes, list) and required_scope in cli_scopes else 4403
+                return WebSocketAuthentication(close_code=4401, epoch=None)
+            accepted = isinstance(cli_scopes, list) and required_scope in cli_scopes
+            return WebSocketAuthentication(
+                close_code=None if accepted else 4403,
+                epoch=state.epoch if accepted else None,
+            )
     access = await repositories.auth_tokens.get_active(
         bearer,
         epoch=state.epoch,
         kind="access",
     )
     if access is None or access.key_thumbprint is None:
-        return 4401
+        return WebSocketAuthentication(close_code=4401, epoch=None)
     try:
         scopes = json.loads(access.scopes)
     except (TypeError, ValueError):
-        return 4401
+        return WebSocketAuthentication(close_code=4401, epoch=None)
     if not isinstance(scopes, list) or required_scope not in scopes:
-        return 4403
+        return WebSocketAuthentication(close_code=4403, epoch=None)
     proof = websocket.headers.get("dpop")
     if proof is None:
-        return 4401
+        return WebSocketAuthentication(close_code=4401, epoch=None)
     htu = f"{str(settings.public_base_url).rstrip('/')}{websocket.url.path}"
     try:
         async with limiter.verification_slot():
@@ -258,10 +270,32 @@ async def websocket_admin_close_code(
                 rotate_nonce=False,
             )
     except TermFlowError:
-        return 4429
+        return WebSocketAuthentication(close_code=4429, epoch=None)
     except DpopInvalid:
-        return 4401
-    return None
+        return WebSocketAuthentication(close_code=4401, epoch=None)
+    return WebSocketAuthentication(close_code=None, epoch=state.epoch)
+
+
+async def websocket_admin_close_code(
+    websocket: WebSocket,
+    settings: Settings,
+    store: BrowserSessionStore,
+    repositories: RepositoryBundle,
+    dpop: DpopVerifier,
+    *,
+    required_scope: str,
+) -> int | None:
+    """Compatibility wrapper for callers that only need the handshake close code."""
+
+    authentication = await authenticate_admin_websocket(
+        websocket,
+        settings,
+        store,
+        repositories,
+        dpop,
+        required_scope=required_scope,
+    )
+    return authentication.close_code
 
 
 def websocket_browser_session_key(

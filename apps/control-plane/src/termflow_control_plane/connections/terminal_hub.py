@@ -22,6 +22,10 @@ class LocalTerminalClose:
     error_code: str | None = None
 
 
+class AuthenticationEpochChanged(RuntimeError):
+    """The caller authenticated before the terminal hub observed a reset."""
+
+
 class BrowserTerminal:
     """One browser owner with a byte/count bounded A-to-C queue."""
 
@@ -30,12 +34,14 @@ class BrowserTerminal:
         *,
         instance_id: UUID,
         session_key: str | None,
+        auth_epoch: int,
         queue_max_messages: int,
         queue_max_bytes: int,
     ) -> None:
         self.instance_id = instance_id
         self.terminal_id = uuid4()
         self.session_key = session_key
+        self.auth_epoch = auth_epoch
         self._queue_max_messages = queue_max_messages
         self._queue_max_bytes = queue_max_bytes
         self._queue: deque[tuple[WireMessage, int]] = deque()
@@ -138,20 +144,25 @@ class TerminalHub:
         self._queue_max_bytes = queue_max_bytes
         self._current: dict[UUID, BrowserTerminal] = {}
         self._lock = asyncio.Lock()
+        self._auth_epoch = 1
 
     async def register(
         self,
         instance_id: UUID,
         *,
         session_key: str | None,
+        auth_epoch: int = 1,
     ) -> BrowserTerminal:
         terminal = BrowserTerminal(
             instance_id=instance_id,
             session_key=session_key,
+            auth_epoch=auth_epoch,
             queue_max_messages=self._queue_max_messages,
             queue_max_bytes=self._queue_max_bytes,
         )
         async with self._lock:
+            if auth_epoch != self._auth_epoch:
+                raise AuthenticationEpochChanged
             previous = self._current.get(instance_id)
             self._current[instance_id] = terminal
             if previous is not None:
@@ -173,11 +184,14 @@ class TerminalHub:
         terminal_id: UUID,
         stream_id: UUID,
         after_seq: int,
+        auth_epoch: int = 1,
     ) -> BrowserTerminal | None:
         async with self._lock:
             terminal = self._current.get(instance_id)
             if (
                 terminal is None
+                or auth_epoch != self._auth_epoch
+                or terminal.auth_epoch != auth_epoch
                 or terminal.terminal_id != terminal_id
                 or terminal.session_key != session_key
                 or not terminal.prepare_resume(stream_id, after_seq)
@@ -241,3 +255,26 @@ class TerminalHub:
         for terminal in matches:
             terminal.terminate("client_closed")
         return len(matches)
+
+    async def terminate_all(self) -> int:
+        """Terminate current terminals during bounded process shutdown."""
+
+        async with self._lock:
+            terminals = tuple(self._current.values())
+            for terminal in terminals:
+                terminal.terminate("client_closed")
+        return len(terminals)
+
+    async def synchronize_epoch(self, epoch: int) -> int:
+        """Atomically reject stale registrations and terminate current terminals."""
+
+        if epoch < 1:
+            raise ValueError("authentication epoch must be positive")
+        async with self._lock:
+            if epoch == self._auth_epoch:
+                return 0
+            self._auth_epoch = epoch
+            terminals = tuple(self._current.values())
+            for terminal in terminals:
+                terminal.terminate("client_closed")
+        return len(terminals)

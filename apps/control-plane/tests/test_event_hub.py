@@ -34,3 +34,18 @@ async def test_publish_honors_instance_filter() -> None:
     assert await hub.publish(event) == []
     assert await first.queue.get() == event
     assert second.queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_epoch_synchronization_closes_current_and_rejects_stale_subscription() -> None:
+    hub = EventHub(queue_size=2)
+    current = await hub.subscribe(instance_id=None, auth_epoch=1)
+
+    assert await hub.synchronize_epoch(2) == 1
+    assert current.closed.is_set()
+    assert current.close_code == 4401
+    stale = await hub.subscribe(instance_id=None, auth_epoch=1)
+    assert stale.closed.is_set()
+    assert stale.close_code == 4401
+    replacement = await hub.subscribe(instance_id=None, auth_epoch=2)
+    assert not replacement.closed.is_set()

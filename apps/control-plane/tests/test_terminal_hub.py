@@ -2,6 +2,7 @@ from uuid import uuid4
 
 import pytest
 from termflow_control_plane.connections.terminal_hub import (
+    AuthenticationEpochChanged,
     LocalTerminalClose,
     TerminalHub,
 )
@@ -137,3 +138,18 @@ async def test_exact_browser_cursor_resumes_the_same_terminal_and_rejects_mismat
         stream_id=stream_id,
         after_seq=1,
     ) is None
+
+
+@pytest.mark.asyncio
+async def test_epoch_synchronization_closes_current_and_rejects_stale_registration() -> None:
+    hub = TerminalHub(queue_max_messages=4, queue_max_bytes=1024)
+    current = await hub.register(uuid4(), session_key=None, auth_epoch=1)
+
+    assert await hub.synchronize_epoch(2) == 1
+    closed = await current.next_event()
+    assert isinstance(closed, LocalTerminalClose)
+    assert closed.reason == "client_closed"
+    with pytest.raises(AuthenticationEpochChanged):
+        await hub.register(uuid4(), session_key=None, auth_epoch=1)
+    replacement = await hub.register(uuid4(), session_key=None, auth_epoch=2)
+    assert replacement.auth_epoch == 2
