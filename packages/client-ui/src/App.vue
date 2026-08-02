@@ -21,17 +21,19 @@
     <aside v-if="!terminalLayout && !bareLayout" class="side-nav" aria-label="主导航">
       <RouterLink to="/"><LayoutDashboard :size="18" aria-hidden="true" />控制中心</RouterLink>
       <RouterLink to="/computers"><MonitorCog :size="18" aria-hidden="true" />电脑管理</RouterLink>
+      <RouterLink to="/settings"><Settings :size="18" aria-hidden="true" />设置</RouterLink>
     </aside>
     <main id="main-content" tabindex="-1"><RouterView :key="routeViewKey" /></main>
     <nav v-if="!terminalLayout && !bareLayout" class="mobile-nav" aria-label="移动端导航">
       <RouterLink to="/"><LayoutDashboard :size="18" aria-hidden="true" />控制中心</RouterLink>
       <RouterLink to="/computers"><MonitorCog :size="18" aria-hidden="true" />电脑管理</RouterLink>
+      <RouterLink to="/settings"><Settings :size="18" aria-hidden="true" />设置</RouterLink>
     </nav>
   </div>
 </template>
 
 <script setup lang="ts">
-import { LayoutDashboard, LogOut, MonitorCog } from '@lucide/vue'
+import { LayoutDashboard, LogOut, MonitorCog, Settings } from '@lucide/vue'
 import { computed } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import ThemePicker from './components/settings/ThemePicker.vue'

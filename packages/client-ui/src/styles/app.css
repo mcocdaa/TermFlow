@@ -145,6 +145,35 @@
   .action-menu .destructive { color: var(--color-danger); }
   .mobile-keybar-shell, .mobile-keybar { display: none; }
   .danger-button { min-height: 2.75rem; border: 1px solid var(--color-danger); border-radius: var(--radius-md); padding: var(--space-2) var(--space-4); background: var(--color-danger); color: var(--color-panel); font-weight: 750; }
+  .secondary-button { min-height: 2.75rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-2) var(--space-4); background: var(--color-elevated); color: var(--color-text-primary); font-weight: 700; }
+  .settings-page { width: min(100%, 64rem); margin-inline: auto; }
+  .settings-page .page-heading p { margin-block-end: 0; color: var(--color-text-secondary); }
+  .settings-panel { display: grid; gap: var(--space-4); margin-block-end: var(--space-4); padding: clamp(var(--space-4), 4vw, var(--space-5)); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-panel); box-shadow: var(--shadow-panel); }
+  .settings-panel h2, .settings-panel h3, .settings-panel p { margin-block: 0; }
+  .settings-panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
+  .status-chip { display: inline-flex; border: 1px solid var(--color-border); border-radius: 99rem; padding: var(--space-1) var(--space-2); color: var(--color-text-muted); font-size: 0.78rem; white-space: nowrap; }
+  .status-chip[data-status='enabled'] { border-color: var(--color-online); color: var(--color-online); }
+  .settings-copy, .settings-footnote { color: var(--color-text-secondary); line-height: 1.6; }
+  .settings-footnote { padding-block-start: var(--space-3); border-block-start: 1px solid var(--color-border); font-size: 0.82rem; }
+  .settings-warning { padding: var(--space-3); border: 1px solid var(--color-warning); border-radius: var(--radius-md); color: var(--color-warning); }
+  .settings-page .theme-picker { width: fit-content; margin-inline-start: 0; }
+  .server-address-row { display: flex; align-items: center; gap: var(--space-3); }
+  .server-address-row code { flex: 1; min-width: 0; overflow-wrap: anywhere; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-elevated); }
+  .connection-qr, .totp-setup-material { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-4); }
+  .connection-qr img, .totp-setup-material img { width: 10rem; height: 10rem; padding: var(--space-2); border-radius: var(--radius-md); background: white; }
+  .connection-qr p, .totp-setup-material p { color: var(--color-text-secondary); line-height: 1.6; }
+  .totp-setup-material code { display: block; margin-block-start: var(--space-3); overflow-wrap: anywhere; font-family: var(--font-mono); }
+  .security-form, .inline-security-form, .revoke-form { width: min(100%, 34rem); margin-block-start: 0; }
+  .authorized-client-list { display: grid; gap: var(--space-2); padding: 0; margin: 0; list-style: none; }
+  .authorized-client-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-elevated); }
+  .authorized-client-list li div { display: grid; gap: var(--space-1); min-width: 0; }
+  .authorized-client-list span, .authorized-client-list small { color: var(--color-text-muted); }
+  .authorize-view { min-height: calc(100dvh - 2 * clamp(var(--space-4), 3vw, 2.5rem)); display: grid; place-items: center; }
+  .consent-card { width: min(100%, 44rem); }
+  .consent-details { display: grid; gap: var(--space-2); }
+  .consent-details div { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: var(--space-3); padding-block: var(--space-2); border-block-end: 1px solid var(--color-border); }
+  .consent-details dt { color: var(--color-text-muted); }
+  .consent-details dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
   .dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-3); margin-block-start: var(--space-5); }
   .terminal-frame { position: relative; width: 100%; height: auto; min-height: 0; overflow: auto; background: var(--color-terminal); overscroll-behavior: contain; }
   .terminal-frame[data-viewport-lock='locked'] { overflow: hidden; }
@@ -171,7 +200,7 @@
     .header-context, .theme-option > :last-child { display: none; }
     .side-nav { display: none; }
     main { padding: var(--space-4); padding-block-end: calc(5rem + env(safe-area-inset-bottom)); }
-    .mobile-nav { grid-area: mobile; position: fixed; z-index: 30; inset-inline: 0; inset-block-end: 0; display: grid; grid-template-columns: 1fr 1fr; padding: var(--space-2) max(var(--space-2), env(safe-area-inset-right)) max(var(--space-2), env(safe-area-inset-bottom)) max(var(--space-2), env(safe-area-inset-left)); border-block-start: 1px solid var(--color-border); background: var(--color-panel); text-align: center; }
+    .mobile-nav { grid-area: mobile; position: fixed; z-index: 30; inset-inline: 0; inset-block-end: 0; display: grid; grid-template-columns: repeat(3, 1fr); padding: var(--space-2) max(var(--space-2), env(safe-area-inset-right)) max(var(--space-2), env(safe-area-inset-bottom)) max(var(--space-2), env(safe-area-inset-left)); border-block-start: 1px solid var(--color-border); background: var(--color-panel); text-align: center; }
     .mobile-nav a { justify-content: center; }
     .metrics-grid { gap: var(--space-2); }
     .metric-card { min-height: 6.5rem; padding: var(--space-3); }
@@ -183,6 +212,8 @@
     .term-last-seen { grid-row: 3; grid-column: 1 / -1; }
     .term-delete-button { grid-row: 1; grid-column: 3; }
     .computer-table-row { grid-template-columns: 1fr; }
+    .server-address-row, .authorized-client-list li { align-items: stretch; flex-direction: column; }
+    .connection-qr, .totp-setup-material, .consent-details div { grid-template-columns: 1fr; }
   }
   @media (max-width: 47.99rem), (pointer: coarse) {
     .logout-button { width: 2.75rem; padding: 0; }

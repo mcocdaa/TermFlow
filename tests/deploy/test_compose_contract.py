@@ -23,6 +23,7 @@ def test_compose_configures_same_origin_web_control_limits() -> None:
     assert "TERMFLOW_PUBLIC_BASE_URL" in environment
     assert "TERMFLOW_TRUSTED_WEB_ORIGINS" in environment
     assert "TERMFLOW_BROWSER_SESSION_TTL_SECONDS" in environment
+    assert environment["TERMFLOW_TOTP_MASTER_KEY"] is None
     assert environment["TERMFLOW_ENROLLMENT_TOKEN_TTL_SECONDS"] == (
         "${TERMFLOW_ENROLLMENT_TOKEN_TTL_SECONDS:-60}"
     )
@@ -34,23 +35,38 @@ def test_compose_configures_same_origin_web_control_limits() -> None:
     assert "TERMFLOW_TERMINAL_RESUME_GRACE_SECONDS" in environment
 
 
-def test_control_plane_image_builds_web_without_shipping_node() -> None:
+def test_control_plane_image_uses_builders_and_a_source_free_runtime() -> None:
     dockerfile = Path("deploy/Dockerfile.control-plane").read_text()
-    assert "FROM node:22" in dockerfile
+    assert "FROM node:22.23.2-bookworm-slim AS web" in dockerfile
     assert "COPY package.json package-lock.json ./" in dockerfile
     assert "apps/clients/web/package-lock.json" not in dockerfile
     assert "npm ci" in dockerfile
     assert "npm run build:web" in dockerfile
     assert "COPY --from=web" in dockerfile
+    assert "AS python-wheels" in dockerfile
+    assert "uv build --wheel --package termflow-protocol" in dockerfile
+    assert "uv build --wheel --package termflow-control-plane" in dockerfile
     assert "FROM python:3.12-slim AS runtime" in dockerfile
     assert "EXPOSE 8000" in dockerfile
     assert "USER termflow" in dockerfile
 
     runtime = dockerfile.split("FROM python:3.12-slim AS runtime", maxsplit=1)[1]
-    assert "COPY packages ./packages" not in runtime
-    assert "COPY apps ./apps" not in runtime
-    assert "COPY packages/protocol ./packages/protocol" in runtime
-    assert "COPY apps/control-plane ./apps/control-plane" in runtime
+    assert "COPY --from=python-wheels /opt/termflow /opt/termflow" in runtime
+    assert 'CMD ["/opt/termflow/bin/termflow-control"' in runtime
+    for forbidden in (
+        "COPY packages",
+        "COPY apps",
+        "pyproject.toml",
+        "uv.lock",
+        "package-lock.json",
+        "package.json",
+        "npm ",
+        "node ",
+        "cargo ",
+        "rust",
+        "/uv",
+    ):
+        assert forbidden not in runtime.lower()
 
 
 def test_docker_context_excludes_local_state_and_frontend_build_output() -> None:
@@ -60,3 +76,67 @@ def test_docker_context_excludes_local_state_and_frontend_build_output() -> None
     assert ".worktrees" in ignored
     assert "**/node_modules" in ignored
     assert "**/dist" in ignored
+    assert "apps/node/src" in ignored
+    assert "apps/clients/tauri" in ignored
+    assert "**/target" in ignored
+
+
+def test_delivery_scripts_verify_image_contents_and_tauri_compile_gates() -> None:
+    verify = Path("scripts/verify.sh").read_text()
+    image_check = Path("scripts/verify-control-plane-image.sh").read_text()
+    tauri_check = Path("scripts/verify-tauri.sh").read_text()
+    workflow = Path(".github/workflows/ci.yml").read_text()
+
+    assert Path(".nvmrc").read_text().strip() == "22.23.2"
+    assert 'EXPECTED_NODE_VERSION="v22.23.2"' in verify
+    assert "npm run build --workspaces --if-present" in verify
+    assert "scripts/verify-tauri.sh" in verify
+    assert "docker build" in verify
+    assert "scripts/verify-control-plane-image.sh" in verify
+
+    for expected in (
+        "termflow_control_plane",
+        "termflow_protocol",
+        "/app/frontend-dist/index.html",
+        "/opt/termflow/bin/termflow-control",
+        "auth totp reset --help",
+        "find /",
+    ):
+        assert expected in image_check
+    for forbidden in (
+        "/app/apps",
+        "/app/packages",
+        "/app/tests",
+        "/app/uv.lock",
+        "/app/package-lock.json",
+        "node",
+        "npm",
+        "cargo",
+        "rustc",
+    ):
+        assert forbidden in image_check
+
+    for command in ("cargo fmt", "cargo clippy", "cargo test", "cargo check", "--no-bundle"):
+        assert command in tauri_check
+    assert "project is not present" not in tauri_check
+    assert 'node-version: "22.23.2"' in workflow
+    assert "dtolnay/rust-toolchain@stable" in workflow
+    assert "tauri-desktop-unsigned" in workflow
+    assert "tauri-android-unsigned" in workflow
+    assert "tauri-ios-unsigned" in workflow
+    assert "android init --ci" in workflow
+    assert "ios init --ci" in workflow
+    assert "tauri=false" not in workflow
+    assert "needs.native-projects.outputs" not in workflow
+
+
+def test_compose_has_an_explicit_optional_totp_secret_file_override() -> None:
+    override = yaml.safe_load(Path("deploy/compose.totp-secret.yaml").read_text())
+    service = override["services"]["control-plane"]
+    assert service["environment"]["TERMFLOW_TOTP_MASTER_KEY_FILE"] == (
+        "/run/secrets/termflow-totp-master-key"
+    )
+    assert service["secrets"] == ["termflow-totp-master-key"]
+    assert override["secrets"]["termflow-totp-master-key"]["file"] == (
+        "${TERMFLOW_TOTP_MASTER_KEY_FILE:?set TERMFLOW_TOTP_MASTER_KEY_FILE}"
+    )

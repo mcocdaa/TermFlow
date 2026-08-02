@@ -31,9 +31,10 @@ from termflow_protocol import (
     TerminalSizePayload,
 )
 
+from termflow_control_plane.auth.dpop import DpopVerifier
 from termflow_control_plane.auth.sessions import (
     BrowserSessionStore,
-    websocket_admin_close_code,
+    authenticate_admin_websocket,
     websocket_browser_session_key,
 )
 from termflow_control_plane.config import Settings
@@ -100,9 +101,16 @@ async def _send_terminal_events(
     websocket: WebSocket,
     terminal: BrowserTerminal,
     terminal_router: TerminalRouter,
+    repositories: RepositoryBundle,
+    auth_epoch: int,
 ) -> None:
     while True:
         event = await terminal.next_event()
+        if (await repositories.auth_state.get()).epoch != auth_epoch:
+            await terminal_router.request_close(terminal, "client_closed")
+            with suppress(RuntimeError):
+                await websocket.close(code=4401, reason="Authentication epoch changed")
+            return
         if isinstance(event, LocalTerminalClose):
             await terminal_router.request_close(terminal, event.reason)
             if event.error_code is not None:
@@ -200,11 +208,18 @@ async def _receive_terminal_input(
     terminal: BrowserTerminal,
     terminal_router: TerminalRouter,
     settings: Settings,
+    repositories: RepositoryBundle,
+    auth_epoch: int,
 ) -> None:
     bucket = _TokenBucket.create(settings.terminal_input_rate_bytes_per_second)
     while True:
         incoming = await websocket.receive()
         if incoming["type"] == "websocket.disconnect":
+            return
+        if (await repositories.auth_state.get()).epoch != auth_epoch:
+            terminal.terminate("client_closed")
+            with suppress(RuntimeError):
+                await websocket.close(code=4401, reason="Authentication epoch changed")
             return
         data = incoming.get("bytes")
         if data is not None:
@@ -249,12 +264,28 @@ async def connect_terminal(websocket: WebSocket, instance_id: UUID) -> None:
     sessions = cast(BrowserSessionStore, websocket.app.state.browser_sessions)
     repositories = cast(RepositoryBundle, websocket.app.state.repositories)
     terminal_router = cast(TerminalRouter, websocket.app.state.terminal_router)
-    auth_close_code = websocket_admin_close_code(websocket, settings, sessions)
-    if auth_close_code is not None:
-        await websocket.close(code=auth_close_code, reason="Authentication or Origin rejected")
+    dpop = cast(DpopVerifier, websocket.app.state.dpop_verifier)
+    authentication = await authenticate_admin_websocket(
+        websocket,
+        settings,
+        sessions,
+        repositories,
+        dpop,
+        required_scope="terminal.write",
+    )
+    if authentication.close_code is not None:
+        await websocket.close(
+            code=authentication.close_code,
+            reason="Authentication or Origin rejected",
+        )
         return
+    assert authentication.epoch is not None
+    auth_epoch = authentication.epoch
     if await repositories.instances.get(instance_id) is None:
         await websocket.close(code=4404, reason="Term not found")
+        return
+    if (await repositories.auth_state.get()).epoch != auth_epoch:
+        await websocket.close(code=4401, reason="Authentication epoch changed")
         return
 
     session_key = websocket_browser_session_key(websocket, settings, sessions)
@@ -274,24 +305,45 @@ async def connect_terminal(websocket: WebSocket, instance_id: UUID) -> None:
                 terminal_id=UUID(str(raw_terminal_id)),
                 stream_id=UUID(str(raw_stream_id)),
                 after_seq=int(str(raw_after_seq)),
+                auth_epoch=auth_epoch,
             )
         except (TypeError, ValueError):
             await websocket.close(code=4400, reason="Invalid terminal resume cursor")
             return
     try:
         if terminal is None:
-            terminal = await terminal_router.open(instance_id, session_key=session_key)
+            terminal = await terminal_router.open(
+                instance_id,
+                session_key=session_key,
+                auth_epoch=auth_epoch,
+            )
     except TerminalRouteError as exc:
+        if exc.code == "authentication_changed":
+            await websocket.close(code=4401, reason="Authentication epoch changed")
+            return
         temporary_id = UUID(int=0)
         await _send_text_model(websocket, _error_frame(temporary_id, exc.code))
         await websocket.close(code=4409)
         return
 
     sender = asyncio.create_task(
-        _send_terminal_events(websocket, terminal, terminal_router)
+        _send_terminal_events(
+            websocket,
+            terminal,
+            terminal_router,
+            repositories,
+            auth_epoch,
+        )
     )
     receiver = asyncio.create_task(
-        _receive_terminal_input(websocket, terminal, terminal_router, settings)
+        _receive_terminal_input(
+            websocket,
+            terminal,
+            terminal_router,
+            settings,
+            repositories,
+            auth_epoch,
+        )
     )
     tasks = {sender, receiver}
     try:

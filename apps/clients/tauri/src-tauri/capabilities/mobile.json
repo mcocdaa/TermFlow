@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile",
+  "description": "TermFlow Android and iOS capabilities",
+  "platforms": ["android", "iOS"],
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "opener:allow-open-url",
+    "deep-link:default",
+    "http:default",
+    "websocket:default",
+    "os:default",
+    "store:default",
+    "clipboard-manager:allow-write-text"
+  ]
+}

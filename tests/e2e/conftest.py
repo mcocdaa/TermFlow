@@ -53,6 +53,7 @@ class TermFlowSystem:
         self.port = _free_port()
         self.base_url = f"http://127.0.0.1:{self.port}"
         self.admin_token = "e2e-admin-token-that-is-long-enough"
+        self._totp_master_key = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode()
         self.database_path = root / "control-plane.db"
         self.control_log_path = root / "control-plane.log"
         self.control_process: subprocess.Popen[bytes] | None = None
@@ -84,6 +85,7 @@ class TermFlowSystem:
                 "TERMFLOW_ALLOW_INSECURE_LOOPBACK": "true",
                 "TERMFLOW_PUBLIC_BASE_URL": self.base_url,
                 "TERMFLOW_TRUSTED_WEB_ORIGINS": self.base_url,
+                "TERMFLOW_TOTP_MASTER_KEY": self._totp_master_key,
             }
         )
         log = self.control_log_path.open("ab")

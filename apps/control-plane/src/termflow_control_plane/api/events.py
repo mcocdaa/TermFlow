@@ -10,9 +10,10 @@ from uuid import UUID
 from fastapi import APIRouter, WebSocket
 from termflow_protocol import MessageType, PaneReplayRequestPayload, WireMessage
 
+from termflow_control_plane.auth.dpop import DpopVerifier
 from termflow_control_plane.auth.sessions import (
     BrowserSessionStore,
-    websocket_admin_close_code,
+    authenticate_admin_websocket,
 )
 from termflow_control_plane.config import Settings
 from termflow_control_plane.connections.event_hub import EventHub, EventSubscriber
@@ -26,7 +27,10 @@ from termflow_control_plane.persistence.repositories import RepositoryBundle
 router = APIRouter(tags=["events"])
 
 
-async def _send_subscription(websocket: WebSocket, subscriber: EventSubscriber) -> None:
+async def _send_subscription(
+    websocket: WebSocket,
+    subscriber: EventSubscriber,
+) -> None:
     while True:
         next_event = asyncio.create_task(subscriber.queue.get())
         closed = asyncio.create_task(subscriber.closed.wait())
@@ -40,7 +44,10 @@ async def _send_subscription(websocket: WebSocket, subscriber: EventSubscriber) 
             with suppress(asyncio.CancelledError):
                 await task
         if closed in done:
-            await websocket.close(code=4410, reason="Subscriber too slow")
+            await websocket.close(
+                code=subscriber.close_code,
+                reason=subscriber.close_reason,
+            )
             return
         await websocket.send_text(next_event.result().model_dump_json())
 
@@ -58,11 +65,25 @@ async def subscribe_events(
     repositories = cast(RepositoryBundle, websocket.app.state.repositories)
     registry = cast(LiveInstanceRegistry, websocket.app.state.registry)
     hub = cast(EventHub, websocket.app.state.event_hub)
-    auth_close_code = websocket_admin_close_code(websocket, settings, sessions)
-    if auth_close_code is not None:
-        reason = "Origin not allowed" if auth_close_code == 4403 else "Authentication required"
-        await websocket.close(code=auth_close_code, reason=reason)
+    dpop = cast(DpopVerifier, websocket.app.state.dpop_verifier)
+    authentication = await authenticate_admin_websocket(
+        websocket,
+        settings,
+        sessions,
+        repositories,
+        dpop,
+        required_scope="terminal.read",
+    )
+    if authentication.close_code is not None:
+        reason = (
+            "Origin not allowed"
+            if authentication.close_code == 4403
+            else "Authentication required"
+        )
+        await websocket.close(code=authentication.close_code, reason=reason)
         return
+    assert authentication.epoch is not None
+    auth_epoch = authentication.epoch
     if await repositories.instances.get(instance_id) is None:
         await websocket.close(code=4404, reason="Instance not found")
         return
@@ -76,8 +97,17 @@ async def subscribe_events(
     if after_seq is not None and after_seq < 0:
         await websocket.close(code=4400, reason="Replay cursor is invalid")
         return
+    if (await repositories.auth_state.get()).epoch != auth_epoch:
+        await websocket.close(code=4401, reason="Authentication epoch changed")
+        return
 
-    subscriber = await hub.subscribe(instance_id)
+    subscriber = await hub.subscribe(instance_id, auth_epoch=auth_epoch)
+    if subscriber.closed.is_set():
+        await websocket.close(
+            code=subscriber.close_code,
+            reason=subscriber.close_reason,
+        )
+        return
     await websocket.accept()
     try:
         if pane_id is not None and stream_id is not None and after_seq is not None:

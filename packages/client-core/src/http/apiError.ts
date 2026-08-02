@@ -13,12 +13,16 @@ export interface ApiErrorDetails {
   status?: number
   code?: string
   requestId?: string
+  retryAfterSeconds?: number
+  dpopNonce?: string
 }
 
 export class ApiError extends Error {
   readonly status?: number
   readonly code?: string
   readonly requestId?: string
+  readonly retryAfterSeconds?: number
+  readonly dpopNonce?: string
 
   constructor(public readonly kind: ApiErrorKind, details: ApiErrorDetails = {}) {
     super(safeMessages[kind])
@@ -26,5 +30,7 @@ export class ApiError extends Error {
     if (details.status !== undefined) this.status = details.status
     if (details.code !== undefined) this.code = details.code
     if (details.requestId !== undefined) this.requestId = details.requestId
+    if (details.retryAfterSeconds !== undefined) this.retryAfterSeconds = details.retryAfterSeconds
+    if (details.dpopNonce !== undefined) this.dpopNonce = details.dpopNonce
   }
 }

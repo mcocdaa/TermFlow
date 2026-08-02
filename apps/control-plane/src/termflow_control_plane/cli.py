@@ -16,7 +16,11 @@ from termflow_control_plane.persistence.repositories import RepositoryBundle
 
 app = typer.Typer(no_args_is_help=True, help="Operate the TermFlow Control Plane.")
 enrollment_app = typer.Typer(no_args_is_help=True, help="Manage one-time enrollment tokens.")
+auth_app = typer.Typer(no_args_is_help=True, help="Manage local authentication recovery.")
+totp_app = typer.Typer(no_args_is_help=True, help="Manage local TOTP recovery.")
 app.add_typer(enrollment_app, name="enrollment")
+app.add_typer(auth_app, name="auth")
+auth_app.add_typer(totp_app, name="totp")
 
 
 def _settings() -> Settings:
@@ -39,11 +43,33 @@ async def _issue_enrollment(settings: Settings) -> str:
         await database.dispose()
 
 
+async def _reset_authentication(settings: Settings) -> int:
+    database = Database(settings.database_url)
+    await database.initialize()
+    try:
+        repositories = RepositoryBundle(database.session_factory)
+        return await repositories.auth_state.reset_and_increment_epoch()
+    finally:
+        await database.dispose()
+
+
 @enrollment_app.command("create")
 def create_enrollment() -> None:
     """Create a short-lived, single-use Installation enrollment token."""
 
     typer.echo(asyncio.run(_issue_enrollment(_settings())))
+
+
+@totp_app.command("reset")
+def reset_totp() -> None:
+    """Clear TOTP and revoke credentials after an explicit local confirmation."""
+
+    typer.echo(
+        "This clears TOTP and revokes all active Web, native, and CLI credentials."
+    )
+    typer.confirm("Continue with the authentication reset?", abort=True)
+    epoch = asyncio.run(_reset_authentication(_settings()))
+    typer.echo(f"Authentication reset complete; epoch {epoch} is now active.")
 
 
 @app.command()

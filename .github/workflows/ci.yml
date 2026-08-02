@@ -29,11 +29,20 @@ jobs:
           node-version: "22.23.2"
           cache: npm
 
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/clients/tauri/src-tauri -> target
+
       - name: Install uv and tmux
         run: |
           python -m pip install --disable-pip-version-check uv==0.11.19
           sudo apt-get update
-          sudo apt-get install --yes tmux
+          sudo apt-get install --yes tmux libwebkit2gtk-4.1-dev libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev
           mkdir -p "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR"
           chmod 700 "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR"
 
@@ -52,8 +61,8 @@ jobs:
       - name: Typecheck clients
         run: npm run typecheck
 
-      - name: Build Web C
-        run: npm run build:web
+      - name: Build client workspaces
+        run: npm run build --workspaces --if-present
 
       - name: Test Python workspace
         run: uv run --all-packages pytest -q --junitxml=.ci/pytest.xml
@@ -63,10 +72,14 @@ jobs:
           uv run --all-packages ruff check .
           uv run --all-packages mypy packages/protocol/src apps/control-plane/src apps/node/src
 
+      - name: Verify Rust and unsigned Linux Tauri compile
+        run: scripts/verify-tauri.sh
+
       - name: Validate and build Control Plane image
         run: |
           docker compose -f deploy/compose.yaml config --quiet
           docker build -f deploy/Dockerfile.control-plane -t termflow-control-plane:ci .
+          scripts/verify-control-plane-image.sh termflow-control-plane:ci
 
       - name: Upload test metadata on failure
         if: failure()
@@ -76,3 +89,76 @@ jobs:
           path: .ci/pytest.xml
           if-no-files-found: ignore
           retention-days: 3
+
+  tauri-desktop-unsigned:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.2"
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/clients/tauri/src-tauri -> target
+      - name: Install Linux Tauri prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - run: npm ci
+      - name: Compile desktop without installer or signing
+        run: npm run tauri:build --workspace @termflow/tauri-client -- --no-bundle
+
+  tauri-android-unsigned:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.2"
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/clients/tauri/src-tauri -> target
+      - run: npm ci
+      - name: Generate the Android project from the committed Tauri configuration
+        run: npm run tauri --workspace @termflow/tauri-client -- android init --ci
+      - name: Compile Android debug APK without publication signing
+        run: npm run tauri --workspace @termflow/tauri-client -- android build --debug --ci --target aarch64 --apk
+
+  tauri-ios-unsigned:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.2"
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/clients/tauri/src-tauri -> target
+      - run: npm ci
+      - name: Generate the iOS project from the committed Tauri configuration
+        run: npm run tauri --workspace @termflow/tauri-client -- ios init --ci
+      - name: Compile iOS simulator debug app without publication signing
+        run: npm run tauri --workspace @termflow/tauri-client -- ios build --debug --ci --target aarch64-sim

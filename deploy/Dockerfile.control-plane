@@ -1,6 +1,6 @@
 FROM ghcr.io/astral-sh/uv:0.11.19 AS uv
 
-FROM node:22-bookworm-slim AS web
+FROM node:22.23.2-bookworm-slim AS web
 
 WORKDIR /workspace
 
@@ -22,9 +22,30 @@ COPY packages/design-tokens ./packages/design-tokens
 
 RUN npm run build:web
 
-FROM python:3.12-slim AS runtime
+FROM python:3.12-slim AS python-wheels
 
-COPY --from=uv /uv /uvx /bin/
+COPY --from=uv /uv /bin/uv
+WORKDIR /build
+
+# Only workspace manifests and the two deliverable Python source trees enter this builder.
+# apps/node's manifest is needed for frozen uv workspace discovery; its source is not copied.
+COPY pyproject.toml uv.lock ./
+COPY packages/protocol/pyproject.toml ./packages/protocol/pyproject.toml
+COPY apps/control-plane/pyproject.toml ./apps/control-plane/pyproject.toml
+COPY apps/node/pyproject.toml ./apps/node/pyproject.toml
+COPY packages/protocol/src ./packages/protocol/src
+COPY apps/control-plane/src ./apps/control-plane/src
+
+RUN uv build --wheel --package termflow-protocol --out-dir /wheels \
+    && uv build --wheel --package termflow-control-plane --out-dir /wheels \
+    && uv export --quiet --frozen --no-dev --package termflow-control-plane \
+        --no-emit-workspace --output-file /runtime-requirements.txt \
+    && uv venv /opt/termflow \
+    && uv pip install --python /opt/termflow/bin/python \
+        --require-hashes --requirements /runtime-requirements.txt \
+    && uv pip install --python /opt/termflow/bin/python --no-deps /wheels/*.whl
+
+FROM python:3.12-slim AS runtime
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends curl \
@@ -32,20 +53,20 @@ RUN apt-get update \
     && groupadd --system termflow \
     && useradd --system --gid termflow --home-dir /app termflow
 
+ENV PATH="/opt/termflow/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
-COPY pyproject.toml uv.lock ./
-COPY packages/protocol ./packages/protocol
-COPY apps/control-plane ./apps/control-plane
-COPY apps/node/pyproject.toml ./apps/node/pyproject.toml
+COPY --from=python-wheels /opt/termflow /opt/termflow
 COPY --from=web /workspace/apps/clients/web/dist /app/frontend-dist
 
-RUN uv sync --frozen --no-dev --package termflow-control-plane \
-    && mkdir -p /app/data /app/frontend-dist \
+RUN mkdir -p /app/data \
     && chown -R termflow:termflow /app
 
 USER termflow
 
 EXPOSE 8000
 
-CMD ["uv", "run", "--frozen", "--no-dev", "--package", "termflow-control-plane", "termflow-control", "serve", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/opt/termflow/bin/termflow-control", "serve", "--host", "0.0.0.0", "--port", "8000"]

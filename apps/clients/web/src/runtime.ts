@@ -25,6 +25,8 @@ function browserDependencies(): ClientRuntime {
     clipboard: createBrowserClipboard(),
     clock,
     visibility: createBrowserVisibility(),
+    capabilities: { manageSecurity: true, manageAuthorizedClients: true },
+    authorizationCompletion: { navigate: (callbackUri) => globalThis.location.assign(callbackUri) },
     canonicalServerUrl: browserCanonicalServerUrl(),
     platform: browserPlatform(),
   }

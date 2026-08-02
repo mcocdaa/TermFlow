@@ -48,6 +48,48 @@ describe('createApiClient', () => {
     expect(error.message).not.toContain('secret')
   })
 
+  it('preserves safe response headers and exposes retry-after on rate limits', async () => {
+    const headers = new Map([
+      ['retry-after', '7'],
+      ['dpop-nonce', 'nonce-1'],
+    ])
+    const request = vi.fn().mockResolvedValue({
+      status: 429,
+      headers: { get: (name: string) => headers.get(name.toLowerCase()) ?? null },
+      body: { error: { code: 'rate_limited', message: 'ignored', request_id: 'request-2' } },
+    })
+    const api = createApiClient({ request })
+
+    const error = await api.request('/api/v1/oauth/token', {
+      method: 'POST',
+      headers: { DPoP: 'proof' },
+      body: { grant_type: 'authorization_code' },
+    }).catch((caught) => caught) as ApiError
+
+    expect(request).toHaveBeenCalledWith('/api/v1/oauth/token', {
+      method: 'POST',
+      headers: { DPoP: 'proof' },
+      body: { grant_type: 'authorization_code' },
+    })
+    expect(error).toMatchObject({ kind: 'rate_limit', retryAfterSeconds: 7 })
+  })
+
+  it('returns status and selected headers through requestResponse', async () => {
+    const api = createApiClient({
+      request: vi.fn().mockResolvedValue({
+        status: 202,
+        headers: { get: (name: string) => name.toLowerCase() === 'dpop-nonce' ? 'next-nonce' : null },
+        body: { status: 'totp_required' },
+      }),
+    })
+
+    await expect(api.requestResponse('/api/v1/admin/sessions', { method: 'POST' })).resolves.toMatchObject({
+      status: 202,
+      body: { status: 'totp_required' },
+      headers: { dpopNonce: 'next-nonce' },
+    })
+  })
+
   it('removes a Term through DELETE and accepts 204', async () => {
     const request = vi.fn().mockResolvedValue(response(204, undefined, ''))
 

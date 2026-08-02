@@ -32,7 +32,7 @@ function binary(data: ArrayBuffer | ArrayBufferView): Uint8Array {
 
 export function createBrowserTerminalTransport(options: BrowserTerminalTransportOptions = {}): TerminalTransport {
   return {
-    connect(request: TerminalConnectRequest, emit: (event: TerminalTransportEvent) => void): TerminalConnection {
+    async connect(request: TerminalConnectRequest, emit: (event: TerminalTransportEvent) => void): Promise<TerminalConnection> {
       const socket = (options.createWebSocket ?? browserWebSocket)(endpoint(request, options.baseUrl ?? currentUrl()))
       socket.binaryType = 'arraybuffer'
       socket.onopen = () => emit({ type: 'open' })
@@ -43,9 +43,9 @@ export function createBrowserTerminalTransport(options: BrowserTerminalTransport
       socket.onerror = () => { /* close owns reconnect policy */ }
       socket.onclose = (event) => emit({ type: 'close', code: event.code })
       return {
-        sendText: (data) => socket.send(data),
-        sendBinary: (data) => socket.send(data),
-        close: (code, reason) => socket.close(code, reason),
+        sendText: async (data) => socket.send(data),
+        sendBinary: async (data) => socket.send(data),
+        close: async (code, reason) => socket.close(code, reason),
       }
     },
   }

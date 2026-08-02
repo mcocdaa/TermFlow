@@ -48,6 +48,7 @@ def test_client_workspace_has_one_lock_and_fixed_dependency_direction() -> None:
 def test_registry_packages_are_pinned_with_integrity() -> None:
     lock = _manifest("package-lock.json")
     workspace_paths = {
+        "apps/clients/tauri",
         "apps/clients/web",
         "packages/design-tokens",
         "packages/client-contracts",

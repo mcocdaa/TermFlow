@@ -36,10 +36,10 @@ export interface TerminalSessionOptions {
 }
 
 export interface TerminalSessionLike {
-  connect(): void
-  sendInput(data: string | Uint8Array): void
-  sendAction(action: TerminalAction, options?: { targetPaneId?: string, confirmed?: boolean }): void
-  dispose(): void
+  connect(): Promise<void>
+  sendInput(data: string | Uint8Array): Promise<void>
+  sendAction(action: TerminalAction, options?: { targetPaneId?: string, confirmed?: boolean }): Promise<void>
+  dispose(): Promise<void>
 }
 
 const MAX_BINARY_FRAME = 65_536
@@ -65,7 +65,7 @@ export class TerminalSession implements TerminalSessionLike {
     this.reconnectDelayMs = options.reconnectDelayMs ?? 1_000
   }
 
-  connect(): void {
+  async connect(): Promise<void> {
     if (this.disposed) return
     this.callbacks.onStatus(this.streamId === null ? 'connecting' : 'reconnecting')
     this.ready = false
@@ -76,9 +76,18 @@ export class TerminalSession implements TerminalSessionLike {
       request.streamId = this.streamId
       request.afterSeq = this.lastSeq
     }
-    this.connection = this.options.transport.connect(request, (event) => {
-      if (generation === this.connectionGeneration) this.handleEvent(event)
-    })
+    try {
+      const connection = await this.options.transport.connect(request, (event) => {
+        if (generation === this.connectionGeneration) this.handleEvent(event)
+      })
+      if (generation !== this.connectionGeneration || this.disposed) {
+        await connection.close(1000, 'stale_connect')
+        return
+      }
+      this.connection = connection
+    } catch {
+      if (generation === this.connectionGeneration) this.handleClose(1006)
+    }
   }
 
   private handleEvent(event: TerminalTransportEvent): void {
@@ -132,12 +141,13 @@ export class TerminalSession implements TerminalSessionLike {
         this.suppressReconnect = control.reason === 'replaced' || control.reason === 'instance_offline' || control.reason === 'client_closed'
         this.callbacks.onClosed(control.reason)
         this.callbacks.onStatus('closed')
-        this.connection?.close(1000, control.reason)
+        if (this.connection !== null) void this.connection.close(1000, control.reason)
         break
     }
   }
 
   private handleClose(code: number): void {
+    this.connectionGeneration += 1
     this.connection = null
     this.ready = false
     if (code === 4401 || code === 4403) {
@@ -153,21 +163,21 @@ export class TerminalSession implements TerminalSessionLike {
     this.reconnectAttempt += 1
     this.reconnectTimer = this.options.scheduler.set(() => {
       this.reconnectTimer = null
-      this.connect()
+      void this.connect()
     }, delay)
   }
 
-  sendInput(data: string | Uint8Array): void {
+  async sendInput(data: string | Uint8Array): Promise<void> {
     if (this.connection === null || !this.ready) return
     const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
     for (let offset = 0; offset < bytes.byteLength; offset += MAX_BINARY_FRAME) {
-      this.connection.sendBinary(bytes.slice(offset, offset + MAX_BINARY_FRAME))
+      await this.connection.sendBinary(bytes.slice(offset, offset + MAX_BINARY_FRAME))
     }
   }
 
-  sendAction(action: TerminalAction, options: { targetPaneId?: string, confirmed?: boolean } = {}): void {
+  async sendAction(action: TerminalAction, options: { targetPaneId?: string, confirmed?: boolean } = {}): Promise<void> {
     if (this.connection === null || !this.ready) return
-    this.connection.sendText(JSON.stringify({
+    await this.connection.sendText(JSON.stringify({
       type: 'terminal.action',
       action_id: this.options.createId(),
       action,
@@ -176,15 +186,15 @@ export class TerminalSession implements TerminalSessionLike {
     }))
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     this.disposed = true
     this.connectionGeneration += 1
     if (this.reconnectTimer !== null) this.options.scheduler.clear(this.reconnectTimer)
     this.reconnectTimer = null
     const connection = this.connection
-    if (connection !== null && this.ready) connection.sendText(JSON.stringify({ type: 'terminal.close', reason: 'client_closed' }))
+    if (connection !== null && this.ready) await connection.sendText(JSON.stringify({ type: 'terminal.close', reason: 'client_closed' }))
     this.ready = false
     this.connection = null
-    connection?.close(1000, 'route_leave')
+    if (connection !== null) await connection.close(1000, 'route_leave')
   }
 }

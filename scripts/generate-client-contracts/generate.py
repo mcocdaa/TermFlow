@@ -16,8 +16,10 @@ from uuid import UUID
 from pydantic import BaseModel
 from termflow_protocol import (
     PROTOCOL_VERSION,
+    BrowserSessionChallengeResponse,
     BrowserSessionDeleteResponse,
     BrowserSessionResponse,
+    CliTokenResponse,
     ComputerListResponse,
     ComputerSummary,
     DashboardMetrics,
@@ -25,6 +27,18 @@ from termflow_protocol import (
     EnrollmentCreateResponse,
     ErrorDetail,
     ErrorEnvelope,
+    NativeClientDeleteResponse,
+    NativeClientListResponse,
+    NativeClientResponse,
+    NativeClientUpdateRequest,
+    OAuthAuthorizationDecisionResponse,
+    OAuthAuthorizationPreviewResponse,
+    OAuthAuthorizationRequest,
+    OAuthMetadataResponse,
+    OAuthPublicJwk,
+    OAuthRevokeResponse,
+    OAuthScope,
+    OAuthTokenResponse,
     PaneSnapshot,
     TerminalAction,
     TerminalActionResultFrame,
@@ -38,19 +52,36 @@ from termflow_protocol import (
     TermSummary,
     TopologyResponse,
     TopologySnapshot,
+    TotpSetupResponse,
+    TotpStatusResponse,
     WindowSnapshot,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = ROOT / "packages/client-contracts/src/generated.ts"
 
-TYPE_ALIASES: tuple[TypeAliasType, ...] = (TerminalAction, TerminalCloseReason)
+TYPE_ALIASES: tuple[TypeAliasType, ...] = (OAuthScope, TerminalAction, TerminalCloseReason)
 CONSTANTS: tuple[tuple[str, object], ...] = (("PROTOCOL_VERSION", PROTOCOL_VERSION),)
 MODELS: tuple[type[BaseModel], ...] = (
     ErrorDetail,
     ErrorEnvelope,
     BrowserSessionResponse,
     BrowserSessionDeleteResponse,
+    BrowserSessionChallengeResponse,
+    TotpStatusResponse,
+    TotpSetupResponse,
+    OAuthPublicJwk,
+    OAuthMetadataResponse,
+    OAuthAuthorizationRequest,
+    OAuthAuthorizationPreviewResponse,
+    OAuthAuthorizationDecisionResponse,
+    OAuthTokenResponse,
+    OAuthRevokeResponse,
+    CliTokenResponse,
+    NativeClientResponse,
+    NativeClientListResponse,
+    NativeClientUpdateRequest,
+    NativeClientDeleteResponse,
     DashboardMetrics,
     TermSummary,
     ComputerSummary,
@@ -108,7 +139,10 @@ def _render_type(annotation: object) -> str:
     if origin is Literal:
         return " | ".join(_literal(value) for value in arguments)
     if origin is list:
-        return f"{_render_type(arguments[0])}[]"
+        item_type = _render_type(arguments[0])
+        if " | " in item_type:
+            item_type = f"({item_type})"
+        return f"{item_type}[]"
     if origin in (types.UnionType, Union):
         return " | ".join(_render_type(argument) for argument in arguments)
     if isinstance(annotation, type) and issubclass(annotation, Enum):

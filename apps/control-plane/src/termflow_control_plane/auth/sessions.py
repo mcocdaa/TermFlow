@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import hmac
+import json
 import secrets
 from collections import OrderedDict
 from collections.abc import Callable
@@ -12,8 +12,12 @@ from urllib.parse import urlsplit
 
 from fastapi import Request, WebSocket
 
-from termflow_control_plane.auth.tokens import hash_token
+from termflow_control_plane.auth.dpop import DpopInvalid, DpopVerifier
+from termflow_control_plane.auth.rate_limit import AuthRateLimiter
+from termflow_control_plane.auth.tokens import hash_token, secret_text_matches
 from termflow_control_plane.config import Settings
+from termflow_control_plane.errors import TermFlowError
+from termflow_control_plane.persistence.repositories import RepositoryBundle
 
 PRODUCTION_COOKIE_NAME = "__Host-termflow_session"
 DEVELOPMENT_COOKIE_NAME = "termflow_session"
@@ -24,6 +28,18 @@ _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 class BrowserCookiePolicy:
     name: str
     secure: bool
+
+
+@dataclass(frozen=True, slots=True)
+class WebSocketAuthentication:
+    close_code: int | None
+    epoch: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class _BrowserSession:
+    expires_at: datetime
+    epoch: int
 
 
 class BrowserSessionStore:
@@ -45,13 +61,18 @@ class BrowserSessionStore:
         self._capacity = capacity
         self._clock = clock or (lambda: datetime.now(UTC))
         self._on_revoke = on_revoke
-        self._sessions: OrderedDict[str, datetime] = OrderedDict()
+        self._sessions: OrderedDict[str, _BrowserSession] = OrderedDict()
+        self._epoch = 1
 
     def __repr__(self) -> str:
         return f"BrowserSessionStore(live_count={self.live_count}, capacity={self._capacity})"
 
     def _prune(self, now: datetime) -> None:
-        expired = [digest for digest, expiry in self._sessions.items() if expiry <= now]
+        expired = [
+            digest
+            for digest, session in self._sessions.items()
+            if session.expires_at <= now
+        ]
         for digest in expired:
             self._remove(digest)
 
@@ -62,23 +83,30 @@ class BrowserSessionStore:
             self._on_revoke(digest)
         return True
 
-    def create(self) -> tuple[str, datetime]:
+    def create(self, *, epoch: int | None = None) -> tuple[str, datetime]:
         now = self._clock()
         self._prune(now)
+        effective_epoch = self._epoch if epoch is None else epoch
+        self.synchronize_epoch(effective_epoch)
         while len(self._sessions) >= self._capacity:
             oldest = next(iter(self._sessions))
             self._remove(oldest)
         secret = secrets.token_urlsafe(32)
         expires_at = now + self._ttl
-        self._sessions[hash_token(secret)] = expires_at
+        self._sessions[hash_token(secret)] = _BrowserSession(expires_at, effective_epoch)
         return secret, expires_at
 
-    def authenticate(self, secret: str | None) -> datetime | None:
+    def authenticate(self, secret: str | None, *, epoch: int | None = None) -> datetime | None:
         now = self._clock()
         self._prune(now)
+        if epoch is not None:
+            self.synchronize_epoch(epoch)
         if not secret:
             return None
-        return self._sessions.get(hash_token(secret))
+        session = self._sessions.get(hash_token(secret))
+        if session is None or session.epoch != self._epoch:
+            return None
+        return session.expires_at
 
     def invalidate(self, secret: str | None) -> bool:
         if not secret:
@@ -101,6 +129,21 @@ class BrowserSessionStore:
         """Revoke expired sessions even when no new browser request arrives."""
 
         self._prune(self._clock())
+
+    def synchronize_epoch(self, epoch: int) -> None:
+        """Revoke every process-local session when the persisted epoch changes."""
+
+        if epoch < 1:
+            raise ValueError("authentication epoch must be positive")
+        if epoch == self._epoch:
+            return
+        for digest in tuple(self._sessions):
+            self._remove(digest)
+        self._epoch = epoch
+
+    @property
+    def epoch(self) -> int:
+        return self._epoch
 
 
 def browser_cookie_policy(settings: Settings) -> BrowserCookiePolicy:
@@ -129,42 +172,130 @@ def request_cookie_session(
     return store.authenticate(request.cookies.get(policy.name))
 
 
-def _websocket_bearer(websocket: WebSocket) -> str | None:
+def _websocket_authorization(websocket: WebSocket) -> tuple[str, str] | None:
     authorization = websocket.headers.get("authorization", "")
     scheme, separator, token = authorization.partition(" ")
-    if not separator or scheme.lower() != "bearer" or not token:
+    normalized_scheme = scheme.lower()
+    if not separator or normalized_scheme not in {"bearer", "dpop"} or not token:
         return None
-    return token
+    return normalized_scheme, token
 
 
-def websocket_admin_authenticated(
+async def authenticate_admin_websocket(
     websocket: WebSocket,
     settings: Settings,
     store: BrowserSessionStore,
-) -> bool:
-    """Browser traffic needs exact Origin; Origin-less native traffic needs Bearer."""
+    repositories: RepositoryBundle,
+    dpop: DpopVerifier,
+    *,
+    required_scope: str,
+) -> WebSocketAuthentication:
+    """Apply the HTTP credential policy and return its exact persisted epoch."""
 
-    return websocket_admin_close_code(websocket, settings, store) is None
-
-
-def websocket_admin_close_code(
-    websocket: WebSocket,
-    settings: Settings,
-    store: BrowserSessionStore,
-) -> int | None:
-    """Return an authentication/policy close code, or ``None`` when allowed."""
-
-    bearer = _websocket_bearer(websocket)
+    limiter: AuthRateLimiter = websocket.app.state.auth_rate_limiter
+    source = websocket.client.host if websocket.client is not None else "unknown-peer"
+    try:
+        limiter.check("protected_websocket", source)
+    except TermFlowError:
+        return WebSocketAuthentication(close_code=4429, epoch=None)
+    authorization = _websocket_authorization(websocket)
     origin = websocket.headers.get("origin")
+    state = await repositories.auth_state.get()
+    if origin is not None:
+        if not origin_allowed(origin, settings):
+            return WebSocketAuthentication(close_code=4403, epoch=None)
+        policy = browser_cookie_policy(settings)
+        accepted = (
+            store.authenticate(
+                websocket.cookies.get(policy.name),
+                epoch=state.epoch,
+            )
+            is not None
+        )
+        return WebSocketAuthentication(
+            close_code=None if accepted else 4401,
+            epoch=state.epoch if accepted else None,
+        )
+    if authorization is None:
+        return WebSocketAuthentication(close_code=4401, epoch=None)
+    scheme, bearer = authorization
     expected = settings.admin_token.get_secret_value()
-    if origin is None:
-        return None if bearer is not None and hmac.compare_digest(bearer, expected) else 4401
-    if not origin_allowed(origin, settings):
-        return 4403
-    if bearer is not None and hmac.compare_digest(bearer, expected):
-        return None
-    policy = browser_cookie_policy(settings)
-    return None if store.authenticate(websocket.cookies.get(policy.name)) is not None else 4401
+    if (
+        scheme == "bearer"
+        and state.totp_enabled_at is None
+        and secret_text_matches(bearer, expected)
+    ):
+        return WebSocketAuthentication(close_code=None, epoch=state.epoch)
+    if scheme == "bearer":
+        cli_token = await repositories.auth_tokens.get_active(
+            bearer,
+            epoch=state.epoch,
+            kind="cli",
+        )
+        if cli_token is not None:
+            try:
+                cli_scopes = json.loads(cli_token.scopes)
+            except (TypeError, ValueError):
+                return WebSocketAuthentication(close_code=4401, epoch=None)
+            accepted = isinstance(cli_scopes, list) and required_scope in cli_scopes
+            return WebSocketAuthentication(
+                close_code=None if accepted else 4403,
+                epoch=state.epoch if accepted else None,
+            )
+    access = await repositories.auth_tokens.get_active(
+        bearer,
+        epoch=state.epoch,
+        kind="access",
+    )
+    if access is None or access.key_thumbprint is None:
+        return WebSocketAuthentication(close_code=4401, epoch=None)
+    try:
+        scopes = json.loads(access.scopes)
+    except (TypeError, ValueError):
+        return WebSocketAuthentication(close_code=4401, epoch=None)
+    if not isinstance(scopes, list) or required_scope not in scopes:
+        return WebSocketAuthentication(close_code=4403, epoch=None)
+    proof = websocket.headers.get("dpop")
+    if proof is None:
+        return WebSocketAuthentication(close_code=4401, epoch=None)
+    htu = f"{str(settings.public_base_url).rstrip('/')}{websocket.url.path}"
+    try:
+        async with limiter.verification_slot():
+            dpop.verify(
+                proof,
+                method="GET",
+                htu=htu,
+                expected_jkt=access.key_thumbprint,
+                access_token=bearer,
+                rotate_nonce=False,
+            )
+    except TermFlowError:
+        return WebSocketAuthentication(close_code=4429, epoch=None)
+    except DpopInvalid:
+        return WebSocketAuthentication(close_code=4401, epoch=None)
+    return WebSocketAuthentication(close_code=None, epoch=state.epoch)
+
+
+async def websocket_admin_close_code(
+    websocket: WebSocket,
+    settings: Settings,
+    store: BrowserSessionStore,
+    repositories: RepositoryBundle,
+    dpop: DpopVerifier,
+    *,
+    required_scope: str,
+) -> int | None:
+    """Compatibility wrapper for callers that only need the handshake close code."""
+
+    authentication = await authenticate_admin_websocket(
+        websocket,
+        settings,
+        store,
+        repositories,
+        dpop,
+        required_scope=required_scope,
+    )
+    return authentication.close_code
 
 
 def websocket_browser_session_key(

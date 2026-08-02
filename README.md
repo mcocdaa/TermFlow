@@ -67,6 +67,7 @@ B+Web C 的容器化启动参见 [deploy/compose.yaml](deploy/compose.yaml) 与
 - [安全与隐私](docs/security.md)
 - [API 调用示例](docs/api-examples.md)
 - [Web C 使用与主题](docs/web-client.md)
+- [部署与恢复](docs/operations.md)
 - [排障指南](docs/troubleshooting.md)
 
 设计与实施计划保存在 `docs/superpowers/`，它们是工程记录；以上文档描述实际版本的

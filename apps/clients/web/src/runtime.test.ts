@@ -6,10 +6,12 @@ describe('browser runtime composition', () => {
   it('assembles the injected browser ports as one ClientRuntime', () => {
     const dependencies: ClientRuntime = {
       api: {} as ClientRuntime['api'],
-      createTerminal: () => ({ connect() {}, sendInput() {}, sendAction() {}, dispose() {} }),
+      createTerminal: () => ({ async connect() {}, async sendInput() {}, async sendAction() {}, async dispose() {} }),
       clipboard: { writeText: async () => undefined },
       clock: { now: () => 1, setTimeout: () => 2, clearTimeout: () => undefined, setInterval: () => 3, clearInterval: () => undefined },
       visibility: { isHidden: () => false, subscribe: () => () => undefined },
+      capabilities: { manageSecurity: true, manageAuthorizedClients: true },
+      authorizationCompletion: { navigate: () => undefined },
       canonicalServerUrl: 'https://b.termflow.test',
       platform: 'MacIntel',
     }

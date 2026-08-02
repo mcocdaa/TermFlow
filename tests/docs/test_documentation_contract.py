@@ -19,6 +19,7 @@ def test_readme_links_every_operator_document() -> None:
         "security.md",
         "api-examples.md",
         "web-client.md",
+        "operations.md",
         "troubleshooting.md",
     ):
         assert name in readme
@@ -49,3 +50,20 @@ def test_docs_keep_terminal_content_and_disconnect_boundaries_explicit() -> None
     assert "B 不持久化终端" in security
     assert "C 不能改变" in architecture
     assert "继续运行" in architecture
+
+
+def test_operations_docs_define_external_edge_secrets_and_native_toolchains() -> None:
+    operations = Path("docs/operations.md").read_text()
+    clients = Path("apps/clients/README.md").read_text()
+    env_example = Path("deploy/env.example").read_text()
+
+    for boundary in ("DNS", "反向代理", "TLS", "mTLS", "不属于 TermFlow"):
+        assert boundary in operations
+    assert "TERMFLOW_TOTP_MASTER_KEY" in operations
+    assert "默认值" in operations
+    assert "docker compose exec control-plane termflow-control auth totp reset" in operations
+    for platform in ("Linux", "Windows", "macOS", "Android", "iOS"):
+        assert platform in clients
+    assert "Node 22.23.2" in clients
+    assert "不能" in clients and "跨平台" in clients
+    assert "TERMFLOW_TOTP_MASTER_KEY=" not in env_example

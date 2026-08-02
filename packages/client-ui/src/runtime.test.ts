@@ -7,7 +7,7 @@ import { createThemeState } from './theme/theme'
 
 const fakeRuntime = (): ClientRuntime => ({
   api: {} as ClientRuntime['api'],
-  createTerminal: () => ({ connect() {}, sendInput() {}, sendAction() {}, dispose() {} }),
+  createTerminal: () => ({ async connect() {}, async sendInput() {}, async sendAction() {}, async dispose() {} }),
   clipboard: { writeText: async () => undefined },
   clock: {
     now: () => 0,
@@ -17,6 +17,8 @@ const fakeRuntime = (): ClientRuntime => ({
     clearInterval: () => undefined,
   },
   visibility: { isHidden: () => false, subscribe: () => () => undefined },
+  capabilities: { manageSecurity: true, manageAuthorizedClients: true },
+  authorizationCompletion: { navigate: () => undefined },
   canonicalServerUrl: 'https://control.example',
   platform: 'Linux x86_64',
 })

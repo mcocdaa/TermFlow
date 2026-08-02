@@ -28,6 +28,19 @@ def test_checked_in_client_contracts_match_python_models(tmp_path: Path) -> None
     assert rendered == GENERATED.read_text()
     assert "export interface BrowserSessionResponse" in rendered
     assert "export interface BrowserSessionDeleteResponse" in rendered
+    assert "export interface BrowserSessionChallengeResponse" in rendered
+    assert "export interface TotpStatusResponse" in rendered
+    assert "export interface TotpSetupResponse" in rendered
+    assert "export interface OAuthMetadataResponse" in rendered
+    assert "export interface OAuthAuthorizationPreviewResponse" in rendered
+    assert "export interface OAuthAuthorizationDecisionResponse" in rendered
+    assert "export interface OAuthTokenResponse" in rendered
+    assert "export interface OAuthRevokeResponse" in rendered
+    assert "export interface CliTokenResponse" in rendered
+    assert "export interface NativeClientResponse" in rendered
+    assert "export interface NativeClientListResponse" in rendered
+    assert "export interface NativeClientDeleteResponse" in rendered
+    assert 'grant_types_supported: ("authorization_code" | "refresh_token")[]' in rendered
     assert "export interface ErrorEnvelope" in rendered
     assert "export interface ErrorDetail" in rendered
     assert "export const PROTOCOL_VERSION = 1 as const" in rendered
@@ -35,6 +48,12 @@ def test_checked_in_client_contracts_match_python_models(tmp_path: Path) -> None
     assert "expires_at?: string" not in rendered
     assert "export type TerminalAction =" in rendered
     assert "gap?:" not in rendered
+    assert "admin_token" not in rendered
+    assert "totp_code" not in rendered
+    assert "code_verifier" not in rendered
+    assert "refresh_token: string" in rendered
+    assert "export interface TotpSetupRequest" not in rendered
+    assert "export interface OAuthTokenRequest" not in rendered
 
     checked = _run_generator("--check")
     assert checked.returncode == 0, checked.stderr
