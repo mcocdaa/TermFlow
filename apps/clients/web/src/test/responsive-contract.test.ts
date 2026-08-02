@@ -43,7 +43,7 @@ describe('responsive shell contract', () => {
     expect(css).toContain('padding-block-end: max(var(--space-2), env(safe-area-inset-bottom))')
     expect(css).not.toContain('.mobile-keybar { position: fixed')
     expect(css).not.toContain('inset-block-end: env(safe-area-inset-bottom)')
-    expect(css).toContain('.control-label, .menu-chevron, [data-computer-name] { display: none; }')
+    expect(css).toContain('.control-label, .menu-chevron, .terminal-identifiers [data-computer-name] { display: none; }')
     expect(css).toContain('.terminal-view { height: 100dvh; grid-template-rows: auto minmax(0, 1fr) auto; }')
     expect(css).not.toContain('.mobile-action-trigger')
     expect(css).not.toContain('.mobile-action-drawer')

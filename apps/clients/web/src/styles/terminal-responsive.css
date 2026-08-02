@@ -5,7 +5,7 @@
     .terminal-frame { grid-row: 2; min-height: 0; touch-action: none; }
     .terminal-identity { flex: 1 1 auto; gap: var(--space-1); }
     .terminal-titlebar-actions { flex: 0 0 auto; gap: var(--space-1); }
-    .control-label, .menu-chevron, [data-computer-name] { display: none; }
+    .control-label, .menu-chevron, .terminal-identifiers [data-computer-name] { display: none; }
     .terminal-status { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
     .titlebar-button { width: 2.35rem; min-width: 2.35rem; padding: 0; justify-content: center; }
     .touch-lock-button[aria-pressed='true'] { border-color: var(--color-accent); background: var(--color-accent); color: var(--color-accent-contrast); }
