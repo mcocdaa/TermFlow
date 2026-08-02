@@ -11,7 +11,8 @@ async function renderAt(path: string) {
   const router = createRouter({ history: createMemoryHistory(), routes: clientRoutes })
   await router.push(path)
   await router.isReady()
-  return mount(App, { global: { plugins: [router, createClientUi(createFakeRuntime())] } })
+  const clientUi = createClientUi(createFakeRuntime())
+  return { wrapper: mount(App, { global: { plugins: [router, clientUi] } }), clientUi }
 }
 
 describe('shared application routes', () => {
@@ -48,26 +49,38 @@ describe('shared application routes', () => {
     ['/terms/term-7', '远程终端'],
     ['/missing', '页面不存在'],
   ])('renders %s in the application shell', async (path, heading) => {
-    const wrapper = await renderAt(path)
+    const { wrapper } = await renderAt(path)
     expect(wrapper.get('h1').text()).toContain(heading)
     expect(wrapper.get('[href="#main-content"]').text()).toBe('跳到主要内容')
     wrapper.unmount()
   })
 
   it('uses a bare shell for login and Lucide icons for application navigation', async () => {
-    const login = await renderAt('/login')
+    const { wrapper: login } = await renderAt('/login')
     expect(login.find('.app-header').exists()).toBe(false)
     expect(login.find('.side-nav').exists()).toBe(false)
     expect(login.find('.mobile-nav').exists()).toBe(false)
     login.unmount()
 
-    const dashboard = await renderAt('/')
+    const router = createRouter({ history: createMemoryHistory(), routes: clientRoutes })
+    await router.push('/')
+    await router.isReady()
+    const clientUi = createClientUi(createFakeRuntime())
+    await clientUi.session.loginWithToken('test-only-token')
+    const dashboard = mount(App, { global: { plugins: [router, clientUi] } })
     const dashboardLink = dashboard.get('.side-nav a[href="/"]')
     const computersLink = dashboard.get('.side-nav a[href="/computers"]')
     expect(dashboardLink.text()).toBe('控制中心')
     expect(computersLink.text()).toBe('电脑管理')
     expect(dashboardLink.find('svg').exists()).toBe(true)
     expect(computersLink.find('svg').exists()).toBe(true)
+    expect(dashboard.get('.mobile-nav a[href="/"]').find('svg').exists()).toBe(true)
+    expect(dashboard.get('.mobile-nav a[href="/computers"]').find('svg').exists()).toBe(true)
+    const logout = dashboard.get('[data-action="logout"]')
+    expect(logout.attributes('aria-label')).toBe('退出登录')
+    expect(logout.attributes('title')).toBe('退出登录')
+    expect(logout.find('svg').exists()).toBe(true)
+    expect(logout.get('.logout-label').text()).toBe('退出')
     dashboard.unmount()
   })
 })

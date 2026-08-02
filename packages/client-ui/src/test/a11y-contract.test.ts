@@ -38,12 +38,16 @@ describe('accessibility contracts', () => {
     invoker.remove()
   })
 
-  it('closes the mobile action drawer with Escape and restores trigger focus', async () => {
+  it('closes the titlebar tmux menu with Escape and restores trigger focus', async () => {
     const wrapper = mount(TmuxActionMenu, { attachTo: document.body, props: { bindings: { prefix: 'C-a', bindings: [] }, activePaneId: '%1' } })
-    const trigger = wrapper.get('[data-action="toggle-mobile-drawer"]')
+    const trigger = wrapper.get('[data-action="toggle-tmux-menu"]')
+    expect(trigger.attributes('aria-label')).toBe('tmux 操作')
     await trigger.trigger('click')
-    await wrapper.get('[data-mobile-drawer]').trigger('keydown', { key: 'Escape' })
-    expect(wrapper.find('[data-mobile-drawer]').exists()).toBe(false)
+    await wrapper.setProps({ open: true })
+    await wrapper.get('[role="menu"]').trigger('keydown', { key: 'Escape' })
+    expect(wrapper.emitted('update:open')?.at(-1)).toEqual([false])
+    await wrapper.setProps({ open: false })
+    expect(wrapper.find('[role="menu"]').exists()).toBe(false)
     expect(document.activeElement).toBe(trigger.element)
     wrapper.unmount()
   })

@@ -28,6 +28,7 @@ export interface ClientRuntime {
   readonly clock: ClockPort
   readonly visibility: VisibilityPort
   readonly canonicalServerUrl: string
+  readonly platform: string
 }
 
 export interface ClientUiOptions {

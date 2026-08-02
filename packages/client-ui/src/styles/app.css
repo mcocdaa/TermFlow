@@ -32,7 +32,8 @@
   input, textarea { min-height: 2.75rem; width: 100%; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-3); background: var(--color-elevated); }
   .primary-button, .text-button { min-height: 2.75rem; border: 1px solid var(--color-accent); border-radius: var(--radius-md); padding: var(--space-2) var(--space-4); background: var(--color-accent); color: var(--color-accent-contrast); font-weight: 700; }
   .text-button { margin-inline-start: var(--space-2); min-height: 2.25rem; background: transparent; color: var(--color-text-primary); }
-  .primary-button, .text-button, .icon-button, .theme-option, .titlebar-button, .terminal-back, .mobile-action-trigger, .mobile-keybar button { transition: background 130ms ease, border-color 130ms ease, color 130ms ease, filter 130ms ease, transform 80ms ease; }
+  .logout-button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); }
+  .primary-button, .text-button, .icon-button, .theme-option, .titlebar-button, .terminal-back, .mobile-keybar button { transition: background 130ms ease, border-color 130ms ease, color 130ms ease, filter 130ms ease, transform 80ms ease; }
   .primary-button:hover:not(:disabled), .danger-button:hover:not(:disabled) { filter: brightness(1.08); }
   .text-button:hover:not(:disabled), .icon-button:hover:not(:disabled), .theme-option:hover:not(:disabled), .terminal-back:hover { border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border)); background: var(--color-elevated); color: var(--color-accent); }
   .primary-button:active:not(:disabled), .text-button:active:not(:disabled), .icon-button:active:not(:disabled), .theme-option:active:not(:disabled), .titlebar-button:active:not(:disabled), .terminal-back:active { transform: translateY(1px); }
@@ -133,7 +134,7 @@
   .action-binding-tooltip code { padding: 0 var(--space-1); border: 1px solid color-mix(in srgb, var(--color-accent) 38%, var(--color-border)); border-radius: 0.25rem; background: var(--color-terminal); color: var(--color-accent); font-family: var(--font-mono); }
   .action-menu button:hover .action-binding-tooltip, .action-menu button:focus-visible .action-binding-tooltip { opacity: 1; }
   .action-menu .destructive { color: var(--color-danger); }
-  .mobile-action-trigger, .mobile-action-drawer, .mobile-keybar { display: none; }
+  .mobile-keybar { display: none; }
   .danger-button { min-height: 2.75rem; border: 1px solid var(--color-danger); border-radius: var(--radius-md); padding: var(--space-2) var(--space-4); background: var(--color-danger); color: var(--color-panel); font-weight: 750; }
   .dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-3); margin-block-start: var(--space-5); }
   .terminal-frame { position: relative; width: 100%; height: auto; min-height: 0; overflow: auto; background: var(--color-terminal); overscroll-behavior: contain; }
@@ -171,7 +172,10 @@
     .term-last-seen { grid-row: 3; grid-column: 1 / -1; }
     .computer-table-row { grid-template-columns: 1fr; }
   }
-  .drawer-collapse-button { display: inline-flex; align-items: center; gap: var(--space-1); }
+  @media (max-width: 47.99rem), (pointer: coarse) {
+    .logout-button { width: 2.75rem; padding: 0; }
+    .logout-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  }
   .locked-indicator { display: inline-block; width: 0.35rem; height: 0.35rem; margin-inline-start: var(--space-1); border-radius: 50%; background: currentColor; vertical-align: middle; }
   @media (prefers-reduced-motion: reduce) { .metric-card, .metric-help, .term-row-link, .menu-chevron, .primary-button, .text-button, .icon-button, .theme-option, .titlebar-button, .terminal-back { transition: none; }
     .metric-card-has-help:hover, .metric-card-has-help:focus-visible, .term-row-link:hover, .term-row-link:focus-visible { transform: none; }

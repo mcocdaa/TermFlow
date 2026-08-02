@@ -18,6 +18,7 @@ const fakeRuntime = (): ClientRuntime => ({
   },
   visibility: { isHidden: () => false, subscribe: () => () => undefined },
   canonicalServerUrl: 'https://control.example',
+  platform: 'Linux x86_64',
 })
 
 describe('client UI runtime', () => {

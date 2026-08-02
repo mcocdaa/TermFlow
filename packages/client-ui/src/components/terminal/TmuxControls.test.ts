@@ -43,10 +43,14 @@ describe('tmux controls', () => {
     expect(focusTrigger.find('svg').exists()).toBe(true)
   })
 
-  it('shows server-reported bindings, sends semantic actions, and keeps the mobile drawer hidden initially', async () => {
+  it('shows server-reported bindings and sends semantic actions from the only tmux menu', async () => {
     const wrapper = mount(TmuxActionMenu, { props: { bindings, activePaneId: '%3', open: false } })
+    expect(wrapper.find('[data-action="toggle-mobile-drawer"]').exists()).toBe(false)
     expect(wrapper.find('[data-mobile-drawer]').exists()).toBe(false)
-    await wrapper.get('[data-action="toggle-tmux-menu"]').trigger('click')
+    const trigger = wrapper.get('[data-action="toggle-tmux-menu"]')
+    expect(trigger.attributes('aria-label')).toBe('tmux 操作')
+    expect(trigger.get('.control-label').text()).toBe('tmux 操作')
+    await trigger.trigger('click')
     await wrapper.setProps({ open: true })
     const split = wrapper.get('[data-action-id="split_left_right"]')
     expect(split.get('.action-label').text()).toBe('左右切分 Pane')
@@ -60,8 +64,6 @@ describe('tmux controls', () => {
     expect(wrapper.emitted('action')).toEqual([['split_left_right', '%3']])
     expect(wrapper.emitted('update:open')?.at(-1)).toEqual([false])
     expect(wrapper.text()).not.toContain('Ctrl+B')
-    await wrapper.get('[data-action="toggle-mobile-drawer"]').trigger('click')
-    expect(wrapper.get('[data-mobile-drawer]')).toBeTruthy()
   })
 
   it('routes close Pane through confirmation instead of an immediate action', async () => {
@@ -77,19 +79,6 @@ describe('tmux controls', () => {
   it('disables server actions while the terminal stream is not ready', async () => {
     const wrapper = mount(TmuxActionMenu, { props: { bindings, activePaneId: '%3', disabled: true } })
     expect(wrapper.get('[data-action="toggle-tmux-menu"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('[data-action="toggle-mobile-drawer"]').attributes('disabled')).toBeDefined()
-  })
-
-  it('closes the mobile action drawer with a downward swipe and restores its trigger focus', async () => {
-    const wrapper = mount(TmuxActionMenu, { attachTo: document.body, props: { bindings, activePaneId: '%3' } })
-    const trigger = wrapper.get('[data-action="toggle-mobile-drawer"]')
-    await trigger.trigger('click')
-    const drawer = wrapper.get('[data-mobile-drawer]')
-    await drawer.trigger('pointerdown', { clientY: 100 })
-    await drawer.trigger('pointerup', { clientY: 180 })
-    expect(wrapper.find('[data-mobile-drawer]').exists()).toBe(false)
-    expect(document.activeElement).toBe(trigger.element)
-    wrapper.unmount()
   })
 
   it('names the Pane and emits confirmed=true only after modal confirmation', async () => {

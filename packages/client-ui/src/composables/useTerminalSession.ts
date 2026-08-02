@@ -7,7 +7,7 @@ import type { TerminalActionResultFrame } from '@termflow/client-contracts'
 import { onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import { useClientRuntime } from '../runtime'
 import type { BindingSnapshot, TerminalActionId } from '../types'
-import { createXtermAdapter, type TerminalAdapter, type TerminalAdapterFactory } from '../terminal/xtermAdapter'
+import { createXtermAdapter, type TerminalAdapter, type TerminalAdapterFactory, type TerminalMouseDispatch } from '../terminal/xtermAdapter'
 
 export type TerminalFactory = (termId: string, callbacks: TerminalSessionCallbacks) => TerminalSessionLike
 
@@ -51,7 +51,7 @@ export function useTerminalSession(
     onReady: (control) => {
       dimensions.value = { rows: control.rows, cols: control.cols }
       if (!adapter && host.value) {
-        adapter = adapterFactory(host.value, dimensions.value, (data) => terminal.sendInput(transformInput ? transformInput(data) : data))
+        adapter = adapterFactory(host.value, dimensions.value, (data) => terminal.sendInput(transformInput ? transformInput(data) : data), runtime.platform)
         adapter.setInputEnabled(true)
         for (const bytes of pendingOutput.splice(0)) adapter.write(bytes)
         adapter.focus()
@@ -77,6 +77,8 @@ export function useTerminalSession(
     focus: () => adapter?.focus(),
     refreshTheme: () => adapter?.refreshTheme(),
     measureCell: () => adapter?.measureCell() ?? null,
+    setVisualScale: (scale: number) => adapter?.setVisualScale(scale) ?? null,
     canClientPan: () => adapter?.canClientPan() ?? false,
+    dispatchMouse: (event: TerminalMouseDispatch) => adapter?.dispatchMouse(event),
   }
 }

@@ -6,7 +6,10 @@ describe('DisplayMenu', () => {
   it('uses one title-bar button with four vertical client display choices', async () => {
     const wrapper = mount(DisplayMenu, { props: { modelValue: 'font-100', open: false } })
     expect(wrapper.find('[role="menu"]').exists()).toBe(false)
-    await wrapper.get('[data-action="toggle-display-menu"]').trigger('click')
+    const trigger = wrapper.get('[data-action="toggle-display-menu"]')
+    expect(trigger.attributes('aria-label')).toBe('显示设置')
+    expect(trigger.get('.control-label').text()).toBe('显示')
+    await trigger.trigger('click')
     expect(wrapper.emitted('update:open')).toEqual([[true]])
     await wrapper.setProps({ open: true })
     expect(wrapper.get('[data-action="toggle-display-menu"]').attributes('aria-expanded')).toBe('true')

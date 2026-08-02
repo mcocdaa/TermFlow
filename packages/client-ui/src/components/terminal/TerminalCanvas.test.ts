@@ -1,6 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import type { TerminalSessionCallbacks, TerminalSessionLike } from '@termflow/client-core'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ClientRuntime } from '../../runtime'
 import { createClientUi } from '../../runtime'
 import { createFakeRuntime } from '../../test/fakeRuntime'
@@ -15,11 +15,125 @@ function terminalRuntime() {
   return { callbacks: () => callbacks, terminal, createTerminal, runtime: createFakeRuntime({ createTerminal }) }
 }
 
+function adapterDouble(overrides: Partial<TerminalAdapter> = {}): TerminalAdapter {
+  return {
+    write: vi.fn(), resize: vi.fn(), reset: vi.fn(), focus: vi.fn(), refreshTheme: vi.fn(), setInputEnabled: vi.fn(),
+    measureCell: vi.fn(() => ({ width: 10, height: 20 })),
+    setVisualScale: vi.fn((scale: number) => ({ width: 10 * scale, height: 20 * scale })),
+    canClientPan: vi.fn(() => true), dispatchMouse: vi.fn(), dispose: vi.fn(),
+    ...overrides,
+  }
+}
+
+function mountTouchCanvas(touchControlLocked: boolean) {
+  const session = terminalRuntime()
+  const adapter = adapterDouble()
+  const createAdapter: TerminalAdapterFactory = vi.fn(() => adapter)
+  const wrapper = mount(TerminalCanvas, {
+    props: { termId: 'term-touch', touchControlLocked, createAdapter },
+    global: { plugins: [createClientUi(session.runtime)] },
+  })
+  const ready = () => session.callbacks().onReady({
+    type: 'terminal.ready', terminal_id: '11111111-1111-4111-8111-111111111111', stream_id: '22222222-2222-4222-8222-222222222222', rows: 40, cols: 120,
+  })
+  return { ...session, wrapper, adapter, dispatchMouse: adapter.dispatchMouse as ReturnType<typeof vi.fn>, ready }
+}
+
+afterEach(() => vi.useRealTimers())
+
 describe('TerminalCanvas', () => {
+  it('routes unlocked touch only to local pan and pinch', async () => {
+    const { wrapper, dispatchMouse, terminal, ready } = mountTouchCanvas(false)
+    ready()
+    await flushPromises()
+    const frame = wrapper.get('.terminal-frame')
+    await frame.trigger('pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 200, clientY: 200 })
+    await frame.trigger('pointermove', { pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 200 })
+    await frame.trigger('pointerup', { pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 200 })
+    expect(dispatchMouse).not.toHaveBeenCalled()
+    expect(terminal.sendInput).not.toHaveBeenCalled()
+    expect(wrapper.vm.captureViewport().panX).toBeLessThan(0)
+  })
+
+  it('routes locked touch through xterm and preserves long-press selection', async () => {
+    vi.useFakeTimers()
+    const { wrapper, dispatchMouse, callbacks, ready } = mountTouchCanvas(true)
+    ready()
+    callbacks().onStatus('connected')
+    await flushPromises()
+    const frame = wrapper.get('.terminal-frame')
+
+    await frame.trigger('pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 50, clientY: 60 })
+    await frame.trigger('pointerup', { pointerId: 1, pointerType: 'touch', clientX: 50, clientY: 60 })
+    expect(dispatchMouse).toHaveBeenCalledWith(expect.objectContaining({ type: 'mousedown', forceSelection: false }))
+    expect(dispatchMouse).toHaveBeenCalledWith(expect.objectContaining({ type: 'mouseup', buttons: 0 }))
+
+    dispatchMouse.mockClear()
+    await frame.trigger('pointerdown', { pointerId: 2, pointerType: 'touch', clientX: 80, clientY: 90 })
+    vi.advanceTimersByTime(500)
+    expect(dispatchMouse).toHaveBeenCalledWith(expect.objectContaining({ detail: 2, forceSelection: true }))
+    await frame.trigger('pointercancel', { pointerId: 2, pointerType: 'touch', clientX: 80, clientY: 90 })
+    expect(dispatchMouse.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({ type: 'mouseup' }))
+
+    callbacks().onStatus('reconnecting')
+    await flushPromises()
+    dispatchMouse.mockClear()
+    await frame.trigger('pointerdown', { pointerId: 3, pointerType: 'touch', clientX: 100, clientY: 120 })
+    await frame.trigger('pointermove', { pointerId: 3, pointerType: 'touch', clientX: 70, clientY: 120 })
+    expect(dispatchMouse).not.toHaveBeenCalled()
+    expect(wrapper.vm.captureViewport().panX).toBeLessThan(0)
+  })
+
+  it('renders scaled modes through xterm geometry without scaling the mouse event surface', async () => {
+    const session = terminalRuntime()
+    const adapter = adapterDouble({ canClientPan: vi.fn(() => false) })
+    const createAdapter: TerminalAdapterFactory = vi.fn(() => adapter)
+    const wrapper = mount(TerminalCanvas, {
+      props: { termId: 'term-scaled', displayMode: 'scale-50', createAdapter },
+      global: { plugins: [createClientUi(session.runtime)] },
+    })
+    session.callbacks().onReady({ type: 'terminal.ready', terminal_id: '11111111-1111-4111-8111-111111111111', stream_id: '22222222-2222-4222-8222-222222222222', rows: 40, cols: 120 })
+    await flushPromises()
+    expect(adapter.setVisualScale).toHaveBeenLastCalledWith(0.5)
+    expect(wrapper.get('.terminal-grid').attributes('style')).toContain('width: 600px')
+    expect(wrapper.get('.terminal-grid').attributes('style')).toContain('height: 400px')
+    expect(wrapper.get('.terminal-grid').attributes('style')).not.toContain('scale(')
+    expect(session.terminal.sendInput).not.toHaveBeenCalled()
+    expect(adapter.resize).not.toHaveBeenCalled()
+    await wrapper.setProps({ displayMode: 'scale-75' })
+    await flushPromises()
+    await wrapper.setProps({ displayMode: 'scale-50' })
+    await flushPromises()
+    expect(adapter.setVisualScale).toHaveBeenLastCalledWith(0.5)
+  })
+
+  it('keeps correcting fit mode until quantized xterm cell geometry fits', async () => {
+    const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(900)
+    const height = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(715)
+    const session = terminalRuntime()
+    const adapter = adapterDouble({
+      setVisualScale: vi.fn((scale: number) => ({ width: 10 * scale, height: scale >= 0.70 ? 18 : 17.5 })),
+      canClientPan: vi.fn(() => false),
+    })
+    const createAdapter: TerminalAdapterFactory = vi.fn(() => adapter)
+    const wrapper = mount(TerminalCanvas, {
+      props: { termId: 'term-fit-quantized', displayMode: 'fit', createAdapter },
+      global: { plugins: [createClientUi(session.runtime)] },
+    })
+    session.callbacks().onReady({ type: 'terminal.ready', terminal_id: '11111111-1111-4111-8111-111111111111', stream_id: '22222222-2222-4222-8222-222222222222', rows: 40, cols: 120 })
+    await flushPromises()
+    expect(adapter.setVisualScale).toHaveBeenCalledTimes(9)
+    expect(wrapper.get('.terminal-grid').attributes('style')).toContain('height: 700px')
+    expect(Number(wrapper.get('.terminal-frame').attributes('data-visual-scale'))).toBeLessThan(0.70)
+    wrapper.unmount()
+    width.mockRestore()
+    height.mockRestore()
+  })
+
   it('creates xterm only from terminal.ready, applies only server sizes, streams bytes, and disposes everything', async () => {
     const session = terminalRuntime()
     let input!: (value: string | Uint8Array) => void
-    const adapter: TerminalAdapter = { write: vi.fn(), resize: vi.fn(), reset: vi.fn(), focus: vi.fn(), refreshTheme: vi.fn(), setInputEnabled: vi.fn(), measureCell: vi.fn(() => ({ width: 10, height: 20 })), canClientPan: vi.fn(() => false), dispose: vi.fn() }
+    const adapter = adapterDouble({ canClientPan: vi.fn(() => false) })
     const createAdapter: TerminalAdapterFactory = vi.fn((_host, _size, onInput) => { input = onInput; return adapter })
     const theme = createThemeState({ load: () => null, save: vi.fn() }, { apply: vi.fn() })
     const wrapper = mount(TerminalCanvas, { props: { termId: 'term-9', createAdapter }, global: { plugins: [createClientUi(session.runtime, { theme })] } })
@@ -30,7 +144,7 @@ describe('TerminalCanvas', () => {
     wrapper.vm.focusPane({ pane_id: '%1', window_id: '@1', index: 0, title: 'shell', current_command: 'zsh', active: true, dead: false, left: 0, top: 0, width: 40, height: 20 })
     session.callbacks().onReady({ type: 'terminal.ready', terminal_id: '11111111-1111-4111-8111-111111111111', stream_id: '22222222-2222-4222-8222-222222222222', rows: 44, cols: 150 })
     await flushPromises()
-    expect(createAdapter).toHaveBeenCalledWith(expect.any(HTMLElement), { rows: 44, cols: 150 }, expect.any(Function))
+    expect(createAdapter).toHaveBeenCalledWith(expect.any(HTMLElement), { rows: 44, cols: 150 }, expect.any(Function), 'Linux x86_64')
     expect(adapter.setInputEnabled).toHaveBeenCalledWith(true)
     session.callbacks().onOutput(new Uint8Array([1, 2]))
     session.callbacks().onSize({ rows: 50, cols: 170 })

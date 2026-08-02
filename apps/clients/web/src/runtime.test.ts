@@ -11,6 +11,7 @@ describe('browser runtime composition', () => {
       clock: { now: () => 1, setTimeout: () => 2, clearTimeout: () => undefined, setInterval: () => 3, clearInterval: () => undefined },
       visibility: { isHidden: () => false, subscribe: () => () => undefined },
       canonicalServerUrl: 'https://b.termflow.test',
+      platform: 'MacIntel',
     }
 
     const runtime = createBrowserRuntime(dependencies)
@@ -26,5 +27,6 @@ describe('browser runtime composition', () => {
     expect(browserRuntime.clock.now).toBeTypeOf('function')
     expect(browserRuntime.visibility.subscribe).toBeTypeOf('function')
     expect(browserRuntime.canonicalServerUrl).toBe('http://localhost:3000')
+    expect(browserRuntime.platform).toBeTypeOf('string')
   })
 })

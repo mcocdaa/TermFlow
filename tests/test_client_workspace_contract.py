@@ -146,6 +146,7 @@ def test_web_client_is_only_a_browser_composition_root() -> None:
         "adapters/browserClipboard.ts",
         "adapters/browserClock.ts",
         "adapters/browserHttpTransport.ts",
+        "adapters/browserPlatform.ts",
         "adapters/browserTerminalTransport.ts",
         "adapters/browserThemePreferences.ts",
         "adapters/browserVisibility.ts",

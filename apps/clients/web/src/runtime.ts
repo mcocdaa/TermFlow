@@ -4,6 +4,7 @@ import { createBrowserClipboard } from './adapters/browserClipboard'
 import { createBrowserClock } from './adapters/browserClock'
 import { browserCanonicalServerUrl } from './adapters/browserCanonicalServerUrl'
 import { createBrowserHttpTransport } from './adapters/browserHttpTransport'
+import { browserPlatform } from './adapters/browserPlatform'
 import { createBrowserTerminalTransport } from './adapters/browserTerminalTransport'
 import { createBrowserVisibility } from './adapters/browserVisibility'
 
@@ -25,6 +26,7 @@ function browserDependencies(): ClientRuntime {
     clock,
     visibility: createBrowserVisibility(),
     canonicalServerUrl: browserCanonicalServerUrl(),
+    platform: browserPlatform(),
   }
 }
 

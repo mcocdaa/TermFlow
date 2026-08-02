@@ -1,11 +1,11 @@
 <template>
   <section class="terminal-view" aria-labelledby="terminal-title">
     <h1 id="terminal-title" class="sr-only">远程终端</h1>
-    <TerminalTitlebar :title="termName" :computer-name="computerName" :status="connectionStatus" :display-menu-open="openMenu === 'display'" v-model:display-mode="displayMode" @update:display-menu-open="setMenuOpen('display', $event)" @rename="updateTermName">
+    <TerminalTitlebar :title="termName" :computer-name="computerName" :status="connectionStatus" :display-menu-open="openMenu === 'display'" v-model:display-mode="displayMode" v-model:touch-control-locked="touchControlLocked" @update:display-menu-open="setMenuOpen('display', $event)" @rename="updateTermName">
       <PaneFocusMenu :panes="panes" :open="openMenu === 'pane'" @update:open="setMenuOpen('pane', $event)" @focus="terminalCanvas?.focusPane($event)" @reset="terminalCanvas?.resetViewport()" />
       <TmuxActionMenu :bindings="bindings" :active-pane-id="activePane?.pane_id ?? null" :disabled="connectionStatus !== 'connected'" :open="openMenu === 'tmux'" @update:open="setMenuOpen('tmux', $event)" @action="runAction" @request-close="requestClose" />
     </TerminalTitlebar>
-    <TerminalCanvas ref="terminalCanvas" :term-id="termId" :display-mode="displayMode" :transform-input="transformInput" @bindings="bindings = $event" @reset-input="modifierResetKey = $event" @status="connectionStatus = $event" @authentication-required="handleAuthenticationRequired" @action-result="handleActionResult" />
+    <TerminalCanvas ref="terminalCanvas" :term-id="termId" :display-mode="displayMode" :touch-control-locked="touchControlLocked" :transform-input="transformInput" @bindings="bindings = $event" @reset-input="modifierResetKey = $event" @status="connectionStatus = $event" @authentication-required="handleAuthenticationRequired" @action-result="handleActionResult" />
     <p v-if="renameError" class="terminal-error" role="alert">{{ renameError }}</p>
     <MobileKeyBar :prefix="bindings.prefix" :controller="modifiers" :reset-key="modifierResetKey" :disabled="connectionStatus !== 'connected'" @input="terminalCanvas?.sendInput($event)" />
     <ClosePaneDialog v-if="closePane" :pane-id="closePane.pane_id" :pane-name="closePane.title || closePane.pane_id" :return-focus="closeReturnFocus" @cancel="closePaneId = null" @confirm="confirmClose" />
@@ -47,6 +47,7 @@ const computerName = ref('Computer 未报告')
 const connectionStatus = ref<TerminalConnectionStatus>('connecting')
 type DesktopMenu = 'display' | 'tmux' | 'pane'
 const openMenu = ref<DesktopMenu | null>(null)
+const touchControlLocked = ref(false)
 const renameError = ref('')
 const panes = ref<PaneTopology[]>([])
 const terminalCanvas = ref<InstanceType<typeof TerminalCanvas> | null>(null)

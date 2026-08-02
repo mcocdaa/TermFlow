@@ -18,19 +18,34 @@
       </div>
       <span data-connection-status class="terminal-status">{{ statusLabel }}</span>
     </div>
-    <div class="terminal-titlebar-actions"><DisplayMenu :model-value="displayMode" :open="displayMenuOpen ?? false" @update:model-value="$emit('update:displayMode', $event)" @update:open="$emit('update:displayMenuOpen', $event)" /><slot /></div>
+    <div class="terminal-titlebar-actions">
+      <DisplayMenu :model-value="displayMode" :open="displayMenuOpen ?? false" @update:model-value="$emit('update:displayMode', $event)" @update:open="$emit('update:displayMenuOpen', $event)" />
+      <slot />
+      <button
+        data-action="toggle-touch-lock"
+        class="titlebar-button touch-lock-button"
+        type="button"
+        :aria-label="touchControlLocked ? '解除画布锁定' : '锁定画布'"
+        :title="touchControlLocked ? '解除画布锁定' : '锁定画布'"
+        :aria-pressed="touchControlLocked"
+        @click="emit('update:touchControlLocked', !touchControlLocked)"
+      >
+        <Lock v-if="touchControlLocked" :size="16" aria-hidden="true" />
+        <Unlock v-else :size="16" aria-hidden="true" />
+      </button>
+    </div>
   </header>
 </template>
 
 <script setup lang="ts">
-import { ArrowLeft, Check, X } from '@lucide/vue'
+import { ArrowLeft, Check, Lock, Unlock, X } from '@lucide/vue'
 import { computed, nextTick, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import type { TerminalConnectionStatus } from '@termflow/client-core'
 import type { DisplayMode } from '../../terminal/viewport'
 import DisplayMenu from './DisplayMenu.vue'
-const props = withDefaults(defineProps<{ title: string; computerName?: string; status?: TerminalConnectionStatus; displayMode: DisplayMode; displayMenuOpen?: boolean }>(), { computerName: 'Computer 未报告', status: 'connecting', displayMenuOpen: false })
-const emit = defineEmits<{ 'update:displayMode': [mode: DisplayMode]; 'update:displayMenuOpen': [open: boolean]; rename: [name: string] }>()
+const props = withDefaults(defineProps<{ title: string; computerName?: string; status?: TerminalConnectionStatus; displayMode: DisplayMode; displayMenuOpen?: boolean; touchControlLocked?: boolean }>(), { computerName: 'Computer 未报告', status: 'connecting', displayMenuOpen: false, touchControlLocked: false })
+const emit = defineEmits<{ 'update:displayMode': [mode: DisplayMode]; 'update:displayMenuOpen': [open: boolean]; 'update:touchControlLocked': [locked: boolean]; rename: [name: string] }>()
 const editing = ref(false)
 const draft = ref('')
 const validationError = ref('')

@@ -26,6 +26,7 @@ export function createFakeRuntime(overrides: Partial<ClientRuntime> = {}): Clien
     },
     visibility: { isHidden: () => false, subscribe: () => () => undefined },
     canonicalServerUrl: 'https://control.example',
+    platform: 'Linux x86_64',
     ...overrides,
   }
 }

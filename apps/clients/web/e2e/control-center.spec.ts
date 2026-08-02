@@ -21,7 +21,132 @@ async function login(page: Page) {
   await expect(page.getByRole('heading', { name: '控制中心' })).toBeVisible()
 }
 
+interface PaneGeometry {
+  pane_id: string
+  active: boolean
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+interface TouchPoint { x: number; y: number; id: number }
+interface TouchStep {
+  type: 'touchStart' | 'touchMove' | 'touchEnd'
+  points: TouchPoint[]
+  delayMs?: number
+}
+
+async function dispatchTouchSequence(page: Page, steps: TouchStep[]) {
+  const session = await page.context().newCDPSession(page)
+  try {
+    for (const step of steps) {
+      await session.send('Input.dispatchTouchEvent', {
+        type: step.type,
+        touchPoints: step.points.map((point) => ({ x: point.x, y: point.y, id: point.id })),
+      })
+      if (step.delayMs) await page.waitForTimeout(step.delayMs)
+    }
+  } finally {
+    await session.detach()
+  }
+}
+
+async function panesForTerm(page: Page): Promise<PaneGeometry[]> {
+  const response = await page.request.get(`/api/v1/instances/${termId}/topology`)
+  expect(response.ok()).toBe(true)
+  const body = await response.json() as { topology: { windows: Array<{ panes: PaneGeometry[] }> } }
+  return body.topology.windows.flatMap((window) => window.panes)
+}
+
+async function ensureTwoPanes(page: Page): Promise<[PaneGeometry, PaneGeometry]> {
+  let panes = (await panesForTerm(page)).toSorted((left, right) => left.left - right.left)
+  if (panes.length === 1) {
+    await page.getByRole('button', { name: 'tmux 操作' }).click()
+    await page.getByRole('menuitem', { name: /左右切分 Pane/ }).click()
+    await expect.poll(async () => (await panesForTerm(page)).length).toBe(2)
+    panes = (await panesForTerm(page)).toSorted((left, right) => left.left - right.left)
+  }
+  expect(panes).toHaveLength(2)
+  return [panes[0]!, panes[1]!]
+}
+
+async function selectLeftPaneWithKeyboard(page: Page): Promise<[PaneGeometry, PaneGeometry]> {
+  const panes = (await panesForTerm(page)).toSorted((left, right) => left.left - right.left)
+  expect(panes).toHaveLength(2)
+  const [leftPane, rightPane] = panes
+  await page.locator('.terminal-host textarea').focus()
+  await page.keyboard.press('Control+b')
+  await page.keyboard.press('ArrowLeft')
+  await expect.poll(async () => (await panesForTerm(page)).find((pane) => pane.active)?.pane_id).toBe(leftPane.pane_id)
+  return [leftPane, rightPane]
+}
+
+async function terminalPoint(page: Page, column: number, row: number) {
+  const screen = page.locator('.xterm-screen')
+  const box = await screen.boundingBox()
+  expect(box).not.toBeNull()
+  const panes = await panesForTerm(page)
+  const cols = Math.max(...panes.map((candidate) => candidate.left + candidate.width))
+  const rows = Math.max(...panes.map((candidate) => candidate.top + candidate.height)) + 1
+  return {
+    x: box!.x + (column + 0.5) / cols * box!.width,
+    y: box!.y + (row + 0.5) / rows * box!.height,
+    col: Math.floor(column) + 1,
+    row: Math.floor(row) + 1,
+  }
+}
+
+async function clickPaneCenter(page: Page, pane: PaneGeometry) {
+  const column = Math.floor(pane.left + pane.width / 2)
+  const row = Math.floor(pane.top + pane.height / 2)
+  const point = await terminalPoint(page, column, row)
+  await page.mouse.click(point.x, point.y)
+  return point
+}
+
+async function expectWordSelection(
+  page: Page,
+  terminalOutputFrames: Buffer[],
+  pane: PaneGeometry,
+  suffix: string,
+  exitCopyMode = false,
+) {
+  const firstWord = `LEFT${suffix}`
+  const secondWord = `RIGHT${suffix}`
+  await page.locator('.terminal-host textarea').focus()
+  if (exitCopyMode) await page.keyboard.press('q')
+  await page.keyboard.type(String.raw`printf '\033[2J\033[HLEFT%s    RIGHT%s' ${suffix} ${suffix}`)
+  const outputStart = terminalOutputFrames.length
+  await page.keyboard.press('Enter')
+  await expect.poll(() => Buffer.concat(terminalOutputFrames.slice(outputStart)).toString('utf8')).toContain(secondWord)
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  await expect(page.locator('.xterm')).toHaveClass(/enable-mouse-events/)
+  const secondWordColumn = pane.left + firstWord.length + 4 + Math.floor(secondWord.length / 2)
+  const selectionTarget = await terminalPoint(page, secondWordColumn, pane.top)
+  await page.keyboard.down('Shift')
+  await page.mouse.dblclick(selectionTarget.x, selectionTarget.y)
+  await page.keyboard.up('Shift')
+  const copied = await page.locator('.xterm').evaluate((element) => {
+    const clipboard = new DataTransfer()
+    element.dispatchEvent(new ClipboardEvent('copy', { bubbles: true, cancelable: true, clipboardData: clipboard }))
+    return clipboard.getData('text/plain')
+  })
+  expect(copied).toBe(secondWord)
+}
+
 test('uses the real dashboard, themes, terminal transport, and responsive controls', async ({ page }, testInfo) => {
+  const terminalFrames: Buffer[] = []
+  const terminalOutputFrames: Buffer[] = []
+  page.on('websocket', (socket) => {
+    if (!socket.url().includes('/terminal')) return
+    socket.on('framesent', ({ payload }) => {
+      if (Buffer.isBuffer(payload)) terminalFrames.push(payload)
+    })
+    socket.on('framereceived', ({ payload }) => {
+      if (Buffer.isBuffer(payload)) terminalOutputFrames.push(payload)
+    })
+  })
   await login(page)
   const termRow = page.locator(`[data-term-id="${termId}"]`)
   await expect(termRow).toBeVisible()
@@ -122,13 +247,23 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
   await expect(termNameControl).toHaveRole('button')
   await expect(termNameControl.locator('svg')).toHaveCount(0)
   expect(await identifiers.evaluate((element) => getComputedStyle(element).whiteSpace)).toBe('nowrap')
-  const termNameBox = await termNameControl.boundingBox()
-  const computerNameBox = await computerName.boundingBox()
-  expect(termNameBox).not.toBeNull()
-  expect(computerNameBox).not.toBeNull()
-  const termNameCenter = termNameBox!.y + termNameBox!.height / 2
-  const computerNameCenter = computerNameBox!.y + computerNameBox!.height / 2
-  expect(Math.abs(termNameCenter - computerNameCenter)).toBeLessThanOrEqual(1)
+  if (testInfo.project.name === 'desktop') {
+    const termNameBox = await termNameControl.boundingBox()
+    const computerNameBox = await computerName.boundingBox()
+    expect(termNameBox).not.toBeNull()
+    expect(computerNameBox).not.toBeNull()
+    const termNameCenter = termNameBox!.y + termNameBox!.height / 2
+    const computerNameCenter = computerNameBox!.y + computerNameBox!.height / 2
+    expect(Math.abs(termNameCenter - computerNameCenter)).toBeLessThanOrEqual(1)
+  } else {
+    await expect(computerName).toBeHidden()
+    await expect(page.getByRole('button', { name: '显示设置' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '聚焦 Pane' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'tmux 操作' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '锁定画布' })).toHaveAttribute('aria-pressed', 'false')
+    await expect(page.getByRole('button', { name: '快捷操作' })).toHaveCount(0)
+    await expect(page.getByLabel('移动端 Tmux 操作')).toHaveCount(0)
+  }
 
   const renamedTerm = `${termName}-${testInfo.project.name}`
   await termNameControl.click()
@@ -175,6 +310,7 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
   await page.getByRole('menuitemradio', { name: '50%' }).click()
   await expect(page.locator('.terminal-frame')).toHaveAttribute('data-display-mode', 'scale-50')
 
+  let mobilePanes: [PaneGeometry, PaneGeometry] | null = null
   if (testInfo.project.name === 'desktop') {
     const tmuxTrigger = page.getByRole('button', { name: /tmux 操作/i })
     await tmuxTrigger.hover()
@@ -202,13 +338,62 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
       const body = await response.json()
       return body.topology.windows.flatMap((window: { panes: unknown[] }) => window.panes).length
     }).toBeGreaterThanOrEqual(2)
+    const [, rightPane] = await selectLeftPaneWithKeyboard(page)
+    await clickPaneCenter(page, rightPane)
+    await expect.poll(async () => (await panesForTerm(page)).find((pane) => pane.active)?.pane_id).toBe(rightPane.pane_id)
+    await expectWordSelection(page, terminalOutputFrames, rightPane, 'FIFTY')
   } else {
-    await page.getByRole('button', { name: '快捷操作' }).click()
-    await expect(page.getByLabel('移动端 Tmux 操作')).toBeVisible()
+    mobilePanes = await ensureTwoPanes(page)
+    const [leftPane, rightPane] = mobilePanes
+    const activePane = mobilePanes.find((pane) => pane.active)!
+    const targetPane = activePane.pane_id === leftPane.pane_id ? rightPane : leftPane
+    await page.getByRole('button', { name: 'tmux 操作' }).click()
+    await page.getByRole('menuitem', { name: targetPane.pane_id === leftPane.pane_id ? '选择左侧 Pane' : '选择右侧 Pane' }).click()
+    await expect.poll(async () => (await panesForTerm(page)).find((pane) => pane.active)?.pane_id).toBe(targetPane.pane_id)
+
     await page.getByRole('button', { name: 'Ctrl' }).click()
     await expect(page.getByRole('button', { name: 'Ctrl' })).toHaveAttribute('aria-pressed', 'true')
-    await page.getByRole('button', { name: '收起' }).click()
-    await expect(page.getByLabel('移动端 Tmux 操作')).toBeHidden()
+    await page.getByRole('button', { name: 'Ctrl' }).click()
+    await page.getByRole('button', { name: 'Ctrl' }).click()
+    await expect(page.getByRole('button', { name: 'Ctrl' })).toHaveAttribute('aria-pressed', 'false')
+
+    await displayTrigger.click()
+    await page.getByRole('menuitemradio', { name: '100% 实际字号' }).click()
+    await page.getByRole('button', { name: '聚焦 Pane' }).click()
+    await page.getByRole('menuitem', { name: '显示完整终端' }).click()
+    const frameBox = await page.locator('.terminal-frame').boundingBox()
+    const gridBox = await page.locator('.terminal-grid').boundingBox()
+    expect(frameBox).not.toBeNull()
+    expect(gridBox).not.toBeNull()
+    const center = { x: frameBox!.x + frameBox!.width / 2, y: frameBox!.y + frameBox!.height / 2 }
+    const panHorizontally = gridBox!.width > frameBox!.width + 1
+    expect(panHorizontally || gridBox!.height > frameBox!.height + 1).toBe(true)
+    const panStart = { x: center.x + (panHorizontally ? 40 : 0), y: center.y + (panHorizontally ? 0 : 40) }
+    const panEnd = { x: center.x - (panHorizontally ? 40 : 0), y: center.y - (panHorizontally ? 0 : 40) }
+    const frameCountBefore = terminalFrames.length
+    const transformBefore = await page.locator('.terminal-grid').evaluate((element) => getComputedStyle(element).transform)
+    const scaleBefore = Number(await page.locator('.terminal-frame').getAttribute('data-visual-scale'))
+
+    await dispatchTouchSequence(page, [
+      { type: 'touchStart', points: [{ id: 1, ...panStart }] },
+      { type: 'touchMove', points: [{ id: 1, ...panEnd }] },
+      { type: 'touchEnd', points: [] },
+    ])
+    expect(await page.locator('.terminal-grid').evaluate((element) => getComputedStyle(element).transform)).not.toBe(transformBefore)
+
+    await dispatchTouchSequence(page, [
+      { type: 'touchStart', points: [
+        { id: 1, x: center.x - 30, y: center.y },
+        { id: 2, x: center.x + 30, y: center.y },
+      ] },
+      { type: 'touchMove', points: [
+        { id: 1, x: center.x - 70, y: center.y },
+        { id: 2, x: center.x + 70, y: center.y },
+      ] },
+      { type: 'touchEnd', points: [] },
+    ])
+    expect(Number(await page.locator('.terminal-frame').getAttribute('data-visual-scale'))).toBeGreaterThan(scaleBefore)
+    expect(terminalFrames).toHaveLength(frameCountBefore)
   }
 
   await displayTrigger.click()
@@ -218,6 +403,9 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
     const documentElement = document.documentElement
     const view = document.querySelector<HTMLElement>('.terminal-view')!
     const frame = document.querySelector<HTMLElement>('.terminal-frame')!
+    const content = document.querySelector<HTMLElement>('.terminal-viewport-content')!
+    const grid = document.querySelector<HTMLElement>('.terminal-grid')!
+    const screen = document.querySelector<HTMLElement>('.xterm-screen')!
     const xtermViewport = document.querySelector<HTMLElement>('.xterm-viewport')!
     const titlebar = document.querySelector<HTMLElement>('.terminal-titlebar')!
     return {
@@ -225,16 +413,122 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
       viewOverflow: view.scrollHeight - view.clientHeight,
       frameOverflow: frame.scrollHeight - frame.clientHeight,
       frameOverflowY: getComputedStyle(frame).overflowY,
+      frameClientHeight: frame.clientHeight,
+      frameScrollHeight: frame.scrollHeight,
+      contentHeight: content.getBoundingClientRect().height,
+      gridHeight: grid.getBoundingClientRect().height,
+      gridTransform: getComputedStyle(grid).transform,
+      screenHeight: screen.getBoundingClientRect().height,
+      visualScale: frame.dataset.visualScale,
+      cellHeight: frame.dataset.cellHeight,
       xtermOverflowY: getComputedStyle(xtermViewport).overflowY,
       titlebarJustify: getComputedStyle(titlebar).justifyContent,
     }
   })
   expect(layout.documentOverflow).toBeLessThanOrEqual(1)
   expect(layout.viewOverflow).toBeLessThanOrEqual(1)
-  expect(layout.frameOverflow).toBeLessThanOrEqual(1)
+  expect(layout.frameOverflow, JSON.stringify(layout)).toBeLessThanOrEqual(1)
   expect(layout.frameOverflowY).toBe('hidden')
   expect(layout.xtermOverflowY).toBe('hidden')
   expect(layout.titlebarJustify).toBe('flex-start')
+
+  if (testInfo.project.name !== 'desktop') {
+    const mobileLayout = await page.evaluate(() => {
+      const view = document.querySelector<HTMLElement>('.terminal-view')!
+      const frame = document.querySelector<HTMLElement>('.terminal-frame')!
+      const keybar = document.querySelector<HTMLElement>('.mobile-keybar')!
+      const frameBox = frame.getBoundingClientRect()
+      const keybarBox = keybar.getBoundingClientRect()
+      return {
+        viewOverflow: view.scrollHeight - view.clientHeight,
+        frameBottom: frameBox.bottom,
+        keybarTop: keybarBox.top,
+        keybarBottom: keybarBox.bottom,
+        keybarPosition: getComputedStyle(keybar).position,
+        viewportHeight: window.innerHeight,
+      }
+    })
+    expect(mobileLayout.viewOverflow).toBeLessThanOrEqual(1)
+    expect(mobileLayout.frameBottom).toBeLessThanOrEqual(mobileLayout.keybarTop + 1)
+    expect(mobileLayout.keybarBottom).toBeLessThanOrEqual(mobileLayout.viewportHeight + 1)
+    expect(mobileLayout.keybarPosition).toBe('static')
+
+    if (!mobilePanes) mobilePanes = await ensureTwoPanes(page)
+    const currentPanes = (await panesForTerm(page)).toSorted((left, right) => left.left - right.left)
+    const activePane = currentPanes.find((pane) => pane.active)!
+    const inactivePane = currentPanes.find((pane) => pane.pane_id !== activePane.pane_id)!
+    const lock = page.locator('[data-action="toggle-touch-lock"]')
+    await lock.click()
+    await expect(lock).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.terminal-frame')).toHaveAttribute('data-touch-control', 'locked')
+
+    const target = await terminalPoint(
+      page,
+      Math.floor(inactivePane.left + inactivePane.width / 2),
+      Math.floor(inactivePane.top + inactivePane.height / 2),
+    )
+    const frameStart = terminalFrames.length
+    await dispatchTouchSequence(page, [
+      { type: 'touchStart', points: [{ id: 1, x: target.x, y: target.y }] },
+      { type: 'touchEnd', points: [] },
+    ])
+    await expect.poll(async () => (await panesForTerm(page)).find((pane) => pane.active)?.pane_id).toBe(inactivePane.pane_id)
+
+    await dispatchTouchSequence(page, [
+      { type: 'touchStart', points: [{ id: 2, x: target.x, y: target.y }] },
+      { type: 'touchMove', points: [{ id: 2, x: target.x + 20, y: target.y }] },
+      { type: 'touchEnd', points: [] },
+    ])
+    await expect.poll(() => Buffer.concat(terminalFrames.slice(frameStart)).toString('latin1')).toMatch(/\x1b\[<0;\d+;\d+M/)
+    await expect.poll(() => Buffer.concat(terminalFrames.slice(frameStart)).toString('latin1')).toMatch(/\x1b\[<32;\d+;\d+M/)
+    await expect.poll(() => Buffer.concat(terminalFrames.slice(frameStart)).toString('latin1')).toMatch(/\x1b\[<0;\d+;\d+m/)
+
+    const wordSuffix = Date.now().toString(36).slice(-4)
+    const firstWord = `LEFTM${wordSuffix}`
+    const secondWord = `RIGHTM${wordSuffix}`
+    await page.locator('.terminal-host textarea').focus()
+    await page.keyboard.type(String.raw`printf '\033[2J\033[H${firstWord}    ${secondWord}'`)
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.terminal-host')).toContainText(secondWord)
+    const currentActivePane = (await panesForTerm(page)).find((pane) => pane.active)!
+    const wordStart = await terminalPoint(page, currentActivePane.left + firstWord.length + 4, currentActivePane.top)
+    const wordEnd = await terminalPoint(page, currentActivePane.left + firstWord.length + 4 + secondWord.length - 1, currentActivePane.top)
+    const selectionFrameStart = terminalFrames.length
+    await dispatchTouchSequence(page, [
+      { type: 'touchStart', points: [{ id: 3, x: wordStart.x, y: wordStart.y }], delayMs: 550 },
+      { type: 'touchMove', points: [{ id: 3, x: wordEnd.x, y: wordEnd.y }] },
+      { type: 'touchEnd', points: [] },
+    ])
+    const copied = await page.locator('.xterm').evaluate((element) => {
+      const clipboard = new DataTransfer()
+      element.dispatchEvent(new ClipboardEvent('copy', { bubbles: true, cancelable: true, clipboardData: clipboard }))
+      return clipboard.getData('text/plain')
+    })
+    expect(copied).toBe(secondWord)
+    expect(terminalFrames).toHaveLength(selectionFrameStart)
+  }
+
+  if (testInfo.project.name === 'desktop') {
+    const [, rightPane] = await selectLeftPaneWithKeyboard(page)
+    const target = await clickPaneCenter(page, rightPane)
+    await expect.poll(async () => (await panesForTerm(page)).find((pane) => pane.active)?.pane_id).toBe(rightPane.pane_id)
+
+    const frame = page.locator('.terminal-frame')
+    const scrollBefore = await frame.evaluate((element) => ({ left: element.scrollLeft, top: element.scrollTop }))
+    const frameStart = terminalFrames.length
+    await page.mouse.move(target.x, target.y)
+    await page.mouse.wheel(0, -120)
+    await expect.poll(() => {
+      for (const payload of terminalFrames.slice(frameStart)) {
+        const match = /\x1b\[<(?:64|65);(\d+);(\d+)M/.exec(payload.toString('latin1'))
+        if (match) return { col: Number(match[1]), row: Number(match[2]) }
+      }
+      return null
+    }).toEqual({ col: target.col, row: target.row })
+    expect(await frame.evaluate((element) => ({ left: element.scrollLeft, top: element.scrollTop }))).toEqual(scrollBefore)
+
+    await expectWordSelection(page, terminalOutputFrames, rightPane, 'FIT', true)
+  }
 
   if (screenshotDir) await page.screenshot({ path: `${screenshotDir}/${testInfo.project.name}.png` })
 })

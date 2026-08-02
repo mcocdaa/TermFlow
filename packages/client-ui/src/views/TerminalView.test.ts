@@ -60,6 +60,12 @@ describe('TerminalView', () => {
     expect(wrapper.get('[data-computer-name]').text()).toBe('设计工作站')
     expect(wrapper.get('[data-term-name]').text()).toBe('产品开发')
     expect(wrapper.get('.terminal-frame').attributes('data-display-mode')).toBe('font-100')
+    const touchLock = wrapper.get('[data-action="toggle-touch-lock"]')
+    expect(touchLock.attributes('aria-label')).toBe('锁定画布')
+    expect(touchLock.attributes('aria-pressed')).toBe('false')
+    await touchLock.trigger('click')
+    expect(touchLock.attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get('.terminal-frame').attributes('data-touch-control')).toBe('locked')
     expect(terminal).not.toHaveProperty('resize')
 
     callbacks.onStatus('connected')
