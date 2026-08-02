@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import struct
 import time
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,7 +27,10 @@ def _counter(offset: int = 0) -> int:
 
 
 @pytest.fixture
-def totp_client(tmp_path):
+def totp_client(tmp_path, monkeypatch):
+    counter = int(time.time()) // 30
+    observed_at = datetime.fromtimestamp(counter * 30 + 15, tz=UTC)
+    monkeypatch.setattr(time, "time", lambda: observed_at.timestamp())
     encoded_key = base64.urlsafe_b64encode(b"t" * 32).decode().rstrip("=")
     settings = Settings(
         admin_token=ADMIN_TOKEN,
@@ -38,6 +42,7 @@ def totp_client(tmp_path):
     )
     app = create_app(settings=settings, database=Database(settings.database_url))
     with TestClient(app) as client:
+        client.app.state.authentication_service._clock = lambda: observed_at
         yield client
 
 
