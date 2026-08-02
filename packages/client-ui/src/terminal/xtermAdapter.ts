@@ -31,6 +31,10 @@ export function visualFontSize(baseFontSize: number, scale: number): number {
   return baseFontSize * normalizedScale
 }
 
+export function nativeWheelAvailable(hasSelection: boolean, mouseTrackingMode: string): boolean {
+  return !hasSelection && mouseTrackingMode === 'none'
+}
+
 export interface TerminalAdapter {
   write(bytes: Uint8Array): void
   resize(cols: number, rows: number): void
@@ -41,6 +45,7 @@ export interface TerminalAdapter {
   measureCell(): TerminalCellMetrics | null
   setVisualScale(scale: number): TerminalCellMetrics | null
   canClientPan(): boolean
+  canNativeWheel(): boolean
   dispatchMouse(event: TerminalMouseDispatch): void
   dispose(): void
 }
@@ -112,6 +117,10 @@ export const createXtermAdapter: TerminalAdapterFactory = (host, size, onInput, 
       return measureCell()
     },
     canClientPan: () => !terminal.hasSelection(),
+    canNativeWheel: () => nativeWheelAvailable(
+      terminal.hasSelection(),
+      terminal.modes.mouseTrackingMode,
+    ),
     dispatchMouse: (event) => {
       const element = terminal.element
       if (!element) return

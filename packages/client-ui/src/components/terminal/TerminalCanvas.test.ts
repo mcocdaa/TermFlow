@@ -20,14 +20,14 @@ function adapterDouble(overrides: Partial<TerminalAdapter> = {}): TerminalAdapte
     write: vi.fn(), resize: vi.fn(), reset: vi.fn(), focus: vi.fn(), refreshTheme: vi.fn(), setInputEnabled: vi.fn(),
     measureCell: vi.fn(() => ({ width: 10, height: 20 })),
     setVisualScale: vi.fn((scale: number) => ({ width: 10 * scale, height: 20 * scale })),
-    canClientPan: vi.fn(() => true), dispatchMouse: vi.fn(), dispose: vi.fn(),
+    canClientPan: vi.fn(() => true), canNativeWheel: vi.fn(() => true), dispatchMouse: vi.fn(), dispose: vi.fn(),
     ...overrides,
   }
 }
 
-function mountTouchCanvas(viewportLocked: boolean) {
+function mountTouchCanvas(viewportLocked: boolean, overrides: Partial<TerminalAdapter> = {}) {
   const session = terminalRuntime()
-  const adapter = adapterDouble()
+  const adapter = adapterDouble(overrides)
   const createAdapter: TerminalAdapterFactory = vi.fn(() => adapter)
   const wrapper = mount(TerminalCanvas, {
     props: { termId: 'term-touch', viewportLocked, createAdapter },
@@ -111,6 +111,25 @@ describe('TerminalCanvas', () => {
       bubbles: true, cancelable: true, deltaX: 50, deltaY: 40,
     }))
     expect([frame.scrollLeft, frame.scrollTop]).toEqual([90, 70])
+
+    const mouseReporting = mountTouchCanvas(false, {
+      canNativeWheel: vi.fn(() => false),
+    })
+    mouseReporting.ready()
+    await flushPromises()
+    const reportingFrame = mouseReporting.wrapper.get('.terminal-frame').element as HTMLElement
+    Object.defineProperties(reportingFrame, {
+      clientWidth: { configurable: true, value: 300 },
+      clientHeight: { configurable: true, value: 200 },
+      scrollWidth: { configurable: true, value: 700 },
+      scrollHeight: { configurable: true, value: 500 },
+    })
+    const remoteWheel = new WheelEvent('wheel', {
+      bubbles: true, cancelable: true, deltaX: 50, deltaY: 40,
+    })
+    reportingFrame.dispatchEvent(remoteWheel)
+    expect([reportingFrame.scrollLeft, reportingFrame.scrollTop]).toEqual([0, 0])
+    expect(remoteWheel.defaultPrevented).toBe(false)
   })
 
   it('routes locked touch through xterm and preserves long-press selection', async () => {

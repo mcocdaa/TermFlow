@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { forceSelectionModifiers, visualFontSize } from './xtermAdapter'
+import { forceSelectionModifiers, nativeWheelAvailable, visualFontSize } from './xtermAdapter'
 
 describe('xterm visual font scaling', () => {
   it('uses the same force-selection modifier that xterm expects on each platform', () => {
@@ -18,5 +18,11 @@ describe('xterm visual font scaling', () => {
   it('normalizes invalid visual scales without changing terminal geometry', () => {
     expect(visualFontSize(14, 0)).toBe(14)
     expect(visualFontSize(14, Number.NaN)).toBe(14)
+  })
+
+  it('allows native frame wheel only without selection or tmux mouse reporting', () => {
+    expect(nativeWheelAvailable(false, 'none')).toBe(true)
+    expect(nativeWheelAvailable(true, 'none')).toBe(false)
+    expect(nativeWheelAvailable(false, 'sgr')).toBe(false)
   })
 })

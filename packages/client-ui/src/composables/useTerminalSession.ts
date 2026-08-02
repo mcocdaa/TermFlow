@@ -79,6 +79,7 @@ export function useTerminalSession(
     measureCell: () => adapter?.measureCell() ?? null,
     setVisualScale: (scale: number) => adapter?.setVisualScale(scale) ?? null,
     canClientPan: () => adapter?.canClientPan() ?? false,
+    canNativeWheel: () => adapter?.canNativeWheel() ?? false,
     dispatchMouse: (event: TerminalMouseDispatch) => adapter?.dispatchMouse(event),
   }
 }

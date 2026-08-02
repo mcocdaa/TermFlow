@@ -111,7 +111,7 @@ function refreshCellMetrics() {
 function point(event: PointerEvent) { return { pointerId: event.pointerId, x: event.clientX, y: event.clientY } }
 function onWheel(event: WheelEvent) {
   const element = frameElement.value
-  if (!element || props.viewportLocked || props.displayMode === 'fit' || !session.canClientPan()) return
+  if (!element || props.viewportLocked || props.displayMode === 'fit' || !session.canNativeWheel()) return
   const left = Math.min(
     Math.max(0, element.scrollWidth - element.clientWidth),
     Math.max(0, element.scrollLeft + event.deltaX),
