@@ -167,6 +167,46 @@ async def test_old_totp_generation_cannot_advance_a_reconfigured_authenticator(
 
 
 @pytest.mark.asyncio
+async def test_totp_enable_and_disable_require_the_expected_generation(
+    tmp_path,
+    secret_box: AesGcmSecretBox,
+) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'totp-cas.db'}")
+    await database.initialize()
+    repositories = RepositoryBundle(database.session_factory)
+    try:
+        encrypted = secret_box.encrypt(b"first", purpose="totp-authenticator")
+        assert await repositories.auth_state.enable_totp(
+            encrypted,
+            counter=10,
+            expected_epoch=1,
+            expected_generation=0,
+        )
+        assert not await repositories.auth_state.enable_totp(
+            encrypted,
+            counter=11,
+            expected_epoch=1,
+            expected_generation=0,
+        )
+        state = await repositories.auth_state.get()
+        assert not await repositories.auth_state.disable_totp(
+            expected_epoch=state.epoch,
+            expected_generation=state.totp_generation - 1,
+        )
+        assert await repositories.auth_state.disable_totp(
+            expected_epoch=state.epoch,
+            expected_generation=state.totp_generation,
+        )
+        disabled = await repositories.auth_state.get()
+        assert disabled.totp_enabled_at is None
+        assert disabled.totp_ciphertext is None
+        assert disabled.totp_last_accepted_counter is None
+        assert disabled.totp_generation == state.totp_generation + 1
+    finally:
+        await database.dispose()
+
+
+@pytest.mark.asyncio
 async def test_stale_totp_setup_cannot_reenable_after_epoch_reset(
     tmp_path,
     secret_box: AesGcmSecretBox,

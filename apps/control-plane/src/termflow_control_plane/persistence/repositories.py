@@ -399,12 +399,17 @@ class AuthStateRepository:
         counter: int,
         *,
         expected_epoch: int | None = None,
+        expected_generation: int | None = None,
     ) -> bool:
         observed_at = datetime.now(UTC)
         async with self._sessions() as session:
             statement = update(AuthenticationState).where(AuthenticationState.id == 1)
             if expected_epoch is not None:
                 statement = statement.where(AuthenticationState.epoch == expected_epoch)
+            if expected_generation is not None:
+                statement = statement.where(
+                    AuthenticationState.totp_generation == expected_generation
+                )
             result = await session.execute(
                 statement.values(
                     totp_ciphertext=encrypted.ciphertext,
@@ -423,6 +428,38 @@ class AuthStateRepository:
                 raise RuntimeError("authentication state singleton is missing")
             await session.commit()
             return updated is not None
+
+    async def disable_totp(
+        self,
+        *,
+        expected_epoch: int,
+        expected_generation: int,
+    ) -> bool:
+        observed_at = datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AuthenticationState)
+                .where(
+                    AuthenticationState.id == 1,
+                    AuthenticationState.epoch == expected_epoch,
+                    AuthenticationState.totp_generation == expected_generation,
+                    AuthenticationState.totp_enabled_at.is_not(None),
+                )
+                .values(
+                    totp_ciphertext=None,
+                    totp_nonce=None,
+                    totp_key_version=None,
+                    totp_aad_version=None,
+                    totp_enabled_at=None,
+                    totp_last_accepted_counter=None,
+                    totp_generation=AuthenticationState.totp_generation + 1,
+                    updated_at=observed_at,
+                )
+                .returning(AuthenticationState.id)
+            )
+            disabled = result.scalar_one_or_none() is not None
+            await session.commit()
+            return disabled
 
     async def accept_totp_counter(
         self,

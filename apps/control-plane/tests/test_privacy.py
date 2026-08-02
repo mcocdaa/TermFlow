@@ -1,3 +1,4 @@
+import base64
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -5,11 +6,15 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi.testclient import TestClient
+from termflow_control_plane.app import create_app
 from termflow_control_plane.auth.audit import (
     AuthAuditOperation,
     AuthAuditResult,
     AuthenticationAudit,
 )
+from termflow_control_plane.config import Settings
+from termflow_control_plane.persistence.database import Database
 from termflow_protocol import (
     BridgeHelloPayload,
     CommandResultPayload,
@@ -228,6 +233,44 @@ def test_browser_session_secret_is_absent_from_logs_responses_and_store_repr(
     assert raw_cookie not in status.text
     assert raw_cookie not in caplog.text
     assert raw_cookie not in repr(client.app.state.browser_sessions)
+
+
+def test_pending_totp_secret_is_encrypted_and_absent_from_logs_and_repr(
+    tmp_path,
+    caplog,
+) -> None:
+    database_path = tmp_path / "totp-privacy.db"
+    encoded_key = base64.urlsafe_b64encode(b"p" * 32).decode().rstrip("=")
+    settings = Settings(
+        admin_token="admin-token-that-is-long-enough-for-tests",
+        database_url=f"sqlite+aiosqlite:///{database_path}",
+        allow_insecure_loopback=True,
+        totp_master_key=encoded_key,
+    )
+    app = create_app(settings=settings, database=Database(settings.database_url))
+    with TestClient(app) as test_client:
+        assert test_client.post(
+            "/api/v1/admin/sessions",
+            headers={"Origin": "http://127.0.0.1:8000"},
+            json={"admin_token": "admin-token-that-is-long-enough-for-tests"},
+        ).status_code == 201
+        setup = test_client.post(
+            "/api/v1/admin/totp/setups",
+            headers={"Origin": "http://127.0.0.1:8000"},
+            json={"admin_token": "admin-token-that-is-long-enough-for-tests"},
+        )
+        setup_key = setup.json()["setup_key"]
+        raw_secret = base64.b32decode(setup_key)
+        rendered = repr(test_client.app.state.authentication_service) + caplog.text
+
+    with sqlite3.connect(database_path) as database:
+        database.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    database_bytes = database_path.read_bytes()
+    assert setup.status_code == 201
+    assert setup.headers["cache-control"] == "no-store"
+    assert setup_key not in rendered
+    assert raw_secret not in database_bytes
+    assert setup_key.encode() not in database_bytes
 
 
 def test_full_terminal_bytes_are_ephemeral_but_byte_count_is_audited(

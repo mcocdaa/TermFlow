@@ -24,11 +24,14 @@ from termflow_control_plane.api.dashboard import router as dashboard_router
 from termflow_control_plane.api.enrollment import router as enrollment_router
 from termflow_control_plane.api.events import router as events_router
 from termflow_control_plane.api.instances import router as instances_router
+from termflow_control_plane.api.security import router as security_router
 from termflow_control_plane.api.sessions import router as sessions_router
 from termflow_control_plane.api.terminal import router as terminal_router_api
 from termflow_control_plane.api.terms import router as terms_router
 from termflow_control_plane.auth.audit import AuthenticationAudit
 from termflow_control_plane.auth.rate_limit import AuthRateLimiter
+from termflow_control_plane.auth.secret_box import AesGcmSecretBox
+from termflow_control_plane.auth.service import AuthenticationService
 from termflow_control_plane.auth.sessions import BrowserSessionStore
 from termflow_control_plane.config import Settings
 from termflow_control_plane.connections.event_hub import EventHub
@@ -96,6 +99,19 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await active_database.initialize()
         app.state.repositories = RepositoryBundle(active_database.session_factory)
+        auth_state = await app.state.repositories.auth_state.get()
+        app.state.browser_sessions.synchronize_epoch(auth_state.epoch)
+        master_key = settings.totp_master_key_bytes
+        secret_box = (
+            AesGcmSecretBox(master_key, key_version=settings.totp_master_key_version)
+            if master_key is not None
+            else None
+        )
+        app.state.authentication_service = AuthenticationService(
+            app.state.repositories,
+            settings,
+            secret_box=secret_box,
+        )
         app.state.auth_audit = AuthenticationAudit(
             getattr(app.state.repositories, "auth_audit", None)
         )
@@ -206,6 +222,7 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
 
     app.include_router(enrollment_router)
     app.include_router(sessions_router)
+    app.include_router(security_router)
     app.include_router(dashboard_router)
     app.include_router(computers_router)
     app.include_router(terms_router)

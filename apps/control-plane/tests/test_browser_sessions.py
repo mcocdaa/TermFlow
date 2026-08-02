@@ -101,6 +101,25 @@ def test_session_store_hashes_secrets_expires_and_enforces_capacity() -> None:
     assert len(revoked) == 3
 
 
+def test_session_store_revokes_sessions_from_an_old_auth_epoch() -> None:
+    store = BrowserSessionStore(ttl=timedelta(minutes=5), capacity=2)
+    secret, _ = store.create(epoch=7)
+
+    assert store.authenticate(secret, epoch=7) is not None
+    assert store.authenticate(secret, epoch=8) is None
+    assert store.live_count == 0
+
+
+def test_http_cookie_is_rejected_when_persisted_auth_epoch_changes(client) -> None:
+    assert _login(client).status_code == 201
+    assert client.app.state.browser_sessions.live_count == 1
+
+    client.portal.call(client.app.state.repositories.auth_state.reset_and_increment_epoch)
+
+    assert client.get("/api/v1/admin/session").status_code == 401
+    assert client.app.state.browser_sessions.live_count == 0
+
+
 def test_https_uses_secure_host_cookie(tmp_path) -> None:
     settings = Settings(
         admin_token=ADMIN_TOKEN,

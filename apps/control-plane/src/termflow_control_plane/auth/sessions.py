@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hmac
 import secrets
 from collections import OrderedDict
 from collections.abc import Callable
@@ -12,7 +11,7 @@ from urllib.parse import urlsplit
 
 from fastapi import Request, WebSocket
 
-from termflow_control_plane.auth.tokens import hash_token
+from termflow_control_plane.auth.tokens import hash_token, secret_text_matches
 from termflow_control_plane.config import Settings
 
 PRODUCTION_COOKIE_NAME = "__Host-termflow_session"
@@ -24,6 +23,12 @@ _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 class BrowserCookiePolicy:
     name: str
     secure: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _BrowserSession:
+    expires_at: datetime
+    epoch: int
 
 
 class BrowserSessionStore:
@@ -45,13 +50,18 @@ class BrowserSessionStore:
         self._capacity = capacity
         self._clock = clock or (lambda: datetime.now(UTC))
         self._on_revoke = on_revoke
-        self._sessions: OrderedDict[str, datetime] = OrderedDict()
+        self._sessions: OrderedDict[str, _BrowserSession] = OrderedDict()
+        self._epoch = 1
 
     def __repr__(self) -> str:
         return f"BrowserSessionStore(live_count={self.live_count}, capacity={self._capacity})"
 
     def _prune(self, now: datetime) -> None:
-        expired = [digest for digest, expiry in self._sessions.items() if expiry <= now]
+        expired = [
+            digest
+            for digest, session in self._sessions.items()
+            if session.expires_at <= now
+        ]
         for digest in expired:
             self._remove(digest)
 
@@ -62,23 +72,30 @@ class BrowserSessionStore:
             self._on_revoke(digest)
         return True
 
-    def create(self) -> tuple[str, datetime]:
+    def create(self, *, epoch: int | None = None) -> tuple[str, datetime]:
         now = self._clock()
         self._prune(now)
+        effective_epoch = self._epoch if epoch is None else epoch
+        self.synchronize_epoch(effective_epoch)
         while len(self._sessions) >= self._capacity:
             oldest = next(iter(self._sessions))
             self._remove(oldest)
         secret = secrets.token_urlsafe(32)
         expires_at = now + self._ttl
-        self._sessions[hash_token(secret)] = expires_at
+        self._sessions[hash_token(secret)] = _BrowserSession(expires_at, effective_epoch)
         return secret, expires_at
 
-    def authenticate(self, secret: str | None) -> datetime | None:
+    def authenticate(self, secret: str | None, *, epoch: int | None = None) -> datetime | None:
         now = self._clock()
         self._prune(now)
+        if epoch is not None:
+            self.synchronize_epoch(epoch)
         if not secret:
             return None
-        return self._sessions.get(hash_token(secret))
+        session = self._sessions.get(hash_token(secret))
+        if session is None or session.epoch != self._epoch:
+            return None
+        return session.expires_at
 
     def invalidate(self, secret: str | None) -> bool:
         if not secret:
@@ -101,6 +118,21 @@ class BrowserSessionStore:
         """Revoke expired sessions even when no new browser request arrives."""
 
         self._prune(self._clock())
+
+    def synchronize_epoch(self, epoch: int) -> None:
+        """Revoke every process-local session when the persisted epoch changes."""
+
+        if epoch < 1:
+            raise ValueError("authentication epoch must be positive")
+        if epoch == self._epoch:
+            return
+        for digest in tuple(self._sessions):
+            self._remove(digest)
+        self._epoch = epoch
+
+    @property
+    def epoch(self) -> int:
+        return self._epoch
 
 
 def browser_cookie_policy(settings: Settings) -> BrowserCookiePolicy:
@@ -158,10 +190,10 @@ def websocket_admin_close_code(
     origin = websocket.headers.get("origin")
     expected = settings.admin_token.get_secret_value()
     if origin is None:
-        return None if bearer is not None and hmac.compare_digest(bearer, expected) else 4401
+        return None if bearer is not None and secret_text_matches(bearer, expected) else 4401
     if not origin_allowed(origin, settings):
         return 4403
-    if bearer is not None and hmac.compare_digest(bearer, expected):
+    if bearer is not None and secret_text_matches(bearer, expected):
         return None
     policy = browser_cookie_policy(settings)
     return None if store.authenticate(websocket.cookies.get(policy.name)) is not None else 4401
