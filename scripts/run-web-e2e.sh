@@ -43,6 +43,9 @@ export TERMFLOW_ALLOW_INSECURE_LOOPBACK=true
 export TERMFLOW_PUBLIC_BASE_URL="$TERMFLOW_E2E_BASE_URL"
 export TERMFLOW_TRUSTED_WEB_ORIGINS="$TERMFLOW_E2E_BASE_URL"
 export TERMFLOW_STATIC_DIR="$REPO_ROOT/apps/clients/web/dist"
+# The disposable browser run logs in once per project and trajectory. Keep the
+# production limiter defaults unchanged while avoiding cross-test exhaustion.
+export TERMFLOW_AUTH_ATTEMPT_BUDGET_CAPACITY=100
 export XDG_CONFIG_HOME="$RUN_DIR/config"
 export XDG_STATE_HOME="$RUN_DIR/state"
 export XDG_RUNTIME_DIR="$RUN_DIR/runtime"
