@@ -706,6 +706,10 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
         keybarLeft: keybarBox.left,
         keybarRight: keybarBox.right,
         keybarShellPosition: getComputedStyle(keybarShell).position,
+        frameScrollbarWidth: getComputedStyle(frame).getPropertyValue('scrollbar-width'),
+        keybarScrollbarWidth: getComputedStyle(keybar).getPropertyValue('scrollbar-width'),
+        frameWebkitScrollbarDisplay: getComputedStyle(frame, '::-webkit-scrollbar').display,
+        keybarWebkitScrollbarDisplay: getComputedStyle(keybar, '::-webkit-scrollbar').display,
         viewportLeft: visualViewport?.offsetLeft ?? 0,
         viewportWidth: visualViewport?.width ?? window.innerWidth,
         viewportHeight: visualViewport?.height ?? window.innerHeight,
@@ -772,6 +776,10 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
       { type: 'touchEnd', points: [] },
     ])
     expect(await mobilePageGeometry(page)).toEqual(pageAtRightBoundary)
+    expect(mobileLayout.frameScrollbarWidth).toBe('none')
+    expect(mobileLayout.keybarScrollbarWidth).toBe('none')
+    expect(mobileLayout.frameWebkitScrollbarDisplay).toBe('none')
+    expect(mobileLayout.keybarWebkitScrollbarDisplay).toBe('none')
 
     if (!mobilePanes) mobilePanes = await ensureTwoPanes(page)
     const currentPanes = (await panesForTerm(page)).toSorted((left, right) => left.left - right.left)

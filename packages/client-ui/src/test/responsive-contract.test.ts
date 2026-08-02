@@ -52,6 +52,14 @@ describe('responsive shell contract', () => {
     expect(css).toContain('.mobile-keybar {')
     expect(css).toContain('overscroll-behavior-x: none;')
     expect(css).toContain('overscroll-behavior-y: none;')
+    expect(css).toMatch(
+      /\.terminal-frame,\s*\.mobile-keybar\s*\{\s*scrollbar-width: none;\s*\}/,
+    )
+    expect(css).toMatch(
+      /\.terminal-frame::\-webkit-scrollbar,\s*\.mobile-keybar::\-webkit-scrollbar\s*\{\s*display: none;\s*\}/,
+    )
+    expect(css).toContain('overflow-x: auto;')
+    expect(css).toContain('touch-action: pan-x;')
     expect(css).not.toContain('overscroll-behavior-inline: contain;')
     expect(css).not.toContain('overscroll-behavior-block: none;')
     expect(css).toContain('padding-block-end: max(var(--space-2), env(safe-area-inset-bottom))')
@@ -68,6 +76,7 @@ describe('responsive shell contract', () => {
     expect(resetCss).toContain('body.termflow-terminal-route { position: fixed; inset: 0; }')
     expect(appCss).not.toContain('.mobile-action-trigger')
     expect(appCss).not.toContain('.mobile-action-drawer')
+    expect(appCss).not.toContain('scrollbar-width: none;')
     expect(appCss).toContain('.mobile-keybar-shell, .mobile-keybar { display: none; }')
     expect(appCss).not.toContain('height: calc(100% - 3.25rem)')
     expect(appCss).toContain('.app-shell.is-terminal { display: block; height: 100dvh; min-height: 0; overflow: hidden; }')
