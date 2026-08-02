@@ -30,6 +30,8 @@ router = APIRouter(tags=["events"])
 async def _send_subscription(
     websocket: WebSocket,
     subscriber: EventSubscriber,
+    sessions: BrowserSessionStore,
+    auth_epoch: int,
 ) -> None:
     while True:
         next_event = asyncio.create_task(subscriber.queue.get())
@@ -48,6 +50,9 @@ async def _send_subscription(
                 code=subscriber.close_code,
                 reason=subscriber.close_reason,
             )
+            return
+        if sessions.epoch != auth_epoch:
+            await websocket.close(code=4401, reason="Authentication epoch changed")
             return
         await websocket.send_text(next_event.result().model_dump_json())
 
@@ -131,6 +136,6 @@ async def subscribe_events(
             except ConnectionBackpressure:
                 await websocket.close(code=4429, reason="Bridge queue full")
                 return
-        await _send_subscription(websocket, subscriber)
+        await _send_subscription(websocket, subscriber, sessions, auth_epoch)
     finally:
         await hub.unsubscribe(subscriber)

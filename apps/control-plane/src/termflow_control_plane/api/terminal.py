@@ -101,12 +101,12 @@ async def _send_terminal_events(
     websocket: WebSocket,
     terminal: BrowserTerminal,
     terminal_router: TerminalRouter,
-    repositories: RepositoryBundle,
+    sessions: BrowserSessionStore,
     auth_epoch: int,
 ) -> None:
     while True:
         event = await terminal.next_event()
-        if (await repositories.auth_state.get()).epoch != auth_epoch:
+        if sessions.epoch != auth_epoch:
             await terminal_router.request_close(terminal, "client_closed")
             with suppress(RuntimeError):
                 await websocket.close(code=4401, reason="Authentication epoch changed")
@@ -208,7 +208,7 @@ async def _receive_terminal_input(
     terminal: BrowserTerminal,
     terminal_router: TerminalRouter,
     settings: Settings,
-    repositories: RepositoryBundle,
+    sessions: BrowserSessionStore,
     auth_epoch: int,
 ) -> None:
     bucket = _TokenBucket.create(settings.terminal_input_rate_bytes_per_second)
@@ -216,7 +216,7 @@ async def _receive_terminal_input(
         incoming = await websocket.receive()
         if incoming["type"] == "websocket.disconnect":
             return
-        if (await repositories.auth_state.get()).epoch != auth_epoch:
+        if sessions.epoch != auth_epoch:
             terminal.terminate("client_closed")
             with suppress(RuntimeError):
                 await websocket.close(code=4401, reason="Authentication epoch changed")
@@ -331,7 +331,7 @@ async def connect_terminal(websocket: WebSocket, instance_id: UUID) -> None:
             websocket,
             terminal,
             terminal_router,
-            repositories,
+            sessions,
             auth_epoch,
         )
     )
@@ -341,7 +341,7 @@ async def connect_terminal(websocket: WebSocket, instance_id: UUID) -> None:
             terminal,
             terminal_router,
             settings,
-            repositories,
+            sessions,
             auth_epoch,
         )
     )

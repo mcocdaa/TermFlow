@@ -102,11 +102,17 @@ async def _authentication_epoch_loop(
     browser_sessions: BrowserSessionStore,
     terminal_hub: TerminalHub,
     event_hub: EventHub,
+    stop: asyncio.Event,
 ) -> None:
     """Observe reset commands running in another process through persisted epoch state."""
 
-    while True:
-        await asyncio.sleep(1)
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=1)
+        except TimeoutError:
+            pass
+        if stop.is_set():
+            return
         state = await repositories.auth_state.get()
         if state.epoch == browser_sessions.epoch:
             continue
@@ -173,31 +179,27 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         session_expiry_task = asyncio.create_task(
             _browser_session_expiry_loop(app.state.browser_sessions)
         )
+        auth_epoch_stop = asyncio.Event()
         auth_epoch_task = asyncio.create_task(
             _authentication_epoch_loop(
                 app.state.repositories,
                 app.state.browser_sessions,
                 app.state.terminal_hub,
                 app.state.event_hub,
+                auth_epoch_stop,
             )
         )
         try:
             yield
         finally:
-            await app.state.terminal_hub.terminate_all()
-            await app.state.event_hub.close_all(
-                code=1012,
-                reason="Control Plane shutting down",
-            )
             expiry_task.cancel()
             session_expiry_task.cancel()
-            auth_epoch_task.cancel()
+            auth_epoch_stop.set()
             with suppress(asyncio.CancelledError):
                 await expiry_task
             with suppress(asyncio.CancelledError):
                 await session_expiry_task
-            with suppress(asyncio.CancelledError):
-                await auth_epoch_task
+            await auth_epoch_task
             try:
                 await app.state.terminal_audit.close()
             finally:

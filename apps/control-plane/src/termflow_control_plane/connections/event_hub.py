@@ -68,23 +68,6 @@ class EventHub:
                     dropped.append(subscriber_id)
         return dropped
 
-    async def close_all(
-        self,
-        *,
-        code: int,
-        reason: str,
-    ) -> int:
-        """Close current subscribers during bounded process shutdown."""
-
-        async with self._lock:
-            subscribers = tuple(self._subscribers.values())
-            self._subscribers.clear()
-            for subscriber in subscribers:
-                subscriber.close_code = code
-                subscriber.close_reason = reason
-                subscriber.closed.set()
-        return len(subscribers)
-
     async def synchronize_epoch(self, epoch: int) -> int:
         """Atomically reject stale subscriptions and close current subscribers."""
 

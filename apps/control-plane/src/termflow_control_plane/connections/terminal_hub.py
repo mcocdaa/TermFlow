@@ -256,15 +256,6 @@ class TerminalHub:
             terminal.terminate("client_closed")
         return len(matches)
 
-    async def terminate_all(self) -> int:
-        """Terminate current terminals during bounded process shutdown."""
-
-        async with self._lock:
-            terminals = tuple(self._current.values())
-            for terminal in terminals:
-                terminal.terminate("client_closed")
-        return len(terminals)
-
     async def synchronize_epoch(self, epoch: int) -> int:
         """Atomically reject stale registrations and terminate current terminals."""
 
