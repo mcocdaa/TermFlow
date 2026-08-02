@@ -19,19 +19,22 @@ from termflow_protocol import (
 )
 
 from termflow_control_plane.api.bridge import router as bridge_router
+from termflow_control_plane.api.clients import router as clients_router
 from termflow_control_plane.api.computers import router as computers_router
 from termflow_control_plane.api.dashboard import router as dashboard_router
 from termflow_control_plane.api.enrollment import router as enrollment_router
 from termflow_control_plane.api.events import router as events_router
 from termflow_control_plane.api.instances import router as instances_router
+from termflow_control_plane.api.oauth import router as oauth_router
 from termflow_control_plane.api.security import router as security_router
 from termflow_control_plane.api.sessions import router as sessions_router
 from termflow_control_plane.api.terminal import router as terminal_router_api
 from termflow_control_plane.api.terms import router as terms_router
 from termflow_control_plane.auth.audit import AuthenticationAudit
+from termflow_control_plane.auth.dpop import DpopVerifier
 from termflow_control_plane.auth.rate_limit import AuthRateLimiter
 from termflow_control_plane.auth.secret_box import AesGcmSecretBox
-from termflow_control_plane.auth.service import AuthenticationService
+from termflow_control_plane.auth.service import AuthenticationRejected, AuthenticationService
 from termflow_control_plane.auth.sessions import BrowserSessionStore
 from termflow_control_plane.config import Settings
 from termflow_control_plane.connections.event_hub import EventHub
@@ -92,6 +95,15 @@ async def _browser_session_expiry_loop(store: BrowserSessionStore) -> None:
         store.prune_expired()
 
 
+async def _verify_oauth_totp(service: AuthenticationService, code: str) -> bool:
+    """Convert unavailable or invalid TOTP state into a closed authorization denial."""
+
+    try:
+        return await service.verify_fresh_totp(code)
+    except AuthenticationRejected:
+        return False
+
+
 def create_app(*, settings: Settings, database: Database | None = None) -> FastAPI:
     active_database = database or Database(settings.database_url)
 
@@ -111,6 +123,10 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
             app.state.repositories,
             settings,
             secret_box=secret_box,
+        )
+        app.state.oauth_totp_verifier = lambda code: _verify_oauth_totp(
+            app.state.authentication_service,
+            code,
         )
         app.state.auth_audit = AuthenticationAudit(
             getattr(app.state.repositories, "auth_audit", None)
@@ -170,6 +186,7 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         refill_seconds=float(getattr(settings, "auth_attempt_refill_seconds", 60)),
         max_backoff_seconds=getattr(settings, "auth_max_backoff_seconds", 300),
     )
+    app.state.dpop_verifier = DpopVerifier()
 
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
@@ -191,11 +208,13 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
                 request_id=_request_id(request),
             )
         )
-        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after is not None else None
+        headers = dict(exc.headers)
+        if exc.retry_after is not None:
+            headers["Retry-After"] = str(exc.retry_after)
         return JSONResponse(
             status_code=exc.status_code,
             content=envelope.model_dump(mode="json"),
-            headers=headers,
+            headers=headers or None,
         )
 
     @app.exception_handler(RequestValidationError)
@@ -223,6 +242,8 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
     app.include_router(enrollment_router)
     app.include_router(sessions_router)
     app.include_router(security_router)
+    app.include_router(oauth_router)
+    app.include_router(clients_router)
     app.include_router(dashboard_router)
     app.include_router(computers_router)
     app.include_router(terms_router)

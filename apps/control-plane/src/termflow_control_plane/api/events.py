@@ -10,6 +10,7 @@ from uuid import UUID
 from fastapi import APIRouter, WebSocket
 from termflow_protocol import MessageType, PaneReplayRequestPayload, WireMessage
 
+from termflow_control_plane.auth.dpop import DpopVerifier
 from termflow_control_plane.auth.sessions import (
     BrowserSessionStore,
     websocket_admin_close_code,
@@ -58,7 +59,15 @@ async def subscribe_events(
     repositories = cast(RepositoryBundle, websocket.app.state.repositories)
     registry = cast(LiveInstanceRegistry, websocket.app.state.registry)
     hub = cast(EventHub, websocket.app.state.event_hub)
-    auth_close_code = websocket_admin_close_code(websocket, settings, sessions)
+    dpop = cast(DpopVerifier, websocket.app.state.dpop_verifier)
+    auth_close_code = await websocket_admin_close_code(
+        websocket,
+        settings,
+        sessions,
+        repositories,
+        dpop,
+        required_scope="terminal.read",
+    )
     if auth_close_code is not None:
         reason = "Origin not allowed" if auth_close_code == 4403 else "Authentication required"
         await websocket.close(code=auth_close_code, reason=reason)

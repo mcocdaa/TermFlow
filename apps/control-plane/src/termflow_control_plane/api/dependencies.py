@@ -1,10 +1,12 @@
 """FastAPI dependency boundaries for settings, repositories, and credentials."""
 
+import json
 from typing import Annotated, cast
 
-from fastapi import Depends, Request
+from fastapi import Depends, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from termflow_control_plane.auth.dpop import DpopInvalid, DpopNonceRequired, DpopVerifier
 from termflow_control_plane.auth.service import AuthenticationService
 from termflow_control_plane.auth.sessions import (
     BrowserSessionStore,
@@ -52,8 +54,33 @@ def _raw_bearer(credentials: HTTPAuthorizationCredentials | None) -> str:
     return credentials.credentials
 
 
+def _required_scope(request: Request) -> str | None:
+    path = request.url.path
+    mutating = request.method in {"POST", "PUT", "PATCH", "DELETE"}
+    if path.startswith("/api/v1/computers"):
+        return "computers.write" if mutating else "computers.read"
+    if path == "/api/v1/enrollment-tokens" or path.startswith("/api/v1/instances"):
+        return "computers.write" if mutating else "computers.read"
+    if path.startswith("/api/v1/terms"):
+        return "terminal.write" if mutating else "terminal.read"
+    if path == "/api/v1/dashboard":
+        return "computers.read"
+    return None
+
+
+def _has_scope(encoded: str, required: str | None) -> bool:
+    if required is None:
+        return True
+    try:
+        scopes = json.loads(encoded)
+    except (TypeError, ValueError):
+        return False
+    return isinstance(scopes, list) and required in scopes
+
+
 async def require_admin(
     request: Request,
+    response: Response,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
     settings: Annotated[Settings, Depends(get_settings)],
     sessions: Annotated[BrowserSessionStore, Depends(get_browser_sessions)],
@@ -62,7 +89,53 @@ async def require_admin(
     expected = settings.admin_token.get_secret_value()
     if credentials is not None:
         supplied = _raw_bearer(credentials)
-        if secret_text_matches(supplied, expected):
+        state = await repositories.auth_state.get()
+        if secret_text_matches(supplied, expected) and state.totp_enabled_at is None:
+            return
+        cli_token = await repositories.auth_tokens.get_active(
+            supplied,
+            epoch=state.epoch,
+            kind="cli",
+        )
+        if cli_token is not None:
+            if not _has_scope(cli_token.scopes, _required_scope(request)):
+                raise TermFlowError(
+                    "insufficient_scope", 403, "The credential lacks the required scope."
+                )
+            return
+        access_token = await repositories.auth_tokens.get_active(
+            supplied,
+            epoch=state.epoch,
+            kind="access",
+        )
+        if access_token is not None and access_token.key_thumbprint is not None:
+            if not _has_scope(access_token.scopes, _required_scope(request)):
+                raise TermFlowError(
+                    "insufficient_scope", 403, "The credential lacks the required scope."
+                )
+            proof = request.headers.get("dpop")
+            if proof is None:
+                raise TermFlowError("invalid_dpop_proof", 401, "DPoP proof is required.")
+            verifier = cast(DpopVerifier, request.app.state.dpop_verifier)
+            htu = f"{str(settings.public_base_url).rstrip('/')}{request.url.path}"
+            try:
+                verified = verifier.verify(
+                    proof,
+                    method=request.method,
+                    htu=htu,
+                    expected_jkt=access_token.key_thumbprint,
+                    access_token=supplied,
+                )
+            except DpopNonceRequired as exc:
+                raise TermFlowError(
+                    "use_dpop_nonce",
+                    401,
+                    "A fresh DPoP nonce is required.",
+                    headers={"DPoP-Nonce": exc.nonce, "Cache-Control": "no-store"},
+                ) from exc
+            except DpopInvalid as exc:
+                raise TermFlowError("invalid_dpop_proof", 401, "DPoP proof is invalid.") from exc
+            response.headers["DPoP-Nonce"] = verified.next_nonce
             return
         raise TermFlowError("unauthorized", 401, "Authentication is required.")
     state = await repositories.auth_state.get()
@@ -84,12 +157,31 @@ async def require_web_admin(
 ) -> None:
     """Require an epoch-current Web Cookie and exact Origin for security APIs."""
 
-    if not origin_allowed(request.headers.get("origin"), settings):
-        raise TermFlowError("origin_not_allowed", 403, "The browser Origin is not allowed.")
     state = await repositories.auth_state.get()
     policy = browser_cookie_policy(settings)
     if sessions.authenticate(request.cookies.get(policy.name), epoch=state.epoch) is None:
         raise TermFlowError("unauthorized", 401, "Authentication is required.")
+    if not origin_allowed(request.headers.get("origin"), settings):
+        raise TermFlowError("origin_not_allowed", 403, "The browser Origin is not allowed.")
+
+
+async def require_web_client_admin(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+    sessions: Annotated[BrowserSessionStore, Depends(get_browser_sessions)],
+    repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
+) -> None:
+    """Require a Web Cookie and exact Origin for client-management mutations."""
+
+    state = await repositories.auth_state.get()
+    policy = browser_cookie_policy(settings)
+    if sessions.authenticate(request.cookies.get(policy.name), epoch=state.epoch) is None:
+        raise TermFlowError("unauthorized", 401, "Authentication is required.")
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not origin_allowed(
+        request.headers.get("origin"),
+        settings,
+    ):
+        raise TermFlowError("origin_not_allowed", 403, "The browser Origin is not allowed.")
 
 
 async def require_installation(

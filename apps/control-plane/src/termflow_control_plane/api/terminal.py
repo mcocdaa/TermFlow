@@ -31,6 +31,7 @@ from termflow_protocol import (
     TerminalSizePayload,
 )
 
+from termflow_control_plane.auth.dpop import DpopVerifier
 from termflow_control_plane.auth.sessions import (
     BrowserSessionStore,
     websocket_admin_close_code,
@@ -249,7 +250,15 @@ async def connect_terminal(websocket: WebSocket, instance_id: UUID) -> None:
     sessions = cast(BrowserSessionStore, websocket.app.state.browser_sessions)
     repositories = cast(RepositoryBundle, websocket.app.state.repositories)
     terminal_router = cast(TerminalRouter, websocket.app.state.terminal_router)
-    auth_close_code = websocket_admin_close_code(websocket, settings, sessions)
+    dpop = cast(DpopVerifier, websocket.app.state.dpop_verifier)
+    auth_close_code = await websocket_admin_close_code(
+        websocket,
+        settings,
+        sessions,
+        repositories,
+        dpop,
+        required_scope="terminal.write",
+    )
     if auth_close_code is not None:
         await websocket.close(code=auth_close_code, reason="Authentication or Origin rejected")
         return

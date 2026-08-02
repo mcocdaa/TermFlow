@@ -37,6 +37,13 @@ def _encode_scopes(scopes: tuple[str, ...]) -> str:
     return json.dumps(sorted(set(scopes)), separators=(",", ":"))
 
 
+def decode_scopes(encoded: str) -> tuple[str, ...]:
+    value = json.loads(encoded)
+    if not isinstance(value, list) or not all(isinstance(scope, str) for scope in value):
+        raise ValueError("persisted authentication scopes are malformed")
+    return tuple(value)
+
+
 async def _insert_auth_token(
     session: AsyncSession,
     *,
@@ -136,6 +143,12 @@ class ConsumedEnrollment:
 @dataclass(frozen=True, slots=True)
 class ExchangedAuthorization:
     authorization: OAuthAuthorization
+    access_token: AuthToken
+    refresh_token: AuthToken
+
+
+@dataclass(frozen=True, slots=True)
+class RotatedTokenPair:
     access_token: AuthToken
     refresh_token: AuthToken
 
@@ -790,6 +803,23 @@ class NativeClientRepository:
             rows = await session.scalars(select(NativeClient).order_by(NativeClient.created_at))
             return list(rows)
 
+    async def list_authorized(self) -> list[NativeClient]:
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(NativeClient)
+                .where(
+                    NativeClient.revoked_at.is_(None),
+                    exists(
+                        select(OAuthAuthorization.id).where(
+                            OAuthAuthorization.client_id == NativeClient.id,
+                            OAuthAuthorization.approved_at.is_not(None),
+                        )
+                    ),
+                )
+                .order_by(NativeClient.created_at)
+            )
+            return list(rows)
+
     async def touch(
         self,
         client_id: UUID,
@@ -854,12 +884,14 @@ class OAuthAuthorizationRepository:
         pkce_challenge: str,
         expires_at: datetime,
         epoch: int,
+        request_state: str,
     ) -> UUID:
         async with self._sessions() as session:
             authorization = OAuthAuthorization(
                 transaction_digest=digest_secret(transaction_secret),
                 client_id=client_id,
                 redirect_uri=redirect_uri,
+                request_state=request_state,
                 scopes=_encode_scopes(scopes),
                 pkce_challenge=pkce_challenge,
                 expires_at=expires_at,
@@ -868,6 +900,62 @@ class OAuthAuthorizationRepository:
             session.add(authorization)
             await session.commit()
             return authorization.id
+
+    async def get_active_id(
+        self,
+        transaction_id: UUID,
+        *,
+        epoch: int,
+        now: datetime | None = None,
+    ) -> OAuthAuthorization | None:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            authorization: OAuthAuthorization | None = await session.scalar(
+                select(OAuthAuthorization).where(
+                    OAuthAuthorization.id == transaction_id,
+                    OAuthAuthorization.epoch == epoch,
+                    OAuthAuthorization.expires_at > observed_at,
+                    OAuthAuthorization.consumed_at.is_(None),
+                    exists(
+                        select(AuthenticationState.id).where(
+                            AuthenticationState.id == 1,
+                            AuthenticationState.epoch == epoch,
+                        )
+                    ),
+                    exists(
+                        select(NativeClient.id).where(
+                            NativeClient.id == OAuthAuthorization.client_id,
+                            NativeClient.revoked_at.is_(None),
+                        )
+                    ),
+                )
+            )
+            return authorization
+
+    async def deny(
+        self,
+        transaction_id: UUID,
+        *,
+        epoch: int,
+        now: datetime | None = None,
+    ) -> OAuthAuthorization | None:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(OAuthAuthorization)
+                .where(
+                    OAuthAuthorization.id == transaction_id,
+                    OAuthAuthorization.epoch == epoch,
+                    OAuthAuthorization.expires_at > observed_at,
+                    OAuthAuthorization.consumed_at.is_(None),
+                    OAuthAuthorization.authorization_code_digest.is_(None),
+                )
+                .values(consumed_at=observed_at)
+                .returning(OAuthAuthorization)
+            )
+            denied = result.scalar_one_or_none()
+            await session.commit()
+            return denied
 
     async def get_active_transaction(
         self,
@@ -991,6 +1079,7 @@ class OAuthAuthorizationRepository:
             if authorization is None:
                 await session.commit()
                 return None
+            family_id = uuid4()
             access = await _insert_auth_token(
                 session,
                 raw_token=raw_access_token,
@@ -1000,6 +1089,7 @@ class OAuthAuthorizationRepository:
                 expires_at=access_expires_at,
                 epoch=epoch,
                 client_id=authorization.client_id,
+                family_id=family_id,
                 now=observed_at,
             )
             refresh = await _insert_auth_token(
@@ -1011,6 +1101,7 @@ class OAuthAuthorizationRepository:
                 expires_at=refresh_expires_at,
                 epoch=epoch,
                 client_id=authorization.client_id,
+                family_id=family_id,
                 now=observed_at,
             )
             if access is None or refresh is None:
@@ -1022,6 +1113,85 @@ class OAuthAuthorizationRepository:
                 access_token=access,
                 refresh_token=refresh,
             )
+
+    async def exchange_transaction(
+        self,
+        transaction_id: UUID,
+        *,
+        epoch: int,
+        raw_access_token: str,
+        raw_refresh_token: str,
+        key_thumbprint: str,
+        pkce_challenge: str,
+        access_expires_at: datetime,
+        refresh_expires_at: datetime,
+        now: datetime | None = None,
+    ) -> ExchangedAuthorization | None:
+        observed_at = now or datetime.now(UTC)
+        active_client = exists(
+            select(NativeClient.id).where(
+                NativeClient.id == OAuthAuthorization.client_id,
+                NativeClient.key_thumbprint == key_thumbprint,
+                NativeClient.revoked_at.is_(None),
+            )
+        )
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(OAuthAuthorization)
+                .where(
+                    OAuthAuthorization.id == transaction_id,
+                    OAuthAuthorization.epoch == epoch,
+                    OAuthAuthorization.pkce_challenge == pkce_challenge,
+                    OAuthAuthorization.expires_at > observed_at,
+                    OAuthAuthorization.code_expires_at > observed_at,
+                    OAuthAuthorization.authorization_code_digest.is_not(None),
+                    OAuthAuthorization.approved_at.is_not(None),
+                    OAuthAuthorization.consumed_at.is_(None),
+                    exists(
+                        select(AuthenticationState.id).where(
+                            AuthenticationState.id == 1,
+                            AuthenticationState.epoch == epoch,
+                        )
+                    ),
+                    active_client,
+                )
+                .values(consumed_at=observed_at)
+                .returning(OAuthAuthorization)
+            )
+            authorization = result.scalar_one_or_none()
+            if authorization is None:
+                await session.commit()
+                return None
+            family_id = uuid4()
+            access = await _insert_auth_token(
+                session,
+                raw_token=raw_access_token,
+                kind="access",
+                encoded_scopes=authorization.scopes,
+                key_thumbprint=key_thumbprint,
+                expires_at=access_expires_at,
+                epoch=epoch,
+                client_id=authorization.client_id,
+                family_id=family_id,
+                now=observed_at,
+            )
+            refresh = await _insert_auth_token(
+                session,
+                raw_token=raw_refresh_token,
+                kind="refresh",
+                encoded_scopes=authorization.scopes,
+                key_thumbprint=key_thumbprint,
+                expires_at=refresh_expires_at,
+                epoch=epoch,
+                client_id=authorization.client_id,
+                family_id=family_id,
+                now=observed_at,
+            )
+            if access is None or refresh is None:
+                await session.rollback()
+                return None
+            await session.commit()
+            return ExchangedAuthorization(authorization, access, refresh)
 
 
 class AuthTokenRepository:
@@ -1179,6 +1349,93 @@ class AuthTokenRepository:
                 raise NativeClientRevoked("native client was revoked during refresh rotation")
             await session.commit()
             return token
+
+    async def rotate_refresh_pair(
+        self,
+        raw_refresh: str,
+        replacement_refresh: str,
+        raw_access: str,
+        *,
+        access_expires_at: datetime,
+        refresh_expires_at: datetime,
+        epoch: int,
+        key_thumbprint: str,
+        now: datetime | None = None,
+    ) -> RotatedTokenPair | None:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AuthToken)
+                .where(
+                    AuthToken.token_digest == digest_secret(raw_refresh),
+                    AuthToken.kind == "refresh",
+                    AuthToken.epoch == epoch,
+                    AuthToken.key_thumbprint == key_thumbprint,
+                    AuthToken.expires_at > observed_at,
+                    AuthToken.rotated_at.is_(None),
+                    AuthToken.revoked_at.is_(None),
+                )
+                .values(rotated_at=observed_at)
+                .returning(
+                    AuthToken.id,
+                    AuthToken.client_id,
+                    AuthToken.scopes,
+                    AuthToken.key_thumbprint,
+                    AuthToken.family_id,
+                )
+            )
+            row = result.one_or_none()
+            if row is None:
+                replay_family = await session.scalar(
+                    select(AuthToken.family_id).where(
+                        AuthToken.token_digest == digest_secret(raw_refresh),
+                        AuthToken.kind == "refresh",
+                        AuthToken.epoch == epoch,
+                        AuthToken.key_thumbprint == key_thumbprint,
+                        AuthToken.rotated_at.is_not(None),
+                    )
+                )
+                if replay_family is not None:
+                    await session.execute(
+                        update(AuthToken)
+                        .where(
+                            AuthToken.family_id == replay_family,
+                            AuthToken.revoked_at.is_(None),
+                        )
+                        .values(revoked_at=observed_at)
+                    )
+                await session.commit()
+                return None
+            access = await _insert_auth_token(
+                session,
+                raw_token=raw_access,
+                kind="access",
+                client_id=row[1],
+                encoded_scopes=row[2],
+                key_thumbprint=row[3],
+                family_id=row[4],
+                epoch=epoch,
+                expires_at=access_expires_at,
+                now=observed_at,
+            )
+            refresh = await _insert_auth_token(
+                session,
+                raw_token=replacement_refresh,
+                kind="refresh",
+                client_id=row[1],
+                encoded_scopes=row[2],
+                key_thumbprint=row[3],
+                family_id=row[4],
+                parent_token_id=row[0],
+                epoch=epoch,
+                expires_at=refresh_expires_at,
+                now=observed_at,
+            )
+            if access is None or refresh is None:
+                await session.rollback()
+                return None
+            await session.commit()
+            return RotatedTokenPair(access_token=access, refresh_token=refresh)
 
     async def revoke(self, raw_token: str) -> bool:
         async with self._sessions() as session:

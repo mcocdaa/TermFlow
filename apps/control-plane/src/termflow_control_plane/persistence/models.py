@@ -151,6 +151,7 @@ class OAuthAuthorization(Base):
         Uuid(as_uuid=True), ForeignKey("native_clients.id"), index=True
     )
     redirect_uri: Mapped[str] = mapped_column(String(2048))
+    request_state: Mapped[str] = mapped_column(String(256))
     scopes: Mapped[str] = mapped_column(Text)
     pkce_challenge: Mapped[str] = mapped_column(String(128))
     epoch: Mapped[int] = mapped_column(Integer)

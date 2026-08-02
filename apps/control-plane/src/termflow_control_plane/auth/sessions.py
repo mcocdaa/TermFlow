@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 from collections import OrderedDict
 from collections.abc import Callable
@@ -11,8 +12,12 @@ from urllib.parse import urlsplit
 
 from fastapi import Request, WebSocket
 
+from termflow_control_plane.auth.dpop import DpopInvalid, DpopVerifier
+from termflow_control_plane.auth.rate_limit import AuthRateLimiter
 from termflow_control_plane.auth.tokens import hash_token, secret_text_matches
 from termflow_control_plane.config import Settings
+from termflow_control_plane.errors import TermFlowError
+from termflow_control_plane.persistence.repositories import RepositoryBundle
 
 PRODUCTION_COOKIE_NAME = "__Host-termflow_session"
 DEVELOPMENT_COOKIE_NAME = "termflow_session"
@@ -169,34 +174,87 @@ def _websocket_bearer(websocket: WebSocket) -> str | None:
     return token
 
 
-def websocket_admin_authenticated(
+async def websocket_admin_close_code(
     websocket: WebSocket,
     settings: Settings,
     store: BrowserSessionStore,
-) -> bool:
-    """Browser traffic needs exact Origin; Origin-less native traffic needs Bearer."""
-
-    return websocket_admin_close_code(websocket, settings, store) is None
-
-
-def websocket_admin_close_code(
-    websocket: WebSocket,
-    settings: Settings,
-    store: BrowserSessionStore,
+    repositories: RepositoryBundle,
+    dpop: DpopVerifier,
+    *,
+    required_scope: str,
 ) -> int | None:
-    """Return an authentication/policy close code, or ``None`` when allowed."""
+    """Apply the HTTP credential policy to a protected WebSocket handshake."""
 
+    limiter: AuthRateLimiter = websocket.app.state.auth_rate_limiter
+    source = websocket.client.host if websocket.client is not None else "unknown-peer"
+    try:
+        limiter.check("protected_websocket", source)
+    except TermFlowError:
+        return 4429
     bearer = _websocket_bearer(websocket)
     origin = websocket.headers.get("origin")
+    state = await repositories.auth_state.get()
+    if origin is not None:
+        if not origin_allowed(origin, settings):
+            return 4403
+        policy = browser_cookie_policy(settings)
+        return (
+            None
+            if store.authenticate(
+                websocket.cookies.get(policy.name),
+                epoch=state.epoch,
+            )
+            is not None
+            else 4401
+        )
+    if bearer is None:
+        return 4401
     expected = settings.admin_token.get_secret_value()
-    if origin is None:
-        return None if bearer is not None and secret_text_matches(bearer, expected) else 4401
-    if not origin_allowed(origin, settings):
-        return 4403
-    if bearer is not None and secret_text_matches(bearer, expected):
+    if state.totp_enabled_at is None and secret_text_matches(bearer, expected):
         return None
-    policy = browser_cookie_policy(settings)
-    return None if store.authenticate(websocket.cookies.get(policy.name)) is not None else 4401
+    cli_token = await repositories.auth_tokens.get_active(
+        bearer,
+        epoch=state.epoch,
+        kind="cli",
+    )
+    if cli_token is not None:
+        try:
+            cli_scopes = json.loads(cli_token.scopes)
+        except (TypeError, ValueError):
+            return 4401
+        return None if isinstance(cli_scopes, list) and required_scope in cli_scopes else 4403
+    access = await repositories.auth_tokens.get_active(
+        bearer,
+        epoch=state.epoch,
+        kind="access",
+    )
+    if access is None or access.key_thumbprint is None:
+        return 4401
+    try:
+        scopes = json.loads(access.scopes)
+    except (TypeError, ValueError):
+        return 4401
+    if not isinstance(scopes, list) or required_scope not in scopes:
+        return 4403
+    proof = websocket.headers.get("dpop")
+    if proof is None:
+        return 4401
+    htu = f"{str(settings.public_base_url).rstrip('/')}{websocket.url.path}"
+    try:
+        async with limiter.verification_slot():
+            dpop.verify(
+                proof,
+                method="GET",
+                htu=htu,
+                expected_jkt=access.key_thumbprint,
+                access_token=bearer,
+                rotate_nonce=False,
+            )
+    except TermFlowError:
+        return 4429
+    except DpopInvalid:
+        return 4401
+    return None
 
 
 def websocket_browser_session_key(

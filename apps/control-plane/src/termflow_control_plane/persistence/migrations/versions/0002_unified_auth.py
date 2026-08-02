@@ -101,6 +101,7 @@ def upgrade() -> None:
         sa.Column("authorization_code_digest", sa.String(64), nullable=True),
         sa.Column("client_id", sa.Uuid(), nullable=False),
         sa.Column("redirect_uri", sa.String(2048), nullable=False),
+        sa.Column("request_state", sa.String(256), nullable=False),
         sa.Column("scopes", sa.Text(), nullable=False),
         sa.Column("pkce_challenge", sa.String(128), nullable=False),
         sa.Column("epoch", sa.Integer(), nullable=False),
