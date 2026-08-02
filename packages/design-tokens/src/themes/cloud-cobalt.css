@@ -33,6 +33,8 @@
     --color-online: #087f5b;
     --color-warning: #a95f00;
     --color-danger: #c92a3a;
+    --color-qr-foreground: #10243e;
+    --color-qr-background: #ffffff;
     --shadow-panel: 0 18px 55px #17365d24;
     --radius-sm: 0.35rem;
     --radius-md: 0.65rem;

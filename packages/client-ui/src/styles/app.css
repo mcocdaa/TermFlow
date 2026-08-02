@@ -160,7 +160,11 @@
   .server-address-row { display: flex; align-items: center; gap: var(--space-3); }
   .server-address-row code { flex: 1; min-width: 0; overflow-wrap: anywhere; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-elevated); }
   .connection-qr, .totp-setup-material { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-4); }
-  .connection-qr img, .totp-setup-material img { width: 10rem; height: 10rem; padding: var(--space-2); border-radius: var(--radius-md); background: white; }
+  .connection-qr img, .totp-setup-material img { width: 10rem; height: 10rem; padding: var(--space-2); border-radius: var(--radius-md); background: var(--color-qr-background); }
+  .themed-qr-code { display: block; width: min(100%, 18rem); height: auto; margin-inline: auto; border-radius: var(--radius-md); background: var(--color-qr-background); }
+  .qr-dialog-panel { width: min(100%, 28rem); text-align: center; }
+  .qr-dialog-panel > header { text-align: start; }
+  .qr-dialog-panel > p { color: var(--color-text-secondary); line-height: 1.6; }
   .connection-qr p, .totp-setup-material p { color: var(--color-text-secondary); line-height: 1.6; }
   .totp-setup-material code { display: block; margin-block-start: var(--space-3); overflow-wrap: anywhere; font-family: var(--font-mono); }
   .security-form, .inline-security-form, .revoke-form { width: min(100%, 34rem); margin-block-start: 0; }

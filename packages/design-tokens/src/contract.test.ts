@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const requiredTokens = [
@@ -11,12 +12,13 @@ const requiredTokens = [
   'terminal-bright-cyan', 'terminal-bright-white', 'color-border',
   'color-text-primary', 'color-text-secondary', 'color-text-muted', 'color-accent',
   'color-accent-contrast', 'color-focus', 'color-online', 'color-warning', 'color-danger',
+  'color-qr-foreground', 'color-qr-background',
   'shadow-panel', 'radius-sm', 'radius-md', 'radius-lg', 'space-1', 'space-2', 'space-3',
   'space-4', 'space-5', 'font-ui', 'font-mono',
 ]
 
 describe('design token contract', () => {
-  const workspaceRoot = resolve(process.cwd(), '../../..')
+  const workspaceRoot = fileURLToPath(new URL('../../..', import.meta.url))
   const themesDirectory = resolve(workspaceRoot, 'packages/design-tokens/src/themes')
 
   it('provides exactly three complete named themes', () => {
