@@ -3,6 +3,10 @@
     .terminal-view { height: 100dvh; grid-template-rows: auto minmax(0, 1fr) auto; }
     .terminal-titlebar { z-index: 50; gap: var(--space-1); padding-inline: max(var(--space-2), env(safe-area-inset-left)) max(var(--space-2), env(safe-area-inset-right)); }
     .terminal-frame { grid-row: 2; min-height: 0; touch-action: none; }
+    .terminal-frame,
+    .mobile-keybar { scrollbar-width: none; }
+    .terminal-frame::-webkit-scrollbar,
+    .mobile-keybar::-webkit-scrollbar { display: none; }
     .terminal-identity { flex: 1 1 auto; gap: var(--space-1); }
     .terminal-titlebar-actions { flex: 0 0 auto; gap: var(--space-1); }
     .titlebar-menu { position: static; height: 2.35rem; }
