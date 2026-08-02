@@ -153,7 +153,11 @@ def test_real_process_totp_enable_login_replay_and_disable(
 
         status = web.get("/api/v1/admin/totp")
         assert status.status_code == 200, status.text
-        assert status.json() == {"enabled": False, "available": True}
+        assert status.json() == {
+            "configured": False,
+            "enabled": False,
+            "available": True,
+        }
 
         setup = web.post(
             "/api/v1/admin/totp/setups",
@@ -169,32 +173,35 @@ def test_real_process_totp_enable_login_replay_and_disable(
             json={"code": _totp_code(secret, initial_counter - 1)},
         )
         assert confirm.status_code == 200, confirm.text
+        assert confirm.json() == {
+            "configured": True,
+            "enabled": False,
+            "available": True,
+        }
 
         logout = web.delete("/api/v1/admin/session")
         assert logout.status_code == 200, logout.text
+        direct_before_enable = web.post(
+            "/api/v1/admin/sessions",
+            json={"admin_token": termflow_system.admin_token},
+        )
+        assert direct_before_enable.status_code == 201, direct_before_enable.text
+
+        enabled = web.post(
+            "/api/v1/admin/totp/enable",
+            json={
+                "admin_token": termflow_system.admin_token,
+                "code": _totp_code(secret, initial_counter),
+            },
+        )
+        assert enabled.status_code == 200, enabled.text
+        assert enabled.json()["enabled"] is True
+
         first_challenge = web.post(
             "/api/v1/admin/sessions",
             json={"admin_token": termflow_system.admin_token},
         )
-        second_challenge = web.post(
-            "/api/v1/admin/sessions",
-            json={"admin_token": termflow_system.admin_token},
-        )
         assert first_challenge.status_code == 202, first_challenge.text
-        assert second_challenge.status_code == 202, second_challenge.text
-
-        current_code = _totp_code(secret, initial_counter)
-        completed = web.post(
-            f"/api/v1/admin/sessions/{first_challenge.json()['challenge_id']}/totp",
-            json={"code": current_code},
-        )
-        assert completed.status_code == 201, completed.text
-        replayed = web.post(
-            f"/api/v1/admin/sessions/{second_challenge.json()['challenge_id']}/totp",
-            json={"code": current_code},
-        )
-        assert replayed.status_code == 401, replayed.text
-        assert replayed.json()["error"]["code"] == "authentication_failed"
 
         disabled = web.request(
             "DELETE",
@@ -204,11 +211,25 @@ def test_real_process_totp_enable_login_replay_and_disable(
                 "code": _totp_code(secret, initial_counter + 1),
             },
         )
-        assert disabled.status_code == 204, disabled.text
+        assert disabled.status_code == 200, disabled.text
         assert web.get("/api/v1/admin/totp").json() == {
+            "configured": True,
             "enabled": False,
             "available": True,
         }
+
+        invalidated = web.post(
+            f"/api/v1/admin/sessions/{first_challenge.json()['challenge_id']}/totp",
+            json={"code": _totp_code(secret, initial_counter + 1)},
+        )
+        assert invalidated.status_code == 401, invalidated.text
+        time.sleep(float(invalidated.headers.get("retry-after", "1")) + 0.05)
+        replayed = web.post(
+            f"/api/v1/admin/sessions/{first_challenge.json()['challenge_id']}/totp",
+            json={"code": _totp_code(secret, initial_counter + 1)},
+        )
+        assert replayed.status_code == 401, replayed.text
+        assert replayed.json()["error"]["code"] == "authentication_failed"
 
         assert web.delete("/api/v1/admin/session").status_code == 200
         direct_login = web.post(
@@ -216,6 +237,38 @@ def test_real_process_totp_enable_login_replay_and_disable(
             json={"admin_token": termflow_system.admin_token},
         )
         assert direct_login.status_code == 201, direct_login.text
+
+        reset = subprocess.run(
+            [
+                str(termflow_system.repo / ".venv/bin/termflow-control"),
+                "auth",
+                "totp",
+                "reset",
+            ],
+            input="y\n",
+            text=True,
+            capture_output=True,
+            env={
+                **os.environ,
+                "TERMFLOW_ADMIN_TOKEN": termflow_system.admin_token,
+                "TERMFLOW_DATABASE_URL": (
+                    f"sqlite+aiosqlite:///{termflow_system.database_path}"
+                ),
+            },
+            timeout=5,
+            check=False,
+        )
+        assert reset.returncode == 0, reset.stdout + reset.stderr
+        assert web.get("/api/v1/admin/session").status_code == 401
+        assert web.post(
+            "/api/v1/admin/sessions",
+            json={"admin_token": termflow_system.admin_token},
+        ).status_code == 201
+        assert web.get("/api/v1/admin/totp").json() == {
+            "configured": False,
+            "enabled": False,
+            "available": True,
+        }
 
 
 def test_real_process_native_dpop_rotation_replay_and_key_binding(termflow_system) -> None:

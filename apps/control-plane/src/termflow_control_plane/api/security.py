@@ -8,7 +8,7 @@ from termflow_protocol import (
     CliTokenRequest,
     CliTokenResponse,
     TotpConfirmRequest,
-    TotpDisableRequest,
+    TotpProtectionRequest,
     TotpSetupRequest,
     TotpSetupResponse,
     TotpStatusResponse,
@@ -133,9 +133,13 @@ async def get_totp_status(
     response: Response,
     authentication: Annotated[AuthenticationService, Depends(get_authentication_service)],
 ) -> TotpStatusResponse:
-    enabled, available = await authentication.totp_status()
+    configured, enabled, available = await authentication.totp_status()
     _no_store(response)
-    return TotpStatusResponse(enabled=enabled, available=available)
+    return TotpStatusResponse(
+        configured=configured,
+        enabled=enabled,
+        available=available,
+    )
 
 
 @router.post(
@@ -204,16 +208,42 @@ async def confirm_totp_setup(
     limiter.record_success("totp_setup_confirm", source)
     await _audit_ok(http_request)
     _no_store(response)
-    return TotpStatusResponse(enabled=True, available=True)
+    return TotpStatusResponse(configured=True, enabled=False, available=True)
 
 
-@router.delete("", status_code=status.HTTP_204_NO_CONTENT)
-async def disable_totp(
-    request: TotpDisableRequest,
+@router.post("/enable", response_model=TotpStatusResponse)
+async def enable_totp(
+    request: TotpProtectionRequest,
     http_request: Request,
     response: Response,
     authentication: Annotated[AuthenticationService, Depends(get_authentication_service)],
-) -> None:
+) -> TotpStatusResponse:
+    limiter, source = await _limiter(http_request, "totp_enable")
+    try:
+        async with limiter.verification_slot():
+            enabled = await authentication.enable_totp(
+                request.admin_token.get_secret_value(),
+                request.code.get_secret_value(),
+            )
+    except (AuthenticationRejected, TotpUnavailable):
+        enabled = False
+    if not enabled:
+        limiter.record_failure("totp_enable", source)
+        await _audit_rejected(http_request)
+        raise _authentication_failed()
+    limiter.record_success("totp_enable", source)
+    await _audit_ok(http_request)
+    _no_store(response)
+    return TotpStatusResponse(configured=True, enabled=True, available=True)
+
+
+@router.delete("", response_model=TotpStatusResponse)
+async def disable_totp(
+    request: TotpProtectionRequest,
+    http_request: Request,
+    response: Response,
+    authentication: Annotated[AuthenticationService, Depends(get_authentication_service)],
+) -> TotpStatusResponse:
     limiter, source = await _limiter(http_request, "totp_disable")
     try:
         async with limiter.verification_slot():
@@ -230,3 +260,4 @@ async def disable_totp(
     limiter.record_success("totp_disable", source)
     await _audit_ok(http_request)
     _no_store(response)
+    return TotpStatusResponse(configured=True, enabled=False, available=True)

@@ -84,6 +84,15 @@ def _enable_totp(client: TestClient) -> bytes:
         json={"code": _totp(secret, int(time.time()) // 30 - 1)},
     )
     assert confirmed.status_code == 200
+    enabled = client.post(
+        "/api/v1/admin/totp/enable",
+        headers={"Origin": ORIGIN},
+        json={
+            "admin_token": ADMIN_TOKEN,
+            "code": _totp(secret, int(time.time()) // 30),
+        },
+    )
+    assert enabled.status_code == 200
     return secret
 
 
@@ -203,7 +212,7 @@ def test_cli_token_requires_fresh_replay_protected_totp_when_enabled(
     cli_token_client: TestClient,
 ) -> None:
     secret = _enable_totp(cli_token_client)
-    current_code = _totp(secret, int(time.time()) // 30)
+    current_code = _totp(secret, int(time.time()) // 30 + 1)
     missing = cli_token_client.post(
         "/api/v1/admin/cli-tokens",
         json={"admin_token": ADMIN_TOKEN},
