@@ -1,4 +1,5 @@
 import json
+import re
 from uuid import uuid4
 
 import httpx
@@ -84,9 +85,11 @@ def test_login_saves_private_config_without_printing_tokens(tmp_path, monkeypatc
             "--enrollment-token",
             "another-secret",
         ],
+        env={"GITHUB_ACTIONS": "true"},
     )
     assert refused.exit_code != 0
-    assert "--force" in refused.output
+    plain_output = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", refused.output)
+    assert "--force" in plain_output
 
 
 def test_login_accepts_public_registration_code_flag(tmp_path, monkeypatch) -> None:
