@@ -22,6 +22,14 @@ describe('DisplayMenu', () => {
     expect(wrapper.emitted('update:open')?.at(-1)).toEqual([false])
     await wrapper.setProps({ open: false })
     expect(wrapper.find('[role="menu"]').exists()).toBe(false)
+    await trigger.trigger('click')
+    await wrapper.setProps({ open: true })
+    expect(trigger.attributes('aria-expanded')).toBe('true')
+    await trigger.trigger('click')
+    expect(wrapper.emitted('update:open')?.at(-1)).toEqual([false])
+    await wrapper.setProps({ open: false })
+    expect(trigger.attributes('aria-expanded')).toBe('false')
+    expect(wrapper.find('[role="menu"]').exists()).toBe(false)
   })
 
   it('supports Escape and arrow-key focus without emitting terminal controls', async () => {

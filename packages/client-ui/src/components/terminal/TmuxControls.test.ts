@@ -28,6 +28,11 @@ describe('tmux controls', () => {
     expect(wrapper.get('[role="menu"]')).toBeTruthy()
     expect(trigger.attributes('aria-expanded')).toBe('true')
     expect(trigger.find('svg').exists()).toBe(true)
+    await trigger.trigger('click')
+    expect(wrapper.emitted('update:open')?.at(-1)).toEqual([false])
+    await wrapper.setProps({ open: false })
+    expect(trigger.attributes('aria-expanded')).toBe('false')
+    expect(wrapper.find('[role="menu"]').exists()).toBe(false)
   })
 
   it('shows server-reported bindings and sends semantic actions from the only tmux menu', async () => {

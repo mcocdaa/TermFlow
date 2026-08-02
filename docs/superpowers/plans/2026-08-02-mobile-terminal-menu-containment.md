@@ -185,8 +185,9 @@ expect(wrapper.find('[role="menu"]').exists()).toBe(false)
 Extend `responsive-contract.test.ts`:
 
 ```ts
-expect(appCss).toContain(".titlebar-button:hover:not(:disabled), .titlebar-button[aria-expanded='true']")
-expect(appCss).not.toContain(".titlebar-button:focus-visible, .titlebar-button[aria-expanded='true']")
+expect(appCss).toContain(".titlebar-button[aria-expanded='true'] {")
+expect(appCss).toContain('@media (hover: hover) and (pointer: fine) {')
+expect(appCss).not.toContain('.titlebar-button:focus-visible')
 expect(css).toContain('.titlebar-menu { position: static;')
 expect(css).toContain('.terminal-titlebar .floating-menu {')
 expect(css).toContain('max-height: calc(100dvh - 3.25rem - 2 * var(--space-2));')
@@ -210,15 +211,21 @@ Expected: component state assertions pass, but the CSS contract fails because fo
 In `app.css`, change the active fill selector to:
 
 ```css
-.titlebar-button:hover:not(:disabled),
 .titlebar-button[aria-expanded='true'] {
   border-color: var(--color-accent);
   background: color-mix(in srgb, var(--color-accent) 13%, var(--color-elevated));
   color: var(--color-accent);
 }
+@media (hover: hover) and (pointer: fine) {
+  .titlebar-button:hover:not(:disabled) {
+    border-color: var(--color-accent);
+    background: color-mix(in srgb, var(--color-accent) 13%, var(--color-elevated));
+    color: var(--color-accent);
+  }
+}
 ```
 
-Do not add a local focus rule; `reset.css` already supplies the accessible `:focus-visible` outline.
+Do not add a local focus fill rule; `reset.css` already supplies the accessible `:focus-visible` outline. Restrict hover fill to fine pointers so touch browsers cannot retain a sticky `:hover` after closing.
 
 Inside the mobile/coarse-pointer block in `terminal-responsive.css`, add:
 

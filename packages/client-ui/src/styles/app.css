@@ -125,7 +125,10 @@
   .terminal-light[data-status='closed'] { background: var(--color-danger); }
   .titlebar-menu { position: relative; height: 2.35rem; }
   .titlebar-button { height: 2.35rem; display: inline-flex; align-items: center; gap: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding-inline: var(--space-3); background: var(--color-elevated); }
-  .titlebar-button:hover:not(:disabled), .titlebar-button:focus-visible, .titlebar-button[aria-expanded='true'] { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 13%, var(--color-elevated)); color: var(--color-accent); }
+  .titlebar-button[aria-expanded='true'] { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 13%, var(--color-elevated)); color: var(--color-accent); }
+  @media (hover: hover) and (pointer: fine) {
+    .titlebar-button:hover:not(:disabled) { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 13%, var(--color-elevated)); color: var(--color-accent); }
+  }
   .viewport-lock-button[aria-pressed='true'] { border-color: var(--color-accent); background: var(--color-accent); color: var(--color-accent-contrast); }
   .menu-chevron { transition: transform 140ms ease; }
   .titlebar-button[aria-expanded='true'] .menu-chevron { transform: rotate(180deg); }
