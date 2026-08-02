@@ -166,12 +166,13 @@ def request_cookie_session(
     return store.authenticate(request.cookies.get(policy.name))
 
 
-def _websocket_bearer(websocket: WebSocket) -> str | None:
+def _websocket_authorization(websocket: WebSocket) -> tuple[str, str] | None:
     authorization = websocket.headers.get("authorization", "")
     scheme, separator, token = authorization.partition(" ")
-    if not separator or scheme.lower() != "bearer" or not token:
+    normalized_scheme = scheme.lower()
+    if not separator or normalized_scheme not in {"bearer", "dpop"} or not token:
         return None
-    return token
+    return normalized_scheme, token
 
 
 async def websocket_admin_close_code(
@@ -191,7 +192,7 @@ async def websocket_admin_close_code(
         limiter.check("protected_websocket", source)
     except TermFlowError:
         return 4429
-    bearer = _websocket_bearer(websocket)
+    authorization = _websocket_authorization(websocket)
     origin = websocket.headers.get("origin")
     state = await repositories.auth_state.get()
     if origin is not None:
@@ -207,22 +208,28 @@ async def websocket_admin_close_code(
             is not None
             else 4401
         )
-    if bearer is None:
+    if authorization is None:
         return 4401
+    scheme, bearer = authorization
     expected = settings.admin_token.get_secret_value()
-    if state.totp_enabled_at is None and secret_text_matches(bearer, expected):
+    if (
+        scheme == "bearer"
+        and state.totp_enabled_at is None
+        and secret_text_matches(bearer, expected)
+    ):
         return None
-    cli_token = await repositories.auth_tokens.get_active(
-        bearer,
-        epoch=state.epoch,
-        kind="cli",
-    )
-    if cli_token is not None:
-        try:
-            cli_scopes = json.loads(cli_token.scopes)
-        except (TypeError, ValueError):
-            return 4401
-        return None if isinstance(cli_scopes, list) and required_scope in cli_scopes else 4403
+    if scheme == "bearer":
+        cli_token = await repositories.auth_tokens.get_active(
+            bearer,
+            epoch=state.epoch,
+            kind="cli",
+        )
+        if cli_token is not None:
+            try:
+                cli_scopes = json.loads(cli_token.scopes)
+            except (TypeError, ValueError):
+                return 4401
+            return None if isinstance(cli_scopes, list) and required_scope in cli_scopes else 4403
     access = await repositories.auth_tokens.get_active(
         bearer,
         epoch=state.epoch,

@@ -431,7 +431,7 @@ def test_dpop_protects_native_event_websocket(client, admin_headers) -> None:
     tokens, nonce = exchange_authorization(client, key, jwk, transaction_id, verifier)
     access = str(tokens["access_token"])
     headers = {
-        "Authorization": f"Bearer {access}",
+        "Authorization": f"DPoP {access}",
         "DPoP": proof(
             key,
             jwk,
@@ -461,6 +461,32 @@ def test_dpop_protects_native_event_websocket(client, admin_headers) -> None:
         ):
             pass
     assert caught.value.code == 4401
+
+
+def test_native_resource_accepts_the_dpop_authorization_scheme(client) -> None:
+    key, jwk = key_and_jwk()
+    transaction_id, verifier = begin_authorization(client, jwk)
+    approve_authorization(client, transaction_id)
+    tokens, nonce = exchange_authorization(client, key, jwk, transaction_id, verifier)
+    access = str(tokens["access_token"])
+    htu = "http://127.0.0.1:8000/api/v1/dashboard"
+
+    response = client.get(
+        "/api/v1/dashboard",
+        headers={
+            "Authorization": f"DPoP {access}",
+            "DPoP": proof(
+                key,
+                jwk,
+                method="GET",
+                htu=htu,
+                nonce=nonce,
+                access_token=access,
+            ),
+        },
+    )
+
+    assert response.status_code == 200, response.text
 
 
 def test_websocket_authentication_has_a_bounded_source_burst(client) -> None:

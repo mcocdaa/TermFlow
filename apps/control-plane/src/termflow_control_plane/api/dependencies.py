@@ -48,6 +48,14 @@ def get_command_router(request: Request) -> CommandRouter:
     return cast(CommandRouter, request.app.state.command_router)
 
 
+def _dpop_credentials(request: Request) -> HTTPAuthorizationCredentials | None:
+    raw = request.headers.get("authorization", "")
+    scheme, separator, credentials = raw.partition(" ")
+    if not separator or scheme.lower() != "dpop" or not credentials:
+        return None
+    return HTTPAuthorizationCredentials(scheme=scheme, credentials=credentials)
+
+
 def _raw_bearer(credentials: HTTPAuthorizationCredentials | None) -> str:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise TermFlowError("unauthorized", 401, "Authentication is required.")
@@ -94,23 +102,32 @@ async def require_admin(
     sessions: Annotated[BrowserSessionStore, Depends(get_browser_sessions)],
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
 ) -> None:
+    credentials = credentials or _dpop_credentials(request)
     expected = settings.admin_token.get_secret_value()
     if credentials is not None:
-        supplied = _raw_bearer(credentials)
+        scheme = credentials.scheme.lower()
+        if scheme not in {"bearer", "dpop"}:
+            raise TermFlowError("unauthorized", 401, "Authentication is required.")
+        supplied = credentials.credentials
         state = await repositories.auth_state.get()
-        if secret_text_matches(supplied, expected) and state.totp_enabled_at is None:
+        if (
+            scheme == "bearer"
+            and secret_text_matches(supplied, expected)
+            and state.totp_enabled_at is None
+        ):
             return
-        cli_token = await repositories.auth_tokens.get_active(
-            supplied,
-            epoch=state.epoch,
-            kind="cli",
-        )
-        if cli_token is not None:
-            if not _has_scope(cli_token.scopes, _required_scope(request)):
-                raise TermFlowError(
-                    "insufficient_scope", 403, "The credential lacks the required scope."
-                )
-            return
+        if scheme == "bearer":
+            cli_token = await repositories.auth_tokens.get_active(
+                supplied,
+                epoch=state.epoch,
+                kind="cli",
+            )
+            if cli_token is not None:
+                if not _has_scope(cli_token.scopes, _required_scope(request)):
+                    raise TermFlowError(
+                        "insufficient_scope", 403, "The credential lacks the required scope."
+                    )
+                return
         access_token = await repositories.auth_tokens.get_active(
             supplied,
             epoch=state.epoch,
@@ -167,12 +184,12 @@ async def require_web_admin(
 ) -> None:
     """Require an epoch-current Web Cookie and exact Origin for security APIs."""
 
+    if not origin_allowed(request.headers.get("origin"), settings):
+        raise TermFlowError("origin_not_allowed", 403, "The browser Origin is not allowed.")
     state = await repositories.auth_state.get()
     policy = browser_cookie_policy(settings)
     if sessions.authenticate(request.cookies.get(policy.name), epoch=state.epoch) is None:
         raise TermFlowError("unauthorized", 401, "Authentication is required.")
-    if not origin_allowed(request.headers.get("origin"), settings):
-        raise TermFlowError("origin_not_allowed", 403, "The browser Origin is not allowed.")
 
 
 async def require_installation(
