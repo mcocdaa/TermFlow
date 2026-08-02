@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from sqlalchemy import case, delete, exists, func, insert, literal, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from termflow_control_plane.auth.secret_box import EncryptedSecret
@@ -784,9 +785,46 @@ class NativeClientRepository:
             await session.commit()
             return client
 
+    async def get_or_create(
+        self,
+        *,
+        display_name: str,
+        public_jwk: str,
+        key_thumbprint: str,
+        platform: str | None,
+        scopes: tuple[str, ...],
+        client_version: str | None = None,
+    ) -> NativeClient:
+        """Return the stable JKT owner, including across concurrent first authorization."""
+
+        existing = await self.get_by_thumbprint(key_thumbprint)
+        if existing is not None:
+            return existing
+        try:
+            return await self.create(
+                display_name=display_name,
+                public_jwk=public_jwk,
+                key_thumbprint=key_thumbprint,
+                platform=platform,
+                client_version=client_version,
+                scopes=scopes,
+            )
+        except IntegrityError:
+            winner = await self.get_by_thumbprint(key_thumbprint)
+            if winner is None:
+                raise
+            return winner
+
     async def get(self, client_id: UUID) -> NativeClient | None:
         async with self._sessions() as session:
             return await session.get(NativeClient, client_id)
+
+    async def get_by_thumbprint(self, key_thumbprint: str) -> NativeClient | None:
+        async with self._sessions() as session:
+            client: NativeClient | None = await session.scalar(
+                select(NativeClient).where(NativeClient.key_thumbprint == key_thumbprint)
+            )
+            return client
 
     async def get_active_by_thumbprint(self, key_thumbprint: str) -> NativeClient | None:
         async with self._sessions() as session:
@@ -837,6 +875,18 @@ class NativeClientRepository:
             touched = result.scalar_one_or_none() is not None
             await session.commit()
             return touched
+
+    async def update_scopes(self, client_id: UUID, scopes: tuple[str, ...]) -> bool:
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(NativeClient)
+                .where(NativeClient.id == client_id, NativeClient.revoked_at.is_(None))
+                .values(scopes=_encode_scopes(scopes), updated_at=datetime.now(UTC))
+                .returning(NativeClient.id)
+            )
+            updated = result.scalar_one_or_none() is not None
+            await session.commit()
+            return updated
 
     async def rename(self, client_id: UUID, display_name: str) -> NativeClient | None:
         async with self._sessions() as session:
@@ -956,6 +1006,38 @@ class OAuthAuthorizationRepository:
             denied = result.scalar_one_or_none()
             await session.commit()
             return denied
+
+    async def record_failure(
+        self,
+        transaction_id: UUID,
+        *,
+        epoch: int,
+        maximum: int,
+        now: datetime | None = None,
+    ) -> bool:
+        observed_at = now or datetime.now(UTC)
+        next_attempt = OAuthAuthorization.attempts + 1
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(OAuthAuthorization)
+                .where(
+                    OAuthAuthorization.id == transaction_id,
+                    OAuthAuthorization.epoch == epoch,
+                    OAuthAuthorization.expires_at > observed_at,
+                    OAuthAuthorization.consumed_at.is_(None),
+                )
+                .values(
+                    attempts=next_attempt,
+                    consumed_at=case(
+                        (next_attempt >= maximum, observed_at),
+                        else_=OAuthAuthorization.consumed_at,
+                    ),
+                )
+                .returning(OAuthAuthorization.attempts)
+            )
+            recorded = result.scalar_one_or_none() is not None
+            await session.commit()
+            return recorded
 
     async def get_active_transaction(
         self,
@@ -1449,6 +1531,45 @@ class AuthTokenRepository:
                 .returning(AuthToken.id)
             )
             revoked = result.scalar_one_or_none() is not None
+            await session.commit()
+            return revoked
+
+    async def revoke_owned_family(
+        self,
+        raw_token: str,
+        *,
+        client_id: UUID,
+        key_thumbprint: str,
+        now: datetime | None = None,
+    ) -> bool:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            token = await session.scalar(
+                select(AuthToken).where(
+                    AuthToken.token_digest == digest_secret(raw_token),
+                    AuthToken.client_id == client_id,
+                    AuthToken.key_thumbprint == key_thumbprint,
+                )
+            )
+            if token is None:
+                return False
+            family_condition = (
+                AuthToken.family_id == token.family_id
+                if token.family_id is not None
+                else AuthToken.id == token.id
+            )
+            result = await session.execute(
+                update(AuthToken)
+                .where(
+                    AuthToken.client_id == client_id,
+                    AuthToken.key_thumbprint == key_thumbprint,
+                    family_condition,
+                    AuthToken.revoked_at.is_(None),
+                )
+                .values(revoked_at=observed_at)
+                .returning(AuthToken.id)
+            )
+            revoked = bool(result.scalars().all())
             await session.commit()
             return revoked
 

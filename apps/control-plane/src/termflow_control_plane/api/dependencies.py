@@ -59,6 +59,14 @@ def _required_scope(request: Request) -> str | None:
     mutating = request.method in {"POST", "PUT", "PATCH", "DELETE"}
     if path.startswith("/api/v1/computers"):
         return "computers.write" if mutating else "computers.read"
+    if path.startswith("/api/v1/instances/") and path.endswith("/topology"):
+        return "terminal.read"
+    if (
+        path.startswith("/api/v1/instances/")
+        and "/panes/" in path
+        and path.endswith("/input")
+    ):
+        return "terminal.write"
     if path == "/api/v1/enrollment-tokens" or path.startswith("/api/v1/instances"):
         return "computers.write" if mutating else "computers.read"
     if path.startswith("/api/v1/terms"):
@@ -135,6 +143,8 @@ async def require_admin(
                 ) from exc
             except DpopInvalid as exc:
                 raise TermFlowError("invalid_dpop_proof", 401, "DPoP proof is invalid.") from exc
+            request.state.native_client_id = access_token.client_id
+            request.state.native_key_thumbprint = access_token.key_thumbprint
             response.headers["DPoP-Nonce"] = verified.next_nonce
             return
         raise TermFlowError("unauthorized", 401, "Authentication is required.")
@@ -162,25 +172,6 @@ async def require_web_admin(
     if sessions.authenticate(request.cookies.get(policy.name), epoch=state.epoch) is None:
         raise TermFlowError("unauthorized", 401, "Authentication is required.")
     if not origin_allowed(request.headers.get("origin"), settings):
-        raise TermFlowError("origin_not_allowed", 403, "The browser Origin is not allowed.")
-
-
-async def require_web_client_admin(
-    request: Request,
-    settings: Annotated[Settings, Depends(get_settings)],
-    sessions: Annotated[BrowserSessionStore, Depends(get_browser_sessions)],
-    repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
-) -> None:
-    """Require a Web Cookie and exact Origin for client-management mutations."""
-
-    state = await repositories.auth_state.get()
-    policy = browser_cookie_policy(settings)
-    if sessions.authenticate(request.cookies.get(policy.name), epoch=state.epoch) is None:
-        raise TermFlowError("unauthorized", 401, "Authentication is required.")
-    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not origin_allowed(
-        request.headers.get("origin"),
-        settings,
-    ):
         raise TermFlowError("origin_not_allowed", 403, "The browser Origin is not allowed.")
 
 

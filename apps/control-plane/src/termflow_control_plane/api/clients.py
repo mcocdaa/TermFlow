@@ -17,12 +17,12 @@ from termflow_control_plane.auth.oauth import client_response
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.repositories import RepositoryBundle
 
-from .dependencies import get_repositories, require_web_client_admin
+from .dependencies import get_repositories, require_web_admin
 
 router = APIRouter(
     prefix="/api/v1/admin/clients",
     tags=["clients"],
-    dependencies=[Depends(require_web_client_admin)],
+    dependencies=[Depends(require_web_admin)],
 )
 
 

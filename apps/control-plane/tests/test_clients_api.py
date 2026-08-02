@@ -28,9 +28,9 @@ def _web_login(client) -> None:
 def test_native_clients_are_managed_only_by_same_origin_web_session(client, admin_headers) -> None:
     _register_client(client)
 
-    assert client.get("/api/v1/admin/clients", headers=admin_headers).status_code == 401
+    assert client.get("/api/v1/admin/clients", headers=admin_headers).status_code == 403
     _web_login(client)
-    listed = client.get("/api/v1/admin/clients")
+    listed = client.get("/api/v1/admin/clients", headers={"Origin": ORIGIN})
     assert listed.status_code == 200
     [registered] = listed.json()["clients"]
     assert registered["display_name"] == "Desktop C"
@@ -73,7 +73,7 @@ def test_denied_or_abandoned_authorization_is_not_an_authorized_client(client) -
     assert denied.status_code == 200
     _web_login(client)
 
-    listed = client.get("/api/v1/admin/clients")
+    listed = client.get("/api/v1/admin/clients", headers={"Origin": ORIGIN})
 
     assert listed.status_code == 200
     assert listed.json() == {"clients": []}

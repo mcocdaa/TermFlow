@@ -6,7 +6,14 @@ from uuid import uuid4
 
 import pytest
 from starlette.websockets import WebSocketDisconnect
+from termflow_control_plane.auth.dpop import DpopVerifier, jwk_thumbprint
+from termflow_control_plane.auth.oauth import OAuthService
 from termflow_control_plane.auth.secret_box import EncryptedSecret
+from termflow_control_plane.errors import TermFlowError
+from termflow_protocol import (
+    OAuthAuthorizationDecisionRequest,
+    OAuthPublicJwk,
+)
 
 from .oauth_helpers import (
     approve_authorization,
@@ -308,6 +315,22 @@ def test_revocation_endpoint_invalidates_the_submitted_refresh_token(client) -> 
     )
     assert revoked.status_code == 200
 
+    dashboard = client.get(
+        "/api/v1/dashboard",
+        headers={
+            "Authorization": f"Bearer {access}",
+            "DPoP": proof(
+                key,
+                jwk,
+                method="GET",
+                htu="http://127.0.0.1:8000/api/v1/dashboard",
+                nonce=revoked.headers["dpop-nonce"],
+                access_token=access,
+            ),
+        },
+    )
+    assert dashboard.status_code == 401
+
     refresh = client.post(
         "/api/v1/oauth/token",
         headers={
@@ -327,6 +350,68 @@ def test_revocation_endpoint_invalidates_the_submitted_refresh_token(client) -> 
     )
     assert refresh.status_code == 400
     assert refresh.json()["error"]["code"] == "invalid_grant"
+
+
+def test_revocation_cannot_cross_native_client_or_key_ownership(client) -> None:
+    owner_key, owner_jwk = key_and_jwk()
+    owner_transaction, owner_verifier = begin_authorization(client, owner_jwk)
+    approve_authorization(client, owner_transaction)
+    owner_tokens, owner_nonce = exchange_authorization(
+        client,
+        owner_key,
+        owner_jwk,
+        owner_transaction,
+        owner_verifier,
+    )
+
+    caller_key, caller_jwk = key_and_jwk()
+    caller_transaction, caller_verifier = begin_authorization(client, caller_jwk)
+    approve_authorization(client, caller_transaction)
+    caller_tokens, caller_nonce = exchange_authorization(
+        client,
+        caller_key,
+        caller_jwk,
+        caller_transaction,
+        caller_verifier,
+    )
+    caller_access = str(caller_tokens["access_token"])
+    revoke_htu = "http://127.0.0.1:8000/api/v1/oauth/revoke"
+    response = client.post(
+        "/api/v1/oauth/revoke",
+        headers={
+            "Authorization": f"Bearer {caller_access}",
+            "DPoP": proof(
+                caller_key,
+                caller_jwk,
+                method="POST",
+                htu=revoke_htu,
+                nonce=caller_nonce,
+                access_token=caller_access,
+            ),
+        },
+        json={"token": owner_tokens["refresh_token"], "token_type_hint": "refresh_token"},
+    )
+    assert response.status_code == 200
+
+    refresh_htu = "http://127.0.0.1:8000/api/v1/oauth/token"
+    refresh = client.post(
+        "/api/v1/oauth/token",
+        headers={
+            "DPoP": proof(
+                owner_key,
+                owner_jwk,
+                method="POST",
+                htu=refresh_htu,
+                nonce=owner_nonce,
+            )
+        },
+        json={
+            "grant_type": "refresh_token",
+            "refresh_token": owner_tokens["refresh_token"],
+            "public_jwk": owner_jwk,
+        },
+    )
+    assert refresh.status_code == 200
 
 
 def test_dpop_protects_native_event_websocket(client, admin_headers) -> None:
@@ -452,6 +537,102 @@ def test_native_authorization_uses_injected_fresh_totp_verifier(client) -> None:
     assert observed == ["123456"]
 
 
+def test_authorization_transaction_is_persistently_invalidated_after_five_errors(client) -> None:
+    _, jwk = key_and_jwk()
+    transaction_id, _ = begin_authorization(client, jwk)
+    service = OAuthService(
+        client.app.state.repositories,
+        client.app.state.settings,
+        DpopVerifier(),
+    )
+
+    async def exhaust_attempts() -> str:
+        invalid = OAuthAuthorizationDecisionRequest.model_validate(
+            {
+                "transaction_id": transaction_id,
+                "decision": "allow",
+                "admin_token": "wrong-admin-token-that-is-long-enough",
+            }
+        )
+        for _ in range(5):
+            with pytest.raises(TermFlowError, match="Authentication failed"):
+                await service.decide(invalid)
+        valid = OAuthAuthorizationDecisionRequest.model_validate(
+            {
+                "transaction_id": transaction_id,
+                "decision": "allow",
+                "admin_token": "admin-token-that-is-long-enough-for-tests",
+            }
+        )
+        with pytest.raises(TermFlowError) as caught:
+            await service.decide(valid)
+        return caught.value.code
+
+    assert asyncio.run(exhaust_attempts()) == "authorization_expired"
+
+
+def test_reauthorization_updates_the_client_management_scope_snapshot(client) -> None:
+    _, jwk = key_and_jwk()
+    first_transaction, _ = begin_authorization(client, jwk, scopes=("computers.read",))
+    approve_authorization(client, first_transaction)
+    second_transaction, _ = begin_authorization(client, jwk, scopes=("terminal.write",))
+    approve_authorization(client, second_transaction)
+    response = client.post(
+        "/api/v1/admin/sessions",
+        headers={"Origin": "http://127.0.0.1:8000"},
+        json={"admin_token": "admin-token-that-is-long-enough-for-tests"},
+    )
+    assert response.status_code == 201
+
+    listed = client.get(
+        "/api/v1/admin/clients",
+        headers={"Origin": "http://127.0.0.1:8000"},
+    )
+    assert listed.status_code == 200
+    assert listed.json()["clients"][0]["scopes"] == ["terminal.write"]
+
+
+def test_concurrent_same_jkt_registration_reuses_one_native_client(client) -> None:
+    _, jwk = key_and_jwk()
+    repositories = client.app.state.repositories
+    public_jwk = OAuthPublicJwk.model_validate(jwk)
+
+    async def create_twice():
+        values = {
+            "display_name": "Concurrent C",
+            "public_jwk": public_jwk.model_dump_json(),
+            "key_thumbprint": jwk_thumbprint(jwk),
+            "platform": "linux",
+            "client_version": "1.0.0",
+            "scopes": ("terminal.read",),
+        }
+        return await asyncio.gather(
+            repositories.native_clients.get_or_create(**values),
+            repositories.native_clients.get_or_create(**values),
+        )
+
+    first, second = asyncio.run(create_twice())
+    assert first.id == second.id
+    assert len(asyncio.run(repositories.native_clients.list_all())) == 1
+
+
+def test_oauth_token_endpoint_is_no_store_for_missing_proof_and_invalid_body(client) -> None:
+    missing_proof = client.post(
+        "/api/v1/oauth/token",
+        json={"grant_type": "authorization_code"},
+    )
+    invalid_body = client.post(
+        "/api/v1/oauth/token",
+        headers={"DPoP": "malformed"},
+        json={"grant_type": "not-supported"},
+    )
+
+    assert missing_proof.status_code in {401, 422}
+    assert missing_proof.headers["cache-control"] == "no-store"
+    assert invalid_body.status_code == 422
+    assert invalid_body.headers["cache-control"] == "no-store"
+
+
 def test_static_administrator_bearer_stops_authorizing_resources_when_totp_enabled(
     client,
     admin_headers,
@@ -498,3 +679,69 @@ def test_native_access_token_scope_is_enforced_on_http_mutation(client, admin_he
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "insufficient_scope"
+
+
+def test_instance_terminal_routes_do_not_accept_computer_management_scopes(
+    client,
+    admin_headers,
+) -> None:
+    enrollment = client.post("/api/v1/enrollment-tokens", headers=admin_headers).json()["token"]
+    installation = client.post(
+        "/api/v1/installations/enroll",
+        json={"enrollment_token": enrollment},
+    ).json()
+    instance_id = uuid4()
+    registered = client.post(
+        "/api/v1/instances/register",
+        headers={"Authorization": f"Bearer {installation['installation_token']}"},
+        json={"instance_id": str(instance_id), "name": "scope-instance"},
+    )
+    assert registered.status_code == 201
+
+    key, jwk = key_and_jwk()
+    transaction_id, verifier = begin_authorization(
+        client,
+        jwk,
+        scopes=("computers.read", "computers.write"),
+    )
+    approve_authorization(client, transaction_id)
+    tokens, nonce = exchange_authorization(client, key, jwk, transaction_id, verifier)
+    access = str(tokens["access_token"])
+
+    topology_path = f"/api/v1/instances/{instance_id}/topology"
+    topology = client.get(
+        topology_path,
+        headers={
+            "Authorization": f"Bearer {access}",
+            "DPoP": proof(
+                key,
+                jwk,
+                method="GET",
+                htu=f"http://127.0.0.1:8000{topology_path}",
+                nonce=nonce,
+                access_token=access,
+            ),
+        },
+    )
+    assert topology.status_code == 403
+    assert topology.json()["error"]["code"] == "insufficient_scope"
+
+    input_path = f"/api/v1/instances/{instance_id}/panes/%1/input"
+    pane_input = client.post(
+        input_path,
+        headers={
+            "Authorization": f"Bearer {access}",
+            "DPoP": proof(
+                key,
+                jwk,
+                method="POST",
+                htu=f"http://127.0.0.1:8000{input_path}",
+                nonce=nonce,
+                access_token=access,
+            ),
+            "Idempotency-Key": str(uuid4()),
+        },
+        json={"text": "whoami", "submit": True},
+    )
+    assert pane_input.status_code == 403
+    assert pane_input.json()["error"]["code"] == "insufficient_scope"

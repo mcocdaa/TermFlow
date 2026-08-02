@@ -5,10 +5,15 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import func, inspect, select, text
+from alembic import command
+from sqlalchemy import create_engine, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from termflow_control_plane.auth.secret_box import AesGcmSecretBox
-from termflow_control_plane.persistence.database import Database, UnrecognizedDatabaseSchema
+from termflow_control_plane.persistence.database import (
+    Database,
+    UnrecognizedDatabaseSchema,
+    _migration_config,
+)
 from termflow_control_plane.persistence.models import (
     AuthAuditEvent,
     AuthChallenge,
@@ -41,7 +46,7 @@ async def test_fresh_database_is_migrated_and_starts_at_auth_epoch_one(tmp_path)
                 await connection.run_sync(lambda sync: inspect(sync).get_table_names())
             )
             revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-        assert revision == "0002"
+        assert revision == "0003"
         assert {
             "authentication_state",
             "totp_setups",
@@ -58,6 +63,30 @@ async def test_fresh_database_is_migrated_and_starts_at_auth_epoch_one(tmp_path)
         assert state.totp_last_accepted_counter is None
     finally:
         await database.dispose()
+
+
+def test_existing_unified_auth_database_is_upgraded_with_oauth_request_state(tmp_path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'existing-0002.db'}")
+    try:
+        with engine.begin() as connection:
+            config = _migration_config(connection)
+            command.upgrade(config, "0002")
+            old_columns = {
+                column["name"]
+                for column in inspect(connection).get_columns("oauth_authorizations")
+            }
+            assert "request_state" not in old_columns
+
+            command.upgrade(config, "head")
+            new_columns = {
+                column["name"]
+                for column in inspect(connection).get_columns("oauth_authorizations")
+            }
+            revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
+        assert "request_state" in new_columns
+        assert revision == "0003"
+    finally:
+        engine.dispose()
 
 
 def test_aes_gcm_secret_box_uses_random_nonce_versioned_aad_and_safe_repr(
@@ -799,7 +828,7 @@ async def test_unversioned_current_database_is_stamped_then_upgraded(tmp_path) -
     try:
         async with database.engine.connect() as connection:
             revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-        assert revision == "0002"
+        assert revision == "0003"
     finally:
         await database.dispose()
 

@@ -104,16 +104,16 @@ class OAuthService:
         if not hmac.compare_digest(calculated_jkt, request.dpop_jkt):
             raise TermFlowError("invalid_request", 400, "The authorization request is invalid.")
         state = await self._repositories.auth_state.get()
-        client = await self._repositories.native_clients.get_active_by_thumbprint(calculated_jkt)
-        if client is None:
-            client = await self._repositories.native_clients.create(
-                display_name=request.client_name,
-                public_jwk=_public_jwk_json(request.public_jwk),
-                key_thumbprint=calculated_jkt,
-                platform=request.platform,
-                client_version=request.client_version,
-                scopes=tuple(request.scopes),
-            )
+        client = await self._repositories.native_clients.get_or_create(
+            display_name=request.client_name,
+            public_jwk=_public_jwk_json(request.public_jwk),
+            key_thumbprint=calculated_jkt,
+            platform=request.platform,
+            client_version=request.client_version,
+            scopes=tuple(request.scopes),
+        )
+        if client.revoked_at is not None:
+            raise TermFlowError("client_revoked", 403, "The native client is revoked.")
         transaction_secret = secrets.token_urlsafe(32)
         return await self._repositories.oauth_authorizations.create(
             transaction_secret=transaction_secret,
@@ -156,17 +156,12 @@ class OAuthService:
         self,
         request: OAuthAuthorizationDecisionRequest,
     ) -> OAuthAuthorizationDecisionResponse:
+        state = await self._repositories.auth_state.get()
         supplied = request.admin_token.get_secret_value()
         expected = self._settings.admin_token.get_secret_value()
         if not hmac.compare_digest(supplied, expected):
+            await self._record_decision_failure(request.transaction_id, state.epoch)
             raise TermFlowError("authentication_failed", 401, "Authentication failed.")
-        state = await self._repositories.auth_state.get()
-        if state.totp_enabled_at is not None:
-            code = request.totp_code
-            if code is None or self._totp_verifier is None:
-                raise TermFlowError("authentication_failed", 401, "Authentication failed.")
-            if not await self._totp_verifier(code.get_secret_value()):
-                raise TermFlowError("authentication_failed", 401, "Authentication failed.")
         authorization = await self._repositories.oauth_authorizations.get_active_id(
             request.transaction_id,
             epoch=state.epoch,
@@ -174,6 +169,18 @@ class OAuthService:
         )
         if authorization is None:
             raise TermFlowError("authorization_expired", 400, "Authorization is unavailable.")
+        if state.totp_enabled_at is not None:
+            code = request.totp_code
+            if code is None or self._totp_verifier is None:
+                await self._record_decision_failure(request.transaction_id, state.epoch)
+                raise TermFlowError("authentication_failed", 401, "Authentication failed.")
+            try:
+                accepted = await self._totp_verifier(code.get_secret_value())
+            except Exception:
+                accepted = False
+            if not accepted:
+                await self._record_decision_failure(request.transaction_id, state.epoch)
+                raise TermFlowError("authentication_failed", 401, "Authentication failed.")
         if request.decision == "deny":
             denied = await self._repositories.oauth_authorizations.deny(
                 request.transaction_id,
@@ -195,6 +202,11 @@ class OAuthService:
         )
         if not issued:
             raise TermFlowError("authorization_expired", 400, "Authorization is unavailable.")
+        if not await self._repositories.native_clients.update_scopes(
+            authorization.client_id,
+            decode_scopes(authorization.scopes),
+        ):
+            raise TermFlowError("authorization_expired", 400, "Authorization is unavailable.")
         approved = await self._repositories.oauth_authorizations.get_active_id(
             authorization.id,
             epoch=state.epoch,
@@ -205,6 +217,14 @@ class OAuthService:
         return OAuthAuthorizationDecisionResponse(
             status="approved",
             callback_uri=_callback_uri(approved),
+        )
+
+    async def _record_decision_failure(self, transaction_id: UUID, epoch: int) -> None:
+        await self._repositories.oauth_authorizations.record_failure(
+            transaction_id,
+            epoch=epoch,
+            maximum=self._settings.auth_max_challenge_attempts,
+            now=self._clock(),
         )
 
     def verify_token_proof(
@@ -274,8 +294,18 @@ class OAuthService:
             scopes=cast(list[OAuthScope], list(scopes)),
         )
 
-    async def revoke(self, raw_token: SecretStr) -> OAuthRevokeResponse:
-        await self._repositories.auth_tokens.revoke(raw_token.get_secret_value())
+    async def revoke(
+        self,
+        raw_token: SecretStr,
+        *,
+        client_id: UUID,
+        key_thumbprint: str,
+    ) -> OAuthRevokeResponse:
+        await self._repositories.auth_tokens.revoke_owned_family(
+            raw_token.get_secret_value(),
+            client_id=client_id,
+            key_thumbprint=key_thumbprint,
+        )
         return OAuthRevokeResponse()
 
 

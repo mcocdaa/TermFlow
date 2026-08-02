@@ -154,6 +154,7 @@ class OAuthAuthorization(Base):
     request_state: Mapped[str] = mapped_column(String(256))
     scopes: Mapped[str] = mapped_column(Text)
     pkce_challenge: Mapped[str] = mapped_column(String(128))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
     epoch: Mapped[int] = mapped_column(Integer)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

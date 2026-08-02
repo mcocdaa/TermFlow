@@ -278,5 +278,13 @@ async def revoke_native_token(
     settings: Annotated[Settings, Depends(get_settings)],
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
 ) -> OAuthRevokeResponse:
+    client_id = getattr(request.state, "native_client_id", None)
+    key_thumbprint = getattr(request.state, "native_key_thumbprint", None)
+    if not isinstance(client_id, UUID) or not isinstance(key_thumbprint, str):
+        raise TermFlowError("unauthorized", 401, "A native access token is required.")
     response.headers["Cache-Control"] = "no-store"
-    return await _service(request, repositories, settings).revoke(body.token)
+    return await _service(request, repositories, settings).revoke(
+        body.token,
+        client_id=client_id,
+        key_thumbprint=key_thumbprint,
+    )

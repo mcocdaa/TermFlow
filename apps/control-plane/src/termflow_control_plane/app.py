@@ -197,6 +197,8 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
             request.state.request_id = uuid4()
         response = await call_next(request)
         response.headers["X-Request-ID"] = str(request.state.request_id)
+        if request.url.path == "/api/v1/oauth/token":
+            response.headers["Cache-Control"] = "no-store"
         return response
 
     @app.exception_handler(TermFlowError)
