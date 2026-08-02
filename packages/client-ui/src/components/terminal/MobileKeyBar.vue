@@ -9,17 +9,19 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
-import { keyNotationBytes, type MobileModifierController, type ModifierKey } from '../../terminal/modifiers'
+import { keyNotationBytes, type MobileModifierController, type ModifierKey } from '@termflow/client-core'
+import { useClientRuntime } from '../../runtime'
 const props = withDefaults(defineProps<{ prefix: string; controller: MobileModifierController; resetKey?: number; disabled?: boolean }>(), { disabled: false })
 const emit = defineEmits<{ input: [bytes: Uint8Array] }>()
+const runtime = useClientRuntime()
 const modifierKeys: Array<{ id: ModifierKey; label: string }> = [{ id: 'ctrl', label: 'Ctrl' }, { id: 'alt', label: 'Alt' }, { id: 'shift', label: 'Shift' }]
 const usablePrefix = computed(() => !!props.prefix && !/未报告|未绑定/.test(props.prefix))
-let blurTimer: ReturnType<typeof setTimeout> | null = null
+let blurTimer: unknown | null = null
 function special(key: 'Escape' | 'Tab') { emit('input', props.controller.consume(key === 'Escape' ? '\u001b' : '\t')) }
 function sendPrefix() { if (!usablePrefix.value) return; props.controller.activatePrefix(); emit('input', keyNotationBytes(props.prefix)) }
 function onKeydown() { props.controller.reset() }
-function onBlur() { blurTimer = setTimeout(() => props.controller.reset(), 1_000) }
+function onBlur() { blurTimer = runtime.clock.setTimeout(() => props.controller.reset(), 1_000) }
 watch(() => props.resetKey, () => props.controller.reset())
 onMounted(() => { window.addEventListener('keydown', onKeydown); window.addEventListener('blur', onBlur) })
-onBeforeUnmount(() => { if (blurTimer !== null) clearTimeout(blurTimer); window.removeEventListener('keydown', onKeydown); window.removeEventListener('blur', onBlur); props.controller.reset() })
+onBeforeUnmount(() => { if (blurTimer !== null) runtime.clock.clearTimeout(blurTimer); window.removeEventListener('keydown', onKeydown); window.removeEventListener('blur', onBlur); props.controller.reset() })
 </script>

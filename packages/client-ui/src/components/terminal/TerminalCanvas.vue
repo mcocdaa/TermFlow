@@ -9,22 +9,24 @@
 </template>
 
 <script setup lang="ts">
+import type { TerminalConnectionStatus } from '@termflow/client-core'
+import type { TerminalActionResultFrame } from '@termflow/client-contracts'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
-import type { TerminalAdapterFactory } from '../../terminal/terminalAdapter'
-import type { PaneTopologyDto } from '../../api/types'
-import type { TerminalSocketFactory } from '../../composables/useTerminalSession'
+import type { TerminalAdapterFactory } from '../../terminal/xtermAdapter'
+import type { PaneTopology, TerminalActionId } from '../../types'
+import type { TerminalFactory } from '../../composables/useTerminalSession'
 import { useTerminalSession } from '../../composables/useTerminalSession'
 import { displayPresentation, type DisplayMode } from '../../terminal/viewport'
 import { createPointerViewport, type PointerViewportSnapshot } from '../../composables/usePointerViewport'
-import { activeTheme } from '../../stores/theme'
+import { activeTheme } from '../../theme/theme'
 
-const props = withDefaults(defineProps<{ termId: string; displayMode?: DisplayMode; selectionActive?: boolean; mouseReportingActive?: boolean; transformInput?: (value: string | Uint8Array) => string | Uint8Array; createSocket?: TerminalSocketFactory; createAdapter?: TerminalAdapterFactory }>(), { displayMode: 'font-100', selectionActive: false, mouseReportingActive: false })
-const emit = defineEmits<{ bindings: [value: { prefix: string; prefix2?: string | null; bindings: Array<{ action: import('../../api/types').TerminalActionId; key: string | null; tooltip: string }> }]; 'reset-input': [key: number]; status: [value: import('../../terminal/socket').TerminalConnectionStatus]; 'authentication-required': []; 'action-result': [value: import('@termflow/client-contracts').TerminalActionResultFrame] }>()
+const props = withDefaults(defineProps<{ termId: string; displayMode?: DisplayMode; selectionActive?: boolean; mouseReportingActive?: boolean; transformInput?: (value: string | Uint8Array) => string | Uint8Array; createTerminal?: TerminalFactory; createAdapter?: TerminalAdapterFactory }>(), { displayMode: 'font-100', selectionActive: false, mouseReportingActive: false })
+const emit = defineEmits<{ bindings: [value: { prefix: string; prefix2?: string | null; bindings: Array<{ action: TerminalActionId; key: string | null; tooltip: string }> }]; 'reset-input': [key: number]; status: [value: TerminalConnectionStatus]; 'authentication-required': []; 'action-result': [value: TerminalActionResultFrame] }>()
 const host = ref<HTMLElement | null>(null)
 const frameElement = ref<HTMLElement | null>(null)
 const frame = ref({ width: 1, height: 1 })
 const cellMetrics = ref<{ width: number; height: number } | null>(null)
-const session = useTerminalSession(props.termId, host, props.createSocket, props.createAdapter, props.transformInput)
+const session = useTerminalSession(props.termId, host, props.createTerminal, props.createAdapter, props.transformInput)
 const { status, dimensions, bindings, terminalError, lastActionResult, resetKey, authenticationRequired } = session
 const presentation = computed(() => dimensions.value && cellMetrics.value ? displayPresentation(props.displayMode, dimensions.value, frame.value, { cellWidth: cellMetrics.value.width, cellHeight: cellMetrics.value.height }) : null)
 const pointer = createPointerViewport({ viewport: frame.value, content: frame.value, canPan: () => !props.selectionActive && !props.mouseReportingActive && session.canClientPan() })
@@ -32,7 +34,7 @@ const totalScale = computed(() => (presentation.value?.scale ?? 1) * pointer.sta
 const contentStyle = computed(() => presentation.value ? { width: `${presentation.value.gridWidth * totalScale.value}px`, height: `${presentation.value.gridHeight * totalScale.value}px` } : {})
 const gridStyle = computed(() => presentation.value ? { width: `${presentation.value.gridWidth}px`, height: `${presentation.value.gridHeight}px`, transform: `translate(${pointer.state.panX}px, ${pointer.state.panY}px) scale(${totalScale.value})` } : {})
 let observer: ResizeObserver | null = null
-let pendingFocusPane: PaneTopologyDto | null = null
+let pendingFocusPane: PaneTopology | null = null
 onMounted(() => {
   const element = frameElement.value
   if (!element) return
@@ -63,13 +65,13 @@ function point(event: PointerEvent) { return { pointerId: event.pointerId, x: ev
 function onPointerDown(event: PointerEvent) { if (event.pointerType === 'mouse') return; frameElement.value?.setPointerCapture?.(event.pointerId); pointer.pointerDown(point(event)) }
 function onPointerMove(event: PointerEvent) { if (event.pointerType !== 'mouse') pointer.pointerMove(point(event)) }
 function onPointerUp(event: PointerEvent) { if (event.pointerType === 'mouse') return; pointer.pointerUp(event.pointerId); frameElement.value?.releasePointerCapture?.(event.pointerId) }
-function focusPane(pane: PaneTopologyDto) {
+function focusPane(pane: PaneTopology) {
   pendingFocusPane = pane
   refreshCellMetrics()
   if (!cellMetrics.value) return
   applyPaneFocus(pane)
 }
-function applyPaneFocus(pane: PaneTopologyDto) {
+function applyPaneFocus(pane: PaneTopology) {
   if (!cellMetrics.value) return
   const scale = presentation.value?.scale ?? 1
   pointer.focusPane(pane, { cellWidth: cellMetrics.value.width * scale, cellHeight: cellMetrics.value.height * scale })

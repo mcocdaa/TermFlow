@@ -18,7 +18,7 @@
       </div>
       <span data-connection-status class="terminal-status">{{ statusLabel }}</span>
     </div>
-    <div class="terminal-titlebar-actions"><DisplayMenu :model-value="displayMode" :open="displayMenuOpen" @update:model-value="$emit('update:displayMode', $event)" @update:open="$emit('update:displayMenuOpen', $event)" /><slot /></div>
+    <div class="terminal-titlebar-actions"><DisplayMenu :model-value="displayMode" :open="displayMenuOpen ?? false" @update:model-value="$emit('update:displayMode', $event)" @update:open="$emit('update:displayMenuOpen', $event)" /><slot /></div>
   </header>
 </template>
 
@@ -26,8 +26,8 @@
 import { ArrowLeft, Check, X } from '@lucide/vue'
 import { computed, nextTick, ref } from 'vue'
 import { RouterLink } from 'vue-router'
+import type { TerminalConnectionStatus } from '@termflow/client-core'
 import type { DisplayMode } from '../../terminal/viewport'
-import type { TerminalConnectionStatus } from '../../terminal/socket'
 import DisplayMenu from './DisplayMenu.vue'
 const props = withDefaults(defineProps<{ title: string; computerName?: string; status?: TerminalConnectionStatus; displayMode: DisplayMode; displayMenuOpen?: boolean }>(), { computerName: 'Computer 未报告', status: 'connecting', displayMenuOpen: false })
 const emit = defineEmits<{ 'update:displayMode': [mode: DisplayMode]; 'update:displayMenuOpen': [open: boolean]; rename: [name: string] }>()

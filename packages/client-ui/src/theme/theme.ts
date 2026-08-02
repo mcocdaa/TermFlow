@@ -3,6 +3,8 @@ import { readonly, ref, type DeepReadonly, type Ref } from 'vue'
 
 export const THEME_STORAGE_KEY = 'termflow.theme'
 const DEFAULT_THEME: ThemeId = 'graphite-signal'
+export const activeTheme = ref<ThemeId>(DEFAULT_THEME)
+let configuredTheme: ThemeState | null = null
 
 export interface ThemePreferences {
   load(): ThemeId | null
@@ -35,4 +37,15 @@ export function createThemeState(preferences: ThemePreferences, target: ThemeTar
       preferences.save(theme)
     },
   }
+}
+
+export function configureActiveTheme(preferences: ThemePreferences, target: ThemeTarget): ThemeId {
+  configuredTheme = createThemeState(preferences, target)
+  activeTheme.value = configuredTheme.active.value
+  return activeTheme.value
+}
+
+export function selectActiveTheme(theme: ThemeId): void {
+  configuredTheme?.select(theme)
+  activeTheme.value = configuredTheme?.active.value ?? theme
 }

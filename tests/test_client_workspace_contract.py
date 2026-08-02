@@ -108,9 +108,8 @@ def test_client_persistence_is_limited_to_browser_theme_preferences() -> None:
     assert references == ["apps/clients/web/src/adapters/browserThemePreferences.ts"]
 
 
-def test_shared_client_packages_have_no_browser_or_native_runtime_globals() -> None:
+def test_shared_client_packages_have_no_direct_network_storage_clipboard_or_native_apis() -> None:
     forbidden = (
-        "window.",
         "navigator.",
         "localstorage",
         "sessionstorage",

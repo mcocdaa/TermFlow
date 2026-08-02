@@ -14,7 +14,7 @@ describe('DisplayMenu', () => {
     const choices = wrapper.findAll('[role="menuitemradio"]')
     expect(choices.map((item) => item.text())).toEqual(['50%', '75%', '100% 实际字号', '适应窗口'])
     expect(choices.every((item) => item.find('svg').exists())).toBe(true)
-    await choices[1].trigger('click')
+    await choices[1]!.trigger('click')
     expect(wrapper.emitted('update:modelValue')).toEqual([['scale-75']])
     expect(wrapper.emitted('update:open')?.at(-1)).toEqual([false])
     await wrapper.setProps({ open: false })

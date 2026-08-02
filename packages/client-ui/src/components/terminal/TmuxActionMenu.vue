@@ -21,10 +21,9 @@
 <script setup lang="ts">
 import { ChevronDown, Command } from '@lucide/vue'
 import { computed, nextTick, ref, useId } from 'vue'
-import type { BindingSnapshotDto } from '../../api/types'
-import type { TerminalActionId } from '../../api/types'
+import type { BindingSnapshot, TerminalActionId } from '../../types'
 import { tmuxActions, type TmuxActionDefinition } from '../../terminal/actions'
-const props = withDefaults(defineProps<{ bindings: BindingSnapshotDto; activePaneId: string | null; disabled?: boolean; open?: boolean }>(), { disabled: false, open: false })
+const props = withDefaults(defineProps<{ bindings: BindingSnapshot; activePaneId: string | null; disabled?: boolean; open?: boolean }>(), { disabled: false, open: false })
 const emit = defineEmits<{ action: [actionId: TerminalActionId, paneId: string | null]; 'request-close': [paneId: string | null, returnFocus: HTMLElement | null]; 'update:open': [open: boolean] }>()
 const drawerOpen = ref(false)
 const mobileTrigger = ref<HTMLButtonElement | null>(null)

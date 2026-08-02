@@ -1,12 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { mount } from '@vue/test-utils'
-import { createClientUi } from '@termflow/client-ui'
+import { createClientUi, TerminalTitlebar, TmuxActionMenu } from '@termflow/client-ui'
 import { createMemoryHistory } from 'vue-router'
 import { describe, expect, it } from 'vitest'
 import App from '../App.vue'
-import TerminalTitlebar from '../components/terminal/TerminalTitlebar.vue'
-import TmuxActionMenu from '../components/terminal/TmuxActionMenu.vue'
 import { createAppRouter } from '../router'
 import { createFakeRuntime } from './fakeRuntime'
 

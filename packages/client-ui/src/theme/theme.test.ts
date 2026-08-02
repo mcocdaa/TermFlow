@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ThemeId } from '@termflow/design-tokens'
-import { createThemeState, THEME_STORAGE_KEY, type ThemePreferences, type ThemeTarget } from './theme'
+import { activeTheme, configureActiveTheme, createThemeState, selectActiveTheme, THEME_STORAGE_KEY, type ThemePreferences, type ThemeTarget } from './theme'
 
 function setup(stored: ThemeId | null) {
   const preferences: ThemePreferences = { load: vi.fn(() => stored), save: vi.fn() }
@@ -22,6 +22,18 @@ describe('theme state', () => {
     expect(theme.active.value).toBe('graphite-signal')
     theme.select('midnight-indigo')
     expect(theme.active.value).toBe('midnight-indigo')
+    expect(preferences.save).toHaveBeenCalledWith('midnight-indigo')
+    expect(target.apply).toHaveBeenLastCalledWith('midnight-indigo')
+  })
+
+  it('exposes one configured active theme for shared terminal and settings UI', () => {
+    const preferences: ThemePreferences = { load: vi.fn<() => ThemeId | null>(() => 'cloud-cobalt'), save: vi.fn() }
+    const target: ThemeTarget = { apply: vi.fn() }
+    configureActiveTheme(preferences, target)
+
+    expect(activeTheme.value).toBe('cloud-cobalt')
+    selectActiveTheme('midnight-indigo')
+    expect(activeTheme.value).toBe('midnight-indigo')
     expect(preferences.save).toHaveBeenCalledWith('midnight-indigo')
     expect(target.apply).toHaveBeenLastCalledWith('midnight-indigo')
   })

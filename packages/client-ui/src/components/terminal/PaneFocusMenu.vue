@@ -11,11 +11,11 @@
 <script setup lang="ts">
 import { ChevronDown, Focus } from '@lucide/vue'
 import { nextTick, ref } from 'vue'
-import type { PaneTopologyDto } from '../../api/types'
-withDefaults(defineProps<{ panes: PaneTopologyDto[]; open?: boolean }>(), { open: false })
-const emit = defineEmits<{ focus: [pane: PaneTopologyDto]; reset: []; 'update:open': [open: boolean] }>()
+import type { PaneTopology } from '../../types'
+withDefaults(defineProps<{ panes: PaneTopology[]; open?: boolean }>(), { open: false })
+const emit = defineEmits<{ focus: [pane: PaneTopology]; reset: []; 'update:open': [open: boolean] }>()
 const trigger = ref<HTMLButtonElement | null>(null)
-function select(pane: PaneTopologyDto) { emit('focus', pane); emit('update:open', false) }
+function select(pane: PaneTopology) { emit('focus', pane); emit('update:open', false) }
 function reset() { emit('reset'); emit('update:open', false) }
 async function closeAndFocus() { emit('update:open', false); await nextTick(); trigger.value?.focus() }
 </script>

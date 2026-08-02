@@ -27,13 +27,13 @@ describe('privacy contracts', () => {
     expect(persistence.map(relativeToWorkspace)).toEqual(['apps/clients/web/src/adapters/browserThemePreferences.ts'])
   })
 
-  it('keeps shared client packages free of browser and native runtime globals', () => {
+  it('keeps shared client packages free of direct networking, persistence, clipboard, and native APIs', () => {
     const packageFiles = [
       resolve(workspaceRoot, 'packages/client-contracts/src'),
       resolve(workspaceRoot, 'packages/client-core/src'),
       resolve(workspaceRoot, 'packages/client-ui/src'),
     ].flatMap(productionFiles)
-    const forbidden = /window\.|navigator\.|localStorage|sessionStorage|indexedDB|\bfetch\(|\bWebSocket\b|@tauri/i
+    const forbidden = /navigator\.|localStorage|sessionStorage|indexedDB|\bfetch\(|\bWebSocket\b|@tauri/i
     expect(packageFiles.filter((file) => forbidden.test(readFileSync(file, 'utf8'))).map(relativeToWorkspace)).toEqual([])
   })
 

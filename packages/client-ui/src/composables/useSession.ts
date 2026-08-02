@@ -4,6 +4,11 @@ import { useClientRuntime } from '../runtime'
 
 export const sessionState = reactive({ authenticated: false, expiresAt: null as string | null })
 
+export function clearSessionState() {
+  sessionState.authenticated = false
+  sessionState.expiresAt = null
+}
+
 export function createSessionActions(api: ApiClient) {
   return {
     async refreshSession(signal?: AbortSignal) {
@@ -13,8 +18,7 @@ export function createSessionActions(api: ApiClient) {
         sessionState.expiresAt = session.expires_at ?? null
         return session
       } catch {
-        sessionState.authenticated = false
-        sessionState.expiresAt = null
+        clearSessionState()
         return { authenticated: false }
       }
     },
@@ -29,8 +33,7 @@ export function createSessionActions(api: ApiClient) {
         if (signal === undefined) await api.sessions.logout()
         else await api.sessions.logout(signal)
       } finally {
-        sessionState.authenticated = false
-        sessionState.expiresAt = null
+        clearSessionState()
       }
     },
   }

@@ -1,7 +1,6 @@
 import { createMemoryHistory, createRouter, createWebHistory, type RouterHistory } from 'vue-router'
-import { ComputersView, DashboardView, LoginView } from '@termflow/client-ui'
+import { ComputersView, DashboardView, LoginView, TerminalView } from '@termflow/client-ui'
 import NotFoundView from './views/NotFoundView.vue'
-import TerminalView from './views/TerminalView.vue'
 
 export interface RouterDependencies {
   sessionStatus: () => Promise<{ authenticated: boolean }>
