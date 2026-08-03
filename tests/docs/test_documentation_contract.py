@@ -61,8 +61,24 @@ def test_operations_docs_define_external_edge_secrets_and_native_toolchains() ->
     assert "[.env.example](.env.example)" in readme
     assert "deploy/env.example" not in readme
     assert "TERMFLOW_PUBLIC_BASE_URL" in env_example
-    assert "TERMFLOW_TRUSTED_WEB_ORIGINS" in env_example
+    assert "TERMFLOW_IMAGE" not in env_example
+    assert "TERMFLOW_TRUSTED_WEB_ORIGINS" not in env_example
     assert "反向代理" in env_example
+    assert (
+        "# TERMFLOW_TOTP_MASTER_KEY=replace-with-generated-base64url-key"
+        in env_example
+    )
+    for explanation in (
+        "8 小时",
+        "浏览器会话",
+        "一次性注册码",
+        "64 KiB",
+        "256 KiB/s",
+        "256 条",
+        "1 MiB",
+        "30 秒",
+    ):
+        assert explanation in env_example
     for boundary in ("DNS", "反向代理", "TLS", "mTLS", "不属于 TermFlow"):
         assert boundary in operations
     assert "TERMFLOW_TOTP_MASTER_KEY" in operations
@@ -78,7 +94,12 @@ def test_operations_docs_define_external_edge_secrets_and_native_toolchains() ->
         assert platform in clients
     assert "Node 22.23.2" in clients
     assert "不能" in clients and "跨平台" in clients
-    assert "TERMFLOW_TOTP_MASTER_KEY=" not in env_example
+    assert "TERMFLOW_IMAGE" not in readme
+    assert "TERMFLOW_IMAGE" not in Path("docs/troubleshooting.md").read_text()
+    assert (
+        "docker compose --env-file .env -f deploy/compose.yaml up -d --build"
+        in operations
+    )
 
 
 def test_operations_docs_explain_manual_and_release_client_boundaries() -> None:
@@ -108,7 +129,7 @@ def test_docs_distinguish_test_artifacts_from_permanent_release_assets() -> None
         "Actions artifact",
         "iOS Simulator",
         "install-termflow-node.sh",
-        "docker compose pull",
+        "up -d --build",
         "tmux 3.2",
         "systemd",
     ):

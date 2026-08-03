@@ -30,22 +30,18 @@ curl -fsSL https://github.com/mcocdaa/TermFlow/releases/download/vX.Y.Z/install-
 `~/.local/bin/termflow` 符号链接。它要求 tmux 3.2+，不使用 `sudo`、不创建 systemd 服务、
 不删除旧版本，也不应输出任何注册码或 token。回退 A 时重新运行旧 tag 的安装命令即可。
 
-B + Web C 的生产 Compose 只消费发布镜像，绝不在生产启动时构建源码：
+B + Web C 的默认 Compose 从当前 checkout 构建，不绑定 GitHub 所有者、Registry 或镜像 tag。
+部署前切换到已验证的精确源码 tag 或 commit，然后运行：
 
 ```bash
-TERMFLOW_IMAGE=ghcr.io/mcocdaa/termflow-control-plane:vX.Y.Z \
-  docker compose --env-file .env -f deploy/compose.yaml pull
-TERMFLOW_IMAGE=ghcr.io/mcocdaa/termflow-control-plane:vX.Y.Z \
-  docker compose --env-file .env -f deploy/compose.yaml up -d
+cp .env.example .env
+# 编辑 TERMFLOW_ADMIN_TOKEN 和实际的 TERMFLOW_PUBLIC_BASE_URL。
+docker compose --env-file .env -f deploy/compose.yaml up -d --build
 ```
 
-回退 B 时把 `TERMFLOW_IMAGE` 改成已验证的旧 tag，重复 `docker compose pull` 与 `up -d`；不要执行
-`down --volumes`，也不要删除 `termflow-data`。源码开发才使用显式 override：
-
-```bash
-TERMFLOW_IMAGE=termflow-control-plane:dev \
-  docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.dev.yaml up -d --build
-```
+回退 B 时切换到已验证的旧源码 tag 或 commit，重复 `up -d --build`；不要执行 `down --volumes`，
+也不要删除 `termflow-data`。GitHub Actions 或 Fork 可以使用同一个 Dockerfile 构建、标记和发布镜像，
+但镜像来源不属于普通 Compose 的运行时配置。
 
 Actions artifact 是短期测试产物：手动 `Tauri Multi-platform Packages` run 保留 14 天，不能代替
 GitHub Release。Windows asset 目前未签名；iOS Simulator asset 只能用于 Simulator，不能用于实体
@@ -60,13 +56,12 @@ iPhone。签名、notarization、TestFlight 与应用商店上传仍是后续独
 
 从仓库根目录运行 Compose 时请显式指定根目录的 env 文件；因为 Compose 文件位于
 `deploy/`，不指定时 Compose 可能把 `deploy/` 作为 project directory，进而找不到根目录
-的 `.env`。首次部署先复制示例，再按实际入口修改；使用反向代理时，
-`TERMFLOW_PUBLIC_BASE_URL` 和 `TERMFLOW_TRUSTED_WEB_ORIGINS` 应填写同一个公网 HTTPS origin：
+的 `.env`。首次部署先复制示例，再按实际入口修改；使用反向代理时，只需把
+`TERMFLOW_PUBLIC_BASE_URL` 填写为公网 HTTPS origin。B 默认使用同一个 origin 校验浏览器请求：
 
 ```bash
 cp .env.example .env
-docker compose --env-file .env -f deploy/compose.yaml pull
-docker compose --env-file .env -f deploy/compose.yaml up -d
+docker compose --env-file .env -f deploy/compose.yaml up -d --build
 ```
 
 多 B 实例不能各自使用自动文件；部署者必须生成同一个 32 字节无填充 base64url 密钥，并把

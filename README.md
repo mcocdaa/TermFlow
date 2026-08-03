@@ -25,16 +25,13 @@ termflow new --name project-a
 将 `vX.Y.Z` 替换为需要的精确 GitHub Release tag。安装器会保留旧版本；回退 A 时，只需重新运行
 旧 tag 的同一命令。确保 `~/.local/bin` 已在当前 shell 的 `PATH` 中。
 
-B 与 Web C 使用同一份已发布的 GHCR 镜像。先复制并填写环境文件中的管理员 token 和公开 URL，
-然后显式拉取和启动精确镜像 tag：
+B 与 Web C 由当前 checkout 的同一份 Dockerfile 构建。先切换到需要部署的精确源码 tag 或 commit，
+再复制并填写管理员 token 和公开 URL：
 
 ```bash
 cp .env.example .env
-# 编辑 .env：至少替换 TERMFLOW_ADMIN_TOKEN，并设置实际 HTTPS 公开 URL。
-TERMFLOW_IMAGE=ghcr.io/mcocdaa/termflow-control-plane:vX.Y.Z \
-  docker compose --env-file .env -f deploy/compose.yaml pull
-TERMFLOW_IMAGE=ghcr.io/mcocdaa/termflow-control-plane:vX.Y.Z \
-  docker compose --env-file .env -f deploy/compose.yaml up -d
+# 编辑 TERMFLOW_ADMIN_TOKEN 和实际的 TERMFLOW_PUBLIC_BASE_URL。
+docker compose --env-file .env -f deploy/compose.yaml up -d --build
 ```
 
 Windows、Linux、macOS、Android 与 iOS Simulator 客户端均作为同一 GitHub Release 的 assets 发布。

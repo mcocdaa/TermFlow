@@ -28,8 +28,8 @@ tmux -V
 校验：它会在更新 `~/.local/bin/termflow` 前失败，因此原有可用版本仍会保留。检查 Release 的
 `SHA256SUMS`、网络代理和 tag 后重试；需要回退时运行旧 Release tag 的安装器。
 
-如果 B/Web C 更新后需要回退，把 `.env` 中（或命令行设置的）`TERMFLOW_IMAGE` 改成旧的精确
-GHCR tag，再运行 `docker compose pull` 和 `docker compose up -d`。不要为了回退执行
+如果 B/Web C 更新后需要回退，切换到已验证的旧源码 tag 或 commit，再运行
+`docker compose --env-file .env -f deploy/compose.yaml up -d --build`。不要为了回退执行
 `docker compose down --volumes`，那会删除 metadata 数据卷。
 
 ## Instance 显示 bridge-down
