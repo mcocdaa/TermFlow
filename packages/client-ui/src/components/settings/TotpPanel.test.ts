@@ -31,7 +31,24 @@ describe('TotpPanel', () => {
     expect(wrapper.get('.eyebrow').text()).toBe('Two Factor Authentication')
     expect(wrapper.get('#totp-heading').text()).toBe('双重因素认证')
     expect(wrapper.text()).not.toMatch(/主密钥|环境变量|文件路径/)
+    expect(wrapper.find('.settings-copy').exists()).toBe(false)
+    expect(wrapper.get('[data-context-help] [role="tooltip"]').text()).toContain('一次性验证码')
     await wrapper.get('[data-action="activate-totp"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/settings/two-factor-auth')
+  })
+
+  it('places reconfiguration beside the bound status in the card header', async () => {
+    const runtime = createFakeRuntime({
+      api: { security: { totpStatus: vi.fn().mockResolvedValue({ configured: true, enabled: false, available: true }) } } as unknown as ClientRuntime['api'],
+    })
+    const { wrapper, router } = await mountPanel(runtime)
+
+    const actions = wrapper.get('[data-authenticator-actions]')
+    expect(actions.element.parentElement?.classList).toContain('settings-panel-heading')
+    expect(actions.get('.status-chip').text()).toBe('验证器已绑定')
+    expect(wrapper.find('.settings-panel > .settings-action-button').exists()).toBe(false)
+    await actions.get('[data-action="reconfigure-totp"]').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/settings/two-factor-auth')
   })

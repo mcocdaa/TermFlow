@@ -146,11 +146,14 @@
   .mobile-keybar-shell, .mobile-keybar { display: none; }
   .danger-button { min-height: 2.75rem; border: 1px solid var(--color-danger); border-radius: var(--radius-md); padding: var(--space-2) var(--space-4); background: var(--color-danger); color: var(--color-panel); font-weight: 750; }
   .secondary-button { min-height: 2.75rem; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-2) var(--space-4); background: var(--color-elevated); color: var(--color-text-primary); font-weight: 700; text-decoration: none; }
+  .compact-secondary-button { min-height: 2rem; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); background: var(--color-elevated); color: var(--color-text-primary); font-weight: 700; }
   .settings-page { width: min(100%, 64rem); margin-inline: auto; }
   .settings-page .page-heading p { margin-block-end: 0; color: var(--color-text-secondary); }
   .settings-panel { display: grid; gap: var(--space-4); margin-block-end: var(--space-4); padding: clamp(var(--space-4), 4vw, var(--space-5)); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-panel); box-shadow: var(--shadow-panel); }
   .settings-panel h2, .settings-panel h3, .settings-panel p { margin-block: 0; }
   .settings-panel-heading { position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
+  .settings-heading-label, .settings-panel-heading-actions { display: flex; align-items: center; gap: var(--space-2); }
+  .settings-panel-heading-actions { margin-inline-start: auto; }
   .status-chip { display: inline-flex; border: 1px solid var(--color-border); border-radius: 99rem; padding: var(--space-1) var(--space-2); color: var(--color-text-muted); font-size: 0.78rem; white-space: nowrap; }
   .status-chip[data-status='enabled'] { border-color: var(--color-online); color: var(--color-online); }
   .settings-copy, .settings-footnote { color: var(--color-text-secondary); line-height: 1.6; }
