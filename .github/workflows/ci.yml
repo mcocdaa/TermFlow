@@ -8,6 +8,28 @@ permissions:
   contents: read
 
 jobs:
+  node-install-acceptance:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv and tmux
+        run: |
+          python -m pip install --disable-pip-version-check uv==0.11.19
+          sudo apt-get update
+          sudo apt-get install --yes tmux
+
+      - name: Sync locked workspace
+        run: uv sync --frozen --all-packages
+
+      - name: Build, install, and connect the frozen Node bundle
+        run: scripts/release/verify_node_bundle.sh v0.1.0
+
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
