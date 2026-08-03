@@ -6,9 +6,15 @@ if [[ "$#" -gt 1 ]]; then
   exit 2
 fi
 
-TAG="${1:-v0.1.0}"
 SCRIPT_DIRECTORY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPOSITORY_ROOT="$(cd -- "${SCRIPT_DIRECTORY}/../.." && pwd)"
+if [[ "$#" -eq 1 ]]; then
+  TAG="$1"
+else
+  VERSION="$(python "${SCRIPT_DIRECTORY}/prepare_version.py" \
+    --root "${REPOSITORY_ROOT}" --resolve-only)"
+  TAG="v${VERSION}"
+fi
 temporary="$(mktemp -d "${TMPDIR:-/tmp}/termflow-node-verify.XXXXXX")"
 trap 'rm -rf "${temporary}"' EXIT
 

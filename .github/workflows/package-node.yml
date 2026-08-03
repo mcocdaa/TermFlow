@@ -1,12 +1,23 @@
 name: Package A · Linux Node
-run-name: Package A · ${{ inputs.release_tag || 'manual' }}
+run-name: Package A · ${{ inputs.release_tag || inputs.version || 'manual' }}
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: Build version override; defaults to 0.0.0-dev.0
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       release_tag:
         description: Validated v-prefixed release tag; empty for manual packaging
+        required: false
+        default: ""
+        type: string
+      version:
+        description: Non-release build version override
         required: false
         default: ""
         type: string
@@ -22,7 +33,9 @@ jobs:
   prepare:
     runs-on: ubuntu-22.04
     outputs:
+      version: ${{ steps.context.outputs.version }}
       tag: ${{ steps.context.outputs.tag }}
+      is_release: ${{ steps.context.outputs.is_release }}
       artifact_name: ${{ steps.context.outputs.artifact_name }}
       retention_days: ${{ steps.context.outputs.retention_days }}
     steps:
@@ -34,21 +47,20 @@ jobs:
         id: context
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
+          TERMFLOW_BUILD_VERSION: ${{ inputs.version || vars.TERMFLOW_BUILD_VERSION }}
         shell: bash
         run: |
           set -euo pipefail
-          version="$(python scripts/release/check_version.py)"
           release_tag="$RELEASE_TAG"
+          python scripts/release/prepare_version.py \
+            --tag "$release_tag" --resolve-only >/dev/null
           if [[ -n "$release_tag" ]]; then
-            python scripts/release/check_version.py --tag "$release_tag" >/dev/null
             artifact_name="termflow-${release_tag}-node-linux-x86_64"
             retention_days=1
           else
-            release_tag="v${version}"
             artifact_name="termflow-node-linux-x86_64"
             retention_days=14
           fi
-          echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
           echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
           echo "retention_days=$retention_days" >> "$GITHUB_OUTPUT"
 
@@ -61,6 +73,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Materialize build version
+        env:
+          TERMFLOW_BUILD_VERSION: ${{ needs.prepare.outputs.version }}
+        run: python scripts/release/prepare_version.py >/dev/null
       - name: Install uv and tmux
         run: |
           python -m pip install --disable-pip-version-check uv==0.11.19
@@ -71,6 +87,7 @@ jobs:
       - name: Build and verify the Node artifact
         env:
           PACKAGE_TAG: ${{ needs.prepare.outputs.tag }}
+          TERMFLOW_BUILD_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           mkdir -p release-assets

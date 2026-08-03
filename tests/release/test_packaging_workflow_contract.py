@@ -17,9 +17,20 @@ def test_node_workflow_is_manual_and_reusable() -> None:
 
     assert workflow["name"] == "Package A · Linux Node"
     assert set(triggers) == {"workflow_dispatch", "workflow_call"}
-    assert triggers["workflow_dispatch"] is None
+    assert triggers["workflow_dispatch"]["inputs"]["version"] == {
+        "description": "Build version override; defaults to 0.0.0-dev.0",
+        "required": False,
+        "default": "",
+        "type": "string",
+    }
     assert triggers["workflow_call"]["inputs"]["release_tag"] == {
         "description": "Validated v-prefixed release tag; empty for manual packaging",
+        "required": False,
+        "default": "",
+        "type": "string",
+    }
+    assert triggers["workflow_call"]["inputs"]["version"] == {
+        "description": "Non-release build version override",
         "required": False,
         "default": "",
         "type": "string",
@@ -36,6 +47,7 @@ def test_node_workflow_owns_names_retention_and_build_commands() -> None:
         "retention_days=14",
         "retention_days=1",
         "scripts/release/build_node_bundle.sh",
+        "scripts/release/prepare_version.py",
         "scripts/release/render_node_installer.py",
         "scripts/release/verify_node_bundle.sh",
         '--repository "$GITHUB_REPOSITORY"',
@@ -43,6 +55,10 @@ def test_node_workflow_owns_names_retention_and_build_commands() -> None:
         "release-assets/SHA256SUMS",
     ):
         assert required in text
+    assert "TERMFLOW_BUILD_VERSION" in text
+    assert text.index("scripts/release/prepare_version.py") < text.index(
+        "uv sync --frozen --all-packages"
+    )
 
 
 def test_control_plane_workflow_is_manual_and_reusable() -> None:
