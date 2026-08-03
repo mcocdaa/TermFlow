@@ -5,6 +5,11 @@ import { createMemoryAccessVault } from './adapters/memoryAccessVault'
 import { canonicalAuthorizeEndpoint, canonicalIssuer } from './serverConfig'
 
 describe('Tauri security composition', () => {
+  it('uses the Windows GUI subsystem for packaged release builds', () => {
+    const entrypoint = readFileSync(resolve(import.meta.dirname, '../src-tauri/src/main.rs'), 'utf8')
+    expect(entrypoint).toContain('#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]')
+  })
+
   it('keeps short-lived access in memory and exposes no browser credential storage', async () => {
     const vault = createMemoryAccessVault()
     await vault.replace('https://b.example', { accessToken: 'short-lived', expiresAt: '2026-08-02T12:00:00Z', tokenType: 'DPoP' })
