@@ -6,7 +6,7 @@
       role="dialog"
       aria-modal="true"
       :aria-labelledby="titleId"
-      :aria-describedby="descriptionId"
+      :aria-describedby="description ? descriptionId : undefined"
       @keydown="onKeydown"
     >
       <header class="qr-dialog-heading">
@@ -16,7 +16,7 @@
         </button>
       </header>
       <ThemedQrCode :value="value" :alt="title" />
-      <p :id="descriptionId">{{ description }}</p>
+      <p v-if="description" :id="descriptionId">{{ description }}</p>
     </section>
   </div>
 </template>
@@ -30,7 +30,7 @@ const props = defineProps<{
   open: boolean
   title: string
   value: string
-  description: string
+  description?: string
   returnFocus?: HTMLElement | null
 }>()
 const emit = defineEmits<{ close: [] }>()

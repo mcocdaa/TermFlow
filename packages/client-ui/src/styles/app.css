@@ -157,8 +157,9 @@
   .settings-footnote { padding-block-start: var(--space-3); border-block-start: 1px solid var(--color-border); font-size: 0.82rem; }
   .settings-warning { padding: var(--space-3); border: 1px solid var(--color-warning); border-radius: var(--radius-md); color: var(--color-warning); }
   .settings-page .theme-picker { width: 100%; margin-inline-start: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); }
-  .settings-page .theme-option { width: 100%; }
-  .server-url-heading { min-height: 2.75rem; display: flex; align-items: center; gap: var(--space-2); }
+  .settings-page .theme-option { width: 100%; justify-content: center; }
+  .server-field { display: grid; gap: var(--space-2); }
+  .server-field-heading { min-height: 2.75rem; display: flex; align-items: center; gap: var(--space-2); }
   .server-address-row { display: flex; align-items: center; gap: var(--space-3); }
   .server-address-row code { flex: 1; min-width: 0; overflow-wrap: anywhere; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-elevated); }
   .connection-qr, .totp-setup-material { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-4); }

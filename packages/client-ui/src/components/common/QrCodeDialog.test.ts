@@ -46,4 +46,16 @@ describe('QrCodeDialog', () => {
     wrapper.unmount()
     trigger.remove()
   })
+
+  it('omits description markup when concise content needs no explanation', async () => {
+    const wrapper = mount(QrCodeDialog, {
+      props: { open: true, title: '服务网址二维码', value: 'termflow://relay' },
+      global: { plugins: [createClientUi(createFakeRuntime())] },
+    })
+    await flushPromises()
+
+    const dialog = wrapper.get('[role="dialog"]')
+    expect(dialog.find('p').exists()).toBe(false)
+    expect(dialog.attributes('aria-describedby')).toBeUndefined()
+  })
 })
