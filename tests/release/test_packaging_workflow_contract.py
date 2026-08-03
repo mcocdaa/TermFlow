@@ -44,3 +44,40 @@ def test_node_workflow_owns_names_retention_and_build_commands() -> None:
         "release-assets/SHA256SUMS",
     ):
         assert required in text
+
+
+def test_control_plane_workflow_is_manual_and_reusable() -> None:
+    workflow = _workflow(CONTROL_PLANE_WORKFLOW)
+    triggers = workflow[True]
+
+    assert workflow["name"] == "Package B + Web C · Control Plane"
+    assert set(triggers) == {"workflow_dispatch", "workflow_call"}
+    assert triggers["workflow_dispatch"] is None
+    assert "release_tag" in triggers["workflow_call"]["inputs"]
+    assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["jobs"]["publish"]["permissions"] == {
+        "contents": "read",
+        "packages": "write",
+    }
+    assert workflow["jobs"]["publish"]["needs"] == ["prepare", "package"]
+
+
+def test_control_plane_manual_artifact_and_tag_publication_are_separated() -> None:
+    text = CONTROL_PLANE_WORKFLOW.read_text()
+
+    for required in (
+        "termflow-control-plane",
+        "termflow-${release_tag}-control-plane",
+        "termflow-control-plane.tar",
+        "scripts/build-control-plane-image.sh",
+        "scripts/verify-control-plane-image.sh",
+        "scripts/release/verify_control_plane_release_image.sh",
+        "scripts/release/archive_control_plane_image.sh",
+        "linux/amd64,linux/arm64",
+        "ghcr.io/${owner}/termflow-control-plane",
+        'image_tag="${RELEASE_TAG//+/_}"',
+        "docker/login-action@v3",
+        "docker buildx build",
+    ):
+        assert required in text
+    assert "if: ${{ needs.prepare.outputs.release_tag != '' }}" in text
