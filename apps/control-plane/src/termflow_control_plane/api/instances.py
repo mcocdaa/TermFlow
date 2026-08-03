@@ -26,6 +26,7 @@ from termflow_control_plane.connections.registry import InstanceOffline, LiveIns
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.models import Installation, Instance
 from termflow_control_plane.persistence.repositories import (
+    InstallationRevoked,
     InstanceOwnershipError,
     RepositoryBundle,
 )
@@ -60,6 +61,12 @@ async def register_instance(
             "instance_owned_by_another_installation",
             status.HTTP_403_FORBIDDEN,
             "The Instance belongs to another installation.",
+        ) from exc
+    except InstallationRevoked as exc:
+        raise TermFlowError(
+            "unauthorized",
+            status.HTTP_401_UNAUTHORIZED,
+            "Authentication is required.",
         ) from exc
     await registry.reactivate(instance.id)
     return InstanceRegisterResponse(instance_id=instance.id, instance_token=raw_token)

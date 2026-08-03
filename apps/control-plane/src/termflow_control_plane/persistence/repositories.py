@@ -127,6 +127,10 @@ class InstanceOwnershipError(RuntimeError):
     pass
 
 
+class InstallationRevoked(RuntimeError):
+    pass
+
+
 class NativeClientRevoked(RuntimeError):
     pass
 
@@ -241,7 +245,11 @@ class InstallationRepository:
 
     async def list_all(self) -> list[Installation]:
         async with self._sessions() as session:
-            result = await session.scalars(select(Installation).order_by(Installation.created_at))
+            result = await session.scalars(
+                select(Installation)
+                .where(Installation.revoked_at.is_(None))
+                .order_by(Installation.created_at)
+            )
             return list(result)
 
     async def rename(self, installation_id: UUID, display_name: str) -> Installation | None:
@@ -252,6 +260,24 @@ class InstallationRepository:
             installation.display_name = display_name
             await session.commit()
             return installation
+
+    async def delete(self, installation_id: UUID, *, now: datetime | None = None) -> bool:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            installation = await session.scalar(
+                select(Installation).where(
+                    Installation.id == installation_id,
+                    Installation.revoked_at.is_(None),
+                )
+            )
+            if installation is None:
+                return False
+            installation.revoked_at = observed_at
+            await session.execute(
+                delete(Instance).where(Instance.installation_id == installation_id)
+            )
+            await session.commit()
+            return True
 
 
 class InstanceRepository:
@@ -267,6 +293,9 @@ class InstanceRepository:
     ) -> Instance:
         observed_at = datetime.now(UTC)
         async with self._sessions() as session:
+            installation = await session.get(Installation, installation_id)
+            if installation is None or installation.revoked_at is not None:
+                raise InstallationRevoked(str(installation_id))
             instance = await session.get(Instance, instance_id)
             if instance is None:
                 instance = Instance(
