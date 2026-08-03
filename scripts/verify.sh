@@ -24,5 +24,5 @@ scripts/verify-tauri.sh
 docker compose -f deploy/compose.yaml config --quiet
 
 CONTROL_PLANE_IMAGE="${TERMFLOW_VERIFY_IMAGE:-termflow-control-plane:verify}"
-docker build -f deploy/Dockerfile.control-plane -t "${CONTROL_PLANE_IMAGE}" .
+scripts/build-control-plane-image.sh "${CONTROL_PLANE_IMAGE}"
 scripts/verify-control-plane-image.sh "${CONTROL_PLANE_IMAGE}"

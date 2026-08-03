@@ -86,6 +86,7 @@ def test_docker_context_excludes_local_state_and_frontend_build_output() -> None
 
 def test_delivery_scripts_verify_image_contents_and_tauri_compile_gates() -> None:
     verify = Path("scripts/verify.sh").read_text()
+    image_build = Path("scripts/build-control-plane-image.sh")
     image_check = Path("scripts/verify-control-plane-image.sh").read_text()
     tauri_check = Path("scripts/verify-tauri.sh").read_text()
     workflow = Path(".github/workflows/ci.yml").read_text()
@@ -94,8 +95,10 @@ def test_delivery_scripts_verify_image_contents_and_tauri_compile_gates() -> Non
     assert 'EXPECTED_NODE_VERSION="v22.23.2"' in verify
     assert "npm run build --workspaces --if-present" in verify
     assert "scripts/verify-tauri.sh" in verify
-    assert "docker build" in verify
+    assert image_build.is_file()
+    assert "scripts/build-control-plane-image.sh" in verify
     assert "scripts/verify-control-plane-image.sh" in verify
+    assert "scripts/build-control-plane-image.sh termflow-control-plane:ci" in workflow
 
     for expected in (
         "termflow_control_plane",

@@ -61,7 +61,10 @@ docker compose --env-file .env -f deploy/compose.yaml exec control-plane termflo
 runner 的成功不能证明 Windows/macOS 可编译，更不能证明任何已签名安装包存在。CI 的桌面
 job 在三个原生 runner 上做 `--no-bundle` 无签名编译；Android/iOS job 每次从已提交的同一份
 Tauri 配置生成平台工程，再执行 debug/unsigned 编译。缺少 Tauri 工程或生成失败都会使 CI
-失败。签名、notarization、商店上传和发布凭据属于单独受保护的 release 流程。
+失败。Control Plane 镜像构建失败时最多尝试 3 次、间隔 10 秒，用于吸收 registry 的瞬时网络
+故障；最后一次仍失败时保留原始退出码并使 CI 失败。可通过 `TERMFLOW_DOCKER_BUILD_ATTEMPTS` 和
+`TERMFLOW_DOCKER_BUILD_RETRY_DELAY_SECONDS` 调整。签名、notarization、商店上传和发布凭据
+属于单独受保护的 release 流程。
 
 ## 多平台 Tauri 测试包
 

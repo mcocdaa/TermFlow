@@ -78,7 +78,7 @@ jobs:
       - name: Validate and build Control Plane image
         run: |
           docker compose -f deploy/compose.yaml config --quiet
-          docker build -f deploy/Dockerfile.control-plane -t termflow-control-plane:ci .
+          scripts/build-control-plane-image.sh termflow-control-plane:ci
           scripts/verify-control-plane-image.sh termflow-control-plane:ci
 
       - name: Upload test metadata on failure
