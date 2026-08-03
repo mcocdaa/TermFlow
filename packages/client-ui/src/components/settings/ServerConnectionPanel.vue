@@ -3,28 +3,29 @@
     <div class="settings-panel-heading">
       <div><p class="eyebrow">Server</p><h2 id="server-heading">中继服务器</h2></div>
     </div>
-    <div data-server-label class="server-url-heading">
-      <h3>服务网址</h3>
-      <button
-        ref="qrTrigger"
-        data-action="show-server-qr"
-        class="icon-button icon-only"
-        type="button"
-        aria-label="显示服务网址二维码"
-        @click="qrOpen = true"
-      >
-        <QrCode :size="18" aria-hidden="true" />
-      </button>
-    </div>
-    <div class="server-address-row">
-      <code data-server-issuer>{{ issuer }}</code>
-      <button data-action="copy-server-url" class="secondary-button" type="button" @click="copyIssuer">{{ copied ? '已复制' : '复制' }}</button>
+    <div data-server-field class="server-field">
+      <div data-server-label class="server-field-heading">
+        <h3 id="server-url-label">服务网址</h3>
+        <button
+          ref="qrTrigger"
+          data-action="show-server-qr"
+          class="icon-button icon-only"
+          type="button"
+          aria-label="显示服务网址二维码"
+          @click="qrOpen = true"
+        >
+          <QrCode :size="18" aria-hidden="true" />
+        </button>
+      </div>
+      <div class="server-address-row" aria-labelledby="server-url-label">
+        <code data-server-issuer>{{ issuer }}</code>
+        <button data-action="copy-server-url" class="secondary-button" type="button" @click="copyIssuer">{{ copied ? '已复制' : '复制' }}</button>
+      </div>
     </div>
     <QrCodeDialog
       :open="qrOpen"
       title="服务网址二维码"
       :value="qrPayload"
-      description="二维码仅包含公开服务网址和协议版本。"
       :return-focus="qrTrigger"
       @close="qrOpen = false"
     />

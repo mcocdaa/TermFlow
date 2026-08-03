@@ -40,11 +40,17 @@ describe('TotpActivationView', () => {
     await flushPromises()
 
     expect(wrapper.findAll('[data-guide-step]')).toHaveLength(5)
+    expect(wrapper.text()).not.toContain('管理员 Token 只用于本次验证，不会保存在客户端。')
+    expect(wrapper.text()).not.toContain('使用你的验证器 App 完成绑定')
     await wrapper.get('input[name="setup-admin-token"]').setValue('admin-secret')
     await wrapper.get('[data-action="begin-totp-setup"]').trigger('submit')
     await flushPromises()
     expect(wrapper.text()).toContain('SETUPKEY')
     expect(wrapper.find('.themed-qr-code').exists()).toBe(true)
+    expect(wrapper.get('[data-setup-key-label]').text()).toBe('设置密钥')
+    expect(wrapper.get('[data-action="explain-setup-key"]').attributes('aria-label')).toBe('说明设置密钥')
+    expect(wrapper.get('[data-context-help] [role="tooltip"]').text()).toContain('无法扫码')
+    expect(wrapper.text()).not.toContain('在验证器 App 中扫码，或手工输入下面的设置密钥。')
 
     await wrapper.get('input[name="setup-confirm-code"]').setValue('123456')
     await wrapper.get('[data-action="confirm-totp-setup"]').trigger('submit')
@@ -53,6 +59,10 @@ describe('TotpActivationView', () => {
     expect(wrapper.get('[role="switch"]').attributes('aria-checked')).toBe('false')
     expect(wrapper.get('[data-totp-protection-label]').classes()).toContain('security-setting-label')
     expect(wrapper.get('[data-action="explain-totp-protection"]').attributes('aria-label')).toBe('说明启用双重认证登录')
+    const configuredHeading = wrapper.get('[data-configured-authenticator-heading]')
+    expect(configuredHeading.get('h2').text()).toBe('验证器已绑定')
+    expect(configuredHeading.get('[data-action="reconfigure-totp"]').text()).toBe('重新配置')
+    expect(wrapper.find('.totp-guide-card > .settings-action-button').exists()).toBe(false)
 
     await wrapper.get('[role="switch"]').trigger('click')
     await wrapper.get('input[name="admin-token"]').setValue('admin-again')

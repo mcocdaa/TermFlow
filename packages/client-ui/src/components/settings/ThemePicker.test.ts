@@ -59,6 +59,7 @@ describe('ThemePicker', () => {
 
     const css = readFileSync(resolve(process.cwd(), 'src/styles/app.css'), 'utf8')
     expect(css).toContain('grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));')
+    expect(css).toContain('.settings-page .theme-option { width: 100%; justify-content: center; }')
     expect(css).not.toContain('.settings-page .theme-picker { width: fit-content;')
   })
 })

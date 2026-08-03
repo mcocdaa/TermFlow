@@ -16,6 +16,9 @@ describe('TotpProtectionDialog', () => {
       global: { plugins: [createClientUi(runtime)] },
     })
 
+    expect(wrapper.text()).not.toContain('请输入管理员 Token 和验证器刚生成的 6 位验证码。')
+    expect(wrapper.get('label[for="protection-admin-token"]').text()).toBe('管理员 Token')
+    expect(wrapper.get('label[for="protection-totp-code"]').text()).toBe('当前验证码')
     await wrapper.get('input[name="admin-token"]').setValue('admin-secret')
     await wrapper.get('input[name="totp-code"]').setValue('123456')
     await wrapper.get('form').trigger('submit')

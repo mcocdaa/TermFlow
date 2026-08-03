@@ -109,6 +109,8 @@ test('uses env-authoritative relay settings and the complete authenticator lifec
   await expect(themeOptions).toHaveCount(3)
   const widths = await themeOptions.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().width))
   expect(Math.max(...widths) - Math.min(...widths)).toBeLessThan(1)
+  const alignments = await themeOptions.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).justifyContent))
+  expect(alignments).toEqual(['center', 'center', 'center'])
   await appearance.getByRole('radio', { name: '云端钴蓝' }).click()
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'cloud-cobalt')
 
@@ -123,11 +125,10 @@ test('uses env-authoritative relay settings and the complete authenticator lifec
   const qrDialogSpacing = await qrDialog.evaluate((dialog) => {
     const header = dialog.querySelector('header')!.getBoundingClientRect()
     const image = dialog.querySelector('img')!.getBoundingClientRect()
-    const description = dialog.querySelector('p')!.getBoundingClientRect()
-    return { headingToImage: image.top - header.bottom, imageToDescription: description.top - image.bottom }
+    return { headingToImage: image.top - header.bottom }
   })
   expect(qrDialogSpacing.headingToImage).toBeGreaterThanOrEqual(12)
-  expect(qrDialogSpacing.imageToDescription).toBeGreaterThanOrEqual(12)
+  await expect(qrDialog.locator('p')).toHaveCount(0)
   const qrEvidence = await qrImage.evaluate((image) => {
     const styles = getComputedStyle(document.documentElement)
     const source = (image as HTMLImageElement).src
@@ -162,6 +163,8 @@ test('uses env-authoritative relay settings and the complete authenticator lifec
   await page.getByRole('button', { name: '激活双重因素认证' }).click()
   await expect(page).toHaveURL(/\/settings\/two-factor-auth$/)
   await expect(page.locator('[data-guide-step]')).toHaveCount(5)
+  await expect(page.getByText('管理员 Token 只用于本次验证，不会保存在客户端。')).toHaveCount(0)
+  await expect(page.getByText(/使用你的验证器 App 完成绑定/)).toHaveCount(0)
   const activationGeometry = await page.evaluate(() => {
     const card = document.querySelector<HTMLElement>('.totp-guide-card')!.getBoundingClientRect()
     const form = document.querySelector<HTMLElement>('[data-action="begin-totp-setup"]')!.getBoundingClientRect()
@@ -180,6 +183,8 @@ test('uses env-authoritative relay settings and the complete authenticator lifec
   await page.locator('[data-action="begin-totp-setup"]').getByRole('button', { name: '继续' }).click()
   const setupKey = (await page.locator('[data-setup-key]').textContent())?.trim() ?? ''
   expect(setupKey).not.toBe('')
+  await expect(page.locator('[data-setup-key-label]')).toHaveText('设置密钥')
+  await expect(page.getByRole('button', { name: '说明设置密钥' })).toBeVisible()
   const setupQr = page.getByRole('img', { name: '验证器设置二维码' })
   await expect(setupQr).toBeVisible()
   const setupQrEvidence = await setupQr.evaluate((image) => {
@@ -199,6 +204,8 @@ test('uses env-authoritative relay settings and the complete authenticator lifec
   await page.getByLabel('验证器生成的第一个 6 位验证码').fill(totpForCounter(setupKey, setupCounter))
   await page.getByRole('button', { name: '确认绑定' }).click()
   await expect(page.getByRole('heading', { name: '验证器已绑定' })).toBeVisible()
+  const configuredHeading = page.locator('[data-configured-authenticator-heading]')
+  await expect(configuredHeading.getByRole('button', { name: '重新配置' })).toBeVisible()
   const protectionSwitch = page.getByRole('switch', { name: '启用双重认证登录' })
   await expect(protectionSwitch).toHaveAttribute('aria-checked', 'false')
   const protectionLabel = page.locator('[data-totp-protection-label]')
@@ -214,6 +221,13 @@ test('uses env-authoritative relay settings and the complete authenticator lifec
   })
   expect(labelGeometry.helpTop).toBeLessThan(labelGeometry.titleBottom)
   expect(labelGeometry.helpBottom).toBeGreaterThan(labelGeometry.titleTop)
+  const tooltipGeometry = await protectionLabel.locator('xpath=..').evaluate((row) => {
+    const rowBox = row.getBoundingClientRect()
+    const tooltipBox = row.querySelector<HTMLElement>('[role="tooltip"]')!.getBoundingClientRect()
+    return { rowLeft: rowBox.left, rowRight: rowBox.right, tooltipLeft: tooltipBox.left, tooltipRight: tooltipBox.right }
+  })
+  expect(tooltipGeometry.tooltipLeft).toBeGreaterThanOrEqual(tooltipGeometry.rowLeft)
+  expect(tooltipGeometry.tooltipRight).toBeLessThanOrEqual(tooltipGeometry.rowRight)
 
   const enableCounter = currentCounter()
   await protectionSwitch.click()
@@ -234,6 +248,9 @@ test('uses env-authoritative relay settings and the complete authenticator lifec
   await expect(page.getByRole('heading', { name: '控制中心' })).toBeVisible()
 
   await page.locator('.side-nav a[href="/settings"]').click()
+  const authenticatorActions = page.locator('[data-authenticator-actions]')
+  await expect(authenticatorActions.getByText('验证器已绑定', { exact: true })).toBeVisible()
+  await expect(authenticatorActions.getByRole('button', { name: '重新配置' })).toBeVisible()
   const persistedSwitch = page.getByRole('switch', { name: '启用双重认证登录' })
   await expect(persistedSwitch).toHaveAttribute('aria-checked', 'true')
   await persistedSwitch.click()

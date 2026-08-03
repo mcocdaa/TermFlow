@@ -1,7 +1,7 @@
 <template>
   <div class="page settings-page totp-activation-view">
     <header class="page-heading totp-guide-heading">
-      <div class="totp-guide-heading-copy"><p class="eyebrow">Two Factor Authentication</p><h1>双重因素认证</h1><p>使用你的验证器 App 完成绑定，再决定是否对新登录启用保护。</p></div>
+      <div class="totp-guide-heading-copy"><p class="eyebrow">Two Factor Authentication</p><h1>双重因素认证</h1></div>
       <RouterLink class="secondary-button" to="/settings">返回设置</RouterLink>
     </header>
     <ol class="totp-guide-steps" aria-label="激活步骤">
@@ -13,7 +13,20 @@
       <template v-else-if="setup">
         <div class="totp-setup-material">
           <ThemedQrCode :value="setup.provisioning_uri" alt="验证器设置二维码" />
-          <div class="totp-setup-copy"><h2>扫描二维码</h2><p>在验证器 App 中扫码，或手工输入下面的设置密钥。</p><code data-setup-key>{{ setup.setup_key }}</code></div>
+          <div class="totp-setup-copy">
+            <h2>扫描二维码</h2>
+            <div class="setup-key-field">
+              <div class="setup-key-heading">
+                <h3 data-setup-key-label>设置密钥</h3>
+                <ContextHelp
+                  data-action="explain-setup-key"
+                  label="说明设置密钥"
+                  text="无法扫码时，在验证器 App 中手工输入此设置密钥。"
+                />
+              </div>
+              <code data-setup-key>{{ setup.setup_key }}</code>
+            </div>
+          </div>
         </div>
         <form data-action="confirm-totp-setup" class="inline-security-form" @submit.prevent="confirmSetup">
           <label for="activation-confirm-code">验证器生成的第一个 6 位验证码</label>
@@ -23,7 +36,7 @@
         </form>
       </template>
       <template v-else-if="!status.configured || reconfiguring">
-        <div class="totp-guide-intro"><h2>{{ status.configured ? '重新配置验证器' : '验证管理员身份' }}</h2><p>管理员 Token 只用于本次验证，不会保存在客户端。</p></div>
+        <div class="totp-guide-intro"><h2>{{ status.configured ? '重新配置验证器' : '验证管理员身份' }}</h2></div>
         <form data-action="begin-totp-setup" class="security-form" @submit.prevent="beginSetup">
           <label for="activation-admin-token">管理员 Token</label>
           <input id="activation-admin-token" v-model="adminToken" name="setup-admin-token" type="password" autocomplete="off" required />
@@ -36,12 +49,14 @@
         </form>
       </template>
       <template v-else>
-        <div class="totp-guide-intro"><h2>验证器已绑定</h2><p>绑定完成。登录保护目前{{ status.enabled ? '已开启' : '未开启' }}。</p></div>
+        <div data-configured-authenticator-heading class="configured-authenticator-heading">
+          <h2>验证器已绑定</h2>
+          <button data-action="reconfigure-totp" class="compact-secondary-button" type="button" @click="reconfiguring = true">重新配置</button>
+        </div>
         <div class="security-setting-row">
           <TotpProtectionLabel />
           <button ref="switchButton" class="toggle-switch" type="button" role="switch" :aria-checked="status.enabled" aria-label="启用双重认证登录" @click="dialogOpen = true"><span aria-hidden="true" /></button>
         </div>
-        <button class="secondary-button settings-action-button" type="button" @click="reconfiguring = true">重新配置验证器</button>
       </template>
     </section>
     <TotpProtectionDialog
@@ -57,6 +72,7 @@
 <script setup lang="ts">
 import type { TotpSetupResponse, TotpStatusResponse } from '@termflow/client-contracts'
 import { onMounted, reactive, ref } from 'vue'
+import ContextHelp from '../components/common/ContextHelp.vue'
 import ThemedQrCode from '../components/common/ThemedQrCode.vue'
 import TotpProtectionLabel from '../components/settings/TotpProtectionLabel.vue'
 import TotpProtectionDialog from '../components/settings/TotpProtectionDialog.vue'

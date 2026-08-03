@@ -8,7 +8,6 @@
         </div>
         <button data-action="close-protection-dialog" class="icon-button icon-only" type="button" aria-label="关闭" @click="close"><X :size="18" aria-hidden="true" /></button>
       </header>
-      <p>请输入管理员 Token 和验证器刚生成的 6 位验证码。</p>
       <form class="security-form" @submit.prevent="submit">
         <label for="protection-admin-token">管理员 Token</label>
         <input id="protection-admin-token" ref="adminInput" v-model="adminToken" name="admin-token" type="password" autocomplete="off" required />
