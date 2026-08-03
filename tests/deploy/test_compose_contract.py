@@ -3,6 +3,34 @@ from pathlib import Path
 import yaml
 
 
+def test_production_compose_uses_an_explicit_release_image_without_source_build() -> None:
+    compose = yaml.safe_load(Path("deploy/compose.yaml").read_text())
+    service = compose["services"]["control-plane"]
+
+    assert service["image"] == "${TERMFLOW_IMAGE:?set TERMFLOW_IMAGE to a pinned GHCR tag}"
+    assert "build" not in service
+
+
+def test_development_override_owns_the_local_source_build() -> None:
+    compose = yaml.safe_load(Path("deploy/compose.dev.yaml").read_text())
+
+    assert compose["services"]["control-plane"]["build"] == {
+        "context": "..",
+        "dockerfile": "deploy/Dockerfile.control-plane",
+    }
+
+
+def test_release_image_smoke_uses_an_isolated_test_volume() -> None:
+    verifier = Path("scripts/release/verify_control_plane_release_image.sh").read_text()
+    workflow = Path(".github/workflows/ci.yml").read_text()
+
+    assert "TERMFLOW_DATA_VOLUME=\"${PROJECT}-data\"" in verifier
+    assert "up -d --wait" in verifier
+    assert "down --volumes --remove-orphans" in verifier
+    assert "http://127.0.0.1:18076/healthz" in verifier
+    assert "verify_control_plane_release_image.sh termflow-control-plane:ci" in workflow
+
+
 def test_compose_is_single_worker_and_persists_only_metadata() -> None:
     compose = yaml.safe_load(Path("deploy/compose.yaml").read_text())
     service = compose["services"]["control-plane"]
@@ -10,7 +38,9 @@ def test_compose_is_single_worker_and_persists_only_metadata() -> None:
     assert service["volumes"] == ["termflow-data:/app/data"]
     assert service["healthcheck"]["test"][-1].endswith("/healthz")
     assert list(compose["services"]) == ["control-plane"]
-    assert compose["volumes"]["termflow-data"] == {"name": "termflow-data"}
+    assert compose["volumes"]["termflow-data"] == {
+        "name": "${TERMFLOW_DATA_VOLUME:-termflow-data}"
+    }
 
 
 def test_compose_configures_same_origin_web_control_limits() -> None:
