@@ -37,6 +37,13 @@ docker compose --env-file .env -f deploy/compose.yaml up -d --build
 Windows、Linux、macOS、Android 与 iOS Simulator 客户端均作为同一 GitHub Release 的 assets 发布。
 当前 Windows 包未签名；iOS asset 仅能用于 Simulator，不能安装到实体 iPhone。
 
+Actions 页面还提供三套独立的手动测试包：A 的
+`termflow-node-linux-x86_64.tar.gz` 和安装器、B + Web C 的
+`termflow-control-plane.tar`，以及原生 C 的 Windows NSIS、Linux deb/AppImage、macOS、
+Android 和 iOS Simulator 包。手动 Artifact 使用稳定名称并保留 14 天；只有 Tag Release 才会推送 GHCR
+和创建永久 GitHub Release。下载 B 的手动 tar 后可执行
+`docker load -i termflow-control-plane.tar`，但它不会自动修改现有 Compose 部署。
+
 ## 源码开发环境要求
 
 - Linux、macOS 或 WSL；

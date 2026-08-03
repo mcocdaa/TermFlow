@@ -16,8 +16,9 @@ uv run --package termflow-node termflow list --json
 
 ## Release 安装器或升级失败
 
-正式 Linux A 使用 GitHub Release 的 `install-termflow-node.sh`，不是 Actions artifact。先确认
-下载的精确 tag 与本机版本：
+正式 Linux A 使用 GitHub Release 的 `install-termflow-node.sh`。手动 A workflow 的 Artifact
+也包含同一安装器、bundle 和中间 `SHA256SUMS`，但只保留 14 天；先确认安装器对应的精确版本与
+本机版本：
 
 ```bash
 termflow --version
@@ -27,6 +28,18 @@ tmux -V
 安装器要求 Linux x86_64、tmux 3.2+、`curl` 与 `sha256sum`。出现 SHA256/checksum 失败时不要绕过
 校验：它会在更新 `~/.local/bin/termflow` 前失败，因此原有可用版本仍会保留。检查 Release 的
 `SHA256SUMS`、网络代理和 tag 后重试；需要回退时运行旧 Release tag 的安装器。
+
+手动 A 的离线安装失败时，确认已把 Artifact 完整解压到同一目录，并从该目录执行：
+
+```bash
+TERMFLOW_RELEASE_BASE_URL="file://$PWD" ./install-termflow-node.sh
+```
+
+不要单独移动安装器、bundle 或 `SHA256SUMS`，也不要删除校验步骤。
+
+手动 B 的 `termflow-control-plane.tar` 无法导入时，先确认 Artifact 已完整解压且 Docker daemon
+可用，再运行 `docker load -i termflow-control-plane.tar`。导入只把镜像加入本机，不会自动更新
+Compose 服务；不要用 `docker system prune` 排障，也不要删除 `termflow-data`。
 
 如果 B/Web C 更新后需要回退，切换到已验证的旧源码 tag 或 commit，再运行
 `docker compose --env-file .env -f deploy/compose.yaml up -d --build`。不要为了回退执行

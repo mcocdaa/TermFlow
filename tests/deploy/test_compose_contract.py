@@ -26,6 +26,7 @@ def test_release_image_smoke_is_independent_from_runtime_compose() -> None:
     assert "docker rm --force" in verifier
     assert "docker volume rm" in verifier
     assert "TERMFLOW_IMAGE" not in verifier
+    assert "TERMFLOW_IMAGE" not in workflow
     assert "docker compose" not in verifier
     assert "http://127.0.0.1:18076/healthz" in verifier
     assert "verify_control_plane_release_image.sh termflow-control-plane:ci" in workflow
