@@ -18,7 +18,9 @@ mkdir -p "${release_directory}"
 (cd "${release_directory}" && sha256sum termflow-node-linux-x86_64.tar.gz > SHA256SUMS)
 
 installer="${temporary}/install-termflow-node.sh"
-uv run --frozen python "${SCRIPT_DIRECTORY}/render_node_installer.py" "${TAG}" "${installer}"
+REPOSITORY="${GITHUB_REPOSITORY:-mcocdaa/TermFlow}"
+uv run --frozen python "${SCRIPT_DIRECTORY}/render_node_installer.py" \
+  "${TAG}" "${installer}" --repository "${REPOSITORY}"
 install_home="${temporary}/home"
 HOME="${install_home}" \
   TERMFLOW_RELEASE_BASE_URL="file://${release_directory}" \
