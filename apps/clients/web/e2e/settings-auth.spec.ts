@@ -116,8 +116,21 @@ test('uses env-authoritative relay settings and the complete authenticator lifec
 
   const server = page.locator('section.settings-panel').filter({ has: page.getByRole('heading', { name: '中继服务器' }) })
   await expect(server.locator('.eyebrow')).toHaveText('Server')
-  await expect(server.getByRole('heading', { name: '服务网址' })).toBeVisible()
+  await expect(server.locator('[data-server-label]')).toHaveText('服务网址')
   await expect(server.locator('[data-server-issuer]')).toHaveText(baseUrl)
+  const serverFieldGeometry = await server.locator('[data-server-field]').evaluate((field) => {
+    const label = field.querySelector<HTMLElement>('[data-server-label]')!
+    const value = field.querySelector<HTMLElement>('.server-address-row')!
+    const labelBox = label.getBoundingClientRect()
+    const valueBox = value.getBoundingClientRect()
+    return {
+      labelFontSize: Number.parseFloat(getComputedStyle(label).fontSize),
+      labelToValueGap: valueBox.top - labelBox.bottom,
+    }
+  })
+  expect(serverFieldGeometry.labelFontSize).toBeLessThanOrEqual(16)
+  expect(serverFieldGeometry.labelToValueGap).toBeGreaterThanOrEqual(4)
+  expect(serverFieldGeometry.labelToValueGap).toBeLessThanOrEqual(12)
   await server.getByRole('button', { name: '显示服务网址二维码' }).click()
   const qrDialog = page.getByRole('dialog', { name: '服务网址二维码' })
   const qrImage = qrDialog.getByRole('img', { name: '服务网址二维码' })
@@ -162,7 +175,10 @@ test('uses env-authoritative relay settings and the complete authenticator lifec
   await page.locator('.side-nav a[href="/settings"]').click()
   await page.getByRole('button', { name: '激活双重因素认证' }).click()
   await expect(page).toHaveURL(/\/settings\/two-factor-auth$/)
-  await expect(page.locator('[data-guide-step]')).toHaveCount(5)
+  const activationSteps = page.locator('[data-guide-step]')
+  await expect(activationSteps).toHaveCount(3)
+  await expect(activationSteps.nth(0)).toHaveAttribute('data-state', 'current')
+  await expect(activationSteps.nth(0)).toHaveAttribute('aria-current', 'step')
   await expect(page.getByText('管理员 Token 只用于本次验证，不会保存在客户端。')).toHaveCount(0)
   await expect(page.getByText(/使用你的验证器 App 完成绑定/)).toHaveCount(0)
   const activationGeometry = await page.evaluate(() => {
@@ -181,12 +197,24 @@ test('uses env-authoritative relay settings and the complete authenticator lifec
   expect(activationGeometry.nextHeight).toBeGreaterThanOrEqual(44)
   await page.getByLabel('管理员 Token').fill(adminToken)
   await page.locator('[data-action="begin-totp-setup"]').getByRole('button', { name: '继续' }).click()
-  const setupKey = (await page.locator('[data-setup-key]').textContent())?.trim() ?? ''
-  expect(setupKey).not.toBe('')
-  await expect(page.locator('[data-setup-key-label]')).toHaveText('设置密钥')
-  await expect(page.getByRole('button', { name: '说明设置密钥' })).toBeVisible()
+  await expect(activationSteps.nth(0)).toHaveAttribute('data-state', 'complete')
+  await expect(activationSteps.nth(1)).toHaveAttribute('data-state', 'current')
+  await expect(activationSteps.nth(1)).toHaveAttribute('aria-current', 'step')
+  await expect(page.locator('[data-wizard-card-title]')).toHaveText('绑定验证器')
+  await expect(page.locator('[data-wizard-progress]')).toHaveText('第 2 步，共 3 步')
   const setupQr = page.getByRole('img', { name: '验证器设置二维码' })
   await expect(setupQr).toBeVisible()
+  const bindingGeometry = await page.evaluate(() => {
+    const card = document.querySelector<HTMLElement>('.totp-guide-card')!.getBoundingClientRect()
+    const layout = document.querySelector<HTMLElement>('[data-totp-bind-layout]')!.getBoundingClientRect()
+    const qr = document.querySelector<HTMLElement>('.themed-qr-code')!.getBoundingClientRect()
+    return {
+      centerDelta: Math.abs((layout.left + layout.width / 2) - (card.left + card.width / 2)),
+      qrInset: qr.left - card.left,
+    }
+  })
+  expect(bindingGeometry.centerDelta).toBeLessThan(2)
+  expect(bindingGeometry.qrInset).toBeGreaterThan(96)
   const setupQrEvidence = await setupQr.evaluate((image) => {
     const styles = getComputedStyle(document.documentElement)
     const source = (image as HTMLImageElement).src
@@ -199,11 +227,21 @@ test('uses env-authoritative relay settings and the complete authenticator lifec
   expect(setupQrEvidence.svg).toContain(setupQrEvidence.foreground)
   expect(setupQrEvidence.svg).toContain(setupQrEvidence.background)
   if (screenshotDir) await page.screenshot({ path: `${screenshotDir}/settings-totp-setup.png`, fullPage: true })
+  const setupKeyDisclosure = page.getByRole('button', { name: '无法扫描？使用设置密钥' })
+  await expect(setupKeyDisclosure).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.locator('[data-setup-key]')).toHaveCount(0)
+  await setupKeyDisclosure.click()
+  await expect(setupKeyDisclosure).toHaveAttribute('aria-expanded', 'true')
+  const setupKey = (await page.locator('[data-setup-key]').textContent())?.trim() ?? ''
+  expect(setupKey).not.toBe('')
 
   const setupCounter = currentCounter() - 1
-  await page.getByLabel('验证器生成的第一个 6 位验证码').fill(totpForCounter(setupKey, setupCounter))
+  await page.getByLabel('验证器验证码').fill(totpForCounter(setupKey, setupCounter))
   await page.getByRole('button', { name: '确认绑定' }).click()
-  await expect(page.getByRole('heading', { name: '验证器已绑定' })).toBeVisible()
+  await expect(page.getByText('验证器已绑定', { exact: true })).toBeVisible()
+  await expect(activationSteps.nth(0)).toHaveAttribute('data-state', 'complete')
+  await expect(activationSteps.nth(1)).toHaveAttribute('data-state', 'complete')
+  await expect(activationSteps.nth(2)).toHaveAttribute('data-state', 'current')
   const configuredHeading = page.locator('[data-configured-authenticator-heading]')
   await expect(configuredHeading.getByRole('button', { name: '重新配置' })).toBeVisible()
   const protectionSwitch = page.getByRole('switch', { name: '启用双重认证登录' })
@@ -236,6 +274,8 @@ test('uses env-authoritative relay settings and the complete authenticator lifec
   await enableDialog.getByLabel('当前验证码').fill(totpForCounter(setupKey, enableCounter))
   await enableDialog.getByRole('button', { name: '确认', exact: true }).click()
   await expect(protectionSwitch).toHaveAttribute('aria-checked', 'true')
+  await expect(page.locator('[data-guide-step][data-state="complete"]')).toHaveCount(3)
+  await expect(page.locator('[data-guide-step][aria-current="step"]')).toHaveCount(0)
   if (screenshotDir) await page.screenshot({ path: `${screenshotDir}/settings-totp-enabled.png`, fullPage: true })
 
   await page.locator('[data-action="logout"]').click()
