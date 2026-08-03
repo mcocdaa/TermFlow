@@ -50,6 +50,18 @@ class TermFlowSystem:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.repo = Path.cwd()
+        configured_node = os.environ.get("TERMFLOW_NODE_EXECUTABLE")
+        self.node_executable = (
+            Path(configured_node).resolve()
+            if configured_node
+            else self.repo / ".venv/bin/termflow"
+        )
+        if not self.node_executable.is_file() or not os.access(
+            self.node_executable, os.X_OK
+        ):
+            raise RuntimeError(
+                f"Invalid TERMFLOW_NODE_EXECUTABLE: {self.node_executable}"
+            )
         self.port = _free_port()
         self.base_url = f"http://127.0.0.1:{self.port}"
         self.admin_token = "e2e-admin-token-that-is-long-enough"
@@ -141,7 +153,7 @@ class TermFlowSystem:
     def login(self, enrollment_token: str) -> None:
         result = subprocess.run(
             [
-                str(self.repo / ".venv/bin/termflow"),
+                str(self.node_executable),
                 "login",
                 "--server",
                 self.base_url,
@@ -160,7 +172,7 @@ class TermFlowSystem:
     def new_and_detach(self, name: str) -> LocalInstance:
         before = {instance.instance_id for instance in self.instance_store.list().instances}
         child = pexpect.spawn(
-            str(self.repo / ".venv/bin/termflow"),
+            str(self.node_executable),
             ["new", "--name", name],
             env=self.node_env,
             timeout=5,
@@ -247,7 +259,7 @@ class TermFlowSystem:
 
     def run_node(self, *arguments: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [str(self.repo / ".venv/bin/termflow"), *arguments],
+            [str(self.node_executable), *arguments],
             env=self.node_env,
             capture_output=True,
             text=True,

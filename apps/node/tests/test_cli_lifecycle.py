@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from termflow_node import cli
+from termflow_node import __version__, cli
 from termflow_node.instances.activation import ActivationError, ActivationResult
 from termflow_node.instances.manager import AmbiguousInstance, InstanceManager
 from termflow_node.instances.models import InstanceLifecycle, LocalInstance, RemoteAccessState
@@ -22,6 +22,13 @@ def _record(root: Path, name: str) -> LocalInstance:
         instance_token="must-not-print",
         lifecycle=InstanceLifecycle.RUNNING,
     )
+
+
+def test_version_reports_the_node_package_version() -> None:
+    result = CliRunner().invoke(cli.app, ["--version"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.strip() == __version__
 
 
 def test_list_shows_independent_instance_health(tmp_path, monkeypatch) -> None:

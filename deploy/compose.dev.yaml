@@ -1,0 +1,6 @@
+services:
+  control-plane:
+    image: termflow-control-plane:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.control-plane

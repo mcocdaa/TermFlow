@@ -11,6 +11,7 @@ from uuid import UUID
 
 import typer
 
+from termflow_node import __version__
 from termflow_node.config.models import InstallationConfig
 from termflow_node.config.store import ConfigStore
 from termflow_node.control_plane_client import ControlPlaneClient, validate_server_url
@@ -20,12 +21,24 @@ from termflow_node.instances.manager import InstanceManager
 from termflow_node.instances.models import LocalInstance, RemoteAccessState
 from termflow_node.instances.store import InstanceStore
 
-app = typer.Typer(no_args_is_help=True, help="Run and manage local TermFlow Instances.")
+app = typer.Typer(
+    no_args_is_help=True,
+    invoke_without_command=True,
+    help="Run and manage local TermFlow Instances.",
+)
 
 
 @app.callback()
-def main() -> None:
+def main(
+    version: Annotated[
+        bool,
+        typer.Option("--version", is_eager=True, help="Show the TermFlow version."),
+    ] = False,
+) -> None:
     """Run and manage local TermFlow Instances."""
+    if version:
+        typer.echo(__version__)
+        raise typer.Exit()
 
 
 @app.command()

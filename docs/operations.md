@@ -12,6 +12,45 @@ mTLS 的证书签发、校验与轮换不属于 TermFlow，也不会被默认镜
 应由部署者提供 HTTPS/WSS 入口，并把用户实际访问的 canonical URL 写入
 `TERMFLOW_PUBLIC_BASE_URL`；B 不因这个配置而自行提供 TLS。
 
+## 永久发布、安装与回退
+
+一个通过全部介质 gate 的 `vX.Y.Z` tag 会创建永久 GitHub Release，并推送同 tag 的 GHCR
+`ghcr.io/mcocdaa/termflow-control-plane:vX.Y.Z` 多架构镜像（linux/amd64、linux/arm64）。稳定 tag
+还会更新 `latest`，但生产部署应始终写精确 tag，不应依赖 `latest`。GitHub Release 中包含 A 的
+`install-termflow-node.sh` 与 Linux Node bundle，以及 Windows、Linux、macOS、Android 和 iOS
+Simulator 客户端；发布前必须确认 GHCR 包已对目标部署者可拉取。
+
+Computer A 的 Linux x86_64 安装命令是：
+
+```bash
+curl -fsSL https://github.com/mcocdaa/TermFlow/releases/download/vX.Y.Z/install-termflow-node.sh | bash
+```
+
+安装器先下载 archive 与 `SHA256SUMS`、校验 checksum，再原子更新当前用户的
+`~/.local/bin/termflow` 符号链接。它要求 tmux 3.2+，不使用 `sudo`、不创建 systemd 服务、
+不删除旧版本，也不应输出任何注册码或 token。回退 A 时重新运行旧 tag 的安装命令即可。
+
+B + Web C 的生产 Compose 只消费发布镜像，绝不在生产启动时构建源码：
+
+```bash
+TERMFLOW_IMAGE=ghcr.io/mcocdaa/termflow-control-plane:vX.Y.Z \
+  docker compose --env-file .env -f deploy/compose.yaml pull
+TERMFLOW_IMAGE=ghcr.io/mcocdaa/termflow-control-plane:vX.Y.Z \
+  docker compose --env-file .env -f deploy/compose.yaml up -d
+```
+
+回退 B 时把 `TERMFLOW_IMAGE` 改成已验证的旧 tag，重复 `docker compose pull` 与 `up -d`；不要执行
+`down --volumes`，也不要删除 `termflow-data`。源码开发才使用显式 override：
+
+```bash
+TERMFLOW_IMAGE=termflow-control-plane:dev \
+  docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.dev.yaml up -d --build
+```
+
+Actions artifact 是短期测试产物：手动 `Tauri Multi-platform Packages` run 保留 14 天，不能代替
+GitHub Release。Windows asset 目前未签名；iOS Simulator asset 只能用于 Simulator，不能用于实体
+iPhone。签名、notarization、TestFlight 与应用商店上传仍是后续独立流程。
+
 ## 管理凭据与 TOTP 密钥
 
 `TERMFLOW_ADMIN_TOKEN` 必须由部署者生成。默认单实例 Compose 会在持久化的
@@ -26,7 +65,8 @@ mTLS 的证书签发、校验与轮换不属于 TermFlow，也不会被默认镜
 
 ```bash
 cp .env.example .env
-docker compose --env-file .env -f deploy/compose.yaml up -d --build
+docker compose --env-file .env -f deploy/compose.yaml pull
+docker compose --env-file .env -f deploy/compose.yaml up -d
 ```
 
 多 B 实例不能各自使用自动文件；部署者必须生成同一个 32 字节无填充 base64url 密钥，并把
@@ -41,7 +81,7 @@ python -c 'import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_b
 
 ```bash
 TERMFLOW_TOTP_MASTER_KEY_FILE=/secure/termflow-totp-key \
-  docker compose -f deploy/compose.yaml -f deploy/compose.totp-secret.yaml up -d
+  docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.totp-secret.yaml up -d
 ```
 
 override 把文件挂载到 `/run/secrets/termflow-totp-master-key`，并设置 B 的
@@ -68,11 +108,11 @@ Tauri 配置生成平台工程，再执行 debug/unsigned 编译。缺少 Tauri 
 `TERMFLOW_DOCKER_BUILD_RETRY_DELAY_SECONDS` 调整。签名、notarization、商店上传和发布凭据
 属于单独受保护的 release 流程。
 
-## 多平台 Tauri 测试包
+## 多平台客户端测试包与正式 Release
 
-`Tauri Multi-platform Packages` workflow 可以在 Actions 页面手动触发，也会在推送 `v*` tag
-时触发。旧的 `Tauri Windows Installer` 和 `termflow-windows-installer` 单平台入口已经被该
-workflow 取代；旧 artifact 的 7 天保留期不再适用。手动运行会保留 14 天，tag 运行会保留 90 天。
+`Tauri Multi-platform Packages` workflow 仅可在 Actions 页面手动触发，用来测试任意 commit；
+它绝不创建 GitHub Release、绝不推 GHCR 版本镜像，artifact 保留 14 天。历史上的单平台
+`Tauri Windows Installer` / `termflow-windows-installer` 入口和 7 天 artifact 规则已被废弃。
 
 手动验证任意 commit：
 
@@ -85,12 +125,18 @@ workflow 取代；旧 artifact 的 7 天保留期不再适用。手动运行会�
    Android debug APK 和 iOS simulator app zip。
 5. 对需要声明支持的平台实际解包、安装并启动；workflow 成功本身不等于安装验收通过。
 
-创建 tag 前，先把根 `package.json`、Tauri client `package.json`、`src-tauri/Cargo.toml` 和
-`src-tauri/tauri.conf.json` 的版本同步为同一个 SemVer，合并到目标 commit，再显式推送匹配的
-`v<version>` tag。tag 与配置版本不一致或 tag 不是合法的 `v` 前缀 SemVer 时，workflow 会在
-任何原生构建开始前失败。tag 触发不接受平台筛选，始终构建全部五个平台；workflow 只上传
-受保留期约束的 Actions artifacts，不创建或更新
-GitHub Release，也不上传商店。
+准备正式 Release 前，先让根 `package.json`、Node、Control Plane、protocol、Tauri client 的
+`package.json`、`src-tauri/Cargo.toml` 与 `tauri.conf.json` 全部为同一 SemVer，并在目标 commit
+上验证：
+
+```bash
+uv run --frozen python scripts/release/check_version.py --tag vX.Y.Z
+```
+
+推送匹配的 `vX.Y.Z` tag 后，`Publish TermFlow Release` 会始终构建 A、B 和全部五类 C 包；A 的
+已安装终端连通 B、B 的 release-image smoke、每种原生包的文件数检查任一失败，发布 job 都不会
+得到 `contents: write` / `packages: write` 权限。全部成功后才上传 Release assets、`SHA256SUMS` 和
+GHCR multi-arch image。不要把手动测试 artifact 当成正式发布，也不要在未经验证的 tag 上重复发布。
 
 这些产物的信任和签名边界如下：
 

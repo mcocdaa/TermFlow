@@ -81,16 +81,38 @@ def test_operations_docs_define_external_edge_secrets_and_native_toolchains() ->
     assert "TERMFLOW_TOTP_MASTER_KEY=" not in env_example
 
 
-def test_operations_docs_explain_manual_unsigned_windows_installer() -> None:
+def test_operations_docs_explain_manual_and_release_client_boundaries() -> None:
     operations = Path("docs/operations.md").read_text()
     for phrase in (
-        "Tauri Windows Installer",
-        "termflow-windows-installer",
+        "Tauri Multi-platform Packages",
+        "Actions artifact",
+        "GitHub Release",
+        "14 天",
         "*-setup.exe",
-        "7 天",
         "SmartScreen",
         "未知发布者",
         "Control Plane Docker 镜像不包含这个安装包",
         "--bundles nsis",
     ):
         assert phrase in operations
+
+
+def test_docs_distinguish_test_artifacts_from_permanent_release_assets() -> None:
+    readme = Path("README.md").read_text()
+    operations = Path("docs/operations.md").read_text()
+    troubleshooting = Path("docs/troubleshooting.md").read_text()
+
+    for phrase in (
+        "GitHub Release",
+        "GHCR",
+        "Actions artifact",
+        "iOS Simulator",
+        "install-termflow-node.sh",
+        "docker compose pull",
+        "tmux 3.2",
+        "systemd",
+    ):
+        assert phrase in operations
+    assert "install-termflow-node.sh" in readme
+    assert "TERM_FLOW" not in readme
+    assert "SHA256" in troubleshooting

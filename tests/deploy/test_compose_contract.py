@@ -3,6 +3,41 @@ from pathlib import Path
 import yaml
 
 
+def test_production_compose_uses_an_explicit_release_image_without_source_build() -> None:
+    compose = yaml.safe_load(Path("deploy/compose.yaml").read_text())
+    service = compose["services"]["control-plane"]
+
+    assert service["image"] == "${TERMFLOW_IMAGE:?set TERMFLOW_IMAGE to a pinned GHCR tag}"
+    assert "build" not in service
+
+
+def test_development_override_owns_the_local_source_build() -> None:
+    compose = yaml.safe_load(Path("deploy/compose.dev.yaml").read_text())
+
+    assert compose["services"]["control-plane"]["build"] == {
+        "context": "..",
+        "dockerfile": "deploy/Dockerfile.control-plane",
+    }
+
+
+def test_release_image_smoke_uses_an_isolated_test_volume() -> None:
+    verifier = Path("scripts/release/verify_control_plane_release_image.sh").read_text()
+    workflow = Path(".github/workflows/ci.yml").read_text()
+
+    assert "TERMFLOW_DATA_VOLUME=\"${PROJECT}-data\"" in verifier
+    assert "up -d --wait" in verifier
+    assert "down --volumes --remove-orphans" in verifier
+    assert "http://127.0.0.1:18076/healthz" in verifier
+    assert "verify_control_plane_release_image.sh termflow-control-plane:ci" in workflow
+
+
+def test_full_verification_supplies_the_required_nonproduction_compose_values() -> None:
+    verify = Path("scripts/verify.sh").read_text()
+
+    assert "TERMFLOW_IMAGE=\"${CONTROL_PLANE_IMAGE}\"" in verify
+    assert "TERMFLOW_ADMIN_TOKEN=\"verify-admin-token-that-is-long-enough\"" in verify
+
+
 def test_compose_is_single_worker_and_persists_only_metadata() -> None:
     compose = yaml.safe_load(Path("deploy/compose.yaml").read_text())
     service = compose["services"]["control-plane"]
@@ -10,7 +45,9 @@ def test_compose_is_single_worker_and_persists_only_metadata() -> None:
     assert service["volumes"] == ["termflow-data:/app/data"]
     assert service["healthcheck"]["test"][-1].endswith("/healthz")
     assert list(compose["services"]) == ["control-plane"]
-    assert compose["volumes"]["termflow-data"] == {"name": "termflow-data"}
+    assert compose["volumes"]["termflow-data"] == {
+        "name": "${TERMFLOW_DATA_VOLUME:-termflow-data}"
+    }
 
 
 def test_compose_configures_same_origin_web_control_limits() -> None:
@@ -148,7 +185,7 @@ def test_compose_has_an_explicit_optional_totp_secret_file_override() -> None:
     )
 
 
-def test_tauri_packages_are_native_tag_or_manual_artifacts_not_public_releases() -> None:
+def test_tauri_packages_are_manual_native_artifacts_not_public_releases() -> None:
     path = Path(".github/workflows/tauri-packages.yml")
     old_path = Path(".github/workflows/tauri-windows-package.yml")
     assert path.is_file()
@@ -156,8 +193,7 @@ def test_tauri_packages_are_native_tag_or_manual_artifacts_not_public_releases()
 
     workflow = yaml.safe_load(path.read_text())
     triggers = workflow[True]
-    assert triggers["push"]["tags"] == ["v*"]
-    assert "workflow_dispatch" in triggers
+    assert set(triggers) == {"workflow_dispatch"}
     assert workflow["permissions"] == {"contents": "read"}
     manual_platform = triggers["workflow_dispatch"]["inputs"]["platform"]
     assert manual_platform == {
@@ -169,13 +205,10 @@ def test_tauri_packages_are_native_tag_or_manual_artifacts_not_public_releases()
     }
     assert workflow["run-name"] == (
         "Tauri packages · "
-        "${{ github.event_name == 'push' && github.ref_name || inputs.platform }}"
+        "${{ inputs.platform }}"
     )
     assert workflow["concurrency"] == {
-        "group": (
-            "tauri-packages-${{ github.ref }}-"
-            "${{ github.event_name == 'workflow_dispatch' && inputs.platform || 'tag' }}"
-        ),
+        "group": "tauri-packages-${{ github.ref }}-${{ inputs.platform }}",
         "cancel-in-progress": False,
     }
 
@@ -215,19 +248,15 @@ def test_tauri_packages_are_native_tag_or_manual_artifacts_not_public_releases()
         condition = jobs[job_name]["if"]
         assert condition == (
             "${{ needs.validate-version.result == 'success' &&\n"
-            "    (github.event_name == 'push' || inputs.platform == 'all' || "
+            "    (inputs.platform == 'all' || "
             f"inputs.platform == '{platform}') }}}}"
         )
 
     rendered = path.read_text()
-    for version_file in (
-        "package.json",
-        "apps/clients/tauri/package.json",
-        "apps/clients/tauri/src-tauri/Cargo.toml",
-        "apps/clients/tauri/src-tauri/tauri.conf.json",
-    ):
-        assert version_file in rendered
+    assert "scripts/release/check_version.py" in rendered
     for expected in (
+        'python-version: "3.12"',
+        "scripts/release/check_version.py",
         'node-version: "22.23.2"',
         "dtolnay/rust-toolchain@stable",
         "npm ci",
@@ -243,6 +272,7 @@ def test_tauri_packages_are_native_tag_or_manual_artifacts_not_public_releases()
         "ditto -c -k --sequesterRsrc --keepParent",
         "actions/upload-artifact@v4",
         "if-no-files-found: error",
+        "retention-days: 14",
     ):
         assert expected in rendered
     for artifact in (
