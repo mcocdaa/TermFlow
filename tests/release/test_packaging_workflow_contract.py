@@ -129,6 +129,7 @@ def test_client_workflow_is_manual_and_reusable() -> None:
     assert workflow["name"] == "Package C · Native Clients"
     assert set(triggers) == {"workflow_dispatch", "workflow_call"}
     assert triggers["workflow_dispatch"]["inputs"]["platform"]["default"] == "all"
+    assert triggers["workflow_dispatch"]["inputs"]["version"]["default"] == ""
     assert triggers["workflow_call"]["inputs"]["platform"] == {
         "description": "Native client platform set",
         "required": False,
@@ -136,6 +137,7 @@ def test_client_workflow_is_manual_and_reusable() -> None:
         "type": "string",
     }
     assert "release_tag" in triggers["workflow_call"]["inputs"]
+    assert triggers["workflow_call"]["inputs"]["version"]["default"] == ""
 
 
 def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() -> None:
@@ -151,3 +153,33 @@ def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() ->
         "ios-simulator-aarch64",
     ):
         assert f"${{{{ needs.validate-version.outputs.artifact_prefix }}}}-{suffix}" in text
+
+
+def test_every_native_runner_materializes_before_reading_package_manifests() -> None:
+    workflow = _workflow(CLIENT_WORKFLOW)
+
+    for job_name in (
+        "windows-nsis",
+        "linux-packages",
+        "macos-packages",
+        "android-debug-apk",
+        "ios-simulator-app",
+    ):
+        steps = workflow["jobs"][job_name]["steps"]
+        materialize = next(
+            index
+            for index, step in enumerate(steps)
+            if "scripts/release/prepare_version.py" in str(step.get("run", ""))
+        )
+        rust_cache = next(
+            index
+            for index, step in enumerate(steps)
+            if step.get("uses") == "Swatinem/rust-cache@v2"
+        )
+        npm_install = next(
+            index
+            for index, step in enumerate(steps)
+            if str(step.get("run", "")).strip() == "npm ci"
+        )
+        assert materialize < rust_cache
+        assert materialize < npm_install

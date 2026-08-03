@@ -104,4 +104,4 @@ def test_native_package_workflow_is_manual_and_reusable_without_publish_permissi
 
     assert set(workflow[True]) == {"workflow_dispatch", "workflow_call"}
     assert workflow["permissions"] == {"contents": "read"}
-    assert "scripts/release/check_version.py" in path.read_text()
+    assert "scripts/release/prepare_version.py" in path.read_text()
