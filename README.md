@@ -29,7 +29,7 @@ B 与 Web C 使用同一份已发布的 GHCR 镜像。先复制并填写环境�
 然后显式拉取和启动精确镜像 tag：
 
 ```bash
-cp deploy/env.example .env
+cp .env.example .env
 # 编辑 .env：至少替换 TERMFLOW_ADMIN_TOKEN，并设置实际 HTTPS 公开 URL。
 TERMFLOW_IMAGE=ghcr.io/mcocdaa/termflow-control-plane:vX.Y.Z \
   docker compose --env-file .env -f deploy/compose.yaml pull
