@@ -8,14 +8,46 @@ TermFlow 让你在 Computer A 上运行彼此隔离的 tmux Term，再通过服�
 Computer；一个 `termflow new` 创建一个独立 Term（私有 tmux server/session）。当前不
 实现 Agent、STT/TTS 或远程创建 Term；Web C 只操控 A 上已经存在的 Term。
 
-## 环境要求
+## 正式安装与部署
+
+正式版本由 GitHub Release 发布；Actions 手动打包页的 artifact 仅用于测试，不是长期下载地址。
+
+Computer A 当前提供 Linux x86_64 一条命令安装包。目标机器需要 `tmux 3.2+`，安装器会校验
+Linux、架构、`curl`、`sha256sum` 与 tmux 版本，再把指定版本安装在当前用户的 `~/.local`，不会
+使用 `sudo`、修改 shell 配置或创建 systemd 服务：
+
+```bash
+curl -fsSL https://github.com/mcocdaa/TermFlow/releases/download/vX.Y.Z/install-termflow-node.sh | bash
+termflow login --server https://termflow.example.com --code '<一次性注册码>'
+termflow new --name project-a
+```
+
+将 `vX.Y.Z` 替换为需要的精确 GitHub Release tag。安装器会保留旧版本；回退 A 时，只需重新运行
+旧 tag 的同一命令。确保 `~/.local/bin` 已在当前 shell 的 `PATH` 中。
+
+B 与 Web C 使用同一份已发布的 GHCR 镜像。先复制并填写环境文件中的管理员 token 和公开 URL，
+然后显式拉取和启动精确镜像 tag：
+
+```bash
+cp deploy/env.example .env
+# 编辑 .env：至少替换 TERMFLOW_ADMIN_TOKEN，并设置实际 HTTPS 公开 URL。
+TERMFLOW_IMAGE=ghcr.io/mcocdaa/termflow-control-plane:vX.Y.Z \
+  docker compose --env-file .env -f deploy/compose.yaml pull
+TERMFLOW_IMAGE=ghcr.io/mcocdaa/termflow-control-plane:vX.Y.Z \
+  docker compose --env-file .env -f deploy/compose.yaml up -d
+```
+
+Windows、Linux、macOS、Android 与 iOS Simulator 客户端均作为同一 GitHub Release 的 assets 发布。
+当前 Windows 包未签名；iOS asset 仅能用于 Simulator，不能安装到实体 iPhone。
+
+## 源码开发环境要求
 
 - Linux、macOS 或 WSL；
 - Python 3.12；
 - [uv](https://docs.astral.sh/uv/)；
 - tmux 3.2 或更高版本。
 
-## 快速开始
+## 源码开发快速开始
 
 安装工作区依赖：
 

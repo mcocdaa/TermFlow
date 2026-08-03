@@ -14,6 +14,24 @@ uv run --package termflow-node termflow list --json
 要求 Python 3.12、tmux 3.2+。`termflow doctor --repair` 只会修复已知 TermFlow 文件权限，
 并在 tmux 仍存活时重启缺失 Bridge；它不会删除状态、杀 tmux 或执行远端命令。
 
+## Release 安装器或升级失败
+
+正式 Linux A 使用 GitHub Release 的 `install-termflow-node.sh`，不是 Actions artifact。先确认
+下载的精确 tag 与本机版本：
+
+```bash
+termflow --version
+tmux -V
+```
+
+安装器要求 Linux x86_64、tmux 3.2+、`curl` 与 `sha256sum`。出现 SHA256/checksum 失败时不要绕过
+校验：它会在更新 `~/.local/bin/termflow` 前失败，因此原有可用版本仍会保留。检查 Release 的
+`SHA256SUMS`、网络代理和 tag 后重试；需要回退时运行旧 Release tag 的安装器。
+
+如果 B/Web C 更新后需要回退，把 `.env` 中（或命令行设置的）`TERMFLOW_IMAGE` 改成旧的精确
+GHCR tag，再运行 `docker compose pull` 和 `docker compose up -d`。不要为了回退执行
+`docker compose down --volumes`，那会删除 metadata 数据卷。
+
 ## Instance 显示 bridge-down
 
 先确认 B `/healthz`、A 的网络与服务器 URL。B 重启后 Bridge 会自动重连；tmux 始终可用：
