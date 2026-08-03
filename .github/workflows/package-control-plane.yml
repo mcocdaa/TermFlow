@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Build version override; defaults to 0.0.0-dev.0
+        description: Build version override; defaults to 0.0.1-dev.0
         required: false
         default: ""
         type: string
@@ -36,6 +36,7 @@ jobs:
       version: ${{ steps.context.outputs.version }}
       release_tag: ${{ steps.context.outputs.tag }}
       is_release: ${{ steps.context.outputs.is_release }}
+      is_prerelease: ${{ steps.context.outputs.is_prerelease }}
       artifact_name: ${{ steps.context.outputs.artifact_name }}
       retention_days: ${{ steps.context.outputs.retention_days }}
     steps:
@@ -125,6 +126,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}
         shell: bash
         run: |
           set -euo pipefail
@@ -135,7 +137,7 @@ jobs:
             --tag "${image}:${image_tag}"
             --tag "${image}:sha-${GITHUB_SHA}"
           )
-          if [[ "$RELEASE_TAG" != *-* ]]; then
+          if [[ "$IS_PRERELEASE" == "false" ]]; then
             tags+=(--tag "${image}:latest")
           fi
           docker buildx build --platform linux/amd64,linux/arm64 --push \

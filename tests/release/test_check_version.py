@@ -9,8 +9,11 @@ from pathlib import Path
 import yaml
 
 from scripts.release.version_files import (
+    ANDROID_CONFIG,
     CARGO_LOCK,
     CARGO_MANIFEST,
+    IOS_CONFIG,
+    MACOS_CONFIG,
     NPM_MANIFESTS,
     PACKAGE_LOCK,
     PYPROJECTS,
@@ -34,6 +37,9 @@ def _write_release_tree(root: Path, version: str = "2.0.0") -> None:
         CARGO_MANIFEST,
         CARGO_LOCK,
         TAURI_CONFIG,
+        ANDROID_CONFIG,
+        MACOS_CONFIG,
+        IOS_CONFIG,
     )
     for relative in paths:
         target = root / relative

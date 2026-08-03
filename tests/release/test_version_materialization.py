@@ -29,6 +29,9 @@ MANAGED_FILES = (
     "apps/clients/tauri/src-tauri/Cargo.toml",
     "apps/clients/tauri/src-tauri/Cargo.lock",
     "apps/clients/tauri/src-tauri/tauri.conf.json",
+    "apps/clients/tauri/src-tauri/tauri.android.conf.json",
+    "apps/clients/tauri/src-tauri/tauri.macos.conf.json",
+    "apps/clients/tauri/src-tauri/tauri.ios.conf.json",
     "packages/design-tokens/package.json",
     "packages/client-contracts/package.json",
     "packages/client-core/package.json",
@@ -105,6 +108,20 @@ def test_materializer_updates_registered_surfaces_and_internal_dependencies(
     assert 'name = "termflow-client"\nversion = "1.4.0-rc.2"' in (
         tmp_path / "apps/clients/tauri/src-tauri/Cargo.lock"
     ).read_text()
+    android = json.loads(
+        (tmp_path / "apps/clients/tauri/src-tauri/tauri.android.conf.json").read_text()
+    )
+    assert android["bundle"]["android"]["versionCode"] == 1_004_000
+    for platform in ("macos", "ios"):
+        config = json.loads(
+            (
+                tmp_path
+                / f"apps/clients/tauri/src-tauri/tauri.{platform}.conf.json"
+            ).read_text()
+        )
+        assert config["version"] == "1.4.0"
+        platform_key = "iOS" if platform == "ios" else "macOS"
+        assert config["bundle"][platform_key]["bundleVersion"] == "1.4.0"
     assert '__version__ = "1.4.0-rc.2"' in (
         tmp_path / "apps/node/src/termflow_node/__init__.py"
     ).read_text()

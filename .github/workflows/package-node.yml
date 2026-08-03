@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Build version override; defaults to 0.0.0-dev.0
+        description: Build version override; defaults to 0.0.1-dev.0
         required: false
         default: ""
         type: string
@@ -36,6 +36,7 @@ jobs:
       version: ${{ steps.context.outputs.version }}
       tag: ${{ steps.context.outputs.tag }}
       is_release: ${{ steps.context.outputs.is_release }}
+      is_prerelease: ${{ steps.context.outputs.is_prerelease }}
       artifact_name: ${{ steps.context.outputs.artifact_name }}
       retention_days: ${{ steps.context.outputs.retention_days }}
     steps:

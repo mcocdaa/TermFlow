@@ -18,7 +18,7 @@ def test_node_workflow_is_manual_and_reusable() -> None:
     assert workflow["name"] == "Package A · Linux Node"
     assert set(triggers) == {"workflow_dispatch", "workflow_call"}
     assert triggers["workflow_dispatch"]["inputs"]["version"] == {
-        "description": "Build version override; defaults to 0.0.0-dev.0",
+        "description": "Build version override; defaults to 0.0.1-dev.0",
         "required": False,
         "default": "",
         "type": "string",
@@ -98,6 +98,10 @@ def test_control_plane_manual_artifact_and_tag_publication_are_separated() -> No
     ):
         assert required in text
     assert "if: ${{ needs.prepare.outputs.is_release == 'true' }}" in text
+    assert "is_prerelease: ${{ steps.context.outputs.is_prerelease }}" in text
+    assert 'IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}' in text
+    assert '[[ "$IS_PRERELEASE" == "false" ]]' in text
+    assert '[[ "$RELEASE_TAG" != *-* ]]' not in text
     assert "TERMFLOW_BUILD_VERSION" in text
 
 

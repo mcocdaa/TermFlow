@@ -17,7 +17,7 @@ on:
           - android
           - ios
       version:
-        description: Build version override; defaults to 0.0.0-dev.0
+        description: Build version override; defaults to 0.0.1-dev.0
         required: false
         default: ""
         type: string
@@ -55,6 +55,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
       is_release: ${{ steps.version.outputs.is_release }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
       artifact_prefix: ${{ steps.version.outputs.artifact_prefix }}
       retention_days: ${{ steps.version.outputs.retention_days }}
     steps:

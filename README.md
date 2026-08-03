@@ -45,10 +45,10 @@ Android 和 iOS Simulator 包。手动 Artifact 使用稳定名称并保留 14 �
 `docker load -i termflow-control-plane.tar`，但它不会自动修改现有 Compose 部署。
 
 正式构建版本的解析顺序固定为
-`Git Tag > TERMFLOW_BUILD_VERSION > 0.0.0-dev.0`。Tag Release 直接使用 `vX.Y.Z`
+`Git Tag > TERMFLOW_BUILD_VERSION > 0.0.1-dev.0`。Tag Release 直接使用 `vX.Y.Z`
 中的版本；手动 workflow 可填写可选版本，本地构建可设置
 `TERMFLOW_BUILD_VERSION=1.2.3`。两者都没有时使用明确的开发版本
-`0.0.0-dev.0`，不会被误认为正式 Release。
+`0.0.1-dev.0`，不会被误认为正式 Release。
 
 ## 源码开发环境要求
 

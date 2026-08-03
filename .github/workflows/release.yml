@@ -19,6 +19,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -75,11 +76,12 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          IS_PRERELEASE: ${{ needs.validate-version.outputs.is_prerelease }}
         run: |
           set -euo pipefail
           (cd release-assets && rm -f SHA256SUMS && sha256sum -- * > SHA256SUMS)
           prerelease=()
-          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
             prerelease=(--prerelease)
           fi
           gh release create "${GITHUB_REF_NAME}" release-assets/* \

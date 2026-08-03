@@ -52,6 +52,9 @@ UV_LOCK = Path("uv.lock")
 CARGO_MANIFEST = Path("apps/clients/tauri/src-tauri/Cargo.toml")
 CARGO_LOCK = Path("apps/clients/tauri/src-tauri/Cargo.lock")
 TAURI_CONFIG = Path("apps/clients/tauri/src-tauri/tauri.conf.json")
+ANDROID_CONFIG = Path("apps/clients/tauri/src-tauri/tauri.android.conf.json")
+MACOS_CONFIG = Path("apps/clients/tauri/src-tauri/tauri.macos.conf.json")
+IOS_CONFIG = Path("apps/clients/tauri/src-tauri/tauri.ios.conf.json")
 
 _PYTHON_VERSION = re.compile(
     r'^(?P<prefix>__version__\s*=\s*")[^"]+(?P<suffix>"\s*)$', re.MULTILINE
@@ -184,6 +187,48 @@ def _materialize_python_version(path: Path, version: str) -> None:
     path.write_text(updated)
 
 
+def _version_core(version: str) -> str:
+    return version.split("+", 1)[0].split("-", 1)[0]
+
+
+def _android_version_code(version: str) -> int:
+    major, minor, patch = (int(component) for component in _version_core(version).split("."))
+    version_code = major * 1_000_000 + minor * 1_000 + patch
+    if not 1 <= version_code <= 2_100_000_000 or minor > 99 or patch > 99:
+        raise ValueError(f"{version}: outside the supported mobile bundle range")
+    return version_code
+
+
+def _materialize_android_config(path: Path, version: str) -> None:
+    data = _read_json(path)
+    bundle = data.get("bundle")
+    if not isinstance(bundle, dict):
+        raise ValueError(f"{path}: missing bundle object")
+    android = bundle.get("android")
+    if not isinstance(android, dict) or not isinstance(android.get("versionCode"), int):
+        raise ValueError(f"{path}: missing integer bundle.android.versionCode")
+    android["versionCode"] = _android_version_code(version)
+    _write_json(path, data)
+
+
+def _materialize_apple_config(path: Path, platform: str, version: str) -> None:
+    data = _read_json(path)
+    if not isinstance(data.get("version"), str):
+        raise ValueError(f"{path}: missing string version")
+    bundle = data.get("bundle")
+    if not isinstance(bundle, dict):
+        raise ValueError(f"{path}: missing bundle object")
+    platform_config = bundle.get(platform)
+    if not isinstance(platform_config, dict) or not isinstance(
+        platform_config.get("bundleVersion"), str
+    ):
+        raise ValueError(f"{path}: missing string bundle.{platform}.bundleVersion")
+    core = _version_core(version)
+    data["version"] = core
+    platform_config["bundleVersion"] = core
+    _write_json(path, data)
+
+
 def _lock_versions(path: Path, package_names: frozenset[str]) -> dict[str, str]:
     result: dict[str, str] = {}
     for block in path.read_text().split("[[package]]")[1:]:
@@ -242,6 +287,9 @@ def materialize_version(root: Path, version: str) -> None:
         raise ValueError(f"{root / TAURI_CONFIG}: missing string version")
     tauri["version"] = version
     _write_json(root / TAURI_CONFIG, tauri)
+    _materialize_android_config(root / ANDROID_CONFIG, version)
+    _materialize_apple_config(root / MACOS_CONFIG, "macOS", version)
+    _materialize_apple_config(root / IOS_CONFIG, "iOS", version)
     _materialize_lock_versions(root / UV_LOCK, UV_PACKAGES, version)
     _materialize_lock_versions(root / CARGO_LOCK, CARGO_PACKAGES, version)
 
@@ -289,6 +337,39 @@ def verify_materialized_version(root: Path, expected: str) -> list[str]:
 
     require(CARGO_MANIFEST, _read_toml_version(root / CARGO_MANIFEST, "package"))
     require(TAURI_CONFIG, str(_read_json(root / TAURI_CONFIG).get("version")))
+    android = _read_json(root / ANDROID_CONFIG)
+    android_bundle = android.get("bundle")
+    android_config = (
+        android_bundle.get("android") if isinstance(android_bundle, dict) else None
+    )
+    android_code = (
+        android_config.get("versionCode") if isinstance(android_config, dict) else None
+    )
+    expected_android_code = _android_version_code(expected)
+    if android_code != expected_android_code:
+        errors.append(
+            f"{ANDROID_CONFIG}: expected versionCode {expected_android_code}, "
+            f"found {android_code}"
+        )
+    apple_core = _version_core(expected)
+    for relative, platform in ((MACOS_CONFIG, "macOS"), (IOS_CONFIG, "iOS")):
+        config = _read_json(root / relative)
+        bundle = config.get("bundle")
+        platform_config = bundle.get(platform) if isinstance(bundle, dict) else None
+        bundle_version = (
+            platform_config.get("bundleVersion")
+            if isinstance(platform_config, dict)
+            else None
+        )
+        if str(config.get("version")) != apple_core:
+            errors.append(
+                f"{relative}: expected platform version {apple_core}, "
+                f"found {config.get('version')}"
+            )
+        if str(bundle_version) != apple_core:
+            errors.append(
+                f"{relative}: expected bundleVersion {apple_core}, found {bundle_version}"
+            )
     for name, actual in _lock_versions(root / UV_LOCK, UV_PACKAGES).items():
         require(Path(f"{UV_LOCK}:{name}"), actual)
     for name, actual in _lock_versions(root / CARGO_LOCK, CARGO_PACKAGES).items():

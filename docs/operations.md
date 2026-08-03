@@ -109,9 +109,9 @@ Tauri 配置生成平台工程，再执行 debug/unsigned 编译。缺少 Tauri 
 commit，后者只供 Tag Release 复用同一套命令。手动运行不接受 `release_tag`，不会创建 GitHub
 Release，也不会推送 GHCR；Actions artifact 使用不含版本的稳定名称并保留 14 天。三个手动
 表单都可以填写可选 `version`；留空时读取仓库 Actions 变量 `TERMFLOW_BUILD_VERSION`，仍未设置
-则使用 `0.0.0-dev.0`。
+则使用 `0.0.1-dev.0`。
 
-统一版本优先级为 `Git Tag > TERMFLOW_BUILD_VERSION > 0.0.0-dev.0`。本地非 Tag 构建可显式运行：
+统一版本优先级为 `Git Tag > TERMFLOW_BUILD_VERSION > 0.0.1-dev.0`。本地非 Tag 构建可显式运行：
 
 ```bash
 TERMFLOW_BUILD_VERSION=1.2.3 \
@@ -120,6 +120,10 @@ TERMFLOW_BUILD_VERSION=1.2.3 \
 
 环境变量只能决定非 Tag 构建包内的版本，不能触发 GHCR 或 GitHub Release，也不能覆盖 Tag。
 非法的非空版本会直接失败，不会静默使用默认值。
+
+完整 SemVer 是产品逻辑版本。Android 使用由数字 core 派生的正整数 `versionCode`，macOS/iOS
+平台包使用纯数字 core；原生客户端授权元数据仍上报完整逻辑版本。当前 deb 仅作为手动下载
+Artifact，prerelease 的 Debian 版本排序不作为 apt 升级通道承诺。
 
 - `Package A · Linux Node` 构建 Linux x86_64 A bundle、安装器和 `SHA256SUMS`。下载并解压
   `termflow-node-linux-x86_64` Artifact 后，可在该目录离线安装：

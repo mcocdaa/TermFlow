@@ -1,9 +1,9 @@
-import { getVersion } from '@tauri-apps/api/app'
 import { arch, platform } from '@tauri-apps/plugin-os'
 import { NativeAuthorizationSession, createPkce } from '@termflow/client-core'
 import type { OAuthScope } from '@termflow/client-contracts'
 import { createMemoryAccessVault } from './adapters/memoryAccessVault'
 import { createTauriKey, exchangeAuthorization, tauriAuthorizationBrowser } from './adapters/tauriAuthorization'
+import { buildVersion } from './buildVersion'
 import { serverConfig } from './serverConfig'
 
 const vault = createMemoryAccessVault()
@@ -18,7 +18,7 @@ export async function authorizeNativeClient(issuer: string, authorizeEndpoint: s
   const session = new NativeAuthorizationSession({
     issuer: serverConfig.current,
     authorizeEndpoint,
-    client: { name: 'TermFlow', platform: `${platform()} ${arch()}`, version: await getVersion() },
+    client: { name: 'TermFlow', platform: `${platform()} ${arch()}`, version: buildVersion },
     scopes,
     browser: tauriAuthorizationBrowser,
     vault,

@@ -55,6 +55,25 @@ def test_release_publishes_only_after_all_reusable_workflows() -> None:
     assert publish["permissions"] == {"contents": "write"}
 
 
+def test_release_uses_resolved_prerelease_state_not_raw_tag_punctuation() -> None:
+    text = WORKFLOW_PATH.read_text()
+    workflow = yaml.safe_load(text)
+
+    validate = workflow["jobs"]["validate-version"]
+    assert validate["outputs"]["is_prerelease"] == (
+        "${{ steps.version.outputs.is_prerelease }}"
+    )
+    publish_steps = workflow["jobs"]["publish"]["steps"]
+    release_step = next(
+        step for step in publish_steps if "gh release create" in step.get("run", "")
+    )
+    assert release_step["env"]["IS_PRERELEASE"] == (
+        "${{ needs.validate-version.outputs.is_prerelease }}"
+    )
+    assert '[[ "$IS_PRERELEASE" == "true" ]]' in release_step["run"]
+    assert '[[ "${GITHUB_REF_NAME}" == *-* ]]' not in text
+
+
 def test_release_contains_no_product_packaging_implementation() -> None:
     text = WORKFLOW_PATH.read_text()
 

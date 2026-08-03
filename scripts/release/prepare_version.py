@@ -20,7 +20,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _emit_github_outputs(*, version: str, tag: str, is_release: bool) -> None:
+def _emit_github_outputs(
+    *, version: str, tag: str, is_release: bool, is_prerelease: bool
+) -> None:
     output_path = os.environ.get("GITHUB_OUTPUT")
     if not output_path:
         return
@@ -28,6 +30,7 @@ def _emit_github_outputs(*, version: str, tag: str, is_release: bool) -> None:
         output.write(f"version={version}\n")
         output.write(f"tag={tag}\n")
         output.write(f"is_release={str(is_release).lower()}\n")
+        output.write(f"is_prerelease={str(is_prerelease).lower()}\n")
 
 
 def main() -> int:
@@ -44,6 +47,7 @@ def main() -> int:
             version=resolved.version,
             tag=resolved.tag,
             is_release=resolved.is_release,
+            is_prerelease=resolved.is_prerelease,
         )
     except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)

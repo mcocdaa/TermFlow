@@ -15,8 +15,11 @@ from scripts.release.build_version import (
     validate_version,
 )
 from scripts.release.version_files import (
+    ANDROID_CONFIG,
     CARGO_LOCK,
     CARGO_MANIFEST,
+    IOS_CONFIG,
+    MACOS_CONFIG,
     NPM_MANIFESTS,
     PACKAGE_LOCK,
     PYPROJECTS,
@@ -40,6 +43,9 @@ def _copy_managed_tree(destination: Path) -> None:
         CARGO_MANIFEST,
         CARGO_LOCK,
         TAURI_CONFIG,
+        ANDROID_CONFIG,
+        MACOS_CONFIG,
+        IOS_CONFIG,
     )
     for relative in paths:
         target = destination / relative
@@ -60,6 +66,7 @@ def test_tag_wins_over_environment() -> None:
         version="1.2.3-rc.1",
         tag="v1.2.3-rc.1",
         is_release=True,
+        is_prerelease=True,
     )
 
 
@@ -69,20 +76,28 @@ def test_environment_wins_without_tag() -> None:
         environment={"TERMFLOW_BUILD_VERSION": "2.3.4"},
     )
 
-    assert resolved == BuildVersion("2.3.4", "v2.3.4", False)
+    assert resolved == BuildVersion("2.3.4", "v2.3.4", False, False)
 
 
 def test_default_is_used_without_tag_or_environment() -> None:
-    assert DEFAULT_BUILD_VERSION == "0.0.0-dev.0"
+    assert DEFAULT_BUILD_VERSION == "0.0.1-dev.0"
     assert resolve_build_version(tag=None, environment={}) == BuildVersion(
-        "0.0.0-dev.0",
-        "v0.0.0-dev.0",
+        "0.0.1-dev.0",
+        "v0.0.1-dev.0",
         False,
+        True,
     )
     assert resolve_build_version(
         tag="",
         environment={"TERMFLOW_BUILD_VERSION": ""},
-    ) == BuildVersion("0.0.0-dev.0", "v0.0.0-dev.0", False)
+    ) == BuildVersion("0.0.1-dev.0", "v0.0.1-dev.0", False, True)
+
+
+def test_metadata_hyphen_does_not_make_a_stable_version_prerelease() -> None:
+    resolved = resolve_build_version(tag="v1.2.3+build-7", environment={})
+
+    assert resolved.is_release is True
+    assert resolved.is_prerelease is False
 
 
 @pytest.mark.parametrize(
@@ -112,7 +127,17 @@ def test_invalid_tags_are_rejected(tag: str) -> None:
 
 @pytest.mark.parametrize(
     "version",
-    ["v1.2.3", "1", "1.2", "1.2.3-foo.1", "latest", " 1.2.3", "1.2.3 "],
+    [
+        "v1.2.3",
+        "1",
+        "1.2",
+        "1.2.3-foo.1",
+        "latest",
+        " 1.2.3",
+        "1.2.3 ",
+        "1\u0662.2.3",
+        "1.2.3-rc.1\u0662",
+    ],
 )
 def test_invalid_environment_versions_do_not_fall_back(version: str) -> None:
     with pytest.raises(ValueError, match="build version"):
@@ -120,6 +145,15 @@ def test_invalid_environment_versions_do_not_fall_back(version: str) -> None:
             tag=None,
             environment={"TERMFLOW_BUILD_VERSION": version},
         )
+
+
+@pytest.mark.parametrize(
+    "version",
+    ["0.0.0", "0.0.0-dev.1", "2101.0.0", "2100.99.99", "1.100.0", "1.0.100"],
+)
+def test_versions_outside_mobile_bundle_ranges_are_rejected(version: str) -> None:
+    with pytest.raises(ValueError, match="mobile bundle"):
+        validate_version(version)
 
 
 def test_prepare_cli_resolves_a_tag_without_writing_files(tmp_path: Path) -> None:
@@ -146,7 +180,7 @@ def test_prepare_cli_resolves_a_tag_without_writing_files(tmp_path: Path) -> Non
     assert result.returncode == 0, result.stderr
     assert result.stdout == "2.0.0\n"
     assert github_output.read_text() == (
-        "version=2.0.0\ntag=v2.0.0\nis_release=true\n"
+        "version=2.0.0\ntag=v2.0.0\nis_release=true\nis_prerelease=false\n"
     )
     assert (tmp_path / "package.json").read_bytes() == before
 
@@ -181,8 +215,8 @@ def test_prepare_cli_materializes_the_fixed_default(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout == "0.0.0-dev.0\n"
-    assert verify_materialized_version(tmp_path, "0.0.0-dev.0") == []
+    assert result.stdout == "0.0.1-dev.0\n"
+    assert verify_materialized_version(tmp_path, "0.0.1-dev.0") == []
 
 
 def test_prepare_cli_rejects_an_invalid_environment_version(tmp_path: Path) -> None:
