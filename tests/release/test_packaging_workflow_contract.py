@@ -67,8 +67,9 @@ def test_control_plane_workflow_is_manual_and_reusable() -> None:
 
     assert workflow["name"] == "Package B + Web C · Control Plane"
     assert set(triggers) == {"workflow_dispatch", "workflow_call"}
-    assert triggers["workflow_dispatch"] is None
+    assert triggers["workflow_dispatch"]["inputs"]["version"]["default"] == ""
     assert "release_tag" in triggers["workflow_call"]["inputs"]
+    assert triggers["workflow_call"]["inputs"]["version"]["default"] == ""
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["jobs"]["publish"]["permissions"] == {
         "contents": "read",
@@ -88,6 +89,7 @@ def test_control_plane_manual_artifact_and_tag_publication_are_separated() -> No
         "scripts/verify-control-plane-image.sh",
         "scripts/release/verify_control_plane_release_image.sh",
         "scripts/release/archive_control_plane_image.sh",
+        "scripts/release/prepare_version.py",
         "linux/amd64,linux/arm64",
         "ghcr.io/${owner}/termflow-control-plane",
         'image_tag="${RELEASE_TAG//+/_}"',
@@ -95,7 +97,29 @@ def test_control_plane_manual_artifact_and_tag_publication_are_separated() -> No
         "docker buildx build",
     ):
         assert required in text
-    assert "if: ${{ needs.prepare.outputs.release_tag != '' }}" in text
+    assert "if: ${{ needs.prepare.outputs.is_release == 'true' }}" in text
+    assert "TERMFLOW_BUILD_VERSION" in text
+
+
+def test_control_plane_materializes_each_image_build_checkout() -> None:
+    workflow = _workflow(CONTROL_PLANE_WORKFLOW)
+
+    for job_name, build_marker in (
+        ("package", "scripts/build-control-plane-image.sh"),
+        ("publish", "docker buildx build"),
+    ):
+        steps = workflow["jobs"][job_name]["steps"]
+        materialize = next(
+            index
+            for index, step in enumerate(steps)
+            if "scripts/release/prepare_version.py" in str(step.get("run", ""))
+        )
+        build = next(
+            index
+            for index, step in enumerate(steps)
+            if build_marker in str(step.get("run", ""))
+        )
+        assert materialize < build
 
 
 def test_client_workflow_is_manual_and_reusable() -> None:

@@ -1,12 +1,23 @@
 name: Package B + Web C · Control Plane
-run-name: Package B + Web C · ${{ inputs.release_tag || 'manual' }}
+run-name: Package B + Web C · ${{ inputs.release_tag || inputs.version || 'manual' }}
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: Build version override; defaults to 0.0.0-dev.0
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       release_tag:
         description: Validated v-prefixed release tag; empty for manual packaging
+        required: false
+        default: ""
+        type: string
+      version:
+        description: Non-release build version override
         required: false
         default: ""
         type: string
@@ -22,7 +33,9 @@ jobs:
   prepare:
     runs-on: ubuntu-22.04
     outputs:
-      release_tag: ${{ steps.context.outputs.release_tag }}
+      version: ${{ steps.context.outputs.version }}
+      release_tag: ${{ steps.context.outputs.tag }}
+      is_release: ${{ steps.context.outputs.is_release }}
       artifact_name: ${{ steps.context.outputs.artifact_name }}
       retention_days: ${{ steps.context.outputs.retention_days }}
     steps:
@@ -34,20 +47,20 @@ jobs:
         id: context
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
+          TERMFLOW_BUILD_VERSION: ${{ inputs.version || vars.TERMFLOW_BUILD_VERSION }}
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/release/check_version.py >/dev/null
           release_tag="$RELEASE_TAG"
+          python scripts/release/prepare_version.py \
+            --tag "$release_tag" --resolve-only >/dev/null
           if [[ -n "$release_tag" ]]; then
-            python scripts/release/check_version.py --tag "$release_tag" >/dev/null
             artifact_name="termflow-${release_tag}-control-plane"
             retention_days=1
           else
             artifact_name="termflow-control-plane"
             retention_days=14
           fi
-          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
           echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
           echo "retention_days=$retention_days" >> "$GITHUB_OUTPUT"
 
@@ -57,6 +70,13 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Materialize build version
+        env:
+          TERMFLOW_BUILD_VERSION: ${{ needs.prepare.outputs.version }}
+        run: python scripts/release/prepare_version.py >/dev/null
       - name: Build, verify, archive, and reload the image
         env:
           LOCAL_IMAGE: termflow-control-plane:package-${{ github.run_id }}-${{ github.run_attempt }}
@@ -79,7 +99,7 @@ jobs:
 
   publish:
     needs: [prepare, package]
-    if: ${{ needs.prepare.outputs.release_tag != '' }}
+    if: ${{ needs.prepare.outputs.is_release == 'true' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     permissions:
@@ -87,6 +107,13 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Materialize build version
+        env:
+          TERMFLOW_BUILD_VERSION: ${{ needs.prepare.outputs.version }}
+        run: python scripts/release/prepare_version.py >/dev/null
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -97,6 +124,7 @@ jobs:
       - name: Push the validated multi-architecture image
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
@@ -112,7 +140,7 @@ jobs:
           fi
           docker buildx build --platform linux/amd64,linux/arm64 --push \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
-            --label "org.opencontainers.image.version=${RELEASE_TAG#v}" \
+            --label "org.opencontainers.image.version=${VERSION}" \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
             "${tags[@]}" \
             -f deploy/Dockerfile.control-plane .
