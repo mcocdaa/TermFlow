@@ -81,3 +81,34 @@ def test_control_plane_manual_artifact_and_tag_publication_are_separated() -> No
     ):
         assert required in text
     assert "if: ${{ needs.prepare.outputs.release_tag != '' }}" in text
+
+
+def test_client_workflow_is_manual_and_reusable() -> None:
+    workflow = _workflow(CLIENT_WORKFLOW)
+    triggers = workflow[True]
+
+    assert workflow["name"] == "Package C · Native Clients"
+    assert set(triggers) == {"workflow_dispatch", "workflow_call"}
+    assert triggers["workflow_dispatch"]["inputs"]["platform"]["default"] == "all"
+    assert triggers["workflow_call"]["inputs"]["platform"] == {
+        "description": "Native client platform set",
+        "required": False,
+        "default": "all",
+        "type": "string",
+    }
+    assert "release_tag" in triggers["workflow_call"]["inputs"]
+
+
+def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() -> None:
+    text = CLIENT_WORKFLOW.read_text()
+
+    assert "artifact_prefix=termflow" in text
+    assert 'artifact_prefix="termflow-${release_tag}"' in text
+    for suffix in (
+        "windows-x64-nsis",
+        "linux-x64",
+        "macos-arm64",
+        "android-arm64-debug",
+        "ios-simulator-aarch64",
+    ):
+        assert f"${{{{ needs.validate-version.outputs.artifact_prefix }}}}-{suffix}" in text

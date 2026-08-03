@@ -186,7 +186,7 @@ def test_compose_has_an_explicit_optional_totp_secret_file_override() -> None:
     )
 
 
-def test_tauri_packages_are_manual_native_artifacts_not_public_releases() -> None:
+def test_tauri_packages_are_manual_and_reusable_native_artifacts() -> None:
     path = Path(".github/workflows/tauri-packages.yml")
     old_path = Path(".github/workflows/tauri-windows-package.yml")
     assert path.is_file()
@@ -194,7 +194,7 @@ def test_tauri_packages_are_manual_native_artifacts_not_public_releases() -> Non
 
     workflow = yaml.safe_load(path.read_text())
     triggers = workflow[True]
-    assert set(triggers) == {"workflow_dispatch"}
+    assert set(triggers) == {"workflow_dispatch", "workflow_call"}
     assert workflow["permissions"] == {"contents": "read"}
     manual_platform = triggers["workflow_dispatch"]["inputs"]["platform"]
     assert manual_platform == {
@@ -205,8 +205,8 @@ def test_tauri_packages_are_manual_native_artifacts_not_public_releases() -> Non
         "options": ["all", "windows", "linux", "macos", "android", "ios"],
     }
     assert workflow["run-name"] == (
-        "Tauri packages · "
-        "${{ inputs.platform }}"
+        "Package C · ${{ inputs.platform }} · "
+        "${{ inputs.release_tag || 'manual' }}"
     )
     assert workflow["concurrency"] == {
         "group": "tauri-packages-${{ github.ref }}-${{ inputs.platform }}",
@@ -273,7 +273,7 @@ def test_tauri_packages_are_manual_native_artifacts_not_public_releases() -> Non
         "ditto -c -k --sequesterRsrc --keepParent",
         "actions/upload-artifact@v4",
         "if-no-files-found: error",
-        "retention-days: 14",
+        "retention-days: ${{ fromJSON(needs.validate-version.outputs.retention_days) }}",
     ):
         assert expected in rendered
     for artifact in (

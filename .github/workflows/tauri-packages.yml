@@ -1,5 +1,5 @@
-name: Tauri Multi-platform Packages
-run-name: Tauri packages · ${{ inputs.platform }}
+name: Package C · Native Clients
+run-name: Package C · ${{ inputs.platform }} · ${{ inputs.release_tag || 'manual' }}
 
 on:
   workflow_dispatch:
@@ -16,6 +16,18 @@ on:
           - macos
           - android
           - ios
+  workflow_call:
+    inputs:
+      platform:
+        description: Native client platform set
+        required: false
+        default: all
+        type: string
+      release_tag:
+        description: Validated v-prefixed release tag; empty for manual packaging
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -31,6 +43,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
+      artifact_prefix: ${{ steps.version.outputs.artifact_prefix }}
+      retention_days: ${{ steps.version.outputs.retention_days }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -42,10 +56,24 @@ jobs:
           cache: npm
       - name: Validate configured version
         id: version
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/release/check_version.py
+          version="$(python scripts/release/check_version.py)"
+          release_tag="$RELEASE_TAG"
+          if [[ -n "$release_tag" ]]; then
+            python scripts/release/check_version.py --tag "$release_tag" >/dev/null
+            artifact_prefix="termflow-${release_tag}"
+            retention_days=1
+          else
+            artifact_prefix=termflow
+            retention_days=14
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "artifact_prefix=$artifact_prefix" >> "$GITHUB_OUTPUT"
+          echo "retention_days=$retention_days" >> "$GITHUB_OUTPUT"
 
   windows-nsis:
     name: Windows x64 · NSIS
@@ -70,10 +98,10 @@ jobs:
         run: npm run tauri:build --workspace @termflow/tauri-client -- --bundles nsis --ci
       - uses: actions/upload-artifact@v4
         with:
-          name: termflow-${{ needs.validate-version.outputs.version }}-windows-x64-nsis
+          name: ${{ needs.validate-version.outputs.artifact_prefix }}-windows-x64-nsis
           path: apps/clients/tauri/src-tauri/target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ fromJSON(needs.validate-version.outputs.retention_days) }}
           compression-level: 0
 
   linux-packages:
@@ -117,12 +145,12 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: termflow-${{ needs.validate-version.outputs.version }}-linux-x64
+          name: ${{ needs.validate-version.outputs.artifact_prefix }}-linux-x64
           path: |
             apps/clients/tauri/src-tauri/target/release/bundle/deb/*.deb
             apps/clients/tauri/src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ fromJSON(needs.validate-version.outputs.retention_days) }}
           compression-level: 0
 
   macos-packages:
@@ -168,12 +196,12 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: termflow-${{ needs.validate-version.outputs.version }}-macos-arm64
+          name: ${{ needs.validate-version.outputs.artifact_prefix }}-macos-arm64
           path: |
             ${{ runner.temp }}/termflow-artifacts/TermFlow-macos-arm64.app.zip
             apps/clients/tauri/src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ fromJSON(needs.validate-version.outputs.retention_days) }}
           compression-level: 0
 
   android-debug-apk:
@@ -217,10 +245,10 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: termflow-${{ needs.validate-version.outputs.version }}-android-arm64-debug
+          name: ${{ needs.validate-version.outputs.artifact_prefix }}-android-arm64-debug
           path: apps/clients/tauri/src-tauri/gen/android/app/build/outputs/apk/**/*-debug.apk
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ fromJSON(needs.validate-version.outputs.retention_days) }}
           compression-level: 0
 
   ios-simulator-app:
@@ -262,8 +290,8 @@ jobs:
             "$1" "$RUNNER_TEMP/termflow-artifacts/TermFlow-ios-simulator-aarch64.app.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: termflow-${{ needs.validate-version.outputs.version }}-ios-simulator-aarch64
+          name: ${{ needs.validate-version.outputs.artifact_prefix }}-ios-simulator-aarch64
           path: ${{ runner.temp }}/termflow-artifacts/TermFlow-ios-simulator-aarch64.app.zip
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ fromJSON(needs.validate-version.outputs.retention_days) }}
           compression-level: 0

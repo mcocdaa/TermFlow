@@ -53,10 +53,10 @@ def test_checker_prints_agreed_version_for_all_product_surfaces(tmp_path: Path) 
     assert result.stdout == "0.1.0\n"
 
 
-def test_manual_package_workflow_does_not_claim_tag_publication() -> None:
+def test_native_package_workflow_is_manual_and_reusable_without_publish_permissions() -> None:
     path = ROOT / ".github/workflows/tauri-packages.yml"
     workflow = yaml.safe_load(path.read_text())
 
-    assert set(workflow[True]) == {"workflow_dispatch"}
+    assert set(workflow[True]) == {"workflow_dispatch", "workflow_call"}
     assert workflow["permissions"] == {"contents": "read"}
     assert "scripts/release/check_version.py" in path.read_text()
