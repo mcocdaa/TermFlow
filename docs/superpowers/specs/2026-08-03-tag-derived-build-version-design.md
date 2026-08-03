@@ -19,7 +19,7 @@ A 安装器虽由模板渲染，却仍间接依赖这些手工版本。
 - A 的 `termflow --version`、注册时上报的客户端版本、bundle 内 `VERSION` 和安装目录一致。
 - B、Web C 和原生 C 的包元数据使用同一构建版本。
 - 无 Tag 构建允许通过 `TERMFLOW_BUILD_VERSION` 注入版本。
-- 无 Tag 且未注入版本时使用固定默认值 `0.0.0-dev.0`。
+- 无 Tag 且未注入版本时使用固定默认值 `0.0.1-dev.0`。
 - 三个基础打包 workflow 复用同一个版本解析和注入实现。
 - Tag、环境变量和默认值均经过格式校验，非法版本在安装依赖或构建产品前失败。
 
@@ -53,11 +53,11 @@ Python 可以调用 `git describe`，但已安装的 A、Docker 镜像、Windows
 
 统一解析器按以下优先级选择构建版本：
 
-`Git Tag > TERMFLOW_BUILD_VERSION > 0.0.0-dev.0`
+`Git Tag > TERMFLOW_BUILD_VERSION > 0.0.1-dev.0`
 
 1. 显式传入的 Git Tag；
 2. `TERMFLOW_BUILD_VERSION` 环境变量；
-3. 固定默认值 `0.0.0-dev.0`。
+3. 固定默认值 `0.0.1-dev.0`。
 
 Tag 必须为 `v` 前缀、且去掉 `v` 后是 TermFlow 支持的 SemVer，例如 `v0.2.0` 或
 `v0.2.0-rc.1`。环境变量不带 `v`，例如：
@@ -69,13 +69,17 @@ TERMFLOW_BUILD_VERSION=0.2.0 <build command>
 如果同时存在 Tag 和环境变量，Tag 无条件优先。这样仓库或 runner 中残留的环境变量不能改变
 Tag Release 的包版本。空字符串等同于未设置；非法的非空值必须失败，不能静默回退默认值。
 
-解析器同时输出：
+版本中的数字必须是 ASCII 数字；为确保同一个版本可以进入 Android 和 Apple 包，core 不得为
+`0.0.0`，major 不得超过 2100，minor 和 patch 不得超过 99，并且 Android 派生
+`versionCode` 不得超过 2,100,000,000。解析器同时输出：
 
 - `release_tag`：Tag 模式保留原始 Tag；非 Tag 模式为 `v${version}`，仅供 A 安装器和内部目录使用；
 - `version`：不含 `v` 的产品构建版本；
 - `is_release`：只有显式 Tag 模式为真。
+- `is_prerelease`：只根据 `+` build metadata 之前是否存在 prerelease 判断，metadata 中的
+  连字符不会把稳定版误判为预发布版。
 
-`0.0.0-dev.0` 只是非正式构建的安全默认值。它不能触发 GHCR 推送、GitHub Release、
+`0.0.1-dev.0` 只是非正式构建的安全默认值。它不能触发 GHCR 推送、GitHub Release、
 `latest` 更新或正式 Artifact 命名。
 
 ## 版本物化边界
@@ -92,8 +96,22 @@ Tag Release 的包版本。空字符串等同于未设置；非法的非空值�
 结构定位或受约束的包名定位，不能全局替换所有 `0.1.0`，避免修改测试样例、第三方锁文件条目
 或业务数据。
 
-仓库中受管表面的静态版本改为开发占位值 `0.0.0-dev.0`。该值只服务于未执行版本准备步骤的
+仓库中受管表面的静态版本改为开发占位值 `0.0.1-dev.0`。该值只服务于未执行版本准备步骤的
 本地开发和编辑器，不代表任何正式 Release。
+
+### 原生平台技术版本
+
+完整 SemVer 是 TermFlow 的逻辑版本，继续写入 npm、Cargo、Windows/Linux Tauri 配置，并由
+原生客户端在授权时上报。移动和 Apple 包另有平台格式约束，因此物化器同时生成：
+
+- Android `bundle.android.versionCode`：`major * 1,000,000 + minor * 1,000 + patch`；
+- macOS/iOS 平台配置：顶层 `version` 和 `bundleVersion` 使用纯数字 core `major.minor.patch`；
+- Tauri 前端通过构建时读取已物化的 `package.json` 获得完整逻辑版本，不依赖 Apple 平台覆盖值。
+
+这样 prerelease/build metadata 仍出现在 Artifact、Windows/Linux 包和客户端诊断版本中，同时
+Android 与 Apple 的技术字段保持有效。当前 deb 仅供下载后手工安装，没有 apt 升级仓库；Debian
+会把 `1.0.0-rc.1` 排在 `1.0.0` 之后这一 SemVer 语义差异记录为发布限制，未来建立 apt 渠道前
+必须转换为 Debian 的 `~rc.1` 形式或不向该渠道发布 prerelease。
 
 ## Workflow 数据流
 
@@ -117,7 +135,7 @@ Tag 模式的 Artifact 名称、GitHub Release 名称和 GHCR 标签继续使用
 ### 手动基础 Workflow
 
 三个 `workflow_dispatch` 表单增加可选的 `version` 输入。workflow 将其映射到
-`TERMFLOW_BUILD_VERSION`；调用者不填写时使用 `0.0.0-dev.0`。可复用 `workflow_call` 也接受
+`TERMFLOW_BUILD_VERSION`；调用者不填写时使用 `0.0.1-dev.0`。可复用 `workflow_call` 也接受
 可选的非发布构建版本，方便其他验证 workflow 调用，但它不能使 `is_release` 变为真。
 
 手动 Artifact 的外层名称继续保持：
@@ -143,6 +161,7 @@ TERMFLOW_BUILD_VERSION=0.2.0 scripts/release/build_node_bundle.sh \
 ## 失败处理
 
 - Tag 缺少 `v`、版本格式非法或无法被受支持的 Python/npm/Cargo/Tauri 版本格式共同表示：立即失败。
+- core 为 `0.0.0`、含 Unicode 数字或超出移动平台技术版本范围：立即失败。
 - `TERMFLOW_BUILD_VERSION` 非空但非法：立即失败，不使用默认值。
 - 物化后任一受管文件版本不一致：立即失败并列出文件，不进入产品构建。
 - 锁文件物化会改变第三方依赖：测试失败，禁止发布。
@@ -154,9 +173,11 @@ TERMFLOW_BUILD_VERSION=0.2.0 scripts/release/build_node_bundle.sh \
 
 - Tag 优先于环境变量；
 - 无 Tag 时使用合法环境变量；
-- 两者都没有时得到 `0.0.0-dev.0`；
+- 两者都没有时得到 `0.0.1-dev.0`；
 - 非法 Tag 和非法环境变量失败；
 - stable、prerelease 和 build metadata 的受支持版本；
+- build metadata 内含连字符时仍被识别为稳定版本；
+- Android/Apple 技术版本映射与边界；
 - Tag 与环境变量冲突时不会污染正式版本。
 
 版本物化测试在临时仓库副本中验证：

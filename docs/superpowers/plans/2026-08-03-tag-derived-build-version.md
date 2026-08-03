@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make Git Tag the authoritative version for formal TermFlow releases while supporting `TERMFLOW_BUILD_VERSION` and the fixed `0.0.0-dev.0` fallback for non-Tag builds.
+**Goal:** Make Git Tag the authoritative version for formal TermFlow releases while supporting `TERMFLOW_BUILD_VERSION` and the fixed `0.0.1-dev.0` fallback for non-Tag builds.
 
 **Architecture:** A small standard-library resolver chooses `Tag > TERMFLOW_BUILD_VERSION > default`; a separate materializer updates only registered TermFlow manifests and local lockfile entries in each ephemeral build checkout. Every reusable packaging workflow resolves its context once, then materializes the resolved version in every runner checkout before frozen dependency installation or product build.
 
@@ -18,7 +18,7 @@
 - Modify `scripts/release/check_version.py`: compatibility checker for already-materialized product surfaces.
 - Create `tests/release/test_build_version.py`: resolver and CLI precedence tests.
 - Create `tests/release/test_version_materialization.py`: targeted file updates, lockfile safety and idempotence tests.
-- Modify product manifests and lockfiles: replace release-looking source versions with `0.0.0-dev.0`.
+- Modify product manifests and lockfiles: replace release-looking source versions with `0.0.1-dev.0`.
 - Modify `apps/control-plane/src/termflow_control_plane/__init__.py` and `app.py`: expose the materialized Control Plane version without an app-level literal.
 - Modify Node release scripts and their tests: permit Tag argument, environment-only version and default version without two version implementations.
 - Modify `.github/workflows/package-node.yml`, `package-control-plane.yml`, `tauri-packages.yml`, and `release.yml`: resolve inputs and materialize each checkout.
@@ -47,6 +47,7 @@ def test_tag_wins_over_environment() -> None:
         version="1.2.3-rc.1",
         tag="v1.2.3-rc.1",
         is_release=True,
+        is_prerelease=True,
     )
 
 
@@ -55,13 +56,13 @@ def test_environment_wins_without_tag() -> None:
         tag=None,
         environment={"TERMFLOW_BUILD_VERSION": "2.3.4"},
     )
-    assert resolved == BuildVersion("2.3.4", "v2.3.4", False)
+    assert resolved == BuildVersion("2.3.4", "v2.3.4", False, False)
 
 
 def test_default_is_used_without_tag_or_environment() -> None:
-    assert DEFAULT_BUILD_VERSION == "0.0.0-dev.0"
+    assert DEFAULT_BUILD_VERSION == "0.0.1-dev.0"
     assert resolve_build_version(tag=None, environment={}) == BuildVersion(
-        "0.0.0-dev.0", "v0.0.0-dev.0", False
+        "0.0.1-dev.0", "v0.0.1-dev.0", False, True
     )
 ```
 
@@ -83,7 +84,7 @@ Expected: FAIL because `scripts/release/build_version.py` does not exist.
 Implement this public contract:
 
 ```python
-DEFAULT_BUILD_VERSION = "0.0.0-dev.0"
+DEFAULT_BUILD_VERSION = "0.0.1-dev.0"
 BUILD_VERSION_ENV = "TERMFLOW_BUILD_VERSION"
 
 
@@ -92,6 +93,7 @@ class BuildVersion:
     version: str
     tag: str
     is_release: bool
+    is_prerelease: bool
 
 
 def validate_version(value: str) -> str:
@@ -103,7 +105,7 @@ def resolve_build_version(
     tag: str | None,
     environment: Mapping[str, str] = os.environ,
 ) -> BuildVersion:
-    """Resolve Tag > TERMFLOW_BUILD_VERSION > 0.0.0-dev.0."""
+    """Resolve Tag > TERMFLOW_BUILD_VERSION > 0.0.1-dev.0."""
 ```
 
 Use one anchored regular expression for numeric `MAJOR.MINOR.PATCH`, optional
@@ -270,7 +272,7 @@ is_release=true
 ```
 
 Then run without Tag using `TERMFLOW_BUILD_VERSION=3.1.0`, assert the copied files are materialized,
-and run with neither input to assert `0.0.0-dev.0`. Add an app test asserting FastAPI's version is
+and run with neither input to assert `0.0.1-dev.0`. Add an app test asserting FastAPI's version is
 `termflow_control_plane.__version__`, not a literal:
 
 ```python
@@ -335,7 +337,7 @@ through `version_files.py`; without Tag print the agreed version. With Tag, reso
 Run the new materializer once on the feature worktree:
 
 ```bash
-TERMFLOW_BUILD_VERSION=0.0.0-dev.0 \
+TERMFLOW_BUILD_VERSION=0.0.1-dev.0 \
   uv run --offline --frozen python scripts/release/prepare_version.py
 ```
 
@@ -353,7 +355,7 @@ app = FastAPI(
 )
 ```
 
-and define `__version__ = "0.0.0-dev.0"` in the package initializer for later materialization.
+and define `__version__ = "0.0.1-dev.0"` in the package initializer for later materialization.
 
 - [ ] **Step 6: Verify locks, tests, and idempotence**
 
@@ -474,7 +476,7 @@ termflow_bundle_tmp="$(mktemp -d)"
 TERMFLOW_BUILD_VERSION=1.2.3 scripts/release/build_node_bundle.sh "$termflow_bundle_tmp"
 tar -xzf "$termflow_bundle_tmp/termflow-node-linux-x86_64.tar.gz" -C "$termflow_bundle_tmp"
 "$termflow_bundle_tmp/termflow-node-linux-x86_64/termflow/termflow" --version
-TERMFLOW_BUILD_VERSION=0.0.0-dev.0 \
+TERMFLOW_BUILD_VERSION=0.0.1-dev.0 \
   uv run --offline --frozen python scripts/release/prepare_version.py
 git diff --check
 ```
@@ -641,7 +643,7 @@ python scripts/release/prepare_version.py --tag "$GITHUB_REF_NAME" --resolve-onl
 
 and no longer calls the source-equality checker. Preserve exact reusable workflow calls, Tag inputs,
 failure dependencies and final Release permissions. Add documentation assertions for
-`TERMFLOW_BUILD_VERSION`, `0.0.0-dev.0`, and `Tag > environment > default`.
+`TERMFLOW_BUILD_VERSION`, `0.0.1-dev.0`, and `Tag > environment > default`.
 
 - [ ] **Step 2: Run the Release contracts and observe failure**
 
@@ -662,7 +664,7 @@ Change only the validation command; continue passing `github.ref_name` to A, B, 
 ```text
 Formal release: git tag vX.Y.Z; git push origin vX.Y.Z
 Manual/local override: TERMFLOW_BUILD_VERSION=X.Y.Z
-No Tag or override: 0.0.0-dev.0
+No Tag or override: 0.0.1-dev.0
 Priority: Git Tag > TERMFLOW_BUILD_VERSION > default
 ```
 
@@ -719,4 +721,14 @@ git diff --check main...HEAD
 ```
 
 Verify every spec requirement maps to a passing test, no downloaded Artifact or generated build output
-is tracked, and the worktree source baseline remains `0.0.0-dev.0` after all injected-version tests.
+is tracked, and the worktree source baseline remains `0.0.1-dev.0` after all injected-version tests.
+
+### Review amendment: platform technical versions and prerelease state
+
+The implementation review added one blocking follow-up before integration:
+
+- reject Unicode digits, `0.0.0`, and numeric cores outside Android/Apple bundle ranges;
+- emit `is_prerelease` from the shared resolver so build metadata containing `-` is not misclassified;
+- materialize Android `versionCode` and numeric-core macOS/iOS platform configs;
+- inject the full logical package version into the Tauri frontend for client authorization metadata;
+- retain the full SemVer for Windows/Linux and record Debian prerelease ordering as a future repository-channel constraint.
