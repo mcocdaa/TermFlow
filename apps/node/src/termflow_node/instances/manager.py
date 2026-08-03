@@ -38,6 +38,13 @@ class AmbiguousInstance(InstanceResolutionError):
     pass
 
 
+def bridge_argv(instance_id: UUID) -> list[str]:
+    bridge_args = ["_bridge", "--instance-id", str(instance_id)]
+    if getattr(sys, "frozen", False):
+        return [str(Path(sys.executable).resolve()), *bridge_args]
+    return [sys.executable, "-m", "termflow_node", *bridge_args]
+
+
 def launch_bridge(instance: LocalInstance, *, log_path: Path | None = None) -> int:
     active_log_path = log_path or (
         InstanceStore.default().instance_dir(instance.instance_id) / "bridge.log"
@@ -45,14 +52,7 @@ def launch_bridge(instance: LocalInstance, *, log_path: Path | None = None) -> i
     descriptor = os.open(active_log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     with os.fdopen(descriptor, "ab", closefd=True) as log:
         process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "termflow_node",
-                "_bridge",
-                "--instance-id",
-                str(instance.instance_id),
-            ],
+            bridge_argv(instance.instance_id),
             stdin=subprocess.DEVNULL,
             stdout=log,
             stderr=subprocess.STDOUT,

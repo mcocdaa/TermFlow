@@ -4,6 +4,7 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
+import termflow_node.instances.manager as manager_module
 from termflow_node.instances.manager import InstanceManager
 from termflow_node.instances.models import InstanceLifecycle, LocalInstance, RemoteAccessState
 from termflow_node.instances.store import InstanceStore
@@ -49,6 +50,27 @@ def _legacy(store: InstanceStore, name: str) -> LocalInstance:
     )
     store.save(record)
     return record
+
+
+def test_frozen_node_launches_bridge_from_the_same_executable(tmp_path, monkeypatch) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    record = _legacy(store, "frozen")
+    process = Mock()
+    process.poll.return_value = None
+    popen = Mock(return_value=process)
+    monkeypatch.setattr(manager_module.subprocess, "Popen", popen)
+    monkeypatch.setattr(manager_module.time, "sleep", lambda _: None)
+    monkeypatch.setattr(manager_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(manager_module.sys, "executable", "/opt/termflow/termflow")
+
+    manager_module.launch_bridge(record, log_path=tmp_path / "bridge.log")
+
+    assert popen.call_args.args[0] == [
+        "/opt/termflow/termflow",
+        "_bridge",
+        "--instance-id",
+        str(record.instance_id),
+    ]
 
 
 @pytest.mark.parametrize(
