@@ -107,7 +107,19 @@ Tauri 配置生成平台工程，再执行 debug/unsigned 编译。缺少 Tauri 
 
 基础打包文件同时声明 `workflow_dispatch` 和 `workflow_call`：前者供 Actions 页面手动测试任意
 commit，后者只供 Tag Release 复用同一套命令。手动运行不接受 `release_tag`，不会创建 GitHub
-Release，也不会推送 GHCR；Actions artifact 使用不含版本的稳定名称并保留 14 天。
+Release，也不会推送 GHCR；Actions artifact 使用不含版本的稳定名称并保留 14 天。三个手动
+表单都可以填写可选 `version`；留空时读取仓库 Actions 变量 `TERMFLOW_BUILD_VERSION`，仍未设置
+则使用 `0.0.0-dev.0`。
+
+统一版本优先级为 `Git Tag > TERMFLOW_BUILD_VERSION > 0.0.0-dev.0`。本地非 Tag 构建可显式运行：
+
+```bash
+TERMFLOW_BUILD_VERSION=1.2.3 \
+  python scripts/release/prepare_version.py --resolve-only
+```
+
+环境变量只能决定非 Tag 构建包内的版本，不能触发 GHCR 或 GitHub Release，也不能覆盖 Tag。
+非法的非空版本会直接失败，不会静默使用默认值。
 
 - `Package A · Linux Node` 构建 Linux x86_64 A bundle、安装器和 `SHA256SUMS`。下载并解压
   `termflow-node-linux-x86_64` Artifact 后，可在该目录离线安装：
@@ -133,15 +145,18 @@ Release，也不会推送 GHCR；Actions artifact 使用不含版本的稳定名
 历史上的单平台 `Tauri Windows Installer` / `termflow-windows-installer` 入口和 7 天 artifact
 规则已被废弃。
 
-准备正式 Release 前，先让根 `package.json`、Node、Control Plane、protocol、Tauri client 的
-`package.json`、`src-tauri/Cargo.toml` 与 `tauri.conf.json` 全部为同一 SemVer，并在目标 commit
-上验证：
+正式 Release 不再要求发布者手动同步修改 Python、npm、Cargo 与 Tauri 清单。先在目标 commit
+上验证 Tag 格式：
 
 ```bash
-uv run --frozen python scripts/release/check_version.py --tag vX.Y.Z
+python scripts/release/prepare_version.py --tag vX.Y.Z --resolve-only
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
-推送匹配的 `vX.Y.Z` Tag 后，`Publish TermFlow Release` 先并行调用 A 与原生 C 基础 workflow；
+推送 `vX.Y.Z` Tag 后，三个基础 workflow 会在各自 runner 的临时 checkout 中把该版本注入
+Python、npm、Cargo、Tauri 和本地锁文件；这些临时修改不会提交回仓库。`Publish TermFlow Release`
+先并行调用 A 与原生 C 基础 workflow；
 二者全部成功后才调用 B + Web C workflow 并授予其 GHCR `packages: write`。B 的镜像内容、健康
 启动、tar round-trip、Artifact 上传或 multi-arch 推送任一步失败，最终 Release job 都不会运行。
 三套基础 workflow 全部成功后，Release job 才合并产物、重新生成唯一的 `SHA256SUMS` 并创建

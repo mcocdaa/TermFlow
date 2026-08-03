@@ -24,10 +24,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Validate the tag and all product versions
+      - name: Resolve release tag
         id: version
         shell: bash
-        run: python scripts/release/check_version.py --tag "$GITHUB_REF_NAME"
+        run: python scripts/release/prepare_version.py --tag "$GITHUB_REF_NAME" --resolve-only
 
   package-node:
     name: Package A

@@ -37,6 +37,11 @@ TERMFLOW_RELEASE_BASE_URL="file://$PWD" ./install-termflow-node.sh
 
 不要单独移动安装器、bundle 或 `SHA256SUMS`，也不要删除校验步骤。
 
+如果手动包显示了意外版本，先检查 Actions 表单中的 `version` 和仓库变量，或本地 shell 中的
+`TERMFLOW_BUILD_VERSION`。解析顺序固定为
+`Git Tag > TERMFLOW_BUILD_VERSION > 0.0.0-dev.0`；无 Tag、无环境变量的包显示
+`0.0.0-dev.0` 是预期行为。正式 Tag 构建不会被同名环境变量覆盖。
+
 手动 B 的 `termflow-control-plane.tar` 无法导入时，先确认 Artifact 已完整解压且 Docker daemon
 可用，再运行 `docker load -i termflow-control-plane.tar`。导入只把镜像加入本机，不会自动更新
 Compose 服务；不要用 `docker system prune` 排障，也不要删除 `termflow-data`。

@@ -5,6 +5,16 @@ import yaml
 WORKFLOW_PATH = Path(".github/workflows/release.yml")
 
 
+def test_release_resolves_the_tag_without_comparing_source_placeholders() -> None:
+    text = WORKFLOW_PATH.read_text()
+
+    assert (
+        'python scripts/release/prepare_version.py --tag "$GITHUB_REF_NAME" '
+        "--resolve-only"
+    ) in text
+    assert "scripts/release/check_version.py" not in text
+
+
 def test_release_calls_the_three_base_packaging_workflows() -> None:
     workflow = yaml.safe_load(WORKFLOW_PATH.read_text())
     jobs = workflow["jobs"]
