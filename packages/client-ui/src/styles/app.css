@@ -207,9 +207,11 @@
   .totp-confirm-form { width: 100%; }
   .setup-key-toggle { min-height: 2rem; border: 0; border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); background: transparent; color: var(--color-accent); font-size: 0.82rem; }
   .setup-key-toggle:hover, .setup-key-toggle:focus-visible { background: var(--color-elevated); }
-  .setup-key-panel { width: 100%; display: grid; gap: var(--space-2); }
-  .setup-key-panel code { display: block; min-width: 0; overflow-wrap: anywhere; padding: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-elevated); font-family: var(--font-mono); font-size: 0.76rem; text-align: start; }
-  .setup-key-panel .compact-secondary-button { justify-self: stretch; }
+  .setup-key-disclosure { position: relative; display: grid; justify-items: center; }
+  .setup-key-popover { position: absolute; z-index: 20; inset-block-start: calc(100% + var(--space-2)); inset-inline-start: 50%; width: min(18rem, calc(100vw - 2 * var(--space-4))); display: grid; gap: var(--space-2); transform: translateX(-50%); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-panel); box-shadow: var(--shadow-panel); text-align: start; }
+  .setup-key-popover h3 { margin: 0; font-size: 0.9rem; }
+  .setup-key-popover code { display: block; min-width: 0; overflow-wrap: anywhere; padding: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-elevated); font-family: var(--font-mono); font-size: 0.76rem; }
+  .setup-key-popover .compact-secondary-button { justify-self: stretch; }
   .configured-authenticator-heading { position: relative; display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
   .authorized-client-list { display: grid; gap: var(--space-2); padding: 0; margin: 0; list-style: none; }
   .authorized-client-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-elevated); }

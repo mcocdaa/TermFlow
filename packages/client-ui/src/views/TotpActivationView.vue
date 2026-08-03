@@ -28,18 +28,11 @@
           <div data-totp-bind-layout class="totp-bind-layout">
             <div class="totp-bind-qr">
               <ThemedQrCode :value="setup.provisioning_uri" alt="验证器设置二维码" />
-              <button
-                data-action="toggle-setup-key"
-                class="setup-key-toggle"
-                type="button"
-                :aria-expanded="setupKeyExpanded"
-                aria-controls="totp-setup-key"
-                @click="setupKeyExpanded = !setupKeyExpanded"
-              >无法扫描？使用设置密钥</button>
-              <div v-if="setupKeyExpanded" id="totp-setup-key" class="setup-key-panel">
-                <code data-setup-key>{{ setup.setup_key }}</code>
-                <button data-action="copy-setup-key" class="compact-secondary-button" type="button" @click="copySetupKey">{{ setupKeyCopied ? '已复制' : '复制密钥' }}</button>
-              </div>
+              <SetupKeyPopover
+                :setup-key="setup.setup_key"
+                :copied="setupKeyCopied"
+                @copy="copySetupKey"
+              />
             </div>
             <form data-action="confirm-totp-setup" class="inline-security-form totp-confirm-form" @submit.prevent="confirmSetup">
               <label for="activation-confirm-code">验证器验证码</label>
@@ -87,6 +80,7 @@
 import type { TotpSetupResponse, TotpStatusResponse } from '@termflow/client-contracts'
 import { computed, onMounted, reactive, ref } from 'vue'
 import ThemedQrCode from '../components/common/ThemedQrCode.vue'
+import SetupKeyPopover from '../components/settings/SetupKeyPopover.vue'
 import TotpProtectionLabel from '../components/settings/TotpProtectionLabel.vue'
 import TotpProtectionDialog from '../components/settings/TotpProtectionDialog.vue'
 import { useClientRuntime } from '../runtime'
@@ -102,7 +96,6 @@ const adminToken = ref('')
 const currentCode = ref('')
 const confirmCode = ref('')
 const message = ref('')
-const setupKeyExpanded = ref(false)
 const setupKeyCopied = ref(false)
 const dialogOpen = ref(false)
 const switchButton = ref<HTMLButtonElement | null>(null)
@@ -144,7 +137,6 @@ async function beginSetup() {
       adminToken: adminToken.value,
       ...(status.configured ? { totpCode: currentCode.value } : {}),
     })
-    setupKeyExpanded.value = false
     setupKeyCopied.value = false
   } catch {
     message.value = '验证失败，请检查凭据后重试。'
@@ -163,7 +155,6 @@ async function confirmSetup() {
     const next = await runtime.api.security.confirmTotpSetup(setup.value.setup_id, confirmCode.value)
     applyStatus(next)
     setup.value = null
-    setupKeyExpanded.value = false
     setupKeyCopied.value = false
   } catch {
     message.value = '验证码无效或设置已过期，请重试。'

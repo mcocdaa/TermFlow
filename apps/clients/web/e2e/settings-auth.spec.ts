@@ -230,10 +230,63 @@ test('uses env-authoritative relay settings and the complete authenticator lifec
   const setupKeyDisclosure = page.getByRole('button', { name: '无法扫描？使用设置密钥' })
   await expect(setupKeyDisclosure).toHaveAttribute('aria-expanded', 'false')
   await expect(page.locator('[data-setup-key]')).toHaveCount(0)
+  const setupLayoutBefore = await page.evaluate(() => {
+    const qr = document.querySelector<HTMLElement>('.themed-qr-code')!.getBoundingClientRect()
+    const form = document.querySelector<HTMLElement>('.totp-confirm-form')!.getBoundingClientRect()
+    return {
+      qr: { x: qr.x, y: qr.y, width: qr.width, height: qr.height },
+      form: { x: form.x, y: form.y, width: form.width, height: form.height },
+    }
+  })
   await setupKeyDisclosure.click()
   await expect(setupKeyDisclosure).toHaveAttribute('aria-expanded', 'true')
-  const setupKey = (await page.locator('[data-setup-key]').textContent())?.trim() ?? ''
+  const setupKeyDialog = page.getByRole('dialog', { name: '设置密钥' })
+  await expect(setupKeyDialog).toBeVisible()
+  const setupKeyGeometry = await setupKeyDialog.evaluate((dialog) => {
+    const box = dialog.getBoundingClientRect()
+    const trigger = document.querySelector<HTMLElement>('[data-action="toggle-setup-key"]')!.getBoundingClientRect()
+    return {
+      left: box.left,
+      right: box.right,
+      top: box.top,
+      triggerBottom: trigger.bottom,
+      viewportWidth: window.innerWidth,
+    }
+  })
+  expect(setupKeyGeometry.left).toBeGreaterThanOrEqual(0)
+  expect(setupKeyGeometry.right).toBeLessThanOrEqual(setupKeyGeometry.viewportWidth)
+  expect(setupKeyGeometry.top).toBeGreaterThanOrEqual(setupKeyGeometry.triggerBottom)
+  const setupLayoutAfter = await page.evaluate(() => {
+    const qr = document.querySelector<HTMLElement>('.themed-qr-code')!.getBoundingClientRect()
+    const form = document.querySelector<HTMLElement>('.totp-confirm-form')!.getBoundingClientRect()
+    return {
+      qr: { x: qr.x, y: qr.y, width: qr.width, height: qr.height },
+      form: { x: form.x, y: form.y, width: form.width, height: form.height },
+    }
+  })
+  for (const area of ['qr', 'form'] as const) {
+    for (const dimension of ['x', 'y', 'width', 'height'] as const) {
+      expect(setupLayoutAfter[area][dimension]).toBeCloseTo(setupLayoutBefore[area][dimension], 0)
+    }
+  }
+  if (screenshotDir) await page.screenshot({ path: `${screenshotDir}/settings-totp-key-popover.png`, fullPage: true })
+  const setupKey = (await setupKeyDialog.locator('[data-setup-key]').textContent())?.trim() ?? ''
   expect(setupKey).not.toBe('')
+  await setupKeyDialog.press('Escape')
+  await expect(setupKeyDialog).toHaveCount(0)
+  await expect(setupKeyDisclosure).toBeFocused()
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await setupKeyDisclosure.click()
+  await expect(setupKeyDialog).toBeVisible()
+  const narrowSetupKeyGeometry = await setupKeyDialog.evaluate((dialog) => {
+    const box = dialog.getBoundingClientRect()
+    return { left: box.left, right: box.right, viewportWidth: window.innerWidth }
+  })
+  expect(narrowSetupKeyGeometry.left).toBeGreaterThanOrEqual(0)
+  expect(narrowSetupKeyGeometry.right).toBeLessThanOrEqual(narrowSetupKeyGeometry.viewportWidth)
+  await setupKeyDialog.press('Escape')
+  await page.setViewportSize({ width: 1440, height: 900 })
 
   const setupCounter = currentCounter() - 1
   await page.getByLabel('验证器验证码').fill(totpForCounter(setupKey, setupCounter))
