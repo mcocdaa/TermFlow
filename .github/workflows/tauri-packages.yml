@@ -1,10 +1,7 @@
 name: Tauri Multi-platform Packages
-run-name: Tauri packages · ${{ github.event_name == 'push' && github.ref_name || inputs.platform }}
+run-name: Tauri packages · ${{ inputs.platform }}
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       platform:
@@ -24,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: tauri-packages-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.platform || 'tag' }}
+  group: tauri-packages-${{ github.ref }}-${{ inputs.platform }}
   cancel-in-progress: false
 
 jobs:
@@ -36,70 +33,26 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
           node-version: "22.23.2"
           cache: npm
-      - name: Validate configured version and release tag
+      - name: Validate configured version
         id: version
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          TAG_NAME: ${{ github.ref_name }}
         shell: bash
         run: |
           set -euo pipefail
-          node <<'NODE'
-          const fs = require("node:fs");
-
-          const packageVersion = (path) => JSON.parse(fs.readFileSync(path, "utf8")).version;
-          const cargoText = fs.readFileSync(
-            "apps/clients/tauri/src-tauri/Cargo.toml",
-            "utf8",
-          );
-          const cargoVersion = cargoText.match(/^version\s*=\s*"([^"]+)"$/m)?.[1];
-          const versions = {
-            "package.json": packageVersion("package.json"),
-            "apps/clients/tauri/package.json": packageVersion(
-              "apps/clients/tauri/package.json",
-            ),
-            "apps/clients/tauri/src-tauri/Cargo.toml": cargoVersion,
-            "apps/clients/tauri/src-tauri/tauri.conf.json": packageVersion(
-              "apps/clients/tauri/src-tauri/tauri.conf.json",
-            ),
-          };
-          if (Object.values(versions).some((version) => !version)) {
-            throw new Error("Every configured package must declare a version");
-          }
-          const configuredVersions = new Set(Object.values(versions));
-          if (configuredVersions.size !== 1) {
-            throw new Error("Configured versions disagree: " + JSON.stringify(versions));
-          }
-
-          const configuredVersion = Object.values(versions)[0];
-          if (process.env.EVENT_NAME === "push") {
-            const tagName = process.env.TAG_NAME || "";
-            const semverTag = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
-            if (!semverTag.test(tagName)) {
-              throw new Error("Release tag must be a v-prefixed SemVer: " + tagName);
-            }
-            const tagVersion = tagName.slice(1);
-            if (tagVersion !== configuredVersion) {
-              throw new Error(
-                "Release tag " + tagName + " disagrees with configured version " + configuredVersion,
-              );
-            }
-          }
-
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, "version=" + configuredVersion + "\n");
-          console.log("Packaging TermFlow " + configuredVersion);
-          NODE
+          python scripts/release/check_version.py
 
   windows-nsis:
     name: Windows x64 · NSIS
     needs: validate-version
     if: >-
       ${{ needs.validate-version.result == 'success' &&
-          (github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'windows') }}
+          (inputs.platform == 'all' || inputs.platform == 'windows') }}
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -120,7 +73,7 @@ jobs:
           name: termflow-${{ needs.validate-version.outputs.version }}-windows-x64-nsis
           path: apps/clients/tauri/src-tauri/target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
-          retention-days: ${{ github.event_name == 'push' && 90 || 14 }}
+          retention-days: 14
           compression-level: 0
 
   linux-packages:
@@ -128,7 +81,7 @@ jobs:
     needs: validate-version
     if: >-
       ${{ needs.validate-version.result == 'success' &&
-          (github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'linux') }}
+          (inputs.platform == 'all' || inputs.platform == 'linux') }}
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     env:
@@ -169,7 +122,7 @@ jobs:
             apps/clients/tauri/src-tauri/target/release/bundle/deb/*.deb
             apps/clients/tauri/src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
-          retention-days: ${{ github.event_name == 'push' && 90 || 14 }}
+          retention-days: 14
           compression-level: 0
 
   macos-packages:
@@ -177,7 +130,7 @@ jobs:
     needs: validate-version
     if: >-
       ${{ needs.validate-version.result == 'success' &&
-          (github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'macos') }}
+          (inputs.platform == 'all' || inputs.platform == 'macos') }}
     runs-on: macos-15
     timeout-minutes: 60
     steps:
@@ -220,7 +173,7 @@ jobs:
             ${{ runner.temp }}/termflow-artifacts/TermFlow-macos-arm64.app.zip
             apps/clients/tauri/src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
-          retention-days: ${{ github.event_name == 'push' && 90 || 14 }}
+          retention-days: 14
           compression-level: 0
 
   android-debug-apk:
@@ -228,7 +181,7 @@ jobs:
     needs: validate-version
     if: >-
       ${{ needs.validate-version.result == 'success' &&
-          (github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'android') }}
+          (inputs.platform == 'all' || inputs.platform == 'android') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -267,7 +220,7 @@ jobs:
           name: termflow-${{ needs.validate-version.outputs.version }}-android-arm64-debug
           path: apps/clients/tauri/src-tauri/gen/android/app/build/outputs/apk/**/*-debug.apk
           if-no-files-found: error
-          retention-days: ${{ github.event_name == 'push' && 90 || 14 }}
+          retention-days: 14
           compression-level: 0
 
   ios-simulator-app:
@@ -275,7 +228,7 @@ jobs:
     needs: validate-version
     if: >-
       ${{ needs.validate-version.result == 'success' &&
-          (github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'ios') }}
+          (inputs.platform == 'all' || inputs.platform == 'ios') }}
     runs-on: macos-15
     timeout-minutes: 90
     steps:
@@ -312,5 +265,5 @@ jobs:
           name: termflow-${{ needs.validate-version.outputs.version }}-ios-simulator-aarch64
           path: ${{ runner.temp }}/termflow-artifacts/TermFlow-ios-simulator-aarch64.app.zip
           if-no-files-found: error
-          retention-days: ${{ github.event_name == 'push' && 90 || 14 }}
+          retention-days: 14
           compression-level: 0

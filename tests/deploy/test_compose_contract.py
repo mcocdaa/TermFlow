@@ -148,7 +148,7 @@ def test_compose_has_an_explicit_optional_totp_secret_file_override() -> None:
     )
 
 
-def test_tauri_packages_are_native_tag_or_manual_artifacts_not_public_releases() -> None:
+def test_tauri_packages_are_manual_native_artifacts_not_public_releases() -> None:
     path = Path(".github/workflows/tauri-packages.yml")
     old_path = Path(".github/workflows/tauri-windows-package.yml")
     assert path.is_file()
@@ -156,8 +156,7 @@ def test_tauri_packages_are_native_tag_or_manual_artifacts_not_public_releases()
 
     workflow = yaml.safe_load(path.read_text())
     triggers = workflow[True]
-    assert triggers["push"]["tags"] == ["v*"]
-    assert "workflow_dispatch" in triggers
+    assert set(triggers) == {"workflow_dispatch"}
     assert workflow["permissions"] == {"contents": "read"}
     manual_platform = triggers["workflow_dispatch"]["inputs"]["platform"]
     assert manual_platform == {
@@ -169,13 +168,10 @@ def test_tauri_packages_are_native_tag_or_manual_artifacts_not_public_releases()
     }
     assert workflow["run-name"] == (
         "Tauri packages · "
-        "${{ github.event_name == 'push' && github.ref_name || inputs.platform }}"
+        "${{ inputs.platform }}"
     )
     assert workflow["concurrency"] == {
-        "group": (
-            "tauri-packages-${{ github.ref }}-"
-            "${{ github.event_name == 'workflow_dispatch' && inputs.platform || 'tag' }}"
-        ),
+        "group": "tauri-packages-${{ github.ref }}-${{ inputs.platform }}",
         "cancel-in-progress": False,
     }
 
@@ -215,19 +211,15 @@ def test_tauri_packages_are_native_tag_or_manual_artifacts_not_public_releases()
         condition = jobs[job_name]["if"]
         assert condition == (
             "${{ needs.validate-version.result == 'success' &&\n"
-            "    (github.event_name == 'push' || inputs.platform == 'all' || "
+            "    (inputs.platform == 'all' || "
             f"inputs.platform == '{platform}') }}}}"
         )
 
     rendered = path.read_text()
-    for version_file in (
-        "package.json",
-        "apps/clients/tauri/package.json",
-        "apps/clients/tauri/src-tauri/Cargo.toml",
-        "apps/clients/tauri/src-tauri/tauri.conf.json",
-    ):
-        assert version_file in rendered
+    assert "scripts/release/check_version.py" in rendered
     for expected in (
+        'python-version: "3.12"',
+        "scripts/release/check_version.py",
         'node-version: "22.23.2"',
         "dtolnay/rust-toolchain@stable",
         "npm ci",
@@ -243,6 +235,7 @@ def test_tauri_packages_are_native_tag_or_manual_artifacts_not_public_releases()
         "ditto -c -k --sequesterRsrc --keepParent",
         "actions/upload-artifact@v4",
         "if-no-files-found: error",
+        "retention-days: 14",
     ):
         assert expected in rendered
     for artifact in (
