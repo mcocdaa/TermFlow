@@ -207,7 +207,7 @@ def test_tauri_packages_are_manual_and_reusable_native_artifacts() -> None:
     }
     assert workflow["run-name"] == (
         "Package C · ${{ inputs.platform }} · "
-        "${{ inputs.release_tag || 'manual' }}"
+        "${{ inputs.release_tag || inputs.version || 'manual' }}"
     )
     assert workflow["concurrency"] == {
         "group": "tauri-packages-${{ github.ref }}-${{ inputs.platform }}",
@@ -255,10 +255,10 @@ def test_tauri_packages_are_manual_and_reusable_native_artifacts() -> None:
         )
 
     rendered = path.read_text()
-    assert "scripts/release/check_version.py" in rendered
+    assert "scripts/release/prepare_version.py" in rendered
     for expected in (
         'python-version: "3.12"',
-        "scripts/release/check_version.py",
+        "scripts/release/prepare_version.py",
         'node-version: "22.23.2"',
         "dtolnay/rust-toolchain@stable",
         "npm ci",

@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "$#" -ne 2 ]]; then
-  echo "usage: build_node_bundle.sh vX.Y.Z OUTPUT_DIRECTORY" >&2
+if [[ "$#" -lt 1 || "$#" -gt 2 ]]; then
+  echo "usage: build_node_bundle.sh [vX.Y.Z] OUTPUT_DIRECTORY" >&2
   exit 2
 fi
 
-TAG="$1"
-OUTPUT_DIRECTORY="$2"
-if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
-  echo "Release tag must be a v-prefixed SemVer: ${TAG}" >&2
-  exit 2
+if [[ "$#" -eq 2 ]]; then
+  TAG="$1"
+  OUTPUT_DIRECTORY="$2"
+else
+  TAG=""
+  OUTPUT_DIRECTORY="$1"
 fi
 if [[ "$(uname -s)" != "Linux" ]]; then
   echo "The TermFlow node bundle can only be built on Linux." >&2
@@ -23,7 +24,11 @@ fi
 
 SCRIPT_DIRECTORY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPOSITORY_ROOT="$(cd -- "${SCRIPT_DIRECTORY}/../.." && pwd)"
-VERSION="$(uv run --frozen python "${SCRIPT_DIRECTORY}/check_version.py" --root "${REPOSITORY_ROOT}" --tag "${TAG}")"
+prepare_arguments=(--root "${REPOSITORY_ROOT}")
+if [[ -n "${TAG}" ]]; then
+  prepare_arguments+=(--tag "${TAG}")
+fi
+VERSION="$(python "${SCRIPT_DIRECTORY}/prepare_version.py" "${prepare_arguments[@]}")"
 ARCHIVE_NAME="termflow-node-linux-x86_64.tar.gz"
 ARCHIVE_PATH="${OUTPUT_DIRECTORY}/${ARCHIVE_NAME}"
 

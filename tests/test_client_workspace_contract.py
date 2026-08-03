@@ -11,6 +11,8 @@ def _manifest(relative: str) -> dict[str, Any]:
 
 def test_client_workspace_has_one_lock_and_fixed_dependency_direction() -> None:
     root = _manifest("package.json")
+    workspace_version = root["version"]
+    assert workspace_version == "0.0.1-dev.0"
     assert root["engines"] == {"node": ">=22 <23"}
     assert root["packageManager"] == "npm@10.9.8"
     assert set(root["workspaces"]) == {
@@ -28,7 +30,9 @@ def test_client_workspace_has_one_lock_and_fixed_dependency_direction() -> None:
     ui = _manifest("packages/client-ui/package.json")
     web = _manifest("apps/clients/web/package.json")
     assert contracts.get("dependencies", {}) == {}
-    assert core["dependencies"] == {"@termflow/client-contracts": "0.1.0"}
+    assert core["dependencies"] == {
+        "@termflow/client-contracts": workspace_version,
+    }
     assert set(ui["dependencies"]) >= {
         "@termflow/client-contracts",
         "@termflow/client-core",

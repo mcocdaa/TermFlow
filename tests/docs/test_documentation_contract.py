@@ -148,3 +148,19 @@ def test_docs_distinguish_test_artifacts_from_permanent_release_assets() -> None
     assert "SHA256" in troubleshooting
     assert "手动 A" in troubleshooting
     assert "手动 B" in troubleshooting
+
+
+def test_release_docs_explain_tag_environment_and_default_version_precedence() -> None:
+    readme = Path("README.md").read_text()
+    operations = Path("docs/operations.md").read_text()
+    troubleshooting = Path("docs/troubleshooting.md").read_text()
+    combined = "\n".join((readme, operations, troubleshooting))
+
+    assert "Git Tag > TERMFLOW_BUILD_VERSION > 0.0.1-dev.0" in combined
+    assert "TERMFLOW_BUILD_VERSION=1.2.3" in combined
+    assert "不能触发 GHCR" in operations
+    assert "不能覆盖 Tag" in operations
+    assert "scripts/release/prepare_version.py" in operations
+    assert "versionCode" in operations
+    assert "完整逻辑版本" in operations
+    assert "先让根 `package.json`" not in operations

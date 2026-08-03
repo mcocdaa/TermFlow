@@ -22,6 +22,13 @@ describe('Tauri security composition', () => {
     expect(source).not.toMatch(/refreshToken\s*:/)
   })
 
+  it('reports the logical package version independently of platform bundle versions', () => {
+    const source = readFileSync(resolve(import.meta.dirname, 'nativeAuth.ts'), 'utf8')
+    expect(source).toContain("from './buildVersion'")
+    expect(source).toContain('version: buildVersion')
+    expect(source).not.toContain('getVersion')
+  })
+
   it('accepts HTTPS or explicit loopback only and strips no ambiguous URL parts', () => {
     expect(canonicalIssuer('https://b.example/')).toBe('https://b.example')
     expect(canonicalIssuer('http://127.0.0.1:8765/')).toBe('http://127.0.0.1:8765')

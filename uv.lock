@@ -1093,7 +1093,7 @@ wheels = [
 
 [[package]]
 name = "termflow-control-plane"
-version = "0.1.0"
+version = "0.0.1-dev.0"
 source = { editable = "apps/control-plane" }
 dependencies = [
     { name = "aiosqlite" },
@@ -1146,7 +1146,7 @@ dev = [
 
 [[package]]
 name = "termflow-node"
-version = "0.1.0"
+version = "0.0.1-dev.0"
 source = { editable = "apps/node" }
 dependencies = [
     { name = "httpx" },
@@ -1189,7 +1189,7 @@ dev = [
 
 [[package]]
 name = "termflow-protocol"
-version = "0.1.0"
+version = "0.0.1-dev.0"
 source = { editable = "packages/protocol" }
 dependencies = [
     { name = "pydantic" },

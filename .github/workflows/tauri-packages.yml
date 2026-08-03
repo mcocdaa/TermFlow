@@ -1,5 +1,5 @@
 name: Package C · Native Clients
-run-name: Package C · ${{ inputs.platform }} · ${{ inputs.release_tag || 'manual' }}
+run-name: Package C · ${{ inputs.platform }} · ${{ inputs.release_tag || inputs.version || 'manual' }}
 
 on:
   workflow_dispatch:
@@ -16,6 +16,11 @@ on:
           - macos
           - android
           - ios
+      version:
+        description: Build version override; defaults to 0.0.1-dev.0
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       platform:
@@ -25,6 +30,11 @@ on:
         type: string
       release_tag:
         description: Validated v-prefixed release tag; empty for manual packaging
+        required: false
+        default: ""
+        type: string
+      version:
+        description: Non-release build version override
         required: false
         default: ""
         type: string
@@ -43,6 +53,9 @@ jobs:
     timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      is_release: ${{ steps.version.outputs.is_release }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
       artifact_prefix: ${{ steps.version.outputs.artifact_prefix }}
       retention_days: ${{ steps.version.outputs.retention_days }}
     steps:
@@ -58,20 +71,20 @@ jobs:
         id: version
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
+          TERMFLOW_BUILD_VERSION: ${{ inputs.version || vars.TERMFLOW_BUILD_VERSION }}
         shell: bash
         run: |
           set -euo pipefail
-          version="$(python scripts/release/check_version.py)"
           release_tag="$RELEASE_TAG"
+          python scripts/release/prepare_version.py \
+            --tag "$release_tag" --resolve-only >/dev/null
           if [[ -n "$release_tag" ]]; then
-            python scripts/release/check_version.py --tag "$release_tag" >/dev/null
             artifact_prefix="termflow-${release_tag}"
             retention_days=1
           else
             artifact_prefix=termflow
             retention_days=14
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "artifact_prefix=$artifact_prefix" >> "$GITHUB_OUTPUT"
           echo "retention_days=$retention_days" >> "$GITHUB_OUTPUT"
 
@@ -85,6 +98,13 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Materialize build version
+        env:
+          TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
+        run: python scripts/release/prepare_version.py >/dev/null
       - uses: actions/setup-node@v4
         with:
           node-version: "22.23.2"
@@ -116,6 +136,13 @@ jobs:
       APPIMAGE_EXTRACT_AND_RUN: "1"
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Materialize build version
+        env:
+          TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
+        run: python scripts/release/prepare_version.py >/dev/null
       - uses: actions/setup-node@v4
         with:
           node-version: "22.23.2"
@@ -163,6 +190,13 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Materialize build version
+        env:
+          TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
+        run: python scripts/release/prepare_version.py >/dev/null
       - uses: actions/setup-node@v4
         with:
           node-version: "22.23.2"
@@ -214,6 +248,13 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Materialize build version
+        env:
+          TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
+        run: python scripts/release/prepare_version.py >/dev/null
       - uses: actions/setup-node@v4
         with:
           node-version: "22.23.2"
@@ -261,6 +302,13 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Materialize build version
+        env:
+          TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
+        run: python scripts/release/prepare_version.py >/dev/null
       - uses: actions/setup-node@v4
         with:
           node-version: "22.23.2"

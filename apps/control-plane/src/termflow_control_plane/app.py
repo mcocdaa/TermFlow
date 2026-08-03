@@ -20,6 +20,7 @@ from termflow_protocol import (
     WireMessage,
 )
 
+from termflow_control_plane import __version__
 from termflow_control_plane.api.bridge import router as bridge_router
 from termflow_control_plane.api.clients import router as clients_router
 from termflow_control_plane.api.computers import router as computers_router
@@ -217,7 +218,11 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
                 finally:
                     await active_database.dispose()
 
-    app = FastAPI(title="TermFlow Control Plane", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(
+        title="TermFlow Control Plane",
+        version=__version__,
+        lifespan=lifespan,
+    )
     app.state.settings = settings
     app.state.registry = LiveInstanceRegistry(
         queue_size=settings.connection_queue_size,

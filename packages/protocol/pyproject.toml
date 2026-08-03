@@ -1,6 +1,6 @@
 [project]
 name = "termflow-protocol"
-version = "0.1.0"
+version = "0.0.1-dev.0"
 description = "Versioned wire contracts for TermFlow"
 requires-python = ">=3.12"
 dependencies = ["pydantic>=2.10,<3"]
