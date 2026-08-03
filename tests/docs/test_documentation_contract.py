@@ -54,9 +54,15 @@ def test_docs_keep_terminal_content_and_disconnect_boundaries_explicit() -> None
 
 def test_operations_docs_define_external_edge_secrets_and_native_toolchains() -> None:
     operations = Path("docs/operations.md").read_text()
+    readme = Path("README.md").read_text()
     clients = Path("apps/clients/README.md").read_text()
-    env_example = Path("deploy/env.example").read_text()
+    env_example = Path(".env.example").read_text()
 
+    assert "[.env.example](.env.example)" in readme
+    assert "deploy/env.example" not in readme
+    assert "TERMFLOW_PUBLIC_BASE_URL" in env_example
+    assert "TERMFLOW_TRUSTED_WEB_ORIGINS" in env_example
+    assert "反向代理" in env_example
     for boundary in ("DNS", "反向代理", "TLS", "mTLS", "不属于 TermFlow"):
         assert boundary in operations
     assert "TERMFLOW_TOTP_MASTER_KEY" in operations

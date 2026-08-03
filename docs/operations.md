@@ -21,9 +21,11 @@ mTLS 的证书签发、校验与轮换不属于 TermFlow，也不会被默认镜
 
 从仓库根目录运行 Compose 时请显式指定根目录的 env 文件；因为 Compose 文件位于
 `deploy/`，不指定时 Compose 可能把 `deploy/` 作为 project directory，进而找不到根目录
-的 `.env`：
+的 `.env`。首次部署先复制示例，再按实际入口修改；使用反向代理时，
+`TERMFLOW_PUBLIC_BASE_URL` 和 `TERMFLOW_TRUSTED_WEB_ORIGINS` 应填写同一个公网 HTTPS origin：
 
 ```bash
+cp .env.example .env
 docker compose --env-file .env -f deploy/compose.yaml up -d --build
 ```
 

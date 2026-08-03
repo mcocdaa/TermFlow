@@ -57,7 +57,7 @@ uv run --package termflow-node termflow kill '<instance-uuid>'
 ```
 
 B+Web C 的容器化启动参见 [deploy/compose.yaml](deploy/compose.yaml) 与
-[deploy/env.example](deploy/env.example)。默认只映射 `127.0.0.1:8765`；公网部署应在 B
+[.env.example](.env.example)。默认只映射 `127.0.0.1:8765`；公网部署应在 B
 前放置 HTTPS/WSS 反向代理。
 
 ## 文档
