@@ -72,16 +72,19 @@ workflow 取代；旧 artifact 的 7 天保留期不再适用。手动运行会�
 手动验证任意 commit：
 
 1. 把需要测试的 commit 推送到 GitHub。
-2. 打开 Actions → `Tauri Multi-platform Packages` → Run workflow，并选择对应分支或 tag。
-3. 等待版本校验和五个原生打包 job 成功。
-4. 从该次 run 的 Artifacts 下载 Windows NSIS `*-setup.exe`、Linux deb/AppImage、macOS app zip/DMG、
+2. 打开 Actions → `Tauri Multi-platform Packages` → Run workflow，选择对应分支或 tag，再在
+   `platform` 中选择 `all`、`windows`、`linux`、`macos`、`android` 或 `ios`。选择单个平台时，
+   其他平台 job 会跳过；选择 `all` 时运行全部五个平台。
+3. 等待版本校验和所选原生打包 job 成功。
+4. 从该次 run 的 Artifacts 下载所选产物：Windows NSIS `*-setup.exe`、Linux deb/AppImage、macOS app zip/DMG、
    Android debug APK 和 iOS simulator app zip。
 5. 对需要声明支持的平台实际解包、安装并启动；workflow 成功本身不等于安装验收通过。
 
 创建 tag 前，先把根 `package.json`、Tauri client `package.json`、`src-tauri/Cargo.toml` 和
 `src-tauri/tauri.conf.json` 的版本同步为同一个 SemVer，合并到目标 commit，再显式推送匹配的
 `v<version>` tag。tag 与配置版本不一致或 tag 不是合法的 `v` 前缀 SemVer 时，workflow 会在
-任何原生构建开始前失败。workflow 只上传受保留期约束的 Actions artifacts，不创建或更新
+任何原生构建开始前失败。tag 触发不接受平台筛选，始终构建全部五个平台；workflow 只上传
+受保留期约束的 Actions artifacts，不创建或更新
 GitHub Release，也不上传商店。
 
 这些产物的信任和签名边界如下：

@@ -156,8 +156,38 @@ def test_tauri_packages_are_native_tag_or_manual_artifacts_not_public_releases()
     assert triggers["push"]["tags"] == ["v*"]
     assert "workflow_dispatch" in triggers
     assert workflow["permissions"] == {"contents": "read"}
+    manual_platform = triggers["workflow_dispatch"]["inputs"]["platform"]
+    assert manual_platform == {
+        "description": "Platform package to build",
+        "required": True,
+        "default": "all",
+        "type": "choice",
+        "options": ["all", "windows", "linux", "macos", "android", "ios"],
+    }
+    assert workflow["run-name"] == (
+        "Tauri packages · "
+        "${{ github.event_name == 'push' && github.ref_name || inputs.platform }}"
+    )
+    assert workflow["concurrency"] == {
+        "group": (
+            "tauri-packages-${{ github.ref }}-"
+            "${{ github.event_name == 'workflow_dispatch' && inputs.platform || 'tag' }}"
+        ),
+        "cancel-in-progress": False,
+    }
 
     jobs = workflow["jobs"]
+    assert {
+        name: job["name"]
+        for name, job in jobs.items()
+    } == {
+        "validate-version": "Validate package version",
+        "windows-nsis": "Windows x64 · NSIS",
+        "linux-packages": "Linux x64 · deb and AppImage",
+        "macos-packages": "macOS arm64 · app and DMG",
+        "android-debug-apk": "Android arm64 · debug APK",
+        "ios-simulator-app": "iOS arm64 simulator · app",
+    }
     assert jobs["validate-version"]["runs-on"] == "ubuntu-22.04"
     assert jobs["windows-nsis"]["runs-on"] == "windows-latest"
     assert jobs["linux-packages"]["runs-on"] == "ubuntu-22.04"
@@ -172,6 +202,19 @@ def test_tauri_packages_are_native_tag_or_manual_artifacts_not_public_releases()
         "ios-simulator-app",
     ):
         assert jobs[job_name]["needs"] == "validate-version"
+    for job_name, platform in {
+        "windows-nsis": "windows",
+        "linux-packages": "linux",
+        "macos-packages": "macos",
+        "android-debug-apk": "android",
+        "ios-simulator-app": "ios",
+    }.items():
+        condition = jobs[job_name]["if"]
+        assert condition == (
+            "${{ needs.validate-version.result == 'success' &&\n"
+            "    (github.event_name == 'push' || inputs.platform == 'all' || "
+            f"inputs.platform == '{platform}') }}}}"
+        )
 
     rendered = path.read_text()
     for version_file in (
