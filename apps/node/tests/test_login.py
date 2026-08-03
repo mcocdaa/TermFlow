@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from termflow_node import __version__
 from termflow_node.cli import app
 from termflow_node.config.store import ConfigStore
 from termflow_node.control_plane_client import ControlPlaneClient, InsecureServerUrl
@@ -25,7 +26,7 @@ async def test_enrollment_client_posts_computer_identity_and_validates_response(
             "enrollment_token": "one-time-secret",
             "hostname": "devbox",
             "platform": "TestOS",
-            "client_version": "0.1.0",
+            "client_version": __version__,
         }
         return httpx.Response(
             200,

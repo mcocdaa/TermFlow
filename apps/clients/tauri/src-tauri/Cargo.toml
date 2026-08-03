@@ -1,6 +1,6 @@
 [package]
 name = "termflow-client"
-version = "0.1.0"
+version = "0.0.0-dev.0"
 description = "TermFlow desktop and mobile client"
 edition = "2021"
 

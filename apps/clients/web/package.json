@@ -1,6 +1,6 @@
 {
   "name": "@termflow/web-client",
-  "version": "0.1.0",
+  "version": "0.0.0-dev.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -15,8 +15,8 @@
     "test:run": "vitest run"
   },
   "dependencies": {
-    "@termflow/client-core": "0.1.0",
-    "@termflow/client-ui": "0.1.0",
+    "@termflow/client-core": "0.0.0-dev.0",
+    "@termflow/client-ui": "0.0.0-dev.0",
     "vue": "^3.5.0",
     "vue-router": "^4.5.0"
   },

@@ -15,6 +15,7 @@ _CORE = r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
 _PRERELEASE = r"(?:-(?:dev|alpha|beta|rc)\.(?:0|[1-9]\d*))?"
 _METADATA = r"(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?"
 BUILD_VERSION_PATTERN = re.compile(rf"{_CORE}{_PRERELEASE}{_METADATA}\Z")
+V_PREFIXED_VERSION_PATTERN = re.compile(rf"v{_CORE}{_PRERELEASE}{_METADATA}\Z")
 
 
 @dataclass(frozen=True, slots=True)
