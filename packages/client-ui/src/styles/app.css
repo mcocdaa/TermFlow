@@ -167,14 +167,13 @@
   .server-qr-trigger { width: 1.75rem; height: 1.75rem; min-height: 1.75rem; }
   .server-address-row { display: flex; align-items: center; gap: var(--space-3); }
   .server-address-row code { flex: 1; min-width: 0; overflow-wrap: anywhere; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-elevated); }
-  .connection-qr, .totp-setup-material { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-4); }
-  .connection-qr img, .totp-setup-material img { width: 10rem; height: 10rem; padding: var(--space-2); border-radius: var(--radius-md); background: var(--color-qr-background); }
+  .connection-qr { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-4); }
+  .connection-qr img { width: 10rem; height: 10rem; padding: var(--space-2); border-radius: var(--radius-md); background: var(--color-qr-background); }
   .themed-qr-code { display: block; width: min(100%, 18rem); height: auto; margin-inline: auto; padding: var(--space-2); border-radius: var(--radius-md); background: var(--color-qr-background); }
   .qr-dialog-panel { width: min(100%, 28rem); display: grid; gap: var(--space-4); text-align: center; }
   .qr-dialog-panel > header { min-height: 2.75rem; align-items: center; text-align: start; }
   .qr-dialog-panel > p { margin: 0; color: var(--color-text-secondary); line-height: 1.6; }
-  .connection-qr p, .totp-setup-material p { color: var(--color-text-secondary); line-height: 1.6; }
-  .totp-setup-material code { display: block; overflow-wrap: anywhere; font-family: var(--font-mono); }
+  .connection-qr p { color: var(--color-text-secondary); line-height: 1.6; }
   .security-form, .inline-security-form, .revoke-form { width: min(100%, 34rem); margin-block-start: 0; }
   .settings-action-button { width: fit-content; }
   .security-setting-row { position: relative; display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-elevated); }
@@ -188,20 +187,30 @@
   .toggle-switch > span { display: block; width: 1.3rem; height: 1.3rem; border-radius: 50%; background: var(--color-text-muted); transition: translate 130ms ease, background 130ms ease; }
   .toggle-switch[aria-checked='true'] { border-color: var(--color-online); background: color-mix(in srgb, var(--color-online) 22%, var(--color-panel)); }
   .toggle-switch[aria-checked='true'] > span { translate: 1.45rem 0; background: var(--color-online); }
-  .totp-guide-steps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-2); padding: 0; list-style: none; counter-reset: totp-step; }
-  .totp-guide-steps li { display: grid; gap: var(--space-1); color: var(--color-text-secondary); font-size: 0.82rem; text-align: center; counter-increment: totp-step; }
-  .totp-guide-steps li::before { content: counter(totp-step); display: grid; place-items: center; width: 2rem; height: 2rem; margin-inline: auto; border: 1px solid var(--color-border); border-radius: 50%; background: var(--color-panel); color: var(--color-accent); font-weight: 800; }
-  .totp-activation-view { width: min(100%, 56rem); }
+  .totp-guide-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); padding: 0; list-style: none; }
+  .totp-guide-steps li { display: grid; justify-items: center; gap: var(--space-2); color: var(--color-text-muted); font-size: 0.82rem; text-align: center; }
+  .totp-guide-step-marker { display: grid; place-items: center; width: 2.25rem; height: 2.25rem; border: 1px solid var(--color-border); border-radius: 50%; background: var(--color-panel); color: var(--color-text-muted); font-weight: 800; }
+  .totp-guide-steps li[data-state='current'] { color: var(--color-text-primary); font-weight: 700; }
+  .totp-guide-steps li[data-state='current'] .totp-guide-step-marker { border-color: var(--color-accent); background: var(--color-accent); color: var(--color-accent-contrast); box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--color-accent) 18%, transparent); }
+  .totp-guide-steps li[data-state='complete'] { color: var(--color-text-secondary); }
+  .totp-guide-steps li[data-state='complete'] .totp-guide-step-marker { border-color: var(--color-online); background: color-mix(in srgb, var(--color-online) 16%, var(--color-panel)); color: var(--color-online); }
+  .totp-activation-view { width: min(100%, 68rem); }
   .totp-guide-heading { align-items: flex-start; }
   .totp-guide-heading-copy { max-width: 42rem; }
-  .totp-guide-card { min-height: 22rem; align-content: center; }
-  .totp-guide-intro { width: min(100%, 34rem); display: grid; gap: var(--space-2); margin-inline: auto; text-align: center; }
+  .totp-guide-card { min-height: 22rem; align-content: start; gap: var(--space-5); }
+  .totp-wizard-card-heading { min-height: 2.75rem; display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding-block-end: var(--space-3); border-block-end: 1px solid var(--color-border); }
+  .totp-wizard-card-heading h2 { margin: 0; font-size: clamp(1.35rem, 3vw, 1.75rem); }
+  .totp-wizard-card-heading span { color: var(--color-text-muted); font-size: 0.82rem; white-space: nowrap; }
   .totp-guide-card .security-form, .totp-guide-card .inline-security-form { margin-inline: auto; }
-  .totp-setup-copy { display: grid; gap: var(--space-2); }
-  .configured-authenticator-heading, .setup-key-heading { position: relative; display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
-  .configured-authenticator-heading h2, .setup-key-heading h3 { margin: 0; }
-  .setup-key-field { display: grid; gap: var(--space-2); }
-  .setup-key-heading .help-tooltip [role='tooltip'] { inset-inline: 0; width: auto; white-space: normal; }
+  .totp-bind-layout { width: min(100%, 46rem); margin-inline: auto; display: grid; grid-template-columns: minmax(12rem, 16rem) minmax(18rem, 1fr); align-items: center; gap: clamp(var(--space-5), 5vw, 4rem); }
+  .totp-bind-qr { min-width: 0; display: grid; justify-items: center; gap: var(--space-3); }
+  .totp-confirm-form { width: 100%; }
+  .setup-key-toggle { min-height: 2rem; border: 0; border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); background: transparent; color: var(--color-accent); font-size: 0.82rem; }
+  .setup-key-toggle:hover, .setup-key-toggle:focus-visible { background: var(--color-elevated); }
+  .setup-key-panel { width: 100%; display: grid; gap: var(--space-2); }
+  .setup-key-panel code { display: block; min-width: 0; overflow-wrap: anywhere; padding: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-elevated); font-family: var(--font-mono); font-size: 0.76rem; text-align: start; }
+  .setup-key-panel .compact-secondary-button { justify-self: stretch; }
+  .configured-authenticator-heading { position: relative; display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
   .authorized-client-list { display: grid; gap: var(--space-2); padding: 0; margin: 0; list-style: none; }
   .authorized-client-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-elevated); }
   .authorized-client-list li div { display: grid; gap: var(--space-1); min-width: 0; }
@@ -252,10 +261,12 @@
     .computer-table-row { grid-template-columns: 1fr; }
     .server-address-row, .authorized-client-list li { align-items: stretch; flex-direction: column; }
     .security-setting-row { flex-wrap: wrap; align-items: center; }
-    .totp-guide-steps { grid-template-columns: 1fr; }
-    .totp-guide-steps li { grid-template-columns: auto minmax(0, 1fr); align-items: center; text-align: start; }
-    .totp-guide-steps li::before { margin-inline: 0; }
-    .connection-qr, .totp-setup-material, .consent-details div { grid-template-columns: 1fr; }
+    .totp-guide-steps { gap: var(--space-1); }
+    .totp-guide-steps li { gap: var(--space-1); font-size: 0.72rem; }
+    .totp-guide-step-marker { width: 1.9rem; height: 1.9rem; }
+    .totp-wizard-card-heading { align-items: flex-start; }
+    .connection-qr, .consent-details div { grid-template-columns: 1fr; }
+    .totp-bind-layout { grid-template-columns: 1fr; gap: var(--space-4); }
   }
   @media (max-width: 47.99rem), (pointer: coarse) {
     .logout-button { width: 2.75rem; padding: 0; }
