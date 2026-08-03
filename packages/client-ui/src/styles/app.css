@@ -162,7 +162,9 @@
   .settings-page .theme-picker { width: 100%; margin-inline-start: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); }
   .settings-page .theme-option { width: 100%; justify-content: center; }
   .server-field { display: grid; gap: var(--space-2); }
-  .server-field-heading { min-height: 2.75rem; display: flex; align-items: center; gap: var(--space-2); }
+  .server-field-heading { display: flex; align-items: center; gap: var(--space-1); }
+  .field-label { color: var(--color-text-primary); }
+  .server-qr-trigger { width: 1.75rem; height: 1.75rem; min-height: 1.75rem; }
   .server-address-row { display: flex; align-items: center; gap: var(--space-3); }
   .server-address-row code { flex: 1; min-width: 0; overflow-wrap: anywhere; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-elevated); }
   .connection-qr, .totp-setup-material { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-4); }

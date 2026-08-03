@@ -4,12 +4,12 @@
       <div><p class="eyebrow">Server</p><h2 id="server-heading">中继服务器</h2></div>
     </div>
     <div data-server-field class="server-field">
-      <div data-server-label class="server-field-heading">
-        <h3 id="server-url-label">服务网址</h3>
+      <div class="server-field-heading">
+        <span id="server-url-label" data-server-label class="field-label">服务网址</span>
         <button
           ref="qrTrigger"
           data-action="show-server-qr"
-          class="icon-button icon-only"
+          class="icon-button icon-only server-qr-trigger"
           type="button"
           aria-label="显示服务网址二维码"
           @click="qrOpen = true"
@@ -18,7 +18,7 @@
         </button>
       </div>
       <div class="server-address-row" aria-labelledby="server-url-label">
-        <code data-server-issuer>{{ issuer }}</code>
+        <code id="server-url-value" data-server-issuer>{{ issuer }}</code>
         <button data-action="copy-server-url" class="secondary-button" type="button" @click="copyIssuer">{{ copied ? '已复制' : '复制' }}</button>
       </div>
     </div>
