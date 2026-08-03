@@ -41,7 +41,15 @@ class RunCommand(Protocol):
     ) -> subprocess.CompletedProcess[str]: ...
 
 
-_VERSION = re.compile(r"^tmux\s+(\d+)\.(\d+)")
+_VERSION = re.compile(r"\btmux\s+(\d+)\.(\d+)\b", re.IGNORECASE)
+_DIAGNOSTIC_LIMIT = 160
+
+
+def _diagnostic_output(value: str | None) -> str:
+    compact = " ".join((value or "").splitlines()).strip()
+    if len(compact) > _DIAGNOSTIC_LIMIT:
+        compact = f"{compact[: _DIAGNOSTIC_LIMIT - 3]}..."
+    return repr(compact)
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,9 +109,15 @@ class TmuxRunner:
             )
         except FileNotFoundError as exc:
             raise TmuxUnavailable("tmux is not installed") from exc
-        match = _VERSION.match(result.stdout.strip()) if result.returncode == 0 else None
+        output = "\n".join((result.stdout or "", result.stderr or ""))
+        match = _VERSION.search(output) if result.returncode == 0 else None
         if match is None:
-            raise TmuxUnavailable("Unable to determine tmux version")
+            raise TmuxUnavailable(
+                "Unable to determine tmux version "
+                f"(exit={result.returncode}; "
+                f"stdout={_diagnostic_output(result.stdout)}; "
+                f"stderr={_diagnostic_output(result.stderr)})"
+            )
         version = (int(match.group(1)), int(match.group(2)))
         if version < (3, 2):
             raise UnsupportedTmuxVersion(f"tmux 3.2+ is required; found {version[0]}.{version[1]}")

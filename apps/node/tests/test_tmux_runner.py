@@ -2,7 +2,13 @@ from pathlib import Path
 from subprocess import CompletedProcess
 
 import pytest
-from termflow_node.tmux.runner import SocketPathTooLong, TmuxCommandError, TmuxRunner
+from termflow_node.tmux.runner import (
+    SocketPathTooLong,
+    TmuxCommandError,
+    TmuxRunner,
+    TmuxUnavailable,
+    UnsupportedTmuxVersion,
+)
 
 
 class FakeRun:
@@ -54,6 +60,53 @@ def test_overlong_socket_path_is_rejected_before_spawn(tmp_path) -> None:
     path = Path("/") / ("a" * 108)
     with pytest.raises(SocketPathTooLong):
         TmuxRunner(path)
+
+
+@pytest.mark.parametrize(
+    ("stdout", "stderr"),
+    [
+        ("version check: tmux 3.4 (Linux)\n", ""),
+        ("", "tmux 3.4\n"),
+    ],
+)
+def test_tmux_version_accepts_wrapped_stdout_or_stderr(tmp_path, stdout, stderr) -> None:
+    def version_run(argv, **kwargs):
+        return CompletedProcess(argv, 0, stdout=stdout, stderr=stderr)
+
+    TmuxRunner((tmp_path / "tmux.sock").absolute(), run=version_run)
+
+
+def test_tmux_version_failure_reports_bounded_process_diagnostics(tmp_path) -> None:
+    def failed_version(argv, **kwargs):
+        return CompletedProcess(
+            argv,
+            9,
+            stdout="wrapper output\n",
+            stderr="tmux launcher failed " + "x" * 300,
+        )
+
+    with pytest.raises(TmuxUnavailable) as caught:
+        TmuxRunner((tmp_path / "tmux.sock").absolute(), run=failed_version)
+
+    detail = str(caught.value)
+    assert "exit=9" in detail
+    assert "wrapper output" in detail
+    assert "tmux launcher failed" in detail
+    assert len(detail) < 450
+
+
+def test_tmux_version_rejects_unparseable_and_old_versions(tmp_path) -> None:
+    def unparseable(argv, **kwargs):
+        return CompletedProcess(argv, 0, stdout="tmux next-3.5\n", stderr="")
+
+    with pytest.raises(TmuxUnavailable, match="Unable to determine tmux version"):
+        TmuxRunner((tmp_path / "unparseable.sock").absolute(), run=unparseable)
+
+    def old_version(argv, **kwargs):
+        return CompletedProcess(argv, 0, stdout="tmux 3.1\n", stderr="")
+
+    with pytest.raises(UnsupportedTmuxVersion, match=r"tmux 3\.2\+ is required; found 3\.1"):
+        TmuxRunner((tmp_path / "old.sock").absolute(), run=old_version)
 
 
 def test_session_identity_rename_kill_and_attach_use_argv_targets(tmp_path) -> None:
