@@ -172,7 +172,7 @@
   .qr-dialog-panel > header { min-height: 2.75rem; align-items: center; text-align: start; }
   .qr-dialog-panel > p { margin: 0; color: var(--color-text-secondary); line-height: 1.6; }
   .connection-qr p, .totp-setup-material p { color: var(--color-text-secondary); line-height: 1.6; }
-  .totp-setup-material code { display: block; margin-block-start: var(--space-3); overflow-wrap: anywhere; font-family: var(--font-mono); }
+  .totp-setup-material code { display: block; overflow-wrap: anywhere; font-family: var(--font-mono); }
   .security-form, .inline-security-form, .revoke-form { width: min(100%, 34rem); margin-block-start: 0; }
   .settings-action-button { width: fit-content; }
   .security-setting-row { position: relative; display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-elevated); }
@@ -196,7 +196,10 @@
   .totp-guide-intro { width: min(100%, 34rem); display: grid; gap: var(--space-2); margin-inline: auto; text-align: center; }
   .totp-guide-card .security-form, .totp-guide-card .inline-security-form { margin-inline: auto; }
   .totp-setup-copy { display: grid; gap: var(--space-2); }
-  .protection-dialog > p { color: var(--color-text-secondary); }
+  .configured-authenticator-heading, .setup-key-heading { position: relative; display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+  .configured-authenticator-heading h2, .setup-key-heading h3 { margin: 0; }
+  .setup-key-field { display: grid; gap: var(--space-2); }
+  .setup-key-heading .help-tooltip [role='tooltip'] { inset-inline: 0; width: auto; white-space: normal; }
   .authorized-client-list { display: grid; gap: var(--space-2); padding: 0; margin: 0; list-style: none; }
   .authorized-client-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-elevated); }
   .authorized-client-list li div { display: grid; gap: var(--space-1); min-width: 0; }
