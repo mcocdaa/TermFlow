@@ -33,10 +33,21 @@ def _make_release_directory(root: Path, *, checksum: str | None = None) -> Path:
     return release
 
 
-def _render_installer(tmp_path: Path) -> Path:
+def _render_installer(
+    tmp_path: Path,
+    *,
+    repository: str = "fork-owner/TermFlow",
+) -> Path:
     installer = tmp_path / "install-termflow-node.sh"
     result = subprocess.run(
-        [sys.executable, str(RENDERER), "v0.1.0", str(installer)],
+        [
+            sys.executable,
+            str(RENDERER),
+            "v0.1.0",
+            str(installer),
+            "--repository",
+            repository,
+        ],
         cwd=REPOSITORY_ROOT,
         capture_output=True,
         text=True,
@@ -44,6 +55,38 @@ def _render_installer(tmp_path: Path) -> Path:
     )
     assert result.returncode == 0, result.stderr
     return installer
+
+
+def test_installer_defaults_to_the_rendered_repository(tmp_path: Path) -> None:
+    installer = _render_installer(tmp_path, repository="fork-owner/TermFlow")
+
+    assert (
+        "https://github.com/fork-owner/TermFlow/releases/download/${TAG}"
+        in installer.read_text()
+    )
+    assert "github.com/mcocdaa/TermFlow" not in installer.read_text()
+
+
+def test_renderer_rejects_an_invalid_repository_slug(tmp_path: Path) -> None:
+    installer = tmp_path / "install-termflow-node.sh"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(RENDERER),
+            "v0.1.0",
+            str(installer),
+            "--repository",
+            "owner/repo/extra",
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "owner/repository" in result.stderr
+    assert not installer.exists()
 
 
 def _run_installer(release: Path, home: Path, installer: Path) -> subprocess.CompletedProcess[str]:

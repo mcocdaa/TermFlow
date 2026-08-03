@@ -105,10 +105,16 @@ def test_operations_docs_define_external_edge_secrets_and_native_toolchains() ->
 def test_operations_docs_explain_manual_and_release_client_boundaries() -> None:
     operations = Path("docs/operations.md").read_text()
     for phrase in (
-        "Tauri Multi-platform Packages",
+        "Package A · Linux Node",
+        "Package B + Web C · Control Plane",
+        "Package C · Native Clients",
         "Actions artifact",
         "GitHub Release",
         "14 天",
+        "termflow-control-plane.tar",
+        "docker load",
+        'TERMFLOW_RELEASE_BASE_URL="file://$PWD"',
+        "workflow_call",
         "*-setup.exe",
         "SmartScreen",
         "未知发布者",
@@ -135,5 +141,10 @@ def test_docs_distinguish_test_artifacts_from_permanent_release_assets() -> None
     ):
         assert phrase in operations
     assert "install-termflow-node.sh" in readme
+    assert "termflow-node-linux-x86_64.tar.gz" in readme
+    assert "deb/AppImage" in readme
+    assert "只有 Tag Release 才会推送 GHCR" in readme
     assert "TERM_FLOW" not in readme
     assert "SHA256" in troubleshooting
+    assert "手动 A" in troubleshooting
+    assert "手动 B" in troubleshooting

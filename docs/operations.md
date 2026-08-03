@@ -43,7 +43,7 @@ docker compose --env-file .env -f deploy/compose.yaml up -d --build
 也不要删除 `termflow-data`。GitHub Actions 或 Fork 可以使用同一个 Dockerfile 构建、标记和发布镜像，
 但镜像来源不属于普通 Compose 的运行时配置。
 
-Actions artifact 是短期测试产物：手动 `Tauri Multi-platform Packages` run 保留 14 天，不能代替
+Actions artifact 是短期测试产物：三套手动打包 workflow 的产物都保留 14 天，不能代替
 GitHub Release。Windows asset 目前未签名；iOS Simulator asset 只能用于 Simulator，不能用于实体
 iPhone。签名、notarization、TestFlight 与应用商店上传仍是后续独立流程。
 
@@ -103,22 +103,35 @@ Tauri 配置生成平台工程，再执行 debug/unsigned 编译。缺少 Tauri 
 `TERMFLOW_DOCKER_BUILD_RETRY_DELAY_SECONDS` 调整。签名、notarization、商店上传和发布凭据
 属于单独受保护的 release 流程。
 
-## 多平台客户端测试包与正式 Release
+## 三套手动打包 Workflow 与正式 Release
 
-`Tauri Multi-platform Packages` workflow 仅可在 Actions 页面手动触发，用来测试任意 commit；
-它绝不创建 GitHub Release、绝不推 GHCR 版本镜像，artifact 保留 14 天。历史上的单平台
-`Tauri Windows Installer` / `termflow-windows-installer` 入口和 7 天 artifact 规则已被废弃。
+基础打包文件同时声明 `workflow_dispatch` 和 `workflow_call`：前者供 Actions 页面手动测试任意
+commit，后者只供 Tag Release 复用同一套命令。手动运行不接受 `release_tag`，不会创建 GitHub
+Release，也不会推送 GHCR；Actions artifact 使用不含版本的稳定名称并保留 14 天。
 
-手动验证任意 commit：
+- `Package A · Linux Node` 构建 Linux x86_64 A bundle、安装器和 `SHA256SUMS`。下载并解压
+  `termflow-node-linux-x86_64` Artifact 后，可在该目录离线安装：
 
-1. 把需要测试的 commit 推送到 GitHub。
-2. 打开 Actions → `Tauri Multi-platform Packages` → Run workflow，选择对应分支或 tag，再在
-   `platform` 中选择 `all`、`windows`、`linux`、`macos`、`android` 或 `ios`。选择单个平台时，
-   其他平台 job 会跳过；选择 `all` 时运行全部五个平台。
-3. 等待版本校验和所选原生打包 job 成功。
-4. 从该次 run 的 Artifacts 下载所选产物：Windows NSIS `*-setup.exe`、Linux deb/AppImage、macOS app zip/DMG、
-   Android debug APK 和 iOS simulator app zip。
-5. 对需要声明支持的平台实际解包、安装并启动；workflow 成功本身不等于安装验收通过。
+  ```bash
+  TERMFLOW_RELEASE_BASE_URL="file://$PWD" ./install-termflow-node.sh
+  ```
+
+- `Package B + Web C · Control Plane` 构建、启动验证并重新导入 amd64 Docker 镜像。下载并
+  解压 `termflow-control-plane` Artifact 后，可导入本机 Docker：
+
+  ```bash
+  docker load -i termflow-control-plane.tar
+  ```
+
+  手动导入不会覆盖 Compose 配置、重启服务或删除 `termflow-data`；部署者应显式选择镜像运行方式。
+- `Package C · Native Clients` 的 `platform` 可选 `all`、`windows`、`linux`、`macos`、
+  `android` 或 `ios`。Artifacts 分别包含 Windows NSIS `*-setup.exe`、Linux deb/AppImage、
+  macOS app zip/DMG、Android debug APK 和 iOS simulator app zip。
+
+手动验证时，把目标 commit 推送到 GitHub，打开上述 workflow 的 Run workflow，等待所选 job
+成功后下载 Artifact，并在目标平台实际解包、安装和启动。workflow 成功本身不等于安装验收通过。
+历史上的单平台 `Tauri Windows Installer` / `termflow-windows-installer` 入口和 7 天 artifact
+规则已被废弃。
 
 准备正式 Release 前，先让根 `package.json`、Node、Control Plane、protocol、Tauri client 的
 `package.json`、`src-tauri/Cargo.toml` 与 `tauri.conf.json` 全部为同一 SemVer，并在目标 commit
@@ -128,10 +141,12 @@ Tauri 配置生成平台工程，再执行 debug/unsigned 编译。缺少 Tauri 
 uv run --frozen python scripts/release/check_version.py --tag vX.Y.Z
 ```
 
-推送匹配的 `vX.Y.Z` tag 后，`Publish TermFlow Release` 会始终构建 A、B 和全部五类 C 包；A 的
-已安装终端连通 B、B 的 release-image smoke、每种原生包的文件数检查任一失败，发布 job 都不会
-得到 `contents: write` / `packages: write` 权限。全部成功后才上传 Release assets、`SHA256SUMS` 和
-GHCR multi-arch image。不要把手动测试 artifact 当成正式发布，也不要在未经验证的 tag 上重复发布。
+推送匹配的 `vX.Y.Z` Tag 后，`Publish TermFlow Release` 先并行调用 A 与原生 C 基础 workflow；
+二者全部成功后才调用 B + Web C workflow 并授予其 GHCR `packages: write`。B 的镜像内容、健康
+启动、tar round-trip、Artifact 上传或 multi-arch 推送任一步失败，最终 Release job 都不会运行。
+三套基础 workflow 全部成功后，Release job 才合并产物、重新生成唯一的 `SHA256SUMS` 并创建
+GitHub Release。Tag 中间 Artifact 名含完整 Tag、保留 1 天；永久文件由 GitHub Release 保存。
+不要把手动测试 artifact 当成正式发布，也不要在未经验证的 Tag 上重复发布。
 
 这些产物的信任和签名边界如下：
 

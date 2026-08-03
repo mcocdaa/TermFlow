@@ -28,7 +28,7 @@ if [[ -z "${tmux_major:-}" || -z "${tmux_minor:-}" ]] || ((tmux_major < 3 || (tm
   fail "tmux 3.2 or newer is required"
 fi
 
-readonly RELEASE_BASE="${TERMFLOW_RELEASE_BASE_URL:-https://github.com/mcocdaa/TermFlow/releases/download/${TAG}}"
+readonly RELEASE_BASE="${TERMFLOW_RELEASE_BASE_URL:-https://github.com/@REPOSITORY@/releases/download/${TAG}}"
 readonly PREFIX="${HOME:?HOME must be set}/.local"
 readonly VERSION_DIRECTORY="${PREFIX}/opt/termflow-node/${TAG}"
 readonly BIN_DIRECTORY="${PREFIX}/bin"
