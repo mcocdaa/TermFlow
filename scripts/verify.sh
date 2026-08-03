@@ -21,8 +21,10 @@ uv run --all-packages pytest -q
 uv run --all-packages ruff check .
 uv run --all-packages mypy packages/protocol/src apps/control-plane/src apps/node/src
 scripts/verify-tauri.sh
-docker compose -f deploy/compose.yaml config --quiet
 
 CONTROL_PLANE_IMAGE="${TERMFLOW_VERIFY_IMAGE:-termflow-control-plane:verify}"
+TERMFLOW_IMAGE="${CONTROL_PLANE_IMAGE}" \
+  TERMFLOW_ADMIN_TOKEN="verify-admin-token-that-is-long-enough" \
+  docker compose -f deploy/compose.yaml config --quiet
 scripts/build-control-plane-image.sh "${CONTROL_PLANE_IMAGE}"
 scripts/verify-control-plane-image.sh "${CONTROL_PLANE_IMAGE}"

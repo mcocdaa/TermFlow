@@ -31,6 +31,13 @@ def test_release_image_smoke_uses_an_isolated_test_volume() -> None:
     assert "verify_control_plane_release_image.sh termflow-control-plane:ci" in workflow
 
 
+def test_full_verification_supplies_the_required_nonproduction_compose_values() -> None:
+    verify = Path("scripts/verify.sh").read_text()
+
+    assert "TERMFLOW_IMAGE=\"${CONTROL_PLANE_IMAGE}\"" in verify
+    assert "TERMFLOW_ADMIN_TOKEN=\"verify-admin-token-that-is-long-enough\"" in verify
+
+
 def test_compose_is_single_worker_and_persists_only_metadata() -> None:
     compose = yaml.safe_load(Path("deploy/compose.yaml").read_text())
     service = compose["services"]["control-plane"]
