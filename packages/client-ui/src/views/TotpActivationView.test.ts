@@ -110,5 +110,6 @@ describe('TotpActivationView', () => {
 
     expect(wrapper.get('[role="status"]').text()).toBe('双重因素认证暂时不可用，请联系服务器管理员。')
     expect(wrapper.text()).not.toContain('deployment detail')
+    expect(wrapper.findAll('[data-guide-step]')).toHaveLength(0)
   })
 })

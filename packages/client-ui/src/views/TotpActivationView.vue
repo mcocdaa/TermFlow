@@ -4,7 +4,7 @@
       <div class="totp-guide-heading-copy"><p class="eyebrow">Two Factor Authentication</p><h1>双重因素认证</h1></div>
       <RouterLink class="secondary-button" to="/settings">返回设置</RouterLink>
     </header>
-    <ol class="totp-guide-steps" aria-label="激活步骤">
+    <ol v-if="!loading && status.available" class="totp-guide-steps" aria-label="激活步骤">
       <li
         v-for="(step, index) in guideSteps"
         :key="step"
