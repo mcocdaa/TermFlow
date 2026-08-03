@@ -7,22 +7,41 @@ if [[ "$#" -ne 1 || -z "$1" ]]; then
 fi
 
 IMAGE="$1"
-SCRIPT_DIRECTORY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPOSITORY_ROOT="$(cd -- "${SCRIPT_DIRECTORY}/../.." && pwd)"
-PROJECT="termflow-release-image-test-$$"
-
-export TERMFLOW_IMAGE="${IMAGE}"
-export TERMFLOW_ADMIN_TOKEN="release-test-admin-token-which-is-long-enough"
-export TERMFLOW_HOST_PORT="18076"
-export TERMFLOW_DATA_VOLUME="${PROJECT}-data"
-export TERMFLOW_PUBLIC_BASE_URL="http://127.0.0.1:${TERMFLOW_HOST_PORT}"
-export TERMFLOW_TRUSTED_WEB_ORIGINS="${TERMFLOW_PUBLIC_BASE_URL}"
+CONTAINER="termflow-release-image-test-$$"
+VOLUME="${CONTAINER}-data"
+HOST_PORT="18076"
+HEALTH_URL="http://127.0.0.1:18076/healthz"
 
 cleanup() {
-  docker compose -p "${PROJECT}" -f "${REPOSITORY_ROOT}/deploy/compose.yaml" \
-    down --volumes --remove-orphans >/dev/null 2>&1 || true
+  docker rm --force "${CONTAINER}" >/dev/null 2>&1 || true
+  docker volume rm "${VOLUME}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-docker compose -p "${PROJECT}" -f "${REPOSITORY_ROOT}/deploy/compose.yaml" up -d --wait
-curl --fail --silent --show-error http://127.0.0.1:18076/healthz
+docker volume create "${VOLUME}" >/dev/null
+docker run --detach \
+  --name "${CONTAINER}" \
+  --pull never \
+  --publish "127.0.0.1:${HOST_PORT}:8000" \
+  --mount "source=${VOLUME},target=/app/data" \
+  --env TERMFLOW_ADMIN_TOKEN=release-test-admin-token-which-is-long-enough \
+  --env TERMFLOW_DATABASE_URL=sqlite+aiosqlite:////app/data/termflow.db \
+  --env TERMFLOW_ALLOW_INSECURE_LOOPBACK=true \
+  --env "TERMFLOW_PUBLIC_BASE_URL=http://127.0.0.1:${HOST_PORT}" \
+  --env TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE=/app/data/totp-master-key \
+  "${IMAGE}" >/dev/null
+
+for attempt in $(seq 1 60); do
+  if curl --fail --silent "${HEALTH_URL}"; then
+    exit 0
+  fi
+  if [[ "$(docker inspect --format '{{.State.Running}}' "${CONTAINER}")" != "true" ]]; then
+    docker logs "${CONTAINER}" >&2
+    exit 1
+  fi
+  sleep 1
+done
+
+docker logs "${CONTAINER}" >&2
+echo "control-plane release image did not become healthy" >&2
+exit 1

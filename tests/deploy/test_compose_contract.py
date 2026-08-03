@@ -3,39 +3,40 @@ from pathlib import Path
 import yaml
 
 
-def test_production_compose_uses_an_explicit_release_image_without_source_build() -> None:
+def test_default_compose_builds_current_checkout_without_an_image_source() -> None:
     compose = yaml.safe_load(Path("deploy/compose.yaml").read_text())
     service = compose["services"]["control-plane"]
 
-    assert service["image"] == "${TERMFLOW_IMAGE:?set TERMFLOW_IMAGE to a pinned GHCR tag}"
-    assert "build" not in service
-
-
-def test_development_override_owns_the_local_source_build() -> None:
-    compose = yaml.safe_load(Path("deploy/compose.dev.yaml").read_text())
-
-    assert compose["services"]["control-plane"]["build"] == {
+    assert service["build"] == {
         "context": "..",
         "dockerfile": "deploy/Dockerfile.control-plane",
     }
+    assert "image" not in service
+    assert "TERMFLOW_IMAGE" not in Path("deploy/compose.yaml").read_text()
+    assert not Path("deploy/compose.dev.yaml").exists()
 
 
-def test_release_image_smoke_uses_an_isolated_test_volume() -> None:
+def test_release_image_smoke_is_independent_from_runtime_compose() -> None:
     verifier = Path("scripts/release/verify_control_plane_release_image.sh").read_text()
     workflow = Path(".github/workflows/ci.yml").read_text()
 
-    assert "TERMFLOW_DATA_VOLUME=\"${PROJECT}-data\"" in verifier
-    assert "up -d --wait" in verifier
-    assert "down --volumes --remove-orphans" in verifier
+    assert 'IMAGE="$1"' in verifier
+    assert "docker run --detach" in verifier
+    assert "docker volume create" in verifier
+    assert "docker rm --force" in verifier
+    assert "docker volume rm" in verifier
+    assert "TERMFLOW_IMAGE" not in verifier
+    assert "docker compose" not in verifier
     assert "http://127.0.0.1:18076/healthz" in verifier
     assert "verify_control_plane_release_image.sh termflow-control-plane:ci" in workflow
 
 
-def test_full_verification_supplies_the_required_nonproduction_compose_values() -> None:
+def test_full_verification_checks_source_build_compose_configuration() -> None:
     verify = Path("scripts/verify.sh").read_text()
 
-    assert "TERMFLOW_IMAGE=\"${CONTROL_PLANE_IMAGE}\"" in verify
+    assert "TERMFLOW_IMAGE" not in verify
     assert "TERMFLOW_ADMIN_TOKEN=\"verify-admin-token-that-is-long-enough\"" in verify
+    assert "docker compose -f deploy/compose.yaml config --quiet" in verify
 
 
 def test_compose_is_single_worker_and_persists_only_metadata() -> None:

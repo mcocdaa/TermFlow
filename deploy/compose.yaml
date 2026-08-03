@@ -1,6 +1,8 @@
 services:
   control-plane:
-    image: ${TERMFLOW_IMAGE:?set TERMFLOW_IMAGE to a pinned GHCR tag}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.control-plane
     command:
       - /opt/termflow/bin/termflow-control
       - serve

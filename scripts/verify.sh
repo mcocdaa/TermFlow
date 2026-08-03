@@ -23,8 +23,7 @@ uv run --all-packages mypy packages/protocol/src apps/control-plane/src apps/nod
 scripts/verify-tauri.sh
 
 CONTROL_PLANE_IMAGE="${TERMFLOW_VERIFY_IMAGE:-termflow-control-plane:verify}"
-TERMFLOW_IMAGE="${CONTROL_PLANE_IMAGE}" \
-  TERMFLOW_ADMIN_TOKEN="verify-admin-token-that-is-long-enough" \
+TERMFLOW_ADMIN_TOKEN="verify-admin-token-that-is-long-enough" \
   docker compose -f deploy/compose.yaml config --quiet
 scripts/build-control-plane-image.sh "${CONTROL_PLANE_IMAGE}"
 scripts/verify-control-plane-image.sh "${CONTROL_PLANE_IMAGE}"
