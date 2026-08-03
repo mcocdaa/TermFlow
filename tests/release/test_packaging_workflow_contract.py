@@ -2,7 +2,6 @@ from pathlib import Path
 
 import yaml
 
-
 NODE_WORKFLOW = Path(".github/workflows/package-node.yml")
 CONTROL_PLANE_WORKFLOW = Path(".github/workflows/package-control-plane.yml")
 CLIENT_WORKFLOW = Path(".github/workflows/tauri-packages.yml")

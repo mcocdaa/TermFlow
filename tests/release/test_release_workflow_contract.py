@@ -2,7 +2,6 @@ from pathlib import Path
 
 import yaml
 
-
 WORKFLOW_PATH = Path(".github/workflows/release.yml")
 
 
