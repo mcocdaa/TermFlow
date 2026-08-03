@@ -3,7 +3,7 @@
     <header class="page-heading"><div><p class="eyebrow">设备与注册</p><h1 id="computers-title">电脑管理</h1></div><button class="primary-button" type="button" @click="showEnrollment = true">添加电脑</button></header>
     <p v-if="message" role="alert" class="form-error">{{ message }}</p>
     <p v-if="loading" class="muted">正在读取 Computers…</p>
-    <ComputerTable v-else :computers="computers" />
+    <ComputerTable v-else :computers="computers" @remove="removeComputer" />
     <EnrollmentDialog v-if="showEnrollment" @closed="showEnrollment = false" />
   </section>
 </template>
@@ -21,11 +21,24 @@ const computers = ref<ComputerSummary[]>([])
 const loading = ref(true)
 const message = ref('')
 const showEnrollment = ref(false)
+const deletingId = ref<string | null>(null)
 const controller = new AbortController()
-onMounted(async () => {
+async function loadComputers() {
+  loading.value = true
   try { computers.value = (await runtime.api.computers.list(controller.signal)).computers }
   catch (error) { if (!(error instanceof ApiError) || error.kind !== 'aborted') message.value = error instanceof ApiError ? error.message : '无法加载 Computers。' }
   finally { loading.value = false }
-})
+}
+async function removeComputer(computer: ComputerSummary) {
+  if (deletingId.value !== null) return
+  deletingId.value = computer.installation_id
+  try {
+    await runtime.api.computers.remove(computer.installation_id)
+    computers.value = computers.value.filter((candidate) => candidate.installation_id !== computer.installation_id)
+    message.value = '已删除'
+  } catch (error) { message.value = error instanceof ApiError ? error.message : '无法删除电脑。' }
+  finally { deletingId.value = null }
+}
+onMounted(() => { void loadComputers() })
 onBeforeUnmount(() => controller.abort())
 </script>

@@ -29,7 +29,7 @@ describe('ComputersView', () => {
     await flushPromises()
 
     expect(list).toHaveBeenCalledTimes(1)
-    expect(wrapper.findAll('[role="columnheader"]').map((header) => header.text())).toEqual(['名称', '终端', '最近在线', '注册时间'])
+    expect(wrapper.findAll('[role="columnheader"]').map((header) => header.text())).toEqual(['名称', '终端', '最近在线', '注册时间', '操作'])
     expect(wrapper.text()).toContain('devbox')
     expect(wrapper.text()).not.toContain('操作系统')
     expect(wrapper.text()).not.toContain('Linux x86_64')
@@ -37,6 +37,10 @@ describe('ComputersView', () => {
     const row = wrapper.get('[data-computer-id="machine-1"]')
     expect(row.findAll('.status-pill')).toHaveLength(1)
     expect(row.get('.status-pill').text()).toBe('在线 (3)')
+    const onlineDelete = row.get('[data-action="delete-computer"]')
+    expect(onlineDelete.attributes('disabled')).toBeDefined()
+    expect(onlineDelete.attributes('aria-label')).toContain('在线')
+    expect(onlineDelete.find('svg').exists()).toBe(true)
     const nameTrigger = wrapper.get('[data-action="edit-name"]')
     expect(nameTrigger.text()).toBe('主工作站')
     expect(nameTrigger.attributes('aria-label')).toBe('修改 Computer 名称：主工作站')
@@ -46,6 +50,37 @@ describe('ComputersView', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('构建主机')
     expect(rename).toHaveBeenCalledWith('machine-1', '构建主机')
+  })
+
+  it('confirms and removes an offline Computer while retaining the disabled online action', async () => {
+    const offlineComputer = {
+      ...computer,
+      installation_id: 'machine-offline',
+      display_name: '离线工作站',
+      online: false,
+      terms: [{ ...computer.terms[0]!, instance_id: 'offline-term', online: false }],
+    }
+    const list = vi.fn().mockResolvedValue({ computers: [computer, offlineComputer] })
+    const remove = vi.fn().mockResolvedValue(undefined)
+    const runtime = createFakeRuntime({ api: { computers: { list, remove } } as unknown as ClientRuntime['api'] })
+    const confirm = vi.spyOn(window, 'confirm')
+    const wrapper = mountComputers(runtime)
+    await flushPromises()
+
+    const action = wrapper.get('[data-computer-id="machine-offline"] [data-action="delete-computer"]')
+    expect(action.attributes('disabled')).toBeUndefined()
+    confirm.mockReturnValueOnce(false)
+    await action.trigger('click')
+    expect(remove).not.toHaveBeenCalled()
+    confirm.mockReturnValueOnce(true)
+    await action.trigger('click')
+    await flushPromises()
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('离线工作站'))
+    expect(remove).toHaveBeenCalledWith('machine-offline')
+    expect(wrapper.find('[data-computer-id="machine-offline"]').exists()).toBe(false)
+    expect(wrapper.get('[role="alert"]').text()).toBe('已删除')
+    confirm.mockRestore()
   })
 
   it('rejects control characters before sending a rename request', async () => {
