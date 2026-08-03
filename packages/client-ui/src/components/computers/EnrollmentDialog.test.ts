@@ -22,7 +22,7 @@ describe('EnrollmentDialog', () => {
     })
     const writeText = vi.fn().mockResolvedValue(undefined)
     const runtime = createFakeRuntime({
-      api: { computers: { createEnrollment } } as unknown as ClientRuntime['api'],
+      api: { computers: { createEnrollment, list: vi.fn().mockResolvedValue({ computers: [] }) } } as unknown as ClientRuntime['api'],
       clipboard: { writeText },
       clock: { now: () => Date.parse('2026-08-01T00:00:00Z'), setTimeout: () => 1, clearTimeout: () => undefined, setInterval: () => 2, clearInterval: () => undefined },
       canonicalServerUrl: 'https://deliberately-wrong.example.com',
@@ -54,7 +54,7 @@ describe('EnrollmentDialog', () => {
 
   it('automatically replaces an expired code using the runtime clock', async () => {
     let now = Date.parse('2026-08-01T00:00:00Z')
-    let tick: (() => void) | undefined
+    const ticks = new Map<number, () => void>()
     const createEnrollment = vi.fn()
       .mockResolvedValueOnce({
         token: 'EXPIRES-NOW',
@@ -69,12 +69,12 @@ describe('EnrollmentDialog', () => {
         login_command: 'termflow login --server https://relay.example.com --code FRESH-CODE',
       })
     const runtime = createFakeRuntime({
-      api: { computers: { createEnrollment } } as unknown as ClientRuntime['api'],
+      api: { computers: { createEnrollment, list: vi.fn().mockResolvedValue({ computers: [] }) } } as unknown as ClientRuntime['api'],
       clock: {
         now: () => now,
         setTimeout: () => 1,
         clearTimeout: () => undefined,
-        setInterval: (callback) => { tick = callback; return 2 },
+        setInterval: (callback, delay) => { ticks.set(delay, callback); return delay },
         clearInterval: () => undefined,
       },
       canonicalServerUrl: 'https://deliberately-wrong.example.com',
@@ -86,7 +86,7 @@ describe('EnrollmentDialog', () => {
     expect(wrapper.text()).toContain('EXPIRES-NOW')
 
     now += 1_100
-    tick?.()
+    ticks.get(250)?.()
     await flushPromises()
 
     expect(wrapper.html()).not.toContain('EXPIRES-NOW')
@@ -121,7 +121,7 @@ describe('EnrollmentDialog', () => {
 
   it('rejects unsafe Computer names before requesting a code', async () => {
     const createEnrollment = vi.fn()
-    const runtime = createFakeRuntime({ api: { computers: { createEnrollment } } as unknown as ClientRuntime['api'] })
+    const runtime = createFakeRuntime({ api: { computers: { createEnrollment, list: vi.fn().mockResolvedValue({ computers: [] }) } } as unknown as ClientRuntime['api'] })
     const wrapper = mountEnrollment(runtime)
 
     await wrapper.get('input[name="computer-name"]').setValue('bad\u007fname')
@@ -129,5 +129,48 @@ describe('EnrollmentDialog', () => {
 
     expect(wrapper.get('[role="alert"]').text()).toContain('1 至 128')
     expect(createEnrollment).not.toHaveBeenCalled()
+  })
+
+  it('closes and emits added after a newly enrolled Computer appears', async () => {
+    const callbacks = new Map<number, () => void>()
+    const clearInterval = vi.fn()
+    const addedComputer = {
+      installation_id: 'new-computer', display_name: '新工作站', hostname: 'new-host', platform: 'Linux', client_version: '0.1.0', online: false,
+      registered_at: '2026-08-03T12:00:00Z', last_seen_at: null, terms: [],
+    }
+    const list = vi.fn()
+      .mockResolvedValueOnce({ computers: [] })
+      .mockResolvedValueOnce({ computers: [addedComputer] })
+    const createEnrollment = vi.fn().mockResolvedValue({
+      token: 'NEW-CODE',
+      expires_at: '2026-08-03T12:01:00Z',
+      server_url: 'https://relay.example.com',
+      login_command: 'termflow login --server https://relay.example.com --code NEW-CODE',
+    })
+    const runtime = createFakeRuntime({
+      api: { computers: { createEnrollment, list } } as unknown as ClientRuntime['api'],
+      clock: {
+        now: () => Date.parse('2026-08-03T12:00:00Z'),
+        setTimeout: () => 1,
+        clearTimeout: () => undefined,
+        setInterval: (callback, delay) => { callbacks.set(delay, callback); return delay },
+        clearInterval,
+      },
+    })
+    const wrapper = mountEnrollment(runtime)
+
+    await wrapper.get('input[name="computer-name"]').setValue('新工作站')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.text()).toContain('NEW-CODE')
+
+    callbacks.get(1000)?.()
+    await flushPromises()
+
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(wrapper.emitted('added')).toHaveLength(1)
+    expect(wrapper.html()).not.toContain('NEW-CODE')
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(clearInterval).toHaveBeenCalled()
   })
 })

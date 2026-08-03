@@ -41,7 +41,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ApiError } from '@termflow/client-core'
 import { useClientRuntime } from '../../runtime'
 
-const emit = defineEmits<{ closed: [] }>()
+const emit = defineEmits<{ closed: []; added: [] }>()
 const runtime = useClientRuntime()
 const open = ref(true)
 const busy = ref(false)
@@ -57,10 +57,14 @@ const nameInput = ref<HTMLInputElement | null>(null)
 const copyButton = ref<HTMLButtonElement | null>(null)
 const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
 let timer: unknown | null = null
+let enrollmentPollTimer: unknown | null = null
+let pollingEnrollment = false
+let baselineComputerIds = new Set<string>()
 
 const secondsRemaining = computed(() => expiresAt.value === null ? 0 : Math.max(0, Math.ceil((expiresAt.value - now.value) / 1000)))
 function stopTimer() { if (timer !== null) runtime.clock.clearInterval(timer); timer = null }
-function clearSecret() { code.value = null; command.value = ''; expiresAt.value = null; copied.value = false; stopTimer() }
+function stopEnrollmentPolling() { if (enrollmentPollTimer !== null) runtime.clock.clearInterval(enrollmentPollTimer); enrollmentPollTimer = null }
+function clearSecret() { code.value = null; command.value = ''; expiresAt.value = null; copied.value = false; stopTimer(); stopEnrollmentPolling() }
 function close() {
   clearSecret()
   open.value = false
@@ -91,6 +95,25 @@ function startTimer() {
     if (open.value) void create(true)
   }, 250)
 }
+async function pollForEnrollment() {
+  if (pollingEnrollment || !open.value || !code.value) return
+  pollingEnrollment = true
+  try {
+    const result = await runtime.api.computers.list()
+    if (!open.value || !code.value) return
+    const added = result.computers.find((computer) => !baselineComputerIds.has(computer.installation_id) && computer.display_name === displayName.value)
+    if (added === undefined) return
+    clearSecret()
+    open.value = false
+    emit('added')
+    void nextTick(() => { if (returnFocus?.isConnected) returnFocus.focus() })
+  } catch (error) { if (open.value) message.value = error instanceof ApiError ? error.message : '无法检查电脑是否已添加。' }
+  finally { pollingEnrollment = false }
+}
+function startEnrollmentPolling() {
+  stopEnrollmentPolling()
+  enrollmentPollTimer = runtime.clock.setInterval(() => { void pollForEnrollment() }, 1000)
+}
 function validName(value: string) {
   return value.length >= 1 && value.length <= 128 && !/[\u0000-\u001f\u007f-\u009f]/.test(value)
 }
@@ -103,6 +126,9 @@ async function create(automatic = false) {
   busy.value = true
   message.value = ''
   try {
+    const baseline = await runtime.api.computers.list()
+    if (!open.value) return
+    baselineComputerIds = new Set(baseline.computers.map((computer) => computer.installation_id))
     const enrollment = await runtime.api.computers.createEnrollment(displayName.value)
     if (!open.value) return
     code.value = enrollment.token
@@ -111,11 +137,12 @@ async function create(automatic = false) {
     now.value = runtime.clock.now()
     copied.value = false
     startTimer()
+    startEnrollmentPolling()
     if (!automatic) void nextTick(() => copyButton.value?.focus())
   } catch (error) { message.value = error instanceof ApiError ? error.message : automatic ? '注册码刷新失败，请手动重试。' : '无法创建注册码。' }
   finally { busy.value = false }
 }
 async function copy() { if (!command.value) return; await runtime.clipboard.writeText(command.value); copied.value = true }
 onMounted(() => nameInput.value?.focus())
-onBeforeUnmount(() => { clearSecret(); if (returnFocus?.isConnected) returnFocus.focus() })
+onBeforeUnmount(() => { open.value = false; clearSecret(); if (returnFocus?.isConnected) returnFocus.focus() })
 </script>

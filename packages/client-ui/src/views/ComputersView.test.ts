@@ -109,4 +109,44 @@ describe('ComputersView', () => {
     expect(wrapper.text()).not.toContain('由 B 记录，按当前设备时区显示')
     expect(row.get('time').text()).not.toMatch(/UTC|GMT|CST/)
   })
+
+  it('closes enrollment, refreshes the list, and reports 已添加 after login succeeds', async () => {
+    const callbacks = new Map<number, () => void>()
+    const addedComputer = { ...computer, installation_id: 'machine-added', display_name: '刚添加的电脑', online: false, terms: [] }
+    const list = vi.fn()
+      .mockResolvedValueOnce({ computers: [computer] })
+      .mockResolvedValueOnce({ computers: [computer] })
+      .mockResolvedValueOnce({ computers: [computer, addedComputer] })
+      .mockResolvedValueOnce({ computers: [computer, addedComputer] })
+    const createEnrollment = vi.fn().mockResolvedValue({
+      token: 'ADD-CODE',
+      expires_at: '2026-08-03T12:01:00Z',
+      server_url: 'https://relay.example.com',
+      login_command: 'termflow login --server https://relay.example.com --code ADD-CODE',
+    })
+    const runtime = createFakeRuntime({
+      api: { computers: { list, createEnrollment, remove: vi.fn() } } as unknown as ClientRuntime['api'],
+      clock: {
+        now: () => Date.parse('2026-08-03T12:00:00Z'),
+        setTimeout: () => 1,
+        clearTimeout: () => undefined,
+        setInterval: (callback, delay) => { callbacks.set(delay, callback); return delay },
+        clearInterval: () => undefined,
+      },
+    })
+    const wrapper = mountComputers(runtime)
+    await flushPromises()
+    await wrapper.get('.page-heading .primary-button').trigger('click')
+    await wrapper.get('input[name="computer-name"]').setValue('刚添加的电脑')
+    await wrapper.get('.enrollment-create-form').trigger('submit')
+    await flushPromises()
+
+    callbacks.get(1000)?.()
+    await flushPromises()
+
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(wrapper.get('[role="alert"]').text()).toBe('已添加')
+    expect(wrapper.get('[data-computer-id="machine-added"]').text()).toContain('刚添加的电脑')
+    expect(list).toHaveBeenCalledTimes(4)
+  })
 })

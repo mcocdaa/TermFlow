@@ -4,7 +4,7 @@
     <p v-if="message" role="alert" class="form-error">{{ message }}</p>
     <p v-if="loading" class="muted">正在读取 Computers…</p>
     <ComputerTable v-else :computers="computers" @remove="removeComputer" />
-    <EnrollmentDialog v-if="showEnrollment" @closed="showEnrollment = false" />
+    <EnrollmentDialog v-if="showEnrollment" @added="onComputerAdded" @closed="showEnrollment = false" />
   </section>
 </template>
 
@@ -38,6 +38,12 @@ async function removeComputer(computer: ComputerSummary) {
     message.value = '已删除'
   } catch (error) { message.value = error instanceof ApiError ? error.message : '无法删除电脑。' }
   finally { deletingId.value = null }
+}
+async function onComputerAdded() {
+  showEnrollment.value = false
+  message.value = '已添加'
+  await loadComputers()
+  if (!message.value || message.value === '已添加') message.value = '已添加'
 }
 onMounted(() => { void loadComputers() })
 onBeforeUnmount(() => controller.abort())
