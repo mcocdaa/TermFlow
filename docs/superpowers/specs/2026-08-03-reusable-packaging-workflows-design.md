@@ -134,8 +134,12 @@ Tag 模式在共同阶段成功后额外：
 - 配置 QEMU 和 Buildx。
 - 使用调用方提供的 `packages: write` 登录 GHCR。
 - 构建并推送 `linux/amd64,linux/arm64` 镜像。
-- 推送 `:<release_tag>` 和 `:sha-<GITHUB_SHA>`。
+- 推送 Docker-compatible release tag 和 `:sha-<GITHUB_SHA>`。
 - 仅稳定 Tag（不含 `-`）更新 `:latest`；预发布 Tag 不更新 `latest`。
+
+Docker tag 语法不接受 SemVer build metadata 中的 `+`。因此仅 GHCR 的版本标签把
+`+` 确定性映射为 `_`（例如 `v0.1.0+build.7` 发布为 `v0.1.0_build.7`）；Artifact 名、
+GitHub Release 名和 OCI `org.opencontainers.image.version` 标签仍保留完整原始 Tag。
 
 镜像地址继续为 `ghcr.io/${GITHUB_REPOSITORY_OWNER}/termflow-control-plane`，因此 Fork 会发布到自己的命名空间。
 
