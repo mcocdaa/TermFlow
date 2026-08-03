@@ -10,6 +10,9 @@ export function createComputersApi(request: ApiRequest) {
   return {
     list: (signal?: AbortSignal) => request<ComputerListResponse>('/api/v1/computers', withSignal({}, signal)),
     get: (id: string, signal?: AbortSignal) => request<ComputerSummary>(`/api/v1/computers/${encodeURIComponent(id)}`, withSignal({}, signal)),
+    remove: (id: string, signal?: AbortSignal) => request<void>(`/api/v1/computers/${encodeURIComponent(id)}`, withSignal({
+      method: 'DELETE',
+    }, signal)),
     rename: (id: string, displayName: string, signal?: AbortSignal) => request<ComputerSummary>(`/api/v1/computers/${encodeURIComponent(id)}`, withSignal({
       method: 'PATCH',
       body: { display_name: displayName },

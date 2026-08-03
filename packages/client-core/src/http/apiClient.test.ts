@@ -116,6 +116,7 @@ describe('createApiClient', () => {
     await api.computers.list()
     await api.computers.get('computer /1')
     await api.computers.rename('computer-1', 'Studio')
+    await api.computers.remove('computer /1')
     await api.computers.createEnrollment('Studio')
     await api.terms.topology('term /1')
     await api.terms.rename('term-1', 'Editor')
@@ -127,6 +128,7 @@ describe('createApiClient', () => {
       ['/api/v1/computers', { method: 'GET' }],
       ['/api/v1/computers/computer%20%2F1', { method: 'GET' }],
       ['/api/v1/computers/computer-1', { method: 'PATCH', body: { display_name: 'Studio' } }],
+      ['/api/v1/computers/computer%20%2F1', { method: 'DELETE' }],
       ['/api/v1/enrollment-tokens', { method: 'POST', body: { display_name: 'Studio' } }],
       ['/api/v1/instances/term%20%2F1/topology', { method: 'GET' }],
       ['/api/v1/terms/term-1', { method: 'PATCH', body: { name: 'Editor' } }],
