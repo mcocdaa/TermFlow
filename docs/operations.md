@@ -63,22 +63,43 @@ job 在三个原生 runner 上做 `--no-bundle` 无签名编译；Android/iOS jo
 Tauri 配置生成平台工程，再执行 debug/unsigned 编译。缺少 Tauri 工程或生成失败都会使 CI
 失败。签名、notarization、商店上传和发布凭据属于单独受保护的 release 流程。
 
-## Windows 测试安装包
+## 多平台 Tauri 测试包
 
-需要在 Windows 上试用当前 Tauri C 时，使用 GitHub Actions 中手动触发的
-`Tauri Windows Installer`，不要从 Linux 或 WSL 的 `--no-bundle` 编译结果推断 Windows
-安装包已经生成：
+`Tauri Multi-platform Packages` workflow 可以在 Actions 页面手动触发，也会在推送 `v*` tag
+时触发。旧的 `Tauri Windows Installer` 和 `termflow-windows-installer` 单平台入口已经被该
+workflow 取代；旧 artifact 的 7 天保留期不再适用。手动运行会保留 14 天，tag 运行会保留 90 天。
+
+手动验证任意 commit：
 
 1. 把需要测试的 commit 推送到 GitHub。
-2. 打开 Actions → `Tauri Windows Installer` → Run workflow，并选择对应分支。
-3. 等待 `windows-nsis` job 成功。
-4. 在该次 run 的 Artifacts 中下载 `termflow-windows-installer`；artifact 只保留 7 天。
-5. 解压后在 Windows 上运行其中的 `*-setup.exe`。
+2. 打开 Actions → `Tauri Multi-platform Packages` → Run workflow，并选择对应分支或 tag。
+3. 等待版本校验和五个原生打包 job 成功。
+4. 从该次 run 的 Artifacts 下载 Windows NSIS `*-setup.exe`、Linux deb/AppImage、macOS app zip/DMG、
+   Android debug APK 和 iOS simulator app zip。
+5. 对需要声明支持的平台实际解包、安装并启动；workflow 成功本身不等于安装验收通过。
 
-这个 workflow 只生成未签名的私有测试包。Windows SmartScreen 显示“未知发布者”属于预期，
-但只能在你确认 commit 与 Actions run 来源可信时继续；它不适合作为公开发布流程。公开分发仍需
-独立的代码签名、受保护的签名凭据和 release 审批。Control Plane Docker 镜像不包含这个安装包，
-也不包含 Tauri、Rust、NSIS 或 Windows 构建工具链。
+创建 tag 前，先把根 `package.json`、Tauri client `package.json`、`src-tauri/Cargo.toml` 和
+`src-tauri/tauri.conf.json` 的版本同步为同一个 SemVer，合并到目标 commit，再显式推送匹配的
+`v<version>` tag。tag 与配置版本不一致或 tag 不是合法的 `v` 前缀 SemVer 时，workflow 会在
+任何原生构建开始前失败。workflow 只上传受保留期约束的 Actions artifacts，不创建或更新
+GitHub Release，也不上传商店。
+
+这些产物的信任和签名边界如下：
+
+- Windows NSIS 没有发布者代码签名，SmartScreen 显示“未知发布者”属于预期。公开分发需要独立的
+  Windows 代码签名和受保护凭据。
+- Linux deb/AppImage 没有发行签名；AppImage 使用 Ubuntu 22.04 作为兼容性构建基线。
+- macOS app 使用 ad-hoc identity 打包，DMG 未做 Developer ID notarization；下载后仍可能需要用户
+  在 Privacy & Security 中明确放行。公开分发需要 Developer ID、notarization 和 stapling。
+- Android 是可安装的 debug APK。它由 Gradle debug keystore 签名，而不是“完全无签名”，也不是
+  稳定的生产签名；不同 run 之间可能无法覆盖升级。Google Play 发布需要受保护的长期 upload key、
+  release signing 配置、递增 versionCode 和正式 AAB/APK。
+- iOS zip 内是 `aarch64-sim` simulator `.app`，只能安装到匹配架构的 iOS Simulator，不能安装到
+  物理 iPhone。物理设备、TestFlight 或 App Store 需要 Apple Developer team、证书、provisioning
+  profile、entitlements 和受保护的签名流程。
+
+Control Plane Docker 镜像不包含这个安装包，也不包含 Tauri、Rust、NSIS 或任何桌面/移动构建
+工具链。
 
 也可以直接在原生 Windows 主机安装 Rust stable MSVC、Visual Studio C++ Build Tools、WebView2、
 Node 22.23.2 和 npm，然后在仓库根目录执行：

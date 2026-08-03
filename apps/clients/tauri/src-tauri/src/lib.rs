@@ -4,16 +4,14 @@ use auth::NativeAuthState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut builder = tauri::Builder::default();
+    let builder = tauri::Builder::default();
 
+    // Must be registered first so Windows/Linux deep-link process launches
+    // are forwarded to the instance that owns the in-memory PKCE verifier.
     #[cfg(desktop)]
-    {
-        // Must be registered first so Windows/Linux deep-link process launches
-        // are forwarded to the instance that owns the in-memory PKCE verifier.
-        builder = builder.plugin(tauri_plugin_single_instance::init(
-            |_app, _argv, _working_directory| {},
-        ));
-    }
+    let builder = builder.plugin(tauri_plugin_single_instance::init(
+        |_app, _argv, _working_directory| {},
+    ));
 
     builder
         .plugin(tauri_plugin_opener::init())

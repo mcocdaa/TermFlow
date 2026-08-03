@@ -47,6 +47,49 @@ async function loginWithAdminToken(page: Page) {
   await expect(page.getByRole('heading', { name: '控制中心' })).toBeVisible()
 }
 
+async function expectOnlyMainContentScrolls(page: Page) {
+  const geometry = await page.evaluate(async () => {
+    const main = document.querySelector<HTMLElement>('main')!
+    const header = document.querySelector<HTMLElement>('.app-header')!
+    const navigation = document.querySelector<HTMLElement>('.side-nav')!
+    const before = {
+      beforeHeaderTop: header.getBoundingClientRect().top,
+      beforeNavigationTop: navigation.getBoundingClientRect().top,
+    }
+    const spacer = document.createElement('div')
+    spacer.dataset.e2eScrollSpacer = 'true'
+    spacer.style.height = '200vh'
+    spacer.style.flex = '0 0 auto'
+    main.append(spacer)
+    main.scrollTop = 160
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+    const result = {
+      windowY: window.scrollY,
+      htmlTop: document.documentElement.scrollTop,
+      bodyTop: document.body.scrollTop,
+      documentHeight: document.documentElement.scrollHeight,
+      viewportHeight: document.documentElement.clientHeight,
+      mainOverflow: getComputedStyle(main).overflowY,
+      mainTop: main.scrollTop,
+      headerTop: header.getBoundingClientRect().top,
+      navigationTop: navigation.getBoundingClientRect().top,
+      ...before,
+    }
+    spacer.remove()
+    main.scrollTop = 0
+    return result
+  })
+
+  expect(geometry.windowY).toBe(0)
+  expect(geometry.htmlTop).toBe(0)
+  expect(geometry.bodyTop).toBe(0)
+  expect(geometry.documentHeight).toBeLessThanOrEqual(geometry.viewportHeight + 1)
+  expect(geometry.mainOverflow).toBe('auto')
+  expect(geometry.mainTop).toBeGreaterThan(0)
+  expect(geometry.headerTop).toBeCloseTo(geometry.beforeHeaderTop, 1)
+  expect(geometry.navigationTop).toBeCloseTo(geometry.beforeNavigationTop, 1)
+}
+
 test('uses env-authoritative relay settings and the complete authenticator lifecycle', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The stateful security trajectory runs once on desktop')
   test.setTimeout(90_000)
@@ -56,6 +99,7 @@ test('uses env-authoritative relay settings and the complete authenticator lifec
   })
 
   await loginWithAdminToken(page)
+  await expectOnlyMainContentScrolls(page)
   await page.locator('.side-nav a[href="/settings"]').click()
   await expect(page.getByRole('heading', { name: '设置', level: 1 })).toBeVisible()
   await expect(page.getByText('主题在客户端本地保存；认证和客户端授权由当前 B 管理。')).toHaveCount(0)
@@ -76,6 +120,14 @@ test('uses env-authoritative relay settings and the complete authenticator lifec
   const qrDialog = page.getByRole('dialog', { name: '服务网址二维码' })
   const qrImage = qrDialog.getByRole('img', { name: '服务网址二维码' })
   await expect(qrImage).toBeVisible()
+  const qrDialogSpacing = await qrDialog.evaluate((dialog) => {
+    const header = dialog.querySelector('header')!.getBoundingClientRect()
+    const image = dialog.querySelector('img')!.getBoundingClientRect()
+    const description = dialog.querySelector('p')!.getBoundingClientRect()
+    return { headingToImage: image.top - header.bottom, imageToDescription: description.top - image.bottom }
+  })
+  expect(qrDialogSpacing.headingToImage).toBeGreaterThanOrEqual(12)
+  expect(qrDialogSpacing.imageToDescription).toBeGreaterThanOrEqual(12)
   const qrEvidence = await qrImage.evaluate((image) => {
     const styles = getComputedStyle(document.documentElement)
     const source = (image as HTMLImageElement).src
@@ -110,11 +162,37 @@ test('uses env-authoritative relay settings and the complete authenticator lifec
   await page.getByRole('button', { name: '激活双重因素认证' }).click()
   await expect(page).toHaveURL(/\/settings\/two-factor-auth$/)
   await expect(page.locator('[data-guide-step]')).toHaveCount(5)
+  const activationGeometry = await page.evaluate(() => {
+    const card = document.querySelector<HTMLElement>('.totp-guide-card')!.getBoundingClientRect()
+    const form = document.querySelector<HTMLElement>('[data-action="begin-totp-setup"]')!.getBoundingClientRect()
+    const back = document.querySelector<HTMLAnchorElement>('a.secondary-button')!.getBoundingClientRect()
+    const next = document.querySelector<HTMLButtonElement>('[data-action="begin-totp-setup"] button')!.getBoundingClientRect()
+    return {
+      centerDelta: Math.abs((form.left + form.width / 2) - (card.left + card.width / 2)),
+      backHeight: back.height,
+      nextHeight: next.height,
+    }
+  })
+  expect(activationGeometry.centerDelta).toBeLessThan(2)
+  expect(activationGeometry.backHeight).toBeGreaterThanOrEqual(44)
+  expect(activationGeometry.nextHeight).toBeGreaterThanOrEqual(44)
   await page.getByLabel('管理员 Token').fill(adminToken)
   await page.locator('[data-action="begin-totp-setup"]').getByRole('button', { name: '继续' }).click()
   const setupKey = (await page.locator('[data-setup-key]').textContent())?.trim() ?? ''
   expect(setupKey).not.toBe('')
-  await expect(page.getByRole('img', { name: '验证器设置二维码' })).toBeVisible()
+  const setupQr = page.getByRole('img', { name: '验证器设置二维码' })
+  await expect(setupQr).toBeVisible()
+  const setupQrEvidence = await setupQr.evaluate((image) => {
+    const styles = getComputedStyle(document.documentElement)
+    const source = (image as HTMLImageElement).src
+    return {
+      foreground: styles.getPropertyValue('--color-qr-foreground').trim(),
+      background: styles.getPropertyValue('--color-qr-background').trim(),
+      svg: decodeURIComponent(source.slice(source.indexOf(',') + 1)),
+    }
+  })
+  expect(setupQrEvidence.svg).toContain(setupQrEvidence.foreground)
+  expect(setupQrEvidence.svg).toContain(setupQrEvidence.background)
   if (screenshotDir) await page.screenshot({ path: `${screenshotDir}/settings-totp-setup.png`, fullPage: true })
 
   const setupCounter = currentCounter() - 1
@@ -123,6 +201,19 @@ test('uses env-authoritative relay settings and the complete authenticator lifec
   await expect(page.getByRole('heading', { name: '验证器已绑定' })).toBeVisible()
   const protectionSwitch = page.getByRole('switch', { name: '启用双重认证登录' })
   await expect(protectionSwitch).toHaveAttribute('aria-checked', 'false')
+  const protectionLabel = page.locator('[data-totp-protection-label]')
+  await expect(protectionLabel.locator('strong')).toHaveText('启用双重认证登录')
+  const helpButton = protectionLabel.getByRole('button', { name: '说明启用双重认证登录' })
+  await expect(helpButton.locator('svg')).toHaveCount(1)
+  await helpButton.focus()
+  await expect(protectionLabel.getByRole('tooltip')).toBeVisible()
+  const labelGeometry = await protectionLabel.evaluate((label) => {
+    const title = label.querySelector('strong')!.getBoundingClientRect()
+    const help = label.querySelector('button')!.getBoundingClientRect()
+    return { titleTop: title.top, titleBottom: title.bottom, helpTop: help.top, helpBottom: help.bottom }
+  })
+  expect(labelGeometry.helpTop).toBeLessThan(labelGeometry.titleBottom)
+  expect(labelGeometry.helpBottom).toBeGreaterThan(labelGeometry.titleTop)
 
   const enableCounter = currentCounter()
   await protectionSwitch.click()

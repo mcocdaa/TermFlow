@@ -43,4 +43,34 @@ describe('design token contract', () => {
     walk(clientUiSource)
     expect(offenders).toEqual([])
   })
+
+  it('uses branded high-contrast QR colors instead of black and white defaults', () => {
+    const parseHex = (value: string) => [1, 3, 5].map((offset) => Number.parseInt(value.slice(offset, offset + 2), 16))
+    const luminance = (value: string) => parseHex(value)
+      .map((channel) => channel / 255)
+      .map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
+      .reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0)
+    const contrast = (first: string, second: string) => {
+      const [lighter, darker] = [luminance(first), luminance(second)].sort((a, b) => b - a)
+      return (lighter + 0.05) / (darker + 0.05)
+    }
+    const pairs = new Set<string>()
+
+    for (const file of readdirSync(themesDirectory).filter((name) => name.endsWith('.css'))) {
+      const css = readFileSync(resolve(themesDirectory, file), 'utf8')
+      const foreground = css.match(/--color-qr-foreground:\s*(#[\da-f]{6})/i)?.[1].toLowerCase()
+      const background = css.match(/--color-qr-background:\s*(#[\da-f]{6})/i)?.[1].toLowerCase()
+
+      expect(foreground, `${file} QR foreground`).toBeTruthy()
+      expect(background, `${file} QR background`).toBeTruthy()
+      expect(foreground).not.toBe('#000000')
+      expect(background).not.toBe('#ffffff')
+      expect(new Set(parseHex(foreground!)).size, `${file} foreground should be branded`).toBeGreaterThan(1)
+      expect(new Set(parseHex(background!)).size, `${file} background should be tinted`).toBeGreaterThan(1)
+      expect(contrast(foreground!, background!), `${file} QR contrast`).toBeGreaterThanOrEqual(4.5)
+      pairs.add(`${foreground}/${background}`)
+    }
+
+    expect(pairs.size).toBe(3)
+  })
 })

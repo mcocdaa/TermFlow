@@ -27,6 +27,37 @@ async function login(page: Page) {
   await expect(page.getByRole('heading', { name: '控制中心' })).toBeVisible()
 }
 
+async function shellScrollGeometry(page: Page) {
+  return page.evaluate(async () => {
+    const main = document.querySelector<HTMLElement>('main')!
+    const header = document.querySelector<HTMLElement>('.app-header')!
+    const navigation = [...document.querySelectorAll<HTMLElement>('.side-nav, .mobile-nav')]
+      .find((candidate) => getComputedStyle(candidate).display !== 'none')!
+    const beforeHeader = header.getBoundingClientRect()
+    const beforeNavigation = navigation.getBoundingClientRect()
+    const spacer = document.createElement('div')
+    spacer.style.height = '200vh'
+    main.append(spacer)
+    main.scrollTop = 160
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+    const afterHeader = header.getBoundingClientRect()
+    const afterNavigation = navigation.getBoundingClientRect()
+    const result = {
+      windowY: window.scrollY,
+      htmlTop: document.documentElement.scrollTop,
+      bodyTop: document.body.scrollTop,
+      documentOverflow: document.documentElement.scrollHeight - document.documentElement.clientHeight,
+      mainOverflow: getComputedStyle(main).overflowY,
+      mainTop: main.scrollTop,
+      headerMovement: Math.abs(afterHeader.top - beforeHeader.top) + Math.abs(afterHeader.left - beforeHeader.left),
+      navigationMovement: Math.abs(afterNavigation.top - beforeNavigation.top) + Math.abs(afterNavigation.left - beforeNavigation.left),
+    }
+    spacer.remove()
+    main.scrollTop = 0
+    return result
+  })
+}
+
 interface PaneGeometry {
   pane_id: string
   active: boolean
@@ -35,6 +66,19 @@ interface PaneGeometry {
   width: number
   height: number
 }
+
+test('keeps the application chrome fixed and scrolls only page content', async ({ page }) => {
+  await login(page)
+  const geometry = await shellScrollGeometry(page)
+  expect(geometry.windowY).toBe(0)
+  expect(geometry.htmlTop).toBe(0)
+  expect(geometry.bodyTop).toBe(0)
+  expect(geometry.documentOverflow).toBeLessThanOrEqual(1)
+  expect(geometry.mainOverflow).toBe('auto')
+  expect(geometry.mainTop).toBeGreaterThan(0)
+  expect(geometry.headerMovement).toBeLessThanOrEqual(1)
+  expect(geometry.navigationMovement).toBeLessThanOrEqual(1)
+})
 
 interface TouchPoint { x: number; y: number; id: number }
 interface TouchStep {

@@ -14,7 +14,7 @@
     </template>
     <template v-else>
       <div class="security-setting-row">
-        <div><strong>启用双重认证登录</strong><span>对之后的新登录和授权要求一次性验证码。</span></div>
+        <TotpProtectionLabel />
         <button
           ref="switchButton"
           class="toggle-switch"
@@ -42,6 +42,7 @@ import type { TotpStatusResponse } from '@termflow/client-contracts'
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useClientRuntime } from '../../runtime'
+import TotpProtectionLabel from './TotpProtectionLabel.vue'
 import TotpProtectionDialog from './TotpProtectionDialog.vue'
 
 const emit = defineEmits<{ changed: [TotpStatusResponse] }>()

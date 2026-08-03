@@ -1,6 +1,7 @@
 <template>
   <div v-if="open" class="dialog-backdrop qr-dialog-backdrop" @click.self="requestClose">
     <section
+      ref="panel"
       class="dialog-panel qr-dialog-panel"
       role="dialog"
       aria-modal="true"
@@ -8,7 +9,7 @@
       :aria-describedby="descriptionId"
       @keydown="onKeydown"
     >
-      <header>
+      <header class="qr-dialog-heading">
         <h2 :id="titleId">{{ title }}</h2>
         <button ref="closeButton" data-action="close-qr" class="icon-button icon-only" type="button" aria-label="关闭二维码" @click="requestClose">
           <X :size="18" aria-hidden="true" />
@@ -33,6 +34,7 @@ const props = defineProps<{
   returnFocus?: HTMLElement | null
 }>()
 const emit = defineEmits<{ close: [] }>()
+const panel = ref<HTMLElement | null>(null)
 const closeButton = ref<HTMLButtonElement | null>(null)
 const titleId = `qr-title-${crypto.randomUUID()}`
 const descriptionId = `qr-description-${crypto.randomUUID()}`
@@ -49,9 +51,20 @@ function requestClose() {
 }
 
 function onKeydown(event: KeyboardEvent) {
-  if (event.key !== 'Escape') return
-  event.preventDefault()
-  requestClose()
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    requestClose()
+    return
+  }
+  if (event.key !== 'Tab' || !panel.value) return
+  const focusable = [...panel.value.querySelectorAll<HTMLElement>('button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])')]
+  if (!focusable.length) return
+  const first = focusable[0]
+  const last = focusable.at(-1)
+  if ((event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last)) {
+    event.preventDefault()
+    ;(event.shiftKey ? last : first)?.focus()
+  }
 }
 
 watch(() => props.open, (open) => {

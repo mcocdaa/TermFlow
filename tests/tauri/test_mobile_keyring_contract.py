@@ -54,3 +54,16 @@ def test_mobile_store_is_initialized_before_entry_creation() -> None:
     assert source.index("initialize_mobile_keyring()?;") < source.index(
         "KeyringEntry::new(KEYRING_SERVICE"
     )
+
+
+def test_mobile_store_unsizes_to_the_keyring_trait_inside_a_closure() -> None:
+    source = (ROOT / "apps/clients/tauri/src-tauri/src/auth.rs").read_text()
+    assert ".map(|store| keyring_core::set_default_store(store))" in source
+    assert ".map(keyring_core::set_default_store)" not in source
+
+
+def test_mobile_entry_point_does_not_leave_the_tauri_builder_mutable() -> None:
+    source = (ROOT / "apps/clients/tauri/src-tauri/src/lib.rs").read_text()
+    assert "let mut builder" not in source
+    assert "let builder = tauri::Builder::default();" in source
+    assert "#[cfg(desktop)]\n    let builder = builder.plugin(" in source

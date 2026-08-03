@@ -145,21 +145,72 @@ def test_compose_has_an_explicit_optional_totp_secret_file_override() -> None:
     )
 
 
-def test_windows_installer_is_a_manual_native_artifact_not_a_docker_layer() -> None:
-    path = Path(".github/workflows/tauri-windows-package.yml")
+def test_tauri_packages_are_native_tag_or_manual_artifacts_not_public_releases() -> None:
+    path = Path(".github/workflows/tauri-packages.yml")
+    old_path = Path(".github/workflows/tauri-windows-package.yml")
+    assert path.is_file()
+    assert not old_path.exists()
+
     workflow = yaml.safe_load(path.read_text())
-    assert "workflow_dispatch" in workflow[True]
-    job = workflow["jobs"]["windows-nsis"]
-    assert job["runs-on"] == "windows-latest"
+    triggers = workflow[True]
+    assert triggers["push"]["tags"] == ["v*"]
+    assert "workflow_dispatch" in triggers
+    assert workflow["permissions"] == {"contents": "read"}
+
+    jobs = workflow["jobs"]
+    assert jobs["validate-version"]["runs-on"] == "ubuntu-22.04"
+    assert jobs["windows-nsis"]["runs-on"] == "windows-latest"
+    assert jobs["linux-packages"]["runs-on"] == "ubuntu-22.04"
+    assert jobs["macos-packages"]["runs-on"] == "macos-15"
+    assert jobs["android-debug-apk"]["runs-on"] == "ubuntu-latest"
+    assert jobs["ios-simulator-app"]["runs-on"] == "macos-15"
+    for job_name in (
+        "windows-nsis",
+        "linux-packages",
+        "macos-packages",
+        "android-debug-apk",
+        "ios-simulator-app",
+    ):
+        assert jobs[job_name]["needs"] == "validate-version"
 
     rendered = path.read_text()
-    assert 'node-version: "22.23.2"' in rendered
-    assert "npm ci" in rendered
-    assert "--bundles nsis" in rendered
-    assert "actions/upload-artifact@v4" in rendered
-    assert (
-        "apps/clients/tauri/src-tauri/target/release/bundle/nsis/*-setup.exe"
-        in rendered
-    )
-    assert "retention-days: 7" in rendered
+    for version_file in (
+        "package.json",
+        "apps/clients/tauri/package.json",
+        "apps/clients/tauri/src-tauri/Cargo.toml",
+        "apps/clients/tauri/src-tauri/tauri.conf.json",
+    ):
+        assert version_file in rendered
+    for expected in (
+        'node-version: "22.23.2"',
+        "dtolnay/rust-toolchain@stable",
+        "npm ci",
+        "--bundles nsis",
+        "--bundles deb,appimage",
+        "--bundles app,dmg",
+        "Require one package of each Linux format",
+        "Expected exactly one macOS DMG",
+        "android init --ci",
+        "android build --debug --ci --target aarch64 --apk",
+        "ios init --ci",
+        "ios build --debug --ci --target aarch64-sim --no-sign",
+        "ditto -c -k --sequesterRsrc --keepParent",
+        "actions/upload-artifact@v4",
+        "if-no-files-found: error",
+    ):
+        assert expected in rendered
+    for artifact in (
+        "apps/clients/tauri/src-tauri/target/release/bundle/nsis/*-setup.exe",
+        "apps/clients/tauri/src-tauri/target/release/bundle/deb/*.deb",
+        "apps/clients/tauri/src-tauri/target/release/bundle/appimage/*.AppImage",
+        "apps/clients/tauri/src-tauri/target/release/bundle/dmg/*.dmg",
+        "TermFlow-macos-arm64.app.zip",
+        "apps/clients/tauri/src-tauri/gen/android/app/build/outputs/apk/**/*-debug.apk",
+        "TermFlow-ios-simulator-aarch64.app.zip",
+    ):
+        assert artifact in rendered
+
+    assert "contents: write" not in rendered
+    assert "gh release" not in rendered
+    assert "softprops/action-gh-release" not in rendered
     assert "deploy/Dockerfile.control-plane" not in rendered

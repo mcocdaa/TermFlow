@@ -47,6 +47,11 @@ describe('TotpPanel', () => {
       } as unknown as ClientRuntime['api'],
     })
     const { wrapper } = await mountPanel(runtime)
+    const protectionLabel = wrapper.get('[data-totp-protection-label]')
+    expect(protectionLabel.classes()).toContain('security-setting-label')
+    expect(protectionLabel.get('strong').text()).toBe('启用双重认证登录')
+    expect(wrapper.get('[data-action="explain-totp-protection"]').attributes('aria-label')).toBe('说明启用双重认证登录')
+    expect(wrapper.get('[role="tooltip"]').text()).toBe('启用后，新的管理员登录和客户端授权都需要验证器生成的一次性验证码。')
     const toggle = wrapper.get('[role="switch"]')
     expect(toggle.attributes('aria-checked')).toBe('false')
     await toggle.trigger('click')

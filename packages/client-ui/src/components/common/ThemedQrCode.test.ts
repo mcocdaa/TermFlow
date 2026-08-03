@@ -27,7 +27,7 @@ describe('ThemedQrCode', () => {
     expect(QRCode.toString).toHaveBeenLastCalledWith('termflow://relay', {
       type: 'svg',
       errorCorrectionLevel: 'M',
-      margin: 2,
+      margin: 4,
       color: { dark: 'oklch(20% 0.1 250)', light: 'oklch(95% 0.02 250)' },
     })
     expect(wrapper.get('img').attributes('src')).toMatch(/^data:image\/svg\+xml/)

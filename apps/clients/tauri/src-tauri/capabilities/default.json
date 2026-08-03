@@ -8,7 +8,15 @@
     "core:event:default",
     "opener:allow-open-url",
     "deep-link:default",
-    "http:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://*" },
+        { "url": "http://127.0.0.1:*" },
+        { "url": "http://localhost:*" },
+        { "url": "http://[::1]:*" }
+      ]
+    },
     "websocket:default",
     "os:default",
     "store:default",

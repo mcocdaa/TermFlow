@@ -20,7 +20,7 @@ async function render() {
   const svg = await QRCode.toString(props.value, {
     type: 'svg',
     errorCorrectionLevel: 'M',
-    margin: 2,
+    margin: 4,
     color: { dark: foreground, light: background },
   })
   if (sequence === renderSequence) {

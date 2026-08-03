@@ -1,4 +1,4 @@
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { describe, expect, it } from 'vitest'
 import { createClientUi } from '../../runtime'
@@ -22,9 +22,17 @@ describe('QrCodeDialog', () => {
       global: { plugins: [createClientUi(createFakeRuntime())] },
     })
     await nextTick()
+    await flushPromises()
 
     const dialog = wrapper.get('[role="dialog"]')
     expect(dialog.attributes('aria-modal')).toBe('true')
+    expect(dialog.classes()).toContain('qr-dialog-panel')
+    expect(dialog.get('header').classes()).toContain('qr-dialog-heading')
+    expect(dialog.get('.themed-qr-code').classes()).toContain('themed-qr-code')
+    expect(document.activeElement).toBe(wrapper.get('[data-action="close-qr"]').element)
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+    dialog.element.dispatchEvent(tab)
+    expect(tab.defaultPrevented).toBe(true)
     expect(document.activeElement).toBe(wrapper.get('[data-action="close-qr"]').element)
     await dialog.trigger('keydown', { key: 'Escape' })
     expect(wrapper.emitted('close')).toHaveLength(1)

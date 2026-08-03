@@ -115,7 +115,7 @@ fn initialize_mobile_keyring() -> Result<(), String> {
             let store = android_native_keyring_store::Store::new();
 
             store
-                .map(keyring_core::set_default_store)
+                .map(|store| keyring_core::set_default_store(store))
                 .map_err(|_| safe_error("secure_store_unavailable"))
         })
         .clone()

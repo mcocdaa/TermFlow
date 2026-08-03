@@ -51,6 +51,8 @@ describe('TotpActivationView', () => {
     await flushPromises()
     expect(confirmTotpSetup).toHaveBeenCalledWith('setup-1', '123456')
     expect(wrapper.get('[role="switch"]').attributes('aria-checked')).toBe('false')
+    expect(wrapper.get('[data-totp-protection-label]').classes()).toContain('security-setting-label')
+    expect(wrapper.get('[data-action="explain-totp-protection"]').attributes('aria-label')).toBe('说明启用双重认证登录')
 
     await wrapper.get('[role="switch"]').trigger('click')
     await wrapper.get('input[name="admin-token"]').setValue('admin-again')
