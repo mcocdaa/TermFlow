@@ -161,7 +161,7 @@ describe('ComputersView', () => {
     expect(row.get('time').text()).not.toMatch(/UTC|GMT|CST/)
   })
 
-  it('closes enrollment, refreshes the list, and reports 已添加 after login succeeds', async () => {
+  it('closes enrollment, refreshes the list, and shows the bottom success toast after login succeeds', async () => {
     const callbacks = new Map<number, () => void>()
     const addedComputer = { ...computer, installation_id: 'machine-added', display_name: '刚添加的电脑', online: false, terms: [] }
     const list = vi.fn()
@@ -196,7 +196,10 @@ describe('ComputersView', () => {
     await flushPromises()
 
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
-    expect(wrapper.get('[role="alert"]').text()).toBe('已添加')
+    const notice = wrapper.get('[data-delete-notice]')
+    expect(notice.attributes('data-tone')).toBe('success')
+    expect(notice.attributes('role')).toBe('status')
+    expect(notice.text()).toBe('已添加')
     expect(wrapper.get('[data-computer-id="machine-added"]').text()).toContain('刚添加的电脑')
     expect(list).toHaveBeenCalledTimes(4)
   })
