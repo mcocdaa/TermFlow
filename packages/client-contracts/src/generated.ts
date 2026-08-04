@@ -61,7 +61,7 @@ export interface OAuthMetadataResponse {
   device_authorization_endpoint: string
   device_verification_uri: string
   response_types_supported: "code"[]
-  grant_types_supported: ("authorization_code" | "refresh_token")[]
+  grant_types_supported: ("authorization_code" | "refresh_token" | "urn:ietf:params:oauth:grant-type:device_code")[]
   code_challenge_methods_supported: "S256"[]
   dpop_signing_alg_values_supported: "ES256"[]
   scopes_supported: OAuthScope[]

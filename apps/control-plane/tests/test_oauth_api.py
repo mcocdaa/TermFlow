@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
@@ -17,6 +18,7 @@ from termflow_protocol import (
 
 from .oauth_helpers import (
     approve_authorization,
+    b64url,
     begin_authorization,
     exchange_authorization,
     key_and_jwk,
@@ -39,7 +41,11 @@ def test_oauth_metadata_uses_only_configured_canonical_issuer(client) -> None:
         "device_authorization_endpoint": "http://127.0.0.1:8000/api/v1/oauth/device/code",
         "device_verification_uri": "http://127.0.0.1:8000/device",
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "grant_types_supported": [
+            "authorization_code",
+            "refresh_token",
+            "urn:ietf:params:oauth:grant-type:device_code",
+        ],
         "code_challenge_methods_supported": ["S256"],
         "dpop_signing_alg_values_supported": ["ES256"],
         "scopes_supported": [
@@ -49,6 +55,301 @@ def test_oauth_metadata_uses_only_configured_canonical_issuer(client) -> None:
             "computers.write",
         ],
     }
+
+
+def _device_request(jwk: dict[str, str]) -> tuple[dict[str, object], str]:
+    verifier = "d" * 43
+    challenge = b64url(hashlib.sha256(verifier.encode()).digest())
+    return (
+        {
+            "client_name": "Device C",
+            "platform": "linux",
+            "client_version": "1.0.0",
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "dpop_jkt": jwk_thumbprint(jwk),
+            "public_jwk": jwk,
+            "scopes": ["terminal.read", "computers.read"],
+        },
+        verifier,
+    )
+
+
+def test_device_code_uses_configured_issuer_and_returns_short_code(client) -> None:
+    _, jwk = key_and_jwk()
+    body, _ = _device_request(jwk)
+    response = client.post(
+        "/api/v1/oauth/device/code",
+        headers={"Host": "attacker.invalid"},
+        json=body,
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["expires_in"] == 900
+    assert payload["interval"] == 5
+    assert payload["verification_uri"] == "http://127.0.0.1:8000/device"
+    assert payload["verification_uri_complete"].startswith("http://127.0.0.1:8000/device?code=")
+    assert payload["device_code"] not in payload["verification_uri_complete"]
+
+
+def test_device_user_code_resolves_the_existing_web_preview(client) -> None:
+    _, jwk = key_and_jwk()
+    body, _ = _device_request(jwk)
+    created = client.post("/api/v1/oauth/device/code", json=body)
+    assert created.status_code == 200, created.text
+    user_code = created.json()["user_code"]
+
+    preview = client.get("/api/v1/oauth/authorize", params={"user_code": user_code})
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["client_name"] == "Device C"
+    assert preview.json()["transaction_id"]
+    assert preview.headers["cache-control"] == "no-store"
+
+    mixed = client.get(
+        "/api/v1/oauth/authorize",
+        params={"user_code": user_code, "transaction_id": preview.json()["transaction_id"]},
+    )
+    assert mixed.status_code == 400
+
+
+def test_device_code_approval_reuses_web_decision_and_issues_dpop_tokens(client) -> None:
+    key, jwk = key_and_jwk()
+    body, verifier = _device_request(jwk)
+    created = client.post("/api/v1/oauth/device/code", json=body)
+    assert created.status_code == 200, created.text
+    device_code = created.json()["device_code"]
+    authorization = asyncio.run(
+        client.app.state.repositories.oauth_authorizations.find_by_device_code(
+            device_code,
+            epoch=1,
+        )
+    )
+    assert authorization is not None
+    transaction_id = str(authorization.id)
+
+    preview = client.get(
+        "/api/v1/oauth/authorize",
+        params={"transaction_id": transaction_id},
+    )
+    assert preview.status_code == 200, preview.text
+    approved = client.post(
+        "/api/v1/oauth/authorize",
+        json={
+            "transaction_id": transaction_id,
+            "decision": "allow",
+            "admin_token": "admin-token-that-is-long-enough-for-tests",
+        },
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["status"] == "approved"
+
+    token_url = "http://127.0.0.1:8000/api/v1/oauth/token"
+    token_body = {
+        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+        "device_code": device_code,
+        "code_verifier": verifier,
+        "public_jwk": jwk,
+    }
+    challenged = client.post(
+        "/api/v1/oauth/token",
+        headers={"DPoP": proof(key, jwk, method="POST", htu=token_url)},
+        json=token_body,
+    )
+    assert challenged.status_code == 401, challenged.text
+    exchanged = client.post(
+        "/api/v1/oauth/token",
+        headers={
+            "DPoP": proof(
+                key,
+                jwk,
+                method="POST",
+                htu=token_url,
+                nonce=challenged.headers["dpop-nonce"],
+            )
+        },
+        json=token_body,
+    )
+    assert exchanged.status_code == 200, exchanged.text
+    assert exchanged.json()["token_type"] == "DPoP"
+    replay = client.post(
+        "/api/v1/oauth/token",
+        headers={
+            "DPoP": proof(
+                key,
+                jwk,
+                method="POST",
+                htu=token_url,
+                nonce=exchanged.headers["dpop-nonce"],
+            )
+        },
+        json=token_body,
+    )
+    assert replay.status_code == 400
+    assert replay.json()["error"]["code"] == "expired_token"
+
+
+def test_device_polling_reports_pending_then_slow_down(client) -> None:
+    key, jwk = key_and_jwk()
+    body, verifier = _device_request(jwk)
+    created = client.post("/api/v1/oauth/device/code", json=body)
+    assert created.status_code == 200, created.text
+    token_url = "http://127.0.0.1:8000/api/v1/oauth/token"
+    token_body = {
+        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+        "device_code": created.json()["device_code"],
+        "code_verifier": verifier,
+        "public_jwk": jwk,
+    }
+    challenged = client.post(
+        "/api/v1/oauth/token",
+        headers={"DPoP": proof(key, jwk, method="POST", htu=token_url)},
+        json=token_body,
+    )
+    assert challenged.status_code == 401
+    pending = client.post(
+        "/api/v1/oauth/token",
+        headers={
+            "DPoP": proof(
+                key,
+                jwk,
+                method="POST",
+                htu=token_url,
+                nonce=challenged.headers["dpop-nonce"],
+            )
+        },
+        json=token_body,
+    )
+    assert pending.status_code == 400
+    assert pending.json()["error"]["code"] == "authorization_pending"
+    assert pending.headers["retry-after"] == "5"
+    slowed = client.post(
+        "/api/v1/oauth/token",
+        headers={
+            "DPoP": proof(
+                key,
+                jwk,
+                method="POST",
+                htu=token_url,
+                nonce=pending.headers["dpop-nonce"],
+            )
+        },
+        json=token_body,
+    )
+    assert slowed.status_code == 400
+    assert slowed.json()["error"]["code"] == "slow_down"
+
+
+def test_device_denial_and_unknown_code_are_generic_terminal_errors(client) -> None:
+    key, jwk = key_and_jwk()
+    body, verifier = _device_request(jwk)
+    created = client.post("/api/v1/oauth/device/code", json=body)
+    assert created.status_code == 200, created.text
+    device_code = created.json()["device_code"]
+    authorization = asyncio.run(
+        client.app.state.repositories.oauth_authorizations.find_by_device_code(
+            device_code,
+            epoch=1,
+        )
+    )
+    assert authorization is not None
+    denied = client.post(
+        "/api/v1/oauth/authorize",
+        json={
+            "transaction_id": str(authorization.id),
+            "decision": "deny",
+            "admin_token": "admin-token-that-is-long-enough-for-tests",
+        },
+    )
+    assert denied.status_code == 200, denied.text
+
+    token_url = "http://127.0.0.1:8000/api/v1/oauth/token"
+    token_body = {
+        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+        "device_code": device_code,
+        "code_verifier": verifier,
+        "public_jwk": jwk,
+    }
+    challenged = client.post(
+        "/api/v1/oauth/token",
+        headers={"DPoP": proof(key, jwk, method="POST", htu=token_url)},
+        json=token_body,
+    )
+    assert challenged.status_code == 401
+    access_denied = client.post(
+        "/api/v1/oauth/token",
+        headers={
+            "DPoP": proof(
+                key,
+                jwk,
+                method="POST",
+                htu=token_url,
+                nonce=challenged.headers["dpop-nonce"],
+            )
+        },
+        json=token_body,
+    )
+    assert access_denied.status_code == 400
+    assert access_denied.json()["error"]["code"] == "access_denied"
+
+    unknown = dict(token_body, device_code="unknown-device-code")
+    challenged_unknown = client.post(
+        "/api/v1/oauth/token",
+        headers={
+            "DPoP": proof(
+                key,
+                jwk,
+                method="POST",
+                htu=token_url,
+                nonce=access_denied.headers["dpop-nonce"],
+            )
+        },
+        json=unknown,
+    )
+    assert challenged_unknown.status_code == 400
+    assert challenged_unknown.json()["error"]["code"] == "expired_token"
+
+
+def test_device_code_creation_has_a_bounded_source_burst(client) -> None:
+    _, jwk = key_and_jwk()
+    body, _ = _device_request(jwk)
+    responses = [client.post("/api/v1/oauth/device/code", json=body) for _ in range(6)]
+    assert [response.status_code for response in responses[:5]] == [200] * 5
+    assert responses[5].status_code == 429
+    assert responses[5].headers["retry-after"]
+
+
+def test_device_approval_reuses_totp_step_up(client) -> None:
+    _, jwk = key_and_jwk()
+    body, _ = _device_request(jwk)
+    created = client.post("/api/v1/oauth/device/code", json=body)
+    assert created.status_code == 200, created.text
+    authorization = asyncio.run(
+        client.app.state.repositories.oauth_authorizations.find_by_device_code(
+            created.json()["device_code"],
+            epoch=1,
+        )
+    )
+    assert authorization is not None
+    _mark_totp_enabled(client)
+    observed: list[str] = []
+
+    async def verify_fresh(code: str) -> bool:
+        observed.append(code)
+        return code == "123456"
+
+    client.app.state.oauth_totp_verifier = verify_fresh
+    response = client.post(
+        "/api/v1/oauth/authorize",
+        json={
+            "transaction_id": str(authorization.id),
+            "decision": "allow",
+            "admin_token": "admin-token-that-is-long-enough-for-tests",
+            "totp_code": "123456",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert observed == ["123456"]
 
 
 def test_authorization_query_rejects_credentials_extras_and_duplicate_fields(client) -> None:

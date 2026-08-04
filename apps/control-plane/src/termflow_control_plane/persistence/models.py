@@ -175,6 +175,9 @@ class OAuthAuthorization(Base):
     device_exchanged_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
+    device_last_polled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     @property

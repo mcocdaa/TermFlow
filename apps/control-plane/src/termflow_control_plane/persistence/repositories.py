@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -655,8 +656,7 @@ class AuthStateRepository:
                 AuthAuditEvent(
                     operation="auth.reset",
                     result="reset",
-                    source_digest=audit_source_digest
-                    or digest_secret("local-control-plane"),
+                    source_digest=audit_source_digest or digest_secret("local-control-plane"),
                     created_at=observed_at,
                 )
             )
@@ -1055,9 +1055,7 @@ class OAuthAuthorizationRepository:
         # Avoid visually ambiguous characters while retaining enough entropy for
         # the short-lived code shown in the Web C approval UI.
         alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-        return "-".join(
-            "".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(2)
-        )
+        return "-".join("".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(2))
 
     async def create(
         self,
@@ -1229,6 +1227,77 @@ class OAuthAuthorizationRepository:
             )
             return authorization
 
+    async def record_device_poll(
+        self,
+        raw_device_code: str,
+        *,
+        epoch: int,
+        interval: int,
+        now: datetime | None = None,
+    ) -> int | None:
+        """Atomically record a poll, returning seconds to wait when too early."""
+
+        observed_at = now or datetime.now(UTC)
+        cutoff = observed_at - timedelta(seconds=interval)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(OAuthAuthorization)
+                .where(
+                    OAuthAuthorization.device_code_digest == digest_secret(raw_device_code),
+                    OAuthAuthorization.epoch == epoch,
+                    OAuthAuthorization.expires_at > observed_at,
+                    OAuthAuthorization.device_status.in_(("pending", "approved")),
+                    OAuthAuthorization.device_exchanged_at.is_(None),
+                    OAuthAuthorization.consumed_at.is_(None),
+                    exists(
+                        select(AuthenticationState.id).where(
+                            AuthenticationState.id == 1,
+                            AuthenticationState.epoch == epoch,
+                        )
+                    ),
+                    or_(
+                        OAuthAuthorization.device_last_polled_at.is_(None),
+                        OAuthAuthorization.device_last_polled_at <= cutoff,
+                    ),
+                )
+                .values(device_last_polled_at=observed_at)
+                .returning(OAuthAuthorization.device_last_polled_at)
+            )
+            recorded = result.scalar_one_or_none()
+            if recorded is not None:
+                await session.commit()
+                return None
+            last_polled = await session.scalar(
+                select(OAuthAuthorization.device_last_polled_at).where(
+                    OAuthAuthorization.device_code_digest == digest_secret(raw_device_code),
+                    OAuthAuthorization.epoch == epoch,
+                )
+            )
+            await session.commit()
+            if last_polled is None:
+                return None
+            if last_polled.tzinfo is None:
+                last_polled = last_polled.replace(tzinfo=UTC)
+            wait_seconds = (last_polled + timedelta(seconds=interval) - observed_at).total_seconds()
+            return max(1, math.ceil(wait_seconds))
+
+    async def get_device_authorization(
+        self,
+        raw_device_code: str,
+        *,
+        epoch: int = 1,
+    ) -> OAuthAuthorization | None:
+        """Read terminal device state without exposing the raw code."""
+
+        async with self._sessions() as session:
+            authorization: OAuthAuthorization | None = await session.scalar(
+                select(OAuthAuthorization).where(
+                    OAuthAuthorization.device_code_digest == digest_secret(raw_device_code),
+                    OAuthAuthorization.epoch == epoch,
+                )
+            )
+            return authorization
+
     async def find_by_user_code(
         self,
         raw_user_code: str,
@@ -1392,6 +1461,94 @@ class OAuthAuthorizationRepository:
             await session.commit()
             return exchanged
 
+    async def exchange_device_code_with_tokens(
+        self,
+        raw_device_code: str,
+        code_verifier: str,
+        *,
+        epoch: int,
+        raw_access_token: str,
+        raw_refresh_token: str,
+        key_thumbprint: str,
+        access_expires_at: datetime,
+        refresh_expires_at: datetime,
+        now: datetime | None = None,
+    ) -> ExchangedAuthorization | None:
+        """Atomically claim a device code and issue its native token pair."""
+
+        observed_at = now or datetime.now(UTC)
+        try:
+            challenge = create_s256_challenge(code_verifier)
+        except (TypeError, ValueError):
+            return None
+        active_client = exists(
+            select(NativeClient.id).where(
+                NativeClient.id == OAuthAuthorization.client_id,
+                NativeClient.key_thumbprint == key_thumbprint,
+                NativeClient.revoked_at.is_(None),
+            )
+        )
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(OAuthAuthorization)
+                .where(
+                    OAuthAuthorization.device_code_digest == digest_secret(raw_device_code),
+                    OAuthAuthorization.epoch == epoch,
+                    OAuthAuthorization.pkce_challenge == challenge,
+                    OAuthAuthorization.expires_at > observed_at,
+                    OAuthAuthorization.device_status == "approved",
+                    OAuthAuthorization.device_exchanged_at.is_(None),
+                    OAuthAuthorization.consumed_at.is_(None),
+                    exists(
+                        select(AuthenticationState.id).where(
+                            AuthenticationState.id == 1,
+                            AuthenticationState.epoch == epoch,
+                        )
+                    ),
+                    active_client,
+                )
+                .values(
+                    device_status="exchanged",
+                    device_exchanged_at=observed_at,
+                    consumed_at=observed_at,
+                )
+                .returning(OAuthAuthorization)
+            )
+            authorization = result.scalar_one_or_none()
+            if authorization is None:
+                await session.commit()
+                return None
+            family_id = uuid4()
+            access = await _insert_auth_token(
+                session,
+                raw_token=raw_access_token,
+                kind="access",
+                encoded_scopes=authorization.scopes,
+                key_thumbprint=key_thumbprint,
+                expires_at=access_expires_at,
+                epoch=epoch,
+                client_id=authorization.client_id,
+                family_id=family_id,
+                now=observed_at,
+            )
+            refresh = await _insert_auth_token(
+                session,
+                raw_token=raw_refresh_token,
+                kind="refresh",
+                encoded_scopes=authorization.scopes,
+                key_thumbprint=key_thumbprint,
+                expires_at=refresh_expires_at,
+                epoch=epoch,
+                client_id=authorization.client_id,
+                family_id=family_id,
+                now=observed_at,
+            )
+            if access is None or refresh is None:
+                await session.rollback()
+                return None
+            await session.commit()
+            return ExchangedAuthorization(authorization, access, refresh)
+
     async def get_active_id(
         self,
         transaction_id: UUID,
@@ -1491,8 +1648,7 @@ class OAuthAuthorizationRepository:
         async with self._sessions() as session:
             authorization: OAuthAuthorization | None = await session.scalar(
                 select(OAuthAuthorization).where(
-                    OAuthAuthorization.transaction_digest
-                    == digest_secret(transaction_secret),
+                    OAuthAuthorization.transaction_digest == digest_secret(transaction_secret),
                     OAuthAuthorization.epoch == epoch,
                     OAuthAuthorization.expires_at > observed_at,
                     OAuthAuthorization.consumed_at.is_(None),
@@ -1580,8 +1736,7 @@ class OAuthAuthorizationRepository:
             result = await session.execute(
                 update(OAuthAuthorization)
                 .where(
-                    OAuthAuthorization.authorization_code_digest
-                    == digest_secret(raw_code),
+                    OAuthAuthorization.authorization_code_digest == digest_secret(raw_code),
                     OAuthAuthorization.epoch == epoch,
                     OAuthAuthorization.pkce_challenge == pkce_challenge,
                     OAuthAuthorization.expires_at > observed_at,

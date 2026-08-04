@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import math
 import secrets
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -18,6 +19,8 @@ from termflow_protocol import (
     OAuthAuthorizationDecisionResponse,
     OAuthAuthorizationPreviewResponse,
     OAuthAuthorizationRequest,
+    OAuthDeviceCodeRequest,
+    OAuthDeviceCodeResponse,
     OAuthMetadataResponse,
     OAuthPublicJwk,
     OAuthRevokeResponse,
@@ -31,6 +34,8 @@ from termflow_control_plane.config import Settings
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.models import NativeClient, OAuthAuthorization
 from termflow_control_plane.persistence.repositories import (
+    CreatedDeviceAuthorization,
+    DeviceAuthorizationRequest,
     RepositoryBundle,
     decode_scopes,
 )
@@ -60,7 +65,8 @@ def _callback_uri(authorization: OAuthAuthorization) -> str:
             "transaction_id": str(authorization.id),
         }
     )
-    return f"{authorization.redirect_uri}?{query}"
+    redirect_uri = authorization.redirect_uri or "termflow://auth/callback"
+    return f"{redirect_uri}?{query}"
 
 
 class OAuthService:
@@ -94,7 +100,11 @@ class OAuthService:
             device_authorization_endpoint=f"{self.issuer}/api/v1/oauth/device/code",
             device_verification_uri=f"{self.issuer}/device",
             response_types_supported=["code"],
-            grant_types_supported=["authorization_code", "refresh_token"],
+            grant_types_supported=[
+                "authorization_code",
+                "refresh_token",
+                "urn:ietf:params:oauth:grant-type:device_code",
+            ],
             code_challenge_methods_supported=["S256"],
             dpop_signing_alg_values_supported=["ES256"],
             scopes_supported=list(OAUTH_SCOPES),
@@ -129,6 +139,58 @@ class OAuthService:
             epoch=state.epoch,
         )
 
+    async def begin_device(self, request: OAuthDeviceCodeRequest) -> OAuthDeviceCodeResponse:
+        """Create the shared authorization transaction for the device grant."""
+
+        jwk = request.public_jwk.model_dump(mode="json")
+        calculated_jkt = jwk_thumbprint(jwk)
+        if not hmac.compare_digest(calculated_jkt, request.dpop_jkt):
+            raise TermFlowError("invalid_request", 400, "The authorization request is invalid.")
+        state = await self._repositories.auth_state.get()
+        client = await self._repositories.native_clients.get_or_create(
+            display_name=request.client_name,
+            public_jwk=_public_jwk_json(request.public_jwk),
+            key_thumbprint=calculated_jkt,
+            platform=request.platform,
+            client_version=request.client_version,
+            scopes=tuple(request.scopes),
+        )
+        if client.revoked_at is not None:
+            raise TermFlowError("client_revoked", 403, "The native client is revoked.")
+        now = self._clock()
+        ttl_seconds = self._settings.oauth_device_authorization_ttl_seconds
+        interval = self._settings.oauth_device_poll_interval_seconds
+        if ttl_seconds <= 0 or interval <= 0:
+            raise TermFlowError("invalid_request", 400, "The authorization request is invalid.")
+        created: CreatedDeviceAuthorization = (
+            await self._repositories.oauth_authorizations.create_device_authorization(
+                DeviceAuthorizationRequest(
+                    client_id=client.id,
+                    scopes=tuple(request.scopes),
+                    pkce_challenge=request.code_challenge,
+                    expires_at=now + timedelta(seconds=ttl_seconds),
+                    epoch=state.epoch,
+                    interval=interval,
+                    # Keep the existing Web C decision response contract for the
+                    # shared transaction; the device client never follows it.
+                    redirect_uri="termflow://auth/callback",
+                    request_state=secrets.token_urlsafe(32),
+                ),
+                now=now,
+            )
+        )
+        verification_uri = f"{self.issuer}/device"
+        complete = f"{verification_uri}?{urlencode({'code': created.user_code})}"
+        expires_in = max(1, math.ceil((created.expires_at - now).total_seconds()))
+        return OAuthDeviceCodeResponse(
+            device_code=created.device_code,
+            user_code=created.user_code,
+            verification_uri=verification_uri,
+            verification_uri_complete=complete,
+            expires_in=expires_in,
+            interval=created.interval,
+        )
+
     async def preview(self, transaction_id: UUID) -> OAuthAuthorizationPreviewResponse:
         state = await self._repositories.auth_state.get()
         authorization = await self._repositories.oauth_authorizations.get_active_id(
@@ -138,6 +200,24 @@ class OAuthService:
         )
         if authorization is None:
             raise TermFlowError("authorization_expired", 404, "Authorization is unavailable.")
+        return await self._preview_authorization(authorization, state.totp_enabled_at is not None)
+
+    async def preview_user_code(self, user_code: str) -> OAuthAuthorizationPreviewResponse:
+        state = await self._repositories.auth_state.get()
+        authorization = await self._repositories.oauth_authorizations.find_by_user_code(
+            user_code,
+            epoch=state.epoch,
+            now=self._clock(),
+        )
+        if authorization is None:
+            raise TermFlowError("authorization_expired", 404, "Authorization is unavailable.")
+        return await self._preview_authorization(authorization, state.totp_enabled_at is not None)
+
+    async def _preview_authorization(
+        self,
+        authorization: OAuthAuthorization,
+        totp_required: bool,
+    ) -> OAuthAuthorizationPreviewResponse:
         client = await self._repositories.native_clients.get(authorization.client_id)
         if client is None or client.revoked_at is not None:
             raise TermFlowError("authorization_expired", 404, "Authorization is unavailable.")
@@ -149,8 +229,8 @@ class OAuthService:
             client_version=client.client_version,
             key_fingerprint=client.key_thumbprint,
             scopes=_protocol_scopes(authorization.scopes),
-            redirect_uri=authorization.redirect_uri,
-            totp_required=state.totp_enabled_at is not None,
+            redirect_uri=authorization.redirect_uri or "termflow://auth/callback",
+            totp_required=totp_required,
             expires_at=authorization.expires_at,
         )
 
@@ -183,6 +263,37 @@ class OAuthService:
             if not accepted:
                 await self._record_decision_failure(request.transaction_id, state.epoch)
                 raise TermFlowError("authentication_failed", 401, "Authentication failed.")
+        if authorization.device_code_digest is not None:
+            if request.decision == "deny":
+                denied = await self._repositories.oauth_authorizations.deny_device_authorization(
+                    request.transaction_id,
+                    epoch=state.epoch,
+                    now=self._clock(),
+                )
+                if denied is None:
+                    raise TermFlowError(
+                        "authorization_expired", 400, "Authorization is unavailable."
+                    )
+                return OAuthAuthorizationDecisionResponse(
+                    status="denied",
+                    callback_uri=_callback_uri(denied),
+                )
+            approved = await self._repositories.oauth_authorizations.mark_approved(
+                request.transaction_id,
+                epoch=state.epoch,
+                now=self._clock(),
+            )
+            if approved is None:
+                raise TermFlowError("authorization_expired", 400, "Authorization is unavailable.")
+            if not await self._repositories.native_clients.update_scopes(
+                authorization.client_id,
+                decode_scopes(authorization.scopes),
+            ):
+                raise TermFlowError("authorization_expired", 400, "Authorization is unavailable.")
+            return OAuthAuthorizationDecisionResponse(
+                status="approved",
+                callback_uri=_callback_uri(approved),
+            )
         if request.decision == "deny":
             denied = await self._repositories.oauth_authorizations.deny(
                 request.transaction_id,
@@ -249,6 +360,9 @@ class OAuthService:
     ) -> OAuthTokenResponse:
         state = await self._repositories.auth_state.get()
         now = self._clock()
+        if request.grant_type == "urn:ietf:params:oauth:grant-type:device_code":
+            assert request.device_code is not None and request.code_verifier is not None
+            return await self._exchange_device_code(request, verified, state.epoch, now)
         raw_access = secrets.token_urlsafe(32)
         raw_refresh = secrets.token_urlsafe(48)
         access_expires_at = now + timedelta(seconds=self._settings.auth_access_token_ttl_seconds)
@@ -289,6 +403,87 @@ class OAuthService:
             if rotated is None:
                 raise TermFlowError("invalid_grant", 400, "The grant is invalid.")
             scopes = decode_scopes(rotated.access_token.scopes)
+        return OAuthTokenResponse(
+            access_token=raw_access,
+            expires_in=self._settings.auth_access_token_ttl_seconds,
+            refresh_token=raw_refresh,
+            scopes=cast(list[OAuthScope], list(scopes)),
+        )
+
+    async def _exchange_device_code(
+        self,
+        request: OAuthTokenRequest,
+        verified: VerifiedDpop,
+        epoch: int,
+        now: datetime,
+    ) -> OAuthTokenResponse:
+        assert request.device_code is not None and request.code_verifier is not None
+        raw_device_code = request.device_code.get_secret_value()
+        authorization = await self._repositories.oauth_authorizations.find_by_device_code(
+            raw_device_code,
+            epoch=epoch,
+            now=now,
+        )
+        if authorization is None:
+            terminal = await self._repositories.oauth_authorizations.get_device_authorization(
+                raw_device_code,
+                epoch=epoch,
+            )
+            if terminal is not None and terminal.device_status == "denied":
+                raise TermFlowError("access_denied", 400, "The authorization was denied.")
+            raise TermFlowError("expired_token", 400, "The device authorization has expired.")
+        client = await self._repositories.native_clients.get(authorization.client_id)
+        if client is None or client.revoked_at is not None:
+            raise TermFlowError("expired_token", 400, "The device authorization has expired.")
+        if not hmac.compare_digest(client.key_thumbprint, verified.jkt):
+            raise TermFlowError("invalid_grant", 400, "The grant is invalid.")
+        interval = (
+            authorization.device_interval or self._settings.oauth_device_poll_interval_seconds
+        )
+        retry_after = await self._repositories.oauth_authorizations.record_device_poll(
+            raw_device_code,
+            epoch=epoch,
+            interval=interval,
+            now=now,
+        )
+        if retry_after is not None:
+            raise TermFlowError(
+                "slow_down",
+                400,
+                "Polling too frequently.",
+                retry_after=retry_after,
+            )
+        if authorization.device_status == "pending":
+            raise TermFlowError(
+                "authorization_pending",
+                400,
+                "The authorization is pending.",
+                retry_after=interval,
+            )
+        raw_access = secrets.token_urlsafe(32)
+        raw_refresh = secrets.token_urlsafe(48)
+        access_expires_at = now + timedelta(seconds=self._settings.auth_access_token_ttl_seconds)
+        refresh_expires_at = now + timedelta(seconds=self._settings.auth_refresh_token_ttl_seconds)
+        exchanged = await self._repositories.oauth_authorizations.exchange_device_code_with_tokens(
+            raw_device_code,
+            request.code_verifier.get_secret_value(),
+            epoch=epoch,
+            now=now,
+            raw_access_token=raw_access,
+            raw_refresh_token=raw_refresh,
+            key_thumbprint=verified.jkt,
+            access_expires_at=access_expires_at,
+            refresh_expires_at=refresh_expires_at,
+        )
+        if exchanged is None:
+            terminal = await self._repositories.oauth_authorizations.get_device_authorization(
+                raw_device_code,
+                epoch=epoch,
+            )
+            if terminal is not None and terminal.device_status == "denied":
+                raise TermFlowError("access_denied", 400, "The authorization was denied.")
+            raise TermFlowError("invalid_grant", 400, "The grant is invalid.")
+        scopes = decode_scopes(exchanged.authorization.scopes)
         return OAuthTokenResponse(
             access_token=raw_access,
             expires_in=self._settings.auth_access_token_ttl_seconds,

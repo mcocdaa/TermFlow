@@ -387,7 +387,13 @@ class OAuthMetadataResponse(HttpModel):
     device_authorization_endpoint: str = Field(min_length=1, max_length=2048)
     device_verification_uri: str = Field(min_length=1, max_length=2048)
     response_types_supported: list[Literal["code"]]
-    grant_types_supported: list[Literal["authorization_code", "refresh_token"]]
+    grant_types_supported: list[
+        Literal[
+            "authorization_code",
+            "refresh_token",
+            "urn:ietf:params:oauth:grant-type:device_code",
+        ]
+    ]
     code_challenge_methods_supported: list[Literal["S256"]]
     dpop_signing_alg_values_supported: list[Literal["ES256"]]
     scopes_supported: list[OAuthScope]
@@ -546,8 +552,13 @@ class OAuthAuthorizationDecisionResponse(HttpModel):
 
 
 class OAuthTokenRequest(HttpModel):
-    grant_type: Literal["authorization_code", "refresh_token"]
+    grant_type: Literal[
+        "authorization_code",
+        "refresh_token",
+        "urn:ietf:params:oauth:grant-type:device_code",
+    ]
     transaction_id: UUID | None = None
+    device_code: SecretStr | None = None
     code_verifier: SecretStr | None = None
     refresh_token: SecretStr | None = None
     public_jwk: OAuthPublicJwk
@@ -562,14 +573,23 @@ class OAuthTokenRequest(HttpModel):
         if self.grant_type == "authorization_code":
             if self.transaction_id is None or self.code_verifier is None:
                 raise ValueError("authorization_code requires transaction_id and code_verifier")
-            if self.refresh_token is not None:
-                raise ValueError("authorization_code must not include refresh_token")
+            if self.refresh_token is not None or self.device_code is not None:
+                raise ValueError("authorization_code must not include refresh_token or device_code")
+        elif self.grant_type == "refresh_token":
+            if (
+                self.refresh_token is None
+                or self.transaction_id is not None
+                or self.code_verifier is not None
+                or self.device_code is not None
+            ):
+                raise ValueError("refresh_token requires only refresh_token credentials")
         elif (
-            self.refresh_token is None
+            self.device_code is None
+            or self.code_verifier is None
             or self.transaction_id is not None
-            or self.code_verifier is not None
+            or self.refresh_token is not None
         ):
-            raise ValueError("refresh_token requires only refresh_token credentials")
+            raise ValueError("device_code requires device_code and code_verifier")
         return self
 
 
