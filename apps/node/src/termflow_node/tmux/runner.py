@@ -41,7 +41,7 @@ class RunCommand(Protocol):
     ) -> subprocess.CompletedProcess[str]: ...
 
 
-_VERSION = re.compile(r"\btmux\s+(\d+)\.(\d+)\b", re.IGNORECASE)
+_VERSION = re.compile(r"\btmux\s+(\d+)\.(\d+)[a-z]*\b", re.IGNORECASE)
 _DIAGNOSTIC_LIMIT = 160
 
 

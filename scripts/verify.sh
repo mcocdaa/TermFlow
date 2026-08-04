@@ -17,7 +17,7 @@ npm run test:run
 npm run typecheck
 npm run build --workspaces --if-present
 uv sync --frozen --all-packages
-uv run --all-packages pytest -q
+uv run --all-packages python -m pytest -q
 uv run --all-packages ruff check .
 uv run --all-packages mypy packages/protocol/src apps/control-plane/src apps/node/src
 scripts/verify-tauri.sh

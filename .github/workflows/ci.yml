@@ -87,7 +87,7 @@ jobs:
         run: npm run build --workspaces --if-present
 
       - name: Test Python workspace
-        run: uv run --all-packages pytest -q --junitxml=.ci/pytest.xml
+        run: uv run --all-packages python -m pytest -q --junitxml=.ci/pytest.xml
 
       - name: Static checks
         run: |

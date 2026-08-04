@@ -65,7 +65,7 @@ def test_overlong_socket_path_is_rejected_before_spawn(tmp_path) -> None:
 @pytest.mark.parametrize(
     ("stdout", "stderr"),
     [
-        ("version check: tmux 3.4 (Linux)\n", ""),
+        ("version check: tmux 3.2a (Linux)\n", ""),
         ("", "tmux 3.4\n"),
     ],
 )
