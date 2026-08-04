@@ -10,8 +10,8 @@ Web C 是独立客户端，只调用 B 的公开 `/api/v1` HTTP 和 WebSocket �
 
 ## 页面
 
-- 登录：使用不带全局导航的极简页面；Admin Token 只用于换取 HttpOnly 会话，成功后立即
-  从组件状态清除；
+- 登录：使用不带全局导航的极简页面；Admin Token 只用于换取 HttpOnly 会话，启用双重认证
+  时再输入验证器的一次性验证码，成功后立即从组件状态清除；
 - 总览：显示在线 Term、活动 Pane、24 小时交互数和 Computer 卡片；在线 Term 和活动 Pane
   指标可悬浮或聚焦查看解释。每个 Computer 卡片内的 Term 使用独立圆角卡片，在线 Term
   整块可点击进入终端；
@@ -54,3 +54,9 @@ Esc、Tab 和 Prefix 是独立布局行，不覆盖 terminal 画布；关闭 Pan
 `midnight-indigo`。所有页面、菜单、状态、terminal 外框和焦点环使用同一组语义 design
 tokens。浏览器只持久化主题标识，不持久化凭据或终端正文；未来 App、EXE 和 Linux 安装
 包应复用相同 token 名称，而不是复制组件中的颜色值。
+
+原生客户端不嵌入这套登录表单。Tauri 客户端从设置的服务器地址发现 OAuth 元数据，打开
+系统浏览器进入授权页；授权页显示客户端名称、平台、版本和 scopes，启用双重认证时要求
+一次性验证码。用户批准后，浏览器跳转一次性 `termflow://auth/callback`，客户端再交换并
+安全保存短期 token。服务器地址必须与 B 的 `TERMFLOW_PUBLIC_BASE_URL` 完全一致（协议、
+主机和端口均不能混用）。

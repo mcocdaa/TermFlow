@@ -15,8 +15,11 @@ Bridge 与 B 的 JSON 消息均使用版本 1：
 }
 ```
 
-未知主版本会被拒绝。凭据只通过 `Authorization: Bearer ...` Header 传递，不放在 URL 或
-消息正文。
+未知主版本会被拒绝。Bridge 和资源 API 的长期/短期凭据通过
+`Authorization: Bearer ...`（原生资源再配合 DPoP）传递，不放在 URL。只有浏览器登录、
+TOTP 设置和 CLI token 交换这些明确的 re-auth 请求才在 HTTPS JSON body 中短暂提交 Admin
+Token；原生 OAuth 授权页的批准请求也属于这个明确的浏览器 re-auth 请求。服务端不会把它写入
+Cookie、URL 或日志。
 
 ## HTTP API
 
@@ -25,7 +28,19 @@ Bridge 与 B 的 JSON 消息均使用版本 1：
 | `GET` | `/healthz` | 无 | 健康检查 |
 | `POST` | `/api/v1/enrollment-tokens` | Admin | 创建一次性注册码 |
 | `POST` | `/api/v1/admin/sessions` | Admin | 创建 Web C 会话 |
+| `POST` | `/api/v1/admin/sessions/{challenge_id}/totp` | 挑战 + 一次性验证码 | 完成启用 TOTP 后的 Web C 登录 |
 | `GET/DELETE` | `/api/v1/admin/session` | Cookie | 检查或删除当前 Web C 会话 |
+| `GET` | `/api/v1/admin/totp` | Web Cookie | 查询 TOTP 状态 |
+| `POST` | `/api/v1/admin/totp/setups` | Web Cookie + Admin/当前验证码 | 创建验证器绑定挑战 |
+| `POST` | `/api/v1/admin/totp/setups/{setup_id}/confirm` | Web Cookie + 一次性验证码 | 确认验证器绑定 |
+| `POST` | `/api/v1/admin/totp/enable` | Web Cookie + Admin/一次性验证码 | 启用登录保护 |
+| `DELETE` | `/api/v1/admin/totp` | Web Cookie + Admin/一次性验证码 | 关闭登录保护 |
+| `POST` | `/api/v1/admin/cli-tokens` | Admin + 可选 TOTP | 为 CLI 交换短期 Bearer token |
+| `GET` | `/.well-known/oauth-authorization-server` | 无 | 原生客户端发现 OAuth 端点 |
+| `GET/POST` | `/api/v1/oauth/authorize` | 原生请求；浏览器确认时 Admin + 可选 TOTP | 创建、预览和批准原生客户端授权 |
+| `POST` | `/api/v1/oauth/token` | PKCE + DPoP | 交换原生 access/refresh token |
+| `POST` | `/api/v1/oauth/revoke` | 原生授权 | 撤销原生 token |
+| `GET/PATCH/DELETE` | `/api/v1/admin/clients[/{client_id}]` | Cookie | 查看、重命名或撤销已授权原生客户端 |
 | `POST` | `/api/v1/installations/enroll` | 注册码 | 换取 Installation Credential |
 | `POST` | `/api/v1/instances/register` | Installation | 注册/轮换该 Installation 所属 Instance |
 | `GET` | `/api/v1/instances` | Admin | 列出 Instance 与在线状态 |
@@ -39,6 +54,21 @@ Bridge 与 B 的 JSON 消息均使用版本 1：
 输入正文只有 `text` 与 `submit`。调用方必须发送 UUID `Idempotency-Key`。`text` 最大
 16 KiB UTF-8，拒绝 C0/C1、DEL、ESC 和 Ctrl+C 等控制字符；`submit=true` 只追加 Enter。
 B 收到 Bridge 的匹配确认后才返回成功。A 离线时立即返回 409，不排队、不延迟执行。
+
+### 浏览器与原生登录
+
+Web C 先向 `/api/v1/admin/sessions` 提交 Admin Token；启用 TOTP 时响应
+`202` 和 `challenge_id`，再向 `/api/v1/admin/sessions/{challenge_id}/totp` 提交 6 位验证码，
+成功后 B 才设置 HttpOnly Cookie。所有浏览器写操作都必须带与
+`TERMFLOW_PUBLIC_BASE_URL` 一致的 Origin。
+
+Tauri App/EXE 不在自己的登录界面收集管理员 Token。它通过 OAuth/PKCE 发起授权，系统浏览器
+显示 Web C 的授权页；用户在该页确认客户端和 scopes，启用 TOTP 时再输入一次性验证码。回调
+只包含一次性授权结果，原生客户端随后使用 DPoP 交换短期 access/refresh token。
+
+启用 TOTP 后，原始 Admin Bearer 不再直接通过受保护资源检查；运维脚本应调用
+`/api/v1/admin/cli-tokens`（同时提交当前验证码）获得带 scopes 的 CLI token，再把该 token
+放入 `Authorization` Header。这样不会把“一次性验证码”扩散到每个资源请求。
 
 ## Bridge WSS
 

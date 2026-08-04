@@ -20,9 +20,71 @@ def test_readme_links_every_operator_document() -> None:
         "api-examples.md",
         "web-client.md",
         "operations.md",
+        "github-actions.md",
         "troubleshooting.md",
     ):
         assert name in readme
+    assert "docs/superpowers/README.md" in readme
+
+
+def test_github_actions_guide_names_current_workflows_and_artifacts() -> None:
+    guide = Path("docs/github-actions.md").read_text()
+    for workflow in (
+        "ci.yml",
+        "package-node.yml",
+        "package-control-plane.yml",
+        "tauri-packages.yml",
+        "release.yml",
+    ):
+        assert f"{workflow}" in guide
+    for marker in (
+        "workflow_dispatch",
+        "workflow_call",
+        "termflow-node-linux-x86_64",
+        "termflow-control-plane.tar",
+        "termflow-windows-x64-nsis",
+        "14 天",
+        "1 天",
+        "GitHub Release",
+        "不会创建 GitHub Release",
+        "ghcr.io/<仓库所有者>/termflow-control-plane",
+        "TERMFLOW_BUILD_VERSION",
+        "0.0.1-dev.0",
+    ):
+        assert marker in guide
+
+
+def test_current_operator_docs_do_not_recommend_removed_runtime_variables() -> None:
+    current_docs = "\n".join(
+        Path(path).read_text()
+        for path in (
+            "README.md",
+            "docs/architecture.md",
+            "docs/protocol.md",
+            "docs/security.md",
+            "docs/api-examples.md",
+            "docs/web-client.md",
+            "docs/operations.md",
+            "docs/troubleshooting.md",
+            "apps/clients/README.md",
+        )
+    )
+    assert "TERMFLOW_TRUSTED_WEB_ORIGINS" not in current_docs
+    assert "TERMFLOW_IMAGE" not in current_docs
+
+
+def test_api_and_native_docs_match_current_auth_transport_boundaries() -> None:
+    api_examples = Path("docs/api-examples.md").read_text()
+    clients = Path("apps/clients/README.md").read_text()
+    operations = Path("docs/operations.md").read_text()
+
+    assert api_examples.count('Origin: $TERMFLOW_URL') == 2
+    assert 'urlsplit(os.environ["TERMFLOW_URL"])' in api_examples
+    assert 'ws_scheme = "wss" if base.scheme == "https" else "ws"' in api_examples
+    assert "access token in memory" in clients
+    assert "refresh token plus its device" in clients
+    assert 'TERMFLOW_HOST_PORT:-8765' in operations
+    assert "v1.2.3+build.5` → `v1.2.3_build.5" in operations
 
 
 def test_docs_explain_computer_term_and_full_terminal_contracts() -> None:

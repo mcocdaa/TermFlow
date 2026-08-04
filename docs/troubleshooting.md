@@ -50,6 +50,43 @@ Compose 服务；不要用 `docker system prune` 排障，也不要删除 `termf
 `docker compose --env-file .env -f deploy/compose.yaml up -d --build`。不要为了回退执行
 `docker compose down --volumes`，那会删除 metadata 数据卷。
 
+## App/EXE 显示“无法连接服务器”
+
+先在同一台机器确认 B 的健康检查，而不是先重复输入管理员 Token：
+
+```bash
+curl -fsS "http://127.0.0.1:${TERMFLOW_HOST_PORT:-8765}/healthz"
+```
+
+上面的 `8765` 是 Compose 默认端口；如果 `.env` 修改了 `TERMFLOW_HOST_PORT`，使用修改后的
+端口。远程部署则应从反向代理的 HTTPS 服务网址检查，而不是访问本机 loopback。
+
+Tauri 的服务器地址必须是没有路径、查询串或片段的完整 origin，例如
+`https://relay.example.com` 或本机 `http://127.0.0.1:8765`。它必须与 B 的
+`TERMFLOW_PUBLIC_BASE_URL` 完全一致；反向代理、证书和 WSS 必须从系统浏览器也能访问。
+
+点击“申请注册远程控制”后，App/EXE 会打开系统浏览器，而不是在本机表单中填写管理员
+Token。浏览器完成授权并回到 `termflow://auth/callback` 后，原生客户端才会得到 token。
+确认 Web C 已使用同一服务网址、浏览器没有拦截回调，并检查 B 日志中的授权失败原因。
+
+旧的 Windows 安装包不会自动包含新代码；如果本地包在 IPv4 可用时仍报告网络离线，重新从
+Tag Release 或 `Package C · Native Clients` workflow 下载新的 Windows NSIS 包。当前版本对
+`127.0.0.1`、`localhost` 和 `[::1]` 的 HTTP capability 均有解析/匹配契约；“服务器不可用”
+与“客户端网络权限配置无效”是两种不同错误。
+
+## GitHub Actions 失败或找不到包
+
+- 手动 workflow 的 Artifact 只保留 14 天；过期后重新运行对应 workflow，不能从仓库源码页面
+  直接下载旧 Artifact；
+- Tag workflow 的中间 Artifact 只保留 1 天，永久文件在 GitHub Release；
+- Tag 的任一 A/C/B job 失败时，`publish` 不会运行，因此没有 GitHub Release，也不会把 B 镜像
+  推到 GHCR。先修复失败 job，再从同一个 workflow 重新运行或使用新的 Tag；
+- Docker base image、Debian 包或 crates.io 下载超时时，先看失败 URL 和 runner 网络。B 镜像脚本
+  默认最多重试 3 次；CI 的瞬时 registry 502 不代表应用代码已通过镜像 gate；
+- CI 的无签名 compile 只证明对应 runner 能编译，不能替代手动 C workflow 的安装包 Artifact。
+
+完整 workflow 输入、Artifact 名称和 Tag 依赖见 [GitHub Actions 构建与发布](github-actions.md)。
+
 ## Instance 显示 bridge-down
 
 先确认 B `/healthz`、A 的网络与服务器 URL。B 重启后 Bridge 会自动重连；tmux 始终可用：

@@ -23,7 +23,8 @@ termflow new --name project-a
 ```
 
 将 `vX.Y.Z` 替换为需要的精确 GitHub Release tag。安装器会保留旧版本；回退 A 时，只需重新运行
-旧 tag 的同一命令。确保 `~/.local/bin` 已在当前 shell 的 `PATH` 中。
+旧 tag 的同一命令。上面的 URL 使用官方仓库；Fork 发布时把 `mcocdaa/TermFlow` 替换为
+自己的 `<owner>/<repository>`。确保 `~/.local/bin` 已在当前 shell 的 `PATH` 中。
 
 B 与 Web C 由当前 checkout 的同一份 Dockerfile 构建。先切换到需要部署的精确源码 tag 或 commit，
 再复制并填写管理员 token 和公开 URL：
@@ -44,9 +45,12 @@ Android 和 iOS Simulator 包。手动 Artifact 使用稳定名称并保留 14 �
 和创建永久 GitHub Release。下载 B 的手动 tar 后可执行
 `docker load -i termflow-control-plane.tar`，但它不会自动修改现有 Compose 部署。
 
+如何从 Actions 页面或 `gh workflow run` 手动构建、如何按平台选择 C、Tag 触发顺序、产物保留期
+和签名限制，见 [GitHub Actions 构建与发布](docs/github-actions.md)。
+
 正式构建版本的解析顺序固定为
 `Git Tag > TERMFLOW_BUILD_VERSION > 0.0.1-dev.0`。Tag Release 直接使用 `vX.Y.Z`
-中的版本；手动 workflow 可填写可选版本，本地构建可设置
+（以及受支持的 prerelease/build metadata）中的版本；手动 workflow 可填写可选版本，本地构建可设置
 `TERMFLOW_BUILD_VERSION=1.2.3`。两者都没有时使用明确的开发版本
 `0.0.1-dev.0`，不会被误认为正式 Release。
 
@@ -110,7 +114,8 @@ B+Web C 的容器化启动参见 [deploy/compose.yaml](deploy/compose.yaml) 与
 - [API 调用示例](docs/api-examples.md)
 - [Web C 使用与主题](docs/web-client.md)
 - [部署与恢复](docs/operations.md)
+- [GitHub Actions 构建与发布](docs/github-actions.md)
 - [排障指南](docs/troubleshooting.md)
 
-设计与实施计划保存在 `docs/superpowers/`，它们是工程记录；以上文档描述实际版本的
-使用方式。
+设计和实施历史见 [`docs/superpowers/README.md`](docs/superpowers/README.md)；其中的历史计划
+是工程记录，不替代上述当前版本使用说明。

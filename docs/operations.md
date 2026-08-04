@@ -14,8 +14,8 @@ mTLS 的证书签发、校验与轮换不属于 TermFlow，也不会被默认镜
 
 ## 永久发布、安装与回退
 
-一个通过全部介质 gate 的 `vX.Y.Z` tag 会创建永久 GitHub Release，并推送同 tag 的 GHCR
-`ghcr.io/mcocdaa/termflow-control-plane:vX.Y.Z` 多架构镜像（linux/amd64、linux/arm64）。稳定 tag
+一个通过全部介质 gate 的 `vX.Y.Z` 或 prerelease tag 会创建 GitHub Release，并推送同 tag 的 GHCR
+`ghcr.io/<repository-owner>/termflow-control-plane:<tag>` 多架构镜像（linux/amd64、linux/arm64）。稳定 tag
 还会更新 `latest`，但生产部署应始终写精确 tag，不应依赖 `latest`。GitHub Release 中包含 A 的
 `install-termflow-node.sh` 与 Linux Node bundle，以及 Windows、Linux、macOS、Android 和 iOS
 Simulator 客户端；发布前必须确认 GHCR 包已对目标部署者可拉取。
@@ -28,7 +28,8 @@ curl -fsSL https://github.com/mcocdaa/TermFlow/releases/download/vX.Y.Z/install-
 
 安装器先下载 archive 与 `SHA256SUMS`、校验 checksum，再原子更新当前用户的
 `~/.local/bin/termflow` 符号链接。它要求 tmux 3.2+，不使用 `sudo`、不创建 systemd 服务、
-不删除旧版本，也不应输出任何注册码或 token。回退 A 时重新运行旧 tag 的安装命令即可。
+不删除旧版本，也不应输出任何注册码或 token。上面的 URL 是官方仓库；Fork 发布时替换为
+自己的 owner/repository。回退 A 时重新运行旧 tag 的安装命令即可。
 
 B + Web C 的默认 Compose 从当前 checkout 构建，不绑定 GitHub 所有者、Registry 或镜像 tag。
 部署前切换到已验证的精确源码 tag 或 commit，然后运行：
@@ -42,6 +43,29 @@ docker compose --env-file .env -f deploy/compose.yaml up -d --build
 回退 B 时切换到已验证的旧源码 tag 或 commit，重复 `up -d --build`；不要执行 `down --volumes`，
 也不要删除 `termflow-data`。GitHub Actions 或 Fork 可以使用同一个 Dockerfile 构建、标记和发布镜像，
 但镜像来源不属于普通 Compose 的运行时配置。
+
+如果要直接运行正式 GHCR 镜像，镜像地址必须由部署者明确选择；它不是 `.env` 的必填项，也不会
+被默认 Compose 隐式替换：
+
+```bash
+set -a; source .env; set +a
+docker run -d --name termflow-control-plane --restart unless-stopped \
+  --publish "127.0.0.1:${TERMFLOW_HOST_PORT:-8765}:8000" \
+  --volume "${TERMFLOW_DATA_VOLUME:-termflow-data}:/app/data" \
+  --env TERMFLOW_ADMIN_TOKEN="$TERMFLOW_ADMIN_TOKEN" \
+  --env TERMFLOW_DATABASE_URL=sqlite+aiosqlite:////app/data/termflow.db \
+  --env TERMFLOW_PUBLIC_BASE_URL="$TERMFLOW_PUBLIC_BASE_URL" \
+  --env TERMFLOW_ALLOW_INSECURE_LOOPBACK="${TERMFLOW_ALLOW_INSECURE_LOOPBACK:-true}" \
+  --env TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE=/app/data/totp-master-key \
+  ghcr.io/<repository-owner>/termflow-control-plane:vX.Y.Z
+```
+
+这个 `docker run` 与 Compose 使用同一个数据卷时，不要同时启动两个 B 实例占用
+同一个 SQLite 文件；切换镜像前先停止旧容器，再保留卷并启动新容器。启动后检查：
+
+```bash
+curl -fsS http://127.0.0.1:8765/healthz
+```
 
 Actions artifact 是短期测试产物：三套手动打包 workflow 的产物都保留 14 天，不能代替
 GitHub Release。Windows asset 目前未签名；iOS Simulator asset 只能用于 Simulator，不能用于实体
@@ -105,8 +129,12 @@ Tauri 配置生成平台工程，再执行 debug/unsigned 编译。缺少 Tauri 
 
 ## 三套手动打包 Workflow 与正式 Release
 
-基础打包文件同时声明 `workflow_dispatch` 和 `workflow_call`：前者供 Actions 页面手动测试任意
-commit，后者只供 Tag Release 复用同一套命令。手动运行不接受 `release_tag`，不会创建 GitHub
+各 workflow 的文件名、输入、Artifact 名称和 Tag 依赖图见
+[GitHub Actions 构建与发布](github-actions.md)；以下只保留部署时需要的版本与验收边界。
+
+基础打包文件同时声明 `workflow_dispatch` 和 `workflow_call`：前者供 Actions 页面手动测试选定的
+branch/tag ref，后者只供 Tag Release 复用同一套命令。若要固定某个 commit，先创建临时
+branch/tag。手动运行不接受 `release_tag`，不会创建 GitHub
 Release，也不会推送 GHCR；Actions artifact 使用不含版本的稳定名称并保留 14 天。三个手动
 表单都可以填写可选 `version`；留空时读取仓库 Actions 变量 `TERMFLOW_BUILD_VERSION`，仍未设置
 则使用 `0.0.1-dev.0`。
@@ -123,7 +151,9 @@ TERMFLOW_BUILD_VERSION=1.2.3 \
 
 完整 SemVer 是产品逻辑版本。Android 使用由数字 core 派生的正整数 `versionCode`，macOS/iOS
 平台包使用纯数字 core；原生客户端授权元数据仍上报完整逻辑版本。当前 deb 仅作为手动下载
-Artifact，prerelease 的 Debian 版本排序不作为 apt 升级通道承诺。
+Artifact，prerelease 的 Debian 版本排序不作为 apt 升级通道承诺。如果 Tag 含
+`+build-metadata`，GHCR 不能使用原始加号，workflow 会把它映射为下划线（例如
+`v1.2.3+build.5` → `v1.2.3_build.5`）；GitHub Release 文件名仍保留原始 Tag。
 
 - `Package A · Linux Node` 构建 Linux x86_64 A bundle、安装器和 `SHA256SUMS`。下载并解压
   `termflow-node-linux-x86_64` Artifact 后，可在该目录离线安装：
