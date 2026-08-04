@@ -92,9 +92,14 @@ describe('NativeConnectView', () => {
 
   it.each([
     {
-      name: 'offline or missing HTTP capability',
+      name: 'offline server',
       failure: () => new ApiError('offline'),
       expected: '无法连接服务器。请检查服务器地址、网络连接和本机服务是否正在运行。',
+    },
+    {
+      name: 'invalid HTTP capability',
+      failure: () => new ApiError('http_capability_denied'),
+      expected: '客户端网络权限配置无效。请升级或重新安装 TermFlow。',
     },
     {
       name: 'user cancellation',

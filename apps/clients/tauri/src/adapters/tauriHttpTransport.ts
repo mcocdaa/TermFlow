@@ -8,6 +8,17 @@ const PUBLIC_PATHS = new Set(['/.well-known/oauth-authorization-server', '/healt
 
 function safePath(path: string) { return path.startsWith('/') && !path.startsWith('//') && !path.includes('://') && !path.includes('\\') }
 
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return typeof error === 'string' ? error : ''
+}
+
+function isHttpCapabilityFailure(error: unknown): boolean {
+  const message = errorMessage(error).toLowerCase()
+  return message.includes('error deserializing scope:')
+    || message.includes('url not allowed on the configured scope:')
+}
+
 export function createTauriHttpTransport(): HttpTransport {
   return {
     async request(path: `/${string}`, request: HttpRequest) {
@@ -57,6 +68,7 @@ export function createTauriHttpTransport(): HttpTransport {
         return { status: response.status, headers: response.headers, body }
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') throw new HttpTransportError('aborted')
+        if (isHttpCapabilityFailure(error)) throw new HttpTransportError('http_capability_denied')
         throw new HttpTransportError('offline')
       }
     },
