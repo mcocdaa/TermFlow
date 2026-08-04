@@ -1,5 +1,5 @@
 from collections.abc import Callable, Iterator
-from types import SimpleNamespace
+from typing import NamedTuple
 from uuid import UUID, uuid4
 
 import pytest
@@ -7,6 +7,17 @@ from fastapi.testclient import TestClient
 from termflow_control_plane.app import create_app
 from termflow_control_plane.config import Settings
 from termflow_control_plane.persistence.database import Database
+
+
+class ProvisionedComputer(NamedTuple):
+    installation_id: UUID
+    installation_token: str
+
+
+class ProvisionedTerm(NamedTuple):
+    computer: ProvisionedComputer
+    instance_id: UUID
+    instance_token: str
 
 
 @pytest.fixture
@@ -35,9 +46,17 @@ def admin_headers() -> dict[str, str]:
 def provision_computer(
     client: TestClient,
     admin_headers: dict[str, str],
-) -> Callable[..., SimpleNamespace]:
-    def provision(**metadata: str) -> SimpleNamespace:
-        enrollment = client.post("/api/v1/enrollment-tokens", headers=admin_headers)
+) -> Callable[..., ProvisionedComputer]:
+    def provision(
+        *,
+        display_name: str | None = None,
+        **metadata: str,
+    ) -> ProvisionedComputer:
+        enrollment = client.post(
+            "/api/v1/enrollment-tokens",
+            headers=admin_headers,
+            json={"display_name": display_name} if display_name is not None else None,
+        )
         enrollment.raise_for_status()
         install_payload = {
             "enrollment_token": enrollment.json()["token"],
@@ -46,7 +65,7 @@ def provision_computer(
         installed = client.post("/api/v1/installations/enroll", json=install_payload)
         installed.raise_for_status()
         response = installed.json()
-        return SimpleNamespace(
+        return ProvisionedComputer(
             installation_id=UUID(str(response["installation_id"])),
             installation_token=str(response["installation_token"]),
         )
@@ -57,15 +76,15 @@ def provision_computer(
 @pytest.fixture
 def provision_term(
     client: TestClient,
-    provision_computer: Callable[..., SimpleNamespace],
-) -> Callable[..., SimpleNamespace]:
+    provision_computer: Callable[..., ProvisionedComputer],
+) -> Callable[..., ProvisionedTerm]:
     def provision(
         *,
-        computer: SimpleNamespace | None = None,
+        computer: ProvisionedComputer | None = None,
         instance_id: UUID | None = None,
         name: str = "term",
         **computer_metadata: str,
-    ) -> SimpleNamespace:
+    ) -> ProvisionedTerm:
         owner = computer or provision_computer(**computer_metadata)
         term_id = instance_id or uuid4()
         registered = client.post(
@@ -75,7 +94,7 @@ def provision_term(
         )
         registered.raise_for_status()
         response = registered.json()
-        return SimpleNamespace(
+        return ProvisionedTerm(
             computer=owner,
             instance_id=term_id,
             instance_token=str(response["instance_token"]),
