@@ -100,14 +100,25 @@ impl NativeLogger {
                 value.set_fragment(None);
                 value.to_string()
             });
+        let safe_event: String = event
+            .chars()
+            .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+            .take(64)
+            .collect();
+        if safe_event.is_empty() {
+            return;
+        }
+        let safe_level = level.filter(|value| matches!(*value, "info" | "warn" | "error"));
+        let safe_request_id = request_id.map(|value| value.chars().take(128).collect::<String>());
+        let safe_error_code = error_code.map(|value| value.chars().take(64).collect::<String>());
         let record = Event {
             timestamp,
             component: "tauri",
-            event,
-            level,
+            event: &safe_event,
+            level: safe_level,
             issuer: safe_issuer,
-            request_id,
-            error_code,
+            request_id: safe_request_id.as_deref(),
+            error_code: safe_error_code.as_deref(),
         };
         if let Ok(mut line) = serde_json::to_vec(&record) {
             line.push(b'\n');
