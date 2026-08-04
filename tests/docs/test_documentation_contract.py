@@ -194,6 +194,7 @@ def test_readme_documents_offline_artifact_install_and_local_image_run() -> None
         "docker load -i termflow-control-plane.tar",
         "docker run -d --name termflow-control-plane",
         'IMAGE_NAME="$(docker load -i termflow-control-plane.tar',
+        'TERMFLOW_ALLOW_INSECURE_LOOPBACK="${TERMFLOW_ALLOW_INSECURE_LOOPBACK:-true}"',
         "curl -fsS http://127.0.0.1:8765/healthz",
     ):
         assert phrase in readme

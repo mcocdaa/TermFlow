@@ -73,6 +73,7 @@ docker run -d --name termflow-control-plane --restart unless-stopped \
   --volume "${TERMFLOW_DATA_VOLUME:-termflow-data}:/app/data" \
   --env TERMFLOW_DATABASE_URL=sqlite+aiosqlite:////app/data/termflow.db \
   --env TERMFLOW_STATIC_DIR=/app/frontend-dist \
+  --env TERMFLOW_ALLOW_INSECURE_LOOPBACK="${TERMFLOW_ALLOW_INSECURE_LOOPBACK:-true}" \
   --env TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE=/app/data/totp-master-key \
   "$IMAGE_NAME"
 curl -fsS http://127.0.0.1:8765/healthz
