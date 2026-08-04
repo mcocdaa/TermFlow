@@ -5,6 +5,7 @@
     <p v-if="loading" class="muted">正在读取 Computers…</p>
     <ComputerTable v-else :computers="computers" @remove="removeComputer" />
     <EnrollmentDialog v-if="showEnrollment" @added="onComputerAdded" @closed="showEnrollment = false" />
+    <p v-if="deleteNotice" data-delete-notice class="computer-delete-toast" :data-tone="deleteNotice.tone" :role="deleteNotice.tone === 'error' ? 'alert' : 'status'">{{ deleteNotice.text }}</p>
   </section>
 </template>
 
@@ -22,7 +23,22 @@ const loading = ref(true)
 const message = ref('')
 const showEnrollment = ref(false)
 const deletingId = ref<string | null>(null)
+type DeleteNotice = { text: string; tone: 'success' | 'error' }
+const deleteNotice = ref<DeleteNotice | null>(null)
+let deleteNoticeTimer: unknown | null = null
 const controller = new AbortController()
+function clearDeleteNoticeTimer() {
+  if (deleteNoticeTimer !== null) runtime.clock.clearTimeout(deleteNoticeTimer)
+  deleteNoticeTimer = null
+}
+function showDeleteNotice(notice: DeleteNotice) {
+  clearDeleteNoticeTimer()
+  deleteNotice.value = notice
+  deleteNoticeTimer = runtime.clock.setTimeout(() => {
+    deleteNotice.value = null
+    deleteNoticeTimer = null
+  }, 3_000)
+}
 async function loadComputers() {
   loading.value = true
   try { computers.value = (await runtime.api.computers.list(controller.signal)).computers }
@@ -35,8 +51,8 @@ async function removeComputer(computer: ComputerSummary) {
   try {
     await runtime.api.computers.remove(computer.installation_id)
     computers.value = computers.value.filter((candidate) => candidate.installation_id !== computer.installation_id)
-    message.value = '已删除'
-  } catch (error) { message.value = error instanceof ApiError ? error.message : '无法删除电脑。' }
+    showDeleteNotice({ text: '已删除', tone: 'success' })
+  } catch (error) { showDeleteNotice({ text: error instanceof ApiError ? error.message : '无法删除电脑。', tone: 'error' }) }
   finally { deletingId.value = null }
 }
 async function onComputerAdded() {
@@ -46,5 +62,8 @@ async function onComputerAdded() {
   if (!message.value || message.value === '已添加') message.value = '已添加'
 }
 onMounted(() => { void loadComputers() })
-onBeforeUnmount(() => controller.abort())
+onBeforeUnmount(() => {
+  controller.abort()
+  clearDeleteNoticeTimer()
+})
 </script>

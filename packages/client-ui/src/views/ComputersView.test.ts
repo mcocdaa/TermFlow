@@ -21,7 +21,7 @@ function mountComputers(runtime: ClientRuntime) {
 }
 
 describe('ComputersView', () => {
-  it('renders four Chinese columns, one online Term pill, and saves a validated display name', async () => {
+  it('renders five Chinese columns, one online Term pill, and saves a validated display name', async () => {
     const list = vi.fn().mockResolvedValue({ computers: [computer] })
     const rename = vi.fn().mockResolvedValue({ ...computer, display_name: '构建主机' })
     const runtime = createFakeRuntime({ api: { computers: { list, rename } } as unknown as ClientRuntime['api'] })
@@ -52,7 +52,7 @@ describe('ComputersView', () => {
     expect(rename).toHaveBeenCalledWith('machine-1', '构建主机')
   })
 
-  it('confirms and removes an offline Computer while retaining the disabled online action', async () => {
+  it('confirms and removes an offline Computer with a dismissing bottom success toast', async () => {
     const offlineComputer = {
       ...computer,
       installation_id: 'machine-offline',
@@ -62,7 +62,18 @@ describe('ComputersView', () => {
     }
     const list = vi.fn().mockResolvedValue({ computers: [computer, offlineComputer] })
     const remove = vi.fn().mockResolvedValue(undefined)
-    const runtime = createFakeRuntime({ api: { computers: { list, remove } } as unknown as ClientRuntime['api'] })
+    let dismissNotice: (() => void) | undefined
+    const clearTimeout = vi.fn()
+    const runtime = createFakeRuntime({
+      api: { computers: { list, remove } } as unknown as ClientRuntime['api'],
+      clock: {
+        now: () => 0,
+        setTimeout: (callback, delay) => { expect(delay).toBe(3_000); dismissNotice = callback; return 17 },
+        clearTimeout,
+        setInterval: () => 1,
+        clearInterval: () => undefined,
+      },
+    })
     const confirm = vi.spyOn(window, 'confirm')
     const wrapper = mountComputers(runtime)
     await flushPromises()
@@ -79,7 +90,47 @@ describe('ComputersView', () => {
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining('离线工作站'))
     expect(remove).toHaveBeenCalledWith('machine-offline')
     expect(wrapper.find('[data-computer-id="machine-offline"]').exists()).toBe(false)
-    expect(wrapper.get('[role="alert"]').text()).toBe('已删除')
+    const notice = wrapper.get('[data-delete-notice]')
+    expect(notice.attributes('role')).toBe('status')
+    expect(notice.attributes('data-tone')).toBe('success')
+    expect(notice.text()).toBe('已删除')
+    expect(wrapper.find('.computers-view > .form-error').exists()).toBe(false)
+    dismissNotice?.()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-delete-notice]').exists()).toBe(false)
+    wrapper.unmount()
+    expect(clearTimeout).not.toHaveBeenCalled()
+    confirm.mockRestore()
+  })
+
+  it('shows a bottom error toast when deleting a Computer fails', async () => {
+    const offlineComputer = { ...computer, installation_id: 'machine-offline', online: false, terms: [] }
+    const list = vi.fn().mockResolvedValue({ computers: [offlineComputer] })
+    const remove = vi.fn().mockRejectedValue(new Error('network failure'))
+    const clearTimeout = vi.fn()
+    const runtime = createFakeRuntime({
+      api: { computers: { list, remove } } as unknown as ClientRuntime['api'],
+      clock: {
+        now: () => 0,
+        setTimeout: () => 23,
+        clearTimeout,
+        setInterval: () => 1,
+        clearInterval: () => undefined,
+      },
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const wrapper = mountComputers(runtime)
+    await flushPromises()
+    await wrapper.get('[data-action="delete-computer"]').trigger('click')
+    await flushPromises()
+
+    const notice = wrapper.get('[data-delete-notice]')
+    expect(notice.attributes('role')).toBe('alert')
+    expect(notice.attributes('data-tone')).toBe('error')
+    expect(notice.text()).toBe('无法删除电脑。')
+    expect(wrapper.find('[data-computer-id="machine-offline"]').exists()).toBe(true)
+    wrapper.unmount()
+    expect(clearTimeout).toHaveBeenCalledWith(23)
     confirm.mockRestore()
   })
 
