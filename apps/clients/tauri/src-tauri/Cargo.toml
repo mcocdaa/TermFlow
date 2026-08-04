@@ -32,7 +32,9 @@ url = "2.5.4"
 uuid = { version = "1.17.0", features = ["v4"] }
 
 [dev-dependencies]
+regex = "1.11.1"
 tempfile = "3.20.0"
+urlpattern = "=0.3.0"
 
 [target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
 keyring = { version = "=4.1.5", features = [] }
