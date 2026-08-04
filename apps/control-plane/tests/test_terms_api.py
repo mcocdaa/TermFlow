@@ -6,27 +6,12 @@ from starlette.websockets import WebSocketDisconnect
 from termflow_protocol import MessageType, TermRenameResultPayload, WireMessage
 
 
-def _provision_term(client, admin_headers):
-    enrollment = client.post("/api/v1/enrollment-tokens", headers=admin_headers).json()["token"]
-    installation = client.post(
-        "/api/v1/installations/enroll",
-        json={"enrollment_token": enrollment, "hostname": "term-host"},
-    ).json()
-    instance_id = uuid4()
-    registration = client.post(
-        "/api/v1/instances/register",
-        headers={"Authorization": f"Bearer {installation['installation_token']}"},
-        json={"instance_id": str(instance_id), "name": "before"},
-    ).json()
-    return (
-        instance_id,
-        registration["instance_token"],
-        installation["installation_token"],
-    )
-
-
-def test_offline_term_rename_is_rejected_without_persistence(client, admin_headers) -> None:
-    instance_id, _, _ = _provision_term(client, admin_headers)
+def test_offline_term_rename_is_rejected_without_persistence(
+    client,
+    admin_headers,
+    provision_term,
+) -> None:
+    instance_id = provision_term(hostname="term-host", name="before").instance_id
     response = client.patch(
         f"/api/v1/terms/{instance_id}",
         headers=admin_headers,
@@ -38,11 +23,16 @@ def test_offline_term_rename_is_rejected_without_persistence(client, admin_heade
     assert stored.name == "before"
 
 
-def test_online_term_rename_persists_only_after_bridge_success(client, admin_headers) -> None:
-    instance_id, instance_token, _ = _provision_term(client, admin_headers)
+def test_online_term_rename_persists_only_after_bridge_success(
+    client,
+    admin_headers,
+    provision_term,
+) -> None:
+    term = provision_term(hostname="term-host", name="before")
+    instance_id = term.instance_id
     with client.websocket_connect(
         "/api/v1/bridge/connect",
-        headers={"Authorization": f"Bearer {instance_token}"},
+        headers={"Authorization": f"Bearer {term.instance_token}"},
     ) as bridge:
         with ThreadPoolExecutor(max_workers=1) as executor:
             pending = executor.submit(
@@ -83,11 +73,16 @@ def test_online_term_rename_persists_only_after_bridge_success(client, admin_hea
     assert "after" not in repr(rename_audit)
 
 
-def test_failed_bridge_rename_keeps_last_known_name(client, admin_headers) -> None:
-    instance_id, instance_token, _ = _provision_term(client, admin_headers)
+def test_failed_bridge_rename_keeps_last_known_name(
+    client,
+    admin_headers,
+    provision_term,
+) -> None:
+    term = provision_term(hostname="term-host", name="before")
+    instance_id = term.instance_id
     with client.websocket_connect(
         "/api/v1/bridge/connect",
-        headers={"Authorization": f"Bearer {instance_token}"},
+        headers={"Authorization": f"Bearer {term.instance_token}"},
     ) as bridge:
         with ThreadPoolExecutor(max_workers=1) as executor:
             pending = executor.submit(
@@ -117,8 +112,12 @@ def test_failed_bridge_rename_keeps_last_known_name(client, admin_headers) -> No
 def test_offline_delete_revokes_token_keeps_computer_and_allows_fresh_registration(
     client,
     admin_headers,
+    provision_term,
 ) -> None:
-    instance_id, old_token, installation_token = _provision_term(client, admin_headers)
+    term = provision_term(hostname="term-host", name="before")
+    instance_id = term.instance_id
+    old_token = term.instance_token
+    installation_token = term.computer.installation_token
     client.portal.call(
         client.app.state.repositories.audit.record,
         "term.before-delete",
@@ -173,12 +172,16 @@ def test_offline_delete_revokes_token_keeps_computer_and_allows_fresh_registrati
         pass
 
 
-def test_unknown_and_already_retiring_terms_return_not_found(client, admin_headers) -> None:
+def test_unknown_and_already_retiring_terms_return_not_found(
+    client,
+    admin_headers,
+    provision_term,
+) -> None:
     unknown = client.delete(f"/api/v1/terms/{uuid4()}", headers=admin_headers)
     assert unknown.status_code == 404
     assert unknown.json()["error"]["code"] == "instance_not_found"
 
-    instance_id, _, _ = _provision_term(client, admin_headers)
+    instance_id = provision_term(hostname="term-host", name="before").instance_id
     client.portal.call(client.app.state.registry.begin_retirement, instance_id)
     retiring = client.delete(f"/api/v1/terms/{instance_id}", headers=admin_headers)
     assert retiring.status_code == 404
@@ -192,11 +195,12 @@ def test_unknown_and_already_retiring_terms_return_not_found(client, admin_heade
     )
 
 
-def test_online_term_is_not_deleted(client, admin_headers) -> None:
-    instance_id, token, _ = _provision_term(client, admin_headers)
+def test_online_term_is_not_deleted(client, admin_headers, provision_term) -> None:
+    term = provision_term(hostname="term-host", name="before")
+    instance_id = term.instance_id
     with client.websocket_connect(
         "/api/v1/bridge/connect",
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Bearer {term.instance_token}"},
     ):
         online = client.delete(f"/api/v1/terms/{instance_id}", headers=admin_headers)
         assert online.status_code == 409

@@ -1,5 +1,4 @@
 import time
-from uuid import uuid4
 
 from termflow_control_plane.auth.tokens import hash_token
 from termflow_protocol import (
@@ -10,26 +9,6 @@ from termflow_protocol import (
     WindowSnapshot,
     WireMessage,
 )
-
-
-def _provision(client, admin_headers):
-    enrollment = client.post("/api/v1/enrollment-tokens", headers=admin_headers).json()["token"]
-    installation = client.post(
-        "/api/v1/installations/enroll",
-        json={
-            "enrollment_token": enrollment,
-            "hostname": "dashboard-host",
-            "platform": "Linux",
-            "client_version": "0.1.0",
-        },
-    ).json()
-    instance_id = uuid4()
-    registration = client.post(
-        "/api/v1/instances/register",
-        headers={"Authorization": f"Bearer {installation['installation_token']}"},
-        json={"instance_id": str(instance_id), "name": "old-name"},
-    ).json()
-    return installation, instance_id, registration["instance_token"]
 
 
 def _topology(name: str) -> TopologySnapshot:
@@ -76,8 +55,18 @@ def _topology(name: str) -> TopologySnapshot:
     )
 
 
-def test_dashboard_groups_terms_and_reports_live_metrics(client, admin_headers) -> None:
-    installation, instance_id, instance_token = _provision(client, admin_headers)
+def test_dashboard_groups_terms_and_reports_live_metrics(
+    client,
+    admin_headers,
+    provision_term,
+) -> None:
+    provisioned = provision_term(
+        hostname="dashboard-host",
+        platform="Linux",
+        client_version="0.1.0",
+        name="old-name",
+    )
+    instance_id = provisioned.instance_id
     client.portal.call(
         client.app.state.repositories.audit.record,
         "pane.input",
@@ -89,7 +78,7 @@ def test_dashboard_groups_terms_and_reports_live_metrics(client, admin_headers) 
     )
     with client.websocket_connect(
         "/api/v1/bridge/connect",
-        headers={"Authorization": f"Bearer {instance_token}"},
+        headers={"Authorization": f"Bearer {provisioned.instance_token}"},
     ) as bridge:
         bridge.send_text(
             WireMessage(
@@ -117,7 +106,7 @@ def test_dashboard_groups_terms_and_reports_live_metrics(client, admin_headers) 
             "computers": 1,
         }
         computer = body["computers"][0]
-        assert computer["installation_id"] == installation["installation_id"]
+        assert computer["installation_id"] == str(provisioned.computer.installation_id)
         assert computer["registered_at"].endswith("Z")
         assert computer["last_seen_at"].endswith("Z")
         assert computer["online"] is True

@@ -22,7 +22,7 @@ from termflow_protocol import (
 ORIGIN = "http://127.0.0.1:8000"
 
 
-def _provision(client, admin_headers):
+def _provision_custom_client(client, admin_headers):
     enrollment = client.post(
         "/api/v1/enrollment-tokens",
         headers=admin_headers,
@@ -70,8 +70,10 @@ def _announce_bridge(bridge, instance_id: UUID) -> None:
 def test_browser_terminal_routes_binary_and_semantic_control_frames(
     client,
     admin_headers,
+    provision_term,
 ) -> None:
-    instance_id, instance_token = _provision(client, admin_headers)
+    term = provision_term(name="terminal")
+    instance_id, instance_token = term.instance_id, term.instance_token
     _login(client)
     with client.websocket_connect(
         "/api/v1/bridge/connect",
@@ -192,8 +194,10 @@ def test_browser_terminal_routes_binary_and_semantic_control_frames(
 def test_browser_terminal_resumes_same_stream_after_transport_disconnect(
     client,
     admin_headers,
+    provision_term,
 ) -> None:
-    instance_id, instance_token = _provision(client, admin_headers)
+    term = provision_term(name="terminal")
+    instance_id, instance_token = term.instance_id, term.instance_token
     _login(client)
     base_url = f"/api/v1/terms/{instance_id}/terminal"
     with client.websocket_connect(
@@ -275,8 +279,13 @@ def test_browser_terminal_resumes_same_stream_after_transport_disconnect(
             assert closing.type is MessageType.TERMINAL_CLOSE
 
 
-def test_terminal_auth_origin_offline_and_native_bearer(client, admin_headers) -> None:
-    instance_id, instance_token = _provision(client, admin_headers)
+def test_terminal_auth_origin_offline_and_native_bearer(
+    client,
+    admin_headers,
+    provision_term,
+) -> None:
+    term = provision_term(name="terminal")
+    instance_id, instance_token = term.instance_id, term.instance_token
     _login(client)
     url = f"/api/v1/terms/{instance_id}/terminal"
 
@@ -305,8 +314,10 @@ def test_terminal_auth_origin_offline_and_native_bearer(client, admin_headers) -
 def test_terminal_rejects_bridge_without_full_terminal_capability(
     client,
     admin_headers,
+    provision_term,
 ) -> None:
-    instance_id, instance_token = _provision(client, admin_headers)
+    term = provision_term(name="terminal")
+    instance_id, instance_token = term.instance_id, term.instance_token
     with client.websocket_connect(
         "/api/v1/bridge/connect",
         headers={"Authorization": f"Bearer {instance_token}"},
@@ -330,8 +341,10 @@ def test_terminal_rejects_bridge_without_full_terminal_capability(
 def test_new_owner_replaces_old_and_logout_closes_cookie_terminal(
     client,
     admin_headers,
+    provision_term,
 ) -> None:
-    instance_id, instance_token = _provision(client, admin_headers)
+    term = provision_term(name="terminal")
+    instance_id, instance_token = term.instance_id, term.instance_token
     _login(client)
     url = f"/api/v1/terms/{instance_id}/terminal"
     with client.websocket_connect(
@@ -366,7 +379,7 @@ def test_session_capacity_eviction_closes_established_cookie_terminal(tmp_path) 
     app = create_app(settings=settings, database=Database(settings.database_url))
     with TestClient(app) as client:
         headers = {"Authorization": "Bearer admin-token-that-is-long-enough-for-tests"}
-        instance_id, instance_token = _provision(client, headers)
+        instance_id, instance_token = _provision_custom_client(client, headers)
         _login(client)
         with client.websocket_connect(
             "/api/v1/bridge/connect",
@@ -385,8 +398,10 @@ def test_session_capacity_eviction_closes_established_cookie_terminal(tmp_path) 
 def test_plain_websocket_disconnect_preserves_aggregate_input_audit(
     client,
     admin_headers,
+    provision_term,
 ) -> None:
-    instance_id, instance_token = _provision(client, admin_headers)
+    term = provision_term(name="terminal")
+    instance_id, instance_token = term.instance_id, term.instance_token
     with client.websocket_connect(
         "/api/v1/bridge/connect",
         headers={"Authorization": f"Bearer {instance_token}"},
@@ -428,7 +443,7 @@ def test_oversized_binary_and_json_terminal_bytes_close_only_that_terminal(
     app = create_app(settings=settings, database=Database(settings.database_url))
     with TestClient(app) as client:
         headers = {"Authorization": "Bearer admin-token-that-is-long-enough-for-tests"}
-        instance_id, instance_token = _provision(client, headers)
+        instance_id, instance_token = _provision_custom_client(client, headers)
         with client.websocket_connect(
             "/api/v1/bridge/connect",
             headers={"Authorization": f"Bearer {instance_token}"},
@@ -459,8 +474,10 @@ def test_oversized_binary_and_json_terminal_bytes_close_only_that_terminal(
 def test_bridge_closed_event_is_forwarded_as_browser_control(
     client,
     admin_headers,
+    provision_term,
 ) -> None:
-    instance_id, instance_token = _provision(client, admin_headers)
+    term = provision_term(name="terminal")
+    instance_id, instance_token = term.instance_id, term.instance_token
     with client.websocket_connect(
         "/api/v1/bridge/connect",
         headers={"Authorization": f"Bearer {instance_token}"},
@@ -488,8 +505,10 @@ def test_bridge_closed_event_is_forwarded_as_browser_control(
 def test_bridge_reconnect_requests_only_proven_terminal_stream_cursor(
     client,
     admin_headers,
+    provision_term,
 ) -> None:
-    instance_id, instance_token = _provision(client, admin_headers)
+    term = provision_term(name="terminal")
+    instance_id, instance_token = term.instance_id, term.instance_token
     bridge_headers = {"Authorization": f"Bearer {instance_token}"}
     url = f"/api/v1/terms/{instance_id}/terminal"
     first_context = client.websocket_connect(
