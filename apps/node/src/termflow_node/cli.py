@@ -7,6 +7,7 @@ import json
 import os
 import signal
 from typing import Annotated
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import typer
@@ -66,7 +67,11 @@ def login(
     try:
         response = asyncio.run(ControlPlaneClient().enroll(normalized_server, enrollment_token))
     except Exception:
-        log_event("enrollment_failed", server_host=normalized_server.host, status="error")
+        log_event(
+            "enrollment_failed",
+            server_host=urlsplit(normalized_server).hostname or "",
+            status="error",
+        )
         raise
     config = InstallationConfig.model_validate(
         {
