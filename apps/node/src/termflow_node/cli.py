@@ -20,6 +20,7 @@ from termflow_node.instances.activation import ActivationError, default_instance
 from termflow_node.instances.manager import InstanceManager
 from termflow_node.instances.models import LocalInstance, RemoteAccessState
 from termflow_node.instances.store import InstanceStore
+from termflow_node.logging import configure_logging, log_event
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -36,6 +37,8 @@ def main(
     ] = False,
 ) -> None:
     """Run and manage local TermFlow Instances."""
+    configure_logging()
+    log_event("cli_started", command="version" if version else "termflow")
     if version:
         typer.echo(__version__)
         raise typer.Exit()
@@ -60,7 +63,11 @@ def login(
     if store.exists() and not force:
         raise typer.BadParameter("A login already exists; pass --force to replace it.")
     normalized_server = validate_server_url(server)
-    response = asyncio.run(ControlPlaneClient().enroll(normalized_server, enrollment_token))
+    try:
+        response = asyncio.run(ControlPlaneClient().enroll(normalized_server, enrollment_token))
+    except Exception:
+        log_event("enrollment_failed", server_host=normalized_server.host, status="error")
+        raise
     config = InstallationConfig.model_validate(
         {
             "server_url": normalized_server,
@@ -69,6 +76,12 @@ def login(
         }
     )
     store.save(config)
+    log_event(
+        "enrollment_succeeded",
+        server_host=config.server_url.host,
+        instance_id=str(config.installation_id),
+        status="ok",
+    )
     typer.echo(f"Installation {config.installation_id} enrolled at {config.server_url.host}")
 
 
@@ -126,11 +139,23 @@ def activate(identifier: str) -> None:
     try:
         result = asyncio.run(activator.activate(identifier))
     except ActivationError as exc:
+        log_event("activation_failed", operation="activate", status="error")
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     if result.activated:
+        log_event(
+            "activation_succeeded",
+            operation="activate",
+            instance_id=str(result.instance.instance_id),
+        )
         typer.echo(f"Activated {result.instance.instance_id}")
     else:
+        log_event(
+            "activation_succeeded",
+            operation="activate",
+            instance_id=str(result.instance.instance_id),
+            status="already_active",
+        )
         typer.echo(f"Remote access already active for {result.instance.instance_id}")
 
 
@@ -205,6 +230,7 @@ async def _run_bridge(instance_id: UUID) -> None:
     from termflow_node.tmux.runner import TmuxRunner
     from termflow_node.tmux.topology import TopologyReader
 
+    log_event("bridge_started", instance_id=str(instance_id), status="starting")
     installation = ConfigStore.default().load()
     store = InstanceStore.default()
     instance = InstanceManager(store).current(instance_id)
@@ -266,7 +292,10 @@ async def _run_bridge(instance_id: UUID) -> None:
     loop = asyncio.get_running_loop()
     for signal_number in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(signal_number, shutdown.set)
-    await runtime.run(shutdown)
+    try:
+        await runtime.run(shutdown)
+    finally:
+        log_event("bridge_stopped", instance_id=str(instance_id), status="stopped")
 
 
 @app.command("_bridge", hidden=True)

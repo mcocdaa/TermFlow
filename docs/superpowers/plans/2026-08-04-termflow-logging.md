@@ -37,7 +37,7 @@
 
 - [ ] **Step 5: Run the focused tests and the existing A suite**
 
-  Run: `uv run --package termflow-node pytest apps/node/tests/test_logging.py apps/node/tests/test_instances.py apps/node/tests/test_cli.py -q`
+  Run: `uv run --package termflow-node pytest apps/node/tests/test_logging.py apps/node/tests/test_instance_store.py apps/node/tests/test_cli_lifecycle.py -q`
 
   Expected: all focused tests pass.
 
