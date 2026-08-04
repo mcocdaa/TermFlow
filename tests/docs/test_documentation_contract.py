@@ -175,7 +175,7 @@ def test_operations_docs_explain_manual_and_release_client_boundaries() -> None:
         "14 天",
         "termflow-control-plane.tar",
         "docker load",
-        'TERMFLOW_RELEASE_BASE_URL="file://$PWD"',
+        "Path.cwd().as_uri()",
         "workflow_call",
         "*-setup.exe",
         "SmartScreen",
@@ -184,6 +184,19 @@ def test_operations_docs_explain_manual_and_release_client_boundaries() -> None:
         "--bundles nsis",
     ):
         assert phrase in operations
+
+
+def test_readme_documents_offline_artifact_install_and_local_image_run() -> None:
+    readme = Path("README.md").read_text()
+
+    for phrase in (
+        "Path.cwd().as_uri()",
+        "docker load -i termflow-control-plane.tar",
+        "docker run -d --name termflow-control-plane",
+        'IMAGE_NAME="$(docker load -i termflow-control-plane.tar',
+        "curl -fsS http://127.0.0.1:8765/healthz",
+    ):
+        assert phrase in readme
 
 
 def test_docs_distinguish_test_artifacts_from_permanent_release_assets() -> None:

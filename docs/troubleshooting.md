@@ -32,7 +32,8 @@ tmux -V
 手动 A 的离线安装失败时，确认已把 Artifact 完整解压到同一目录，并从该目录执行：
 
 ```bash
-TERMFLOW_RELEASE_BASE_URL="file://$PWD" ./install-termflow-node.sh
+TERMFLOW_RELEASE_BASE_URL="$(python3 -c 'from pathlib import Path; print(Path.cwd().as_uri())')" \
+  ./install-termflow-node.sh
 ```
 
 不要单独移动安装器、bundle 或 `SHA256SUMS`，也不要删除校验步骤。

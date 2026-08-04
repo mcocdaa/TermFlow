@@ -45,6 +45,42 @@ Android 和 iOS Simulator 包。手动 Artifact 使用稳定名称并保留 14 �
 和创建永久 GitHub Release。下载 B 的手动 tar 后可执行
 `docker load -i termflow-control-plane.tar`，但它不会自动修改现有 Compose 部署。
 
+从 Actions 下载的 artifact 可按下面方式做离线安装验收。A 的安装器通过
+`Path.cwd().as_uri()` 把本地目录转换为 `file://` URL，因此下载目录包含空格或括号时也能工作：
+
+```bash
+cd "/path/to/termflow-node-linux-x86_64"
+TERMFLOW_RELEASE_BASE_URL="$(python3 -c 'from pathlib import Path; print(Path.cwd().as_uri())')" \
+  ./install-termflow-node.sh
+~/.local/bin/termflow --version
+~/.local/bin/termflow doctor
+```
+
+B + Web C 的 tar 先导入 Docker，并保留 `docker load` 输出的完整镜像名；从源码 Compose
+切换到该 artifact 时只执行 `down`，不要加 `--volumes`，这样会保留 `termflow-data`：
+
+```bash
+cd "/path/to/termflow-control-plane"
+IMAGE_NAME="$(docker load -i termflow-control-plane.tar | sed -n 's/^Loaded image: //p')"
+test -n "$IMAGE_NAME"
+
+cd /path/to/TermFlow
+set -a; source .env; set +a
+docker compose --env-file .env -f deploy/compose.yaml down
+docker run -d --name termflow-control-plane --restart unless-stopped \
+  --env-file .env \
+  --publish "127.0.0.1:${TERMFLOW_HOST_PORT:-8765}:8000" \
+  --volume "${TERMFLOW_DATA_VOLUME:-termflow-data}:/app/data" \
+  --env TERMFLOW_DATABASE_URL=sqlite+aiosqlite:////app/data/termflow.db \
+  --env TERMFLOW_STATIC_DIR=/app/frontend-dist \
+  --env TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE=/app/data/totp-master-key \
+  "$IMAGE_NAME"
+curl -fsS http://127.0.0.1:8765/healthz
+```
+
+上面第二段中的 `/path/to/TermFlow` 替换为本仓库路径；如果没有旧的 Compose 服务，
+`docker compose ... down` 也可以直接执行。这个流程不会删除或重建数据卷。
+
 如何从 Actions 页面或 `gh workflow run` 手动构建、如何按平台选择 C、Tag 触发顺序、产物保留期
 和签名限制，见 [GitHub Actions 构建与发布](docs/github-actions.md)。
 

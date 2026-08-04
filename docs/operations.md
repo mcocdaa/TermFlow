@@ -159,8 +159,11 @@ Artifact，prerelease 的 Debian 版本排序不作为 apt 升级通道承诺。
   `termflow-node-linux-x86_64` Artifact 后，可在该目录离线安装：
 
   ```bash
-  TERMFLOW_RELEASE_BASE_URL="file://$PWD" ./install-termflow-node.sh
+  TERMFLOW_RELEASE_BASE_URL="$(python3 -c 'from pathlib import Path; print(Path.cwd().as_uri())')" \
+    ./install-termflow-node.sh
   ```
+
+  使用 `Path.cwd().as_uri()` 是为了正确编码 Windows 下载目录中的空格和括号。
 
 - `Package B + Web C · Control Plane` 构建、启动验证并重新导入 amd64 Docker 镜像。下载并
   解压 `termflow-control-plane` Artifact 后，可导入本机 Docker：
