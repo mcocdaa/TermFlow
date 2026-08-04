@@ -28,7 +28,8 @@ Bridge 主动建立并长期维护到 B 的一条 WSS，这让 NAT 后面的电�
 
 Web C 看到的不是 B 拼装的 Pane 文本，而是 A 在 PTY 中附着的真实 tmux client 输出，
 因此状态栏、边框、Window 切换、copy mode 和前缀键都由 tmux 自己绘制。Web C 是协议
-独立的 C；它与 B 放进同一 Docker 镜像只是部署选择。
+独立的 C；它与 B 放进同一 Docker 镜像只是部署选择。这个镜像的 runtime 只提供 B 的
+HTTP/WS 进程和 Web 静态文件，A、Tauri 工程以及构建工具不在镜像里。
 
 ## 尺寸与显示
 
@@ -49,5 +50,6 @@ NATS、Kafka 或其他外部消息系统。
 ## 客户端与未来 Agent
 
 Web C 只通过公开 HTTP/WebSocket 契约与 B 通信，不读取 B 数据库。未来 App、EXE、Linux
-桌面包与它平级复用同一契约。STT 可在 C 或独立服务完成；未来规划型 Agent 可放在 B
+桌面包与它平级复用同一契约，并通过系统浏览器的 OAuth/PKCE 授权而不是复制 Web 登录逻辑。
+STT 可在 C 或独立服务完成；未来规划型 Agent 可放在 B
 附近，但必须经过同一鉴权、审计和输入接口，不能绕过协议直接碰 A 的 tmux socket。

@@ -5,11 +5,15 @@
 向 shell Pane 输入普通文字本质上可以执行命令。Admin 控制权限等同于对这些 tmux
 会话的可信终端控制权限；TermFlow 不把已认证控制方的文字做命令沙箱。
 
-## 三类凭据
+## 凭据与授权载体
 
 - Admin Token：管理 B，查看和控制全部 Instance；
 - Installation Credential：只能为本机注册 Instance；
 - Instance Credential：只能连接并上报一个指定 Instance。
+
+Web C 的浏览器会话和原生客户端 OAuth access/refresh token 是另外两种短期授权载体：它们
+都受当前认证 epoch 约束，不能替代 Admin Token 管理 B。原生授权使用 PKCE、DPoP 和系统浏览器
+确认；Tauri 页面不把 Admin Token 写入客户端存储。
 
 B 只存 token 的 SHA-256 哈希；Web C 创建注册码时还可以随哈希保存用户指定的非机密
 Computer 显示名。注册码最多成功使用一次且默认 60 秒过期；B 在同一次原子消费中取得
@@ -18,10 +22,18 @@ Computer 显示名。注册码最多成功使用一次且默认 60 秒过期；B
 失效。A 必须保存可用的 Installation/Instance 原始凭据，因此它们只写入本机明确的
 `0600` 文件；父目录为 `0700`，普通模型 repr、stdout 和日志保持遮蔽。
 
-Web C 的登录页把 Admin Token 交换为 8 小时内存会话。浏览器只得到 `HttpOnly`、
-`SameSite=Strict` Cookie；HTTPS 部署使用 `Secure` 和 `__Host-` 前缀。WebSocket 握手还
-检查精确 Origin allowlist。Admin Token 不写 localStorage、sessionStorage、URL 或前端
-日志。curl 和原生客户端仍可使用 Bearer Header。
+Web C 的登录页把 Admin Token 交换为 8 小时内存会话。启用双重认证后，第一次提交 Token
+只会得到短时挑战，必须再提交验证器生成的一次性验证码；成功后才签发会话。浏览器只得到
+`HttpOnly`、`SameSite=Strict` Cookie；HTTPS 部署使用 `Secure` 和 `__Host-` 前缀。WebSocket
+握手还检查精确 Origin allowlist。Admin Token 不写 localStorage、sessionStorage、URL 或
+前端日志。TOTP 关闭时 curl 可直接使用 Admin Bearer Header；TOTP 开启后应先用验证码换取
+有 scopes 的 CLI token，再用该 Bearer 访问资源。原生客户端在系统浏览器完成授权后，使用
+OAuth access/refresh token 和 DPoP 访问资源。
+
+TOTP 的主密钥只由 B 读取：单实例默认在 `termflow-data` 中自动生成 0600 文件，多实例必须
+显式共享同一密钥。验证器丢失不能在 Web C、App 或 EXE 中恢复；必须由拥有 Docker 主机权限的
+管理员在容器内运行 `termflow-control auth totp reset`。认证失败和验证码尝试由 B 限速，
+挑战过期或超过尝试次数后不会继续接受该挑战。
 
 Computer 的注册时间由 B 创建 Installation 时记录，最近在线时间由 B 收到 A 的注册、
 心跳或拓扑更新时记录；两者都以 UTC 存储和传输，不依赖 A 的本地时钟。Web C 按当前
@@ -37,6 +49,9 @@ socket 的同 OS 用户进程视为可信。`termflow kill` 只操作精确解�
 ## 网络与持久化
 
 公网 B 必须使用 HTTPS/WSS；明文 HTTP/WS 只允许 `127.0.0.1`、`localhost` 或 `::1`。
+DNS、TLS、反向代理和可选 mTLS 由部署者的外部边缘服务负责，TermFlow 容器只接收代理转发的
+HTTP/WS。`TERMFLOW_PUBLIC_BASE_URL` 是用户、A、Web C 和原生客户端共同使用的 canonical
+origin；添加电脑返回的登录命令也从它生成。
 token 不放 URL。B 不持久化终端输入、输出、屏幕快照或录像；SQLite 和审计只含身份、
 字节数、动作、结果等元数据。A 的短期输出环只存在于 Bridge 内存，进程退出即消失。
 
