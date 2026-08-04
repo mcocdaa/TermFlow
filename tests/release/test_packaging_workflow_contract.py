@@ -142,6 +142,15 @@ def test_client_workflow_is_manual_and_reusable() -> None:
     }
     assert "release_tag" in triggers["workflow_call"]["inputs"]
     assert triggers["workflow_call"]["inputs"]["version"]["default"] == ""
+    assert workflow["permissions"] == {"contents": "read"}
+    assert set(workflow["jobs"]) == {
+        "validate-version",
+        "windows-nsis",
+        "linux-packages",
+        "macos-packages",
+        "android-debug-apk",
+        "ios-simulator-app",
+    }
 
 
 def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() -> None:
@@ -157,6 +166,17 @@ def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() ->
         "ios-simulator-aarch64",
     ):
         assert f"${{{{ needs.validate-version.outputs.artifact_prefix }}}}-{suffix}" in text
+    for required in (
+        "--bundles nsis",
+        "--bundles deb,appimage",
+        "--bundles app,dmg",
+        "android build --debug --ci --target aarch64 --apk",
+        "ios build --debug --ci --target aarch64-sim --no-sign",
+        "actions/upload-artifact@v4",
+    ):
+        assert required in text
+    for forbidden in ("contents: write", "gh release", "softprops/action-gh-release"):
+        assert forbidden not in text
 
 
 def test_every_native_runner_materializes_before_reading_package_manifests() -> None:
