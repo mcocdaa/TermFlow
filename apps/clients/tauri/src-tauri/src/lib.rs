@@ -2,6 +2,7 @@ mod auth;
 mod diagnostics;
 
 use auth::NativeAuthState;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
