@@ -14,6 +14,14 @@ export function createTauriKey(issuer: string): NativeKeyPort {
 
 let pendingCallback: { ready: Promise<void> } | undefined
 
+function safeErrorDetail(error: unknown): string {
+  const raw = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+  return raw
+    .replace(/https?:\/\/[^\s]+/gi, '<url>')
+    .replace(/termflow:\/\/[^\s]+/gi, '<callback>')
+    .slice(0, 256)
+}
+
 export const tauriAuthorizationBrowser: AuthorizationBrowserPort = {
   open: async (url) => {
     const pending = pendingCallback
@@ -21,7 +29,7 @@ export const tauriAuthorizationBrowser: AuthorizationBrowserPort = {
     await pending.ready
     void logNativeEvent({ event: 'browser_open_started', issuer: new URL(url).origin })
     try { await openUrl(url) } catch (error) {
-      void logNativeEvent({ event: 'browser_open_failed', issuer: new URL(url).origin, level: 'error', errorCode: 'browser_open_failed' })
+      void logNativeEvent({ event: 'browser_open_failed', issuer: new URL(url).origin, level: 'error', errorCode: 'browser_open_failed', errorDetail: safeErrorDetail(error) })
       throw error
     }
   },

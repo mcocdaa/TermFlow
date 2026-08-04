@@ -31,6 +31,8 @@ struct Event<'a> {
     request_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error_code: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_detail: Option<&'a str>,
 }
 
 impl NativeLogger {
@@ -81,6 +83,7 @@ impl NativeLogger {
         issuer: Option<&str>,
         request_id: Option<&str>,
         error_code: Option<&str>,
+        error_detail: Option<&str>,
     ) {
         let Ok(mut inner) = self.inner.lock() else {
             return;
@@ -111,6 +114,8 @@ impl NativeLogger {
         let safe_level = level.filter(|value| matches!(*value, "info" | "warn" | "error"));
         let safe_request_id = request_id.map(|value| value.chars().take(128).collect::<String>());
         let safe_error_code = error_code.map(|value| value.chars().take(64).collect::<String>());
+        let safe_error_detail =
+            error_detail.map(|value| value.chars().take(256).collect::<String>());
         let record = Event {
             timestamp,
             component: "tauri",
@@ -119,6 +124,7 @@ impl NativeLogger {
             issuer: safe_issuer,
             request_id: safe_request_id.as_deref(),
             error_code: safe_error_code.as_deref(),
+            error_detail: safe_error_detail.as_deref(),
         };
         if let Ok(mut line) = serde_json::to_vec(&record) {
             line.push(b'\n');
@@ -136,6 +142,7 @@ pub fn native_log(
     issuer: Option<String>,
     request_id: Option<String>,
     error_code: Option<String>,
+    error_detail: Option<String>,
 ) {
     logger.event(
         &event,
@@ -143,6 +150,7 @@ pub fn native_log(
         issuer.as_deref(),
         request_id.as_deref(),
         error_code.as_deref(),
+        error_detail.as_deref(),
     );
 }
 

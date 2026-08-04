@@ -34,4 +34,24 @@ describe('tauriAuthorizationBrowser', () => {
     receive?.(['termflow://auth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111'])
     await expect(callback).resolves.toContain('transaction_id=')
   })
+
+  it('records the sanitized system-browser error detail', async () => {
+    let registrationReady: ((unlisten: () => void) => void) | undefined
+    mocks.onOpenUrl.mockImplementation(() => new Promise(resolve => { registrationReady = resolve }))
+    mocks.openUrl.mockRejectedValueOnce(new Error('ShellExecute failed for https://relay.example/auth?code=secret'))
+
+    const callback = tauriAuthorizationBrowser.waitForCallback('state-2')
+    const opened = tauriAuthorizationBrowser.open('https://relay.example/api/v1/oauth/authorize?state=state-2')
+    await Promise.resolve()
+    registrationReady?.(vi.fn())
+    await expect(opened).rejects.toThrow('ShellExecute failed')
+    await Promise.resolve()
+
+    expect(mocks.invoke).toHaveBeenCalledWith('native_log', expect.objectContaining({
+      event: 'browser_open_failed',
+      errorCode: 'browser_open_failed',
+      errorDetail: 'Error: ShellExecute failed for <url>',
+    }))
+    callback.then(() => undefined, () => undefined)
+  })
 })

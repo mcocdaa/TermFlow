@@ -6,6 +6,7 @@ export type NativeLogEvent = {
   issuer?: string | undefined
   requestId?: string | undefined
   errorCode?: string | undefined
+  errorDetail?: string | undefined
 }
 
 /** Best-effort native diagnostics; failures must never block authorization. */
@@ -17,6 +18,7 @@ export async function logNativeEvent(entry: NativeLogEvent): Promise<void> {
       issuer: entry.issuer,
       requestId: entry.requestId,
       errorCode: entry.errorCode,
+      errorDetail: entry.errorDetail,
     })
   } catch {
     // Logging is intentionally non-fatal, especially during first launch.

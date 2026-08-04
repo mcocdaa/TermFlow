@@ -15,6 +15,7 @@ describe('native diagnostics', () => {
       issuer: 'https://relay.example',
       requestId: 'req-1',
       errorCode: undefined,
+      errorDetail: undefined,
     })
   })
 
@@ -22,5 +23,12 @@ describe('native diagnostics', () => {
     vi.mocked(invoke).mockRejectedValueOnce(new Error('no native runtime'))
     await expect(logNativeEvent({ event: 'connect_started' })).resolves.toBeUndefined()
   })
-})
 
+  it('forwards a bounded diagnostic detail without changing the event shape', async () => {
+    await logNativeEvent({ event: 'browser_open_failed', errorCode: 'browser_open_failed', errorDetail: 'Error: shell execute failed' })
+    expect(invoke).toHaveBeenCalledWith('native_log', expect.objectContaining({
+      errorCode: 'browser_open_failed',
+      errorDetail: 'Error: shell execute failed',
+    }))
+  })
+})
