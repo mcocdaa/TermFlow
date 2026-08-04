@@ -82,3 +82,23 @@ fn native_http_capabilities_parse_and_allow_only_secure_or_loopback_servers() {
         assert!(!is_allowed(&patterns, "http://relay.example.com/healthz"));
     }
 }
+
+#[test]
+fn native_opener_capabilities_allow_the_authorization_browser_urls() {
+    for capability in ["default.json", "mobile.json"] {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("capabilities")
+            .join(capability);
+        let document: Value =
+            serde_json::from_str(&fs::read_to_string(path).expect("read capability JSON"))
+                .expect("parse capability JSON");
+        assert!(
+            document["permissions"]
+                .as_array()
+                .expect("permissions array")
+                .iter()
+                .any(|permission| permission == "opener:allow-default-urls"),
+            "{capability} must allow the opener default URL scope",
+        );
+    }
+}

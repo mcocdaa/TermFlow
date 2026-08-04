@@ -7,7 +7,7 @@
   "permissions": [
     "core:default",
     "core:event:default",
-    "opener:allow-open-url",
+    "opener:allow-default-urls",
     "deep-link:default",
     {
       "identifier": "http:default",
