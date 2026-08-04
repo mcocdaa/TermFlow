@@ -57,9 +57,9 @@ async function removeComputer(computer: ComputerSummary) {
 }
 async function onComputerAdded() {
   showEnrollment.value = false
-  message.value = '已添加'
+  message.value = ''
   await loadComputers()
-  if (!message.value || message.value === '已添加') message.value = '已添加'
+  if (!message.value) showDeleteNotice({ text: '已添加', tone: 'success' })
 }
 onMounted(() => { void loadComputers() })
 onBeforeUnmount(() => {
