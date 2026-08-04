@@ -1,4 +1,4 @@
-export type ApiErrorKind = 'offline' | 'authentication' | 'validation' | 'rate_limit' | 'server' | 'aborted'
+export type ApiErrorKind = 'offline' | 'authentication' | 'validation' | 'rate_limit' | 'server' | 'aborted' | 'http_capability_denied'
 
 const safeMessages: Record<ApiErrorKind, string> = {
   offline: '无法连接服务，请检查网络后重试。',
@@ -7,6 +7,7 @@ const safeMessages: Record<ApiErrorKind, string> = {
   rate_limit: '操作过于频繁，请稍后重试。',
   server: '服务暂时不可用，请稍后重试。',
   aborted: '请求已取消。',
+  http_capability_denied: '客户端网络权限配置无效，请升级或重新安装 TermFlow。',
 }
 
 export interface ApiErrorDetails {

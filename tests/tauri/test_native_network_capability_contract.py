@@ -9,7 +9,7 @@ EXPECTED_HTTP_SCOPE = {
     "https://*",
     "http://127.0.0.1:*",
     "http://localhost:*",
-    "http://[::1]:*",
+    r"http://[\:\:1]:*",
 }
 
 
@@ -34,7 +34,7 @@ def test_native_http_capability_allows_https_and_loopback_only(
         not in {
             "http://127.0.0.1:*",
             "http://localhost:*",
-            "http://[::1]:*",
+            r"http://[\:\:1]:*",
         }
         for url in EXPECTED_HTTP_SCOPE
     )

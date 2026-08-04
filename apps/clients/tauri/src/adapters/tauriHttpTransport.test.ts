@@ -84,4 +84,21 @@ describe('createTauriHttpTransport', () => {
       issuer: 'https://b.example', nonce: 'next-nonce',
     })
   })
+
+  it.each([
+    new Error('error deserializing scope: `bad` is not a valid URL pattern'),
+    'url not allowed on the configured scope: http://relay.example.com/',
+  ])('classifies a Tauri HTTP scope failure separately from offline errors', async (failure) => {
+    tauriFetch.mockRejectedValue(failure)
+
+    await expect(createTauriHttpTransport().request('/healthz', { method: 'GET' }))
+      .rejects.toMatchObject({ kind: 'http_capability_denied' })
+  })
+
+  it('keeps ordinary fetch failures classified as offline', async () => {
+    tauriFetch.mockRejectedValue(new TypeError('Failed to fetch'))
+
+    await expect(createTauriHttpTransport().request('/healthz', { method: 'GET' }))
+      .rejects.toMatchObject({ kind: 'offline' })
+  })
 })

@@ -28,7 +28,10 @@ function registrationErrorMessage(error: unknown): string {
     : error instanceof Error
       ? error.message
       : typeof error === 'string' ? error : ''
-  if (code === 'offline' || code === 'http_capability_denied') {
+  if (code === 'http_capability_denied') {
+    return '客户端网络权限配置无效。请升级或重新安装 TermFlow。'
+  }
+  if (code === 'offline') {
     return '无法连接服务器。请检查服务器地址、网络连接和本机服务是否正在运行。'
   }
   if (code === 'authorization_cancelled' || code === 'aborted') {

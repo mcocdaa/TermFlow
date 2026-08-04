@@ -4811,6 +4811,7 @@ dependencies = [
  "keyring",
  "keyring-core",
  "p256",
+ "regex",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -4829,6 +4830,7 @@ dependencies = [
  "time",
  "tokio",
  "url",
+ "urlpattern",
  "uuid",
 ]
 
