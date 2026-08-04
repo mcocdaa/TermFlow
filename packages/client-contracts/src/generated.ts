@@ -2,6 +2,7 @@
 /* Do not edit it by hand. */
 
 export type OAuthScope = "terminal.read" | "terminal.write" | "computers.read" | "computers.write"
+export type OAuthDeviceTokenErrorCode = "authorization_pending" | "slow_down" | "access_denied" | "expired_token"
 export type TerminalAction = "split_left_right" | "split_top_bottom" | "new_window" | "select_left" | "select_right" | "select_up" | "select_down" | "toggle_zoom" | "copy_mode" | "close_pane"
 export type TerminalCloseReason = "client_closed" | "replaced" | "grace_expired" | "stream_gap" | "instance_offline" | "internal_error"
 export const PROTOCOL_VERSION = 1 as const
@@ -57,8 +58,10 @@ export interface OAuthMetadataResponse {
   authorization_endpoint: string
   token_endpoint: string
   revocation_endpoint: string
+  device_authorization_endpoint: string
+  device_verification_uri: string
   response_types_supported: "code"[]
-  grant_types_supported: ("authorization_code" | "refresh_token")[]
+  grant_types_supported: ("authorization_code" | "refresh_token" | "urn:ietf:params:oauth:grant-type:device_code")[]
   code_challenge_methods_supported: "S256"[]
   dpop_signing_alg_values_supported: "ES256"[]
   scopes_supported: OAuthScope[]
@@ -76,6 +79,30 @@ export interface OAuthAuthorizationRequest {
   dpop_jkt: string
   public_jwk: OAuthPublicJwk
   scopes: OAuthScope[]
+}
+
+export interface OAuthDeviceCodeRequest {
+  client_name: string
+  platform: string
+  client_version: string | null
+  code_challenge: string
+  code_challenge_method: "S256"
+  dpop_jkt: string
+  public_jwk: OAuthPublicJwk
+  scopes: OAuthScope[]
+}
+
+export interface OAuthDeviceCodeResponse {
+  device_code: string
+  user_code: string
+  verification_uri: string
+  verification_uri_complete: string
+  expires_in: number
+  interval: number
+}
+
+export interface OAuthDeviceTokenError {
+  error: OAuthDeviceTokenErrorCode
 }
 
 export interface OAuthAuthorizationPreviewResponse {

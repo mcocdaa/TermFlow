@@ -5,7 +5,7 @@ import { serverConfig } from '../serverConfig'
 import { logNativeEvent } from '../diagnostics'
 
 interface NativeHeaders { authorization: string; dpop: string }
-const PUBLIC_PATHS = new Set(['/.well-known/oauth-authorization-server', '/healthz'])
+const PUBLIC_PATHS = new Set(['/.well-known/oauth-authorization-server', '/healthz', '/api/v1/oauth/device/code'])
 
 function safePath(path: string) { return path.startsWith('/') && !path.startsWith('//') && !path.includes('://') && !path.includes('\\') }
 

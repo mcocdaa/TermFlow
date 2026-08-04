@@ -26,6 +26,13 @@ type OAuthScope = Literal[
     "computers.write",
 ]
 
+type OAuthDeviceTokenErrorCode = Literal[
+    "authorization_pending",
+    "slow_down",
+    "access_denied",
+    "expired_token",
+]
+
 OAUTH_SCOPES: tuple[OAuthScope, ...] = (
     "terminal.read",
     "terminal.write",
@@ -377,8 +384,16 @@ class OAuthMetadataResponse(HttpModel):
     authorization_endpoint: str = Field(min_length=1, max_length=2048)
     token_endpoint: str = Field(min_length=1, max_length=2048)
     revocation_endpoint: str = Field(min_length=1, max_length=2048)
+    device_authorization_endpoint: str = Field(min_length=1, max_length=2048)
+    device_verification_uri: str = Field(min_length=1, max_length=2048)
     response_types_supported: list[Literal["code"]]
-    grant_types_supported: list[Literal["authorization_code", "refresh_token"]]
+    grant_types_supported: list[
+        Literal[
+            "authorization_code",
+            "refresh_token",
+            "urn:ietf:params:oauth:grant-type:device_code",
+        ]
+    ]
     code_challenge_methods_supported: list[Literal["S256"]]
     dpop_signing_alg_values_supported: list[Literal["ES256"]]
     scopes_supported: list[OAuthScope]
@@ -435,6 +450,52 @@ class OAuthAuthorizationRequest(HttpModel):
         return validate_scopes(value)
 
 
+class OAuthDeviceCodeRequest(HttpModel):
+    client_name: str
+    platform: str = Field(min_length=1, max_length=128)
+    client_version: str | None = Field(default=None, min_length=1, max_length=64)
+    code_challenge: str
+    code_challenge_method: Literal["S256"] = "S256"
+    dpop_jkt: str
+    public_jwk: OAuthPublicJwk
+    scopes: list[OAuthScope]
+
+    @field_validator("client_name")
+    @classmethod
+    def valid_client_name(cls, value: str) -> str:
+        return validate_client_name(value)
+
+    @field_validator("code_challenge")
+    @classmethod
+    def valid_code_challenge(cls, value: str) -> str:
+        validated = validate_pkce_value(value)
+        assert isinstance(validated, str)
+        return validated
+
+    @field_validator("dpop_jkt")
+    @classmethod
+    def valid_dpop_thumbprint(cls, value: str) -> str:
+        return validate_base64url_256(value)
+
+    @field_validator("scopes")
+    @classmethod
+    def nonempty_unique_scopes(cls, value: list[OAuthScope]) -> list[OAuthScope]:
+        return validate_scopes(value)
+
+
+class OAuthDeviceCodeResponse(HttpModel):
+    device_code: str = Field(repr=False, min_length=1)
+    user_code: str = Field(min_length=1)
+    verification_uri: str = Field(min_length=1, max_length=2048)
+    verification_uri_complete: str = Field(min_length=1, max_length=2048)
+    expires_in: int = Field(gt=0)
+    interval: int = Field(gt=0)
+
+
+class OAuthDeviceTokenError(HttpModel):
+    error: OAuthDeviceTokenErrorCode
+
+
 class OAuthAuthorizationPreviewResponse(HttpModel):
     transaction_id: UUID
     issuer: str = Field(min_length=1, max_length=2048)
@@ -471,7 +532,7 @@ class OAuthAuthorizationPreviewResponse(HttpModel):
 class OAuthAuthorizationDecisionRequest(HttpModel):
     transaction_id: UUID
     decision: Literal["allow", "deny"]
-    admin_token: SecretStr
+    admin_token: SecretStr | None = None
     totp_code: SecretStr | None = None
 
     @field_validator("totp_code", mode="before")
@@ -491,8 +552,13 @@ class OAuthAuthorizationDecisionResponse(HttpModel):
 
 
 class OAuthTokenRequest(HttpModel):
-    grant_type: Literal["authorization_code", "refresh_token"]
+    grant_type: Literal[
+        "authorization_code",
+        "refresh_token",
+        "urn:ietf:params:oauth:grant-type:device_code",
+    ]
     transaction_id: UUID | None = None
+    device_code: SecretStr | None = None
     code_verifier: SecretStr | None = None
     refresh_token: SecretStr | None = None
     public_jwk: OAuthPublicJwk
@@ -507,14 +573,23 @@ class OAuthTokenRequest(HttpModel):
         if self.grant_type == "authorization_code":
             if self.transaction_id is None or self.code_verifier is None:
                 raise ValueError("authorization_code requires transaction_id and code_verifier")
-            if self.refresh_token is not None:
-                raise ValueError("authorization_code must not include refresh_token")
+            if self.refresh_token is not None or self.device_code is not None:
+                raise ValueError("authorization_code must not include refresh_token or device_code")
+        elif self.grant_type == "refresh_token":
+            if (
+                self.refresh_token is None
+                or self.transaction_id is not None
+                or self.code_verifier is not None
+                or self.device_code is not None
+            ):
+                raise ValueError("refresh_token requires only refresh_token credentials")
         elif (
-            self.refresh_token is None
+            self.device_code is None
+            or self.code_verifier is None
             or self.transaction_id is not None
-            or self.code_verifier is not None
+            or self.refresh_token is not None
         ):
-            raise ValueError("refresh_token requires only refresh_token credentials")
+            raise ValueError("device_code requires device_code and code_verifier")
         return self
 
 

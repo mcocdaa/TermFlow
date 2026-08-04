@@ -7,6 +7,7 @@
         <p v-if="message" class="form-error" role="alert">{{ message }}</p>
         <button class="primary-button" type="submit" :disabled="busy">{{ busy ? '等待服务器管理员审批' : '申请注册远程控制' }}</button>
       </form>
+      <button class="secondary-button" type="button" data-action="device-authorize" @click="router.push({ path: '/connect/device', query: route.query })">在其他设备上授权</button>
     </div>
   </section>
 </template>

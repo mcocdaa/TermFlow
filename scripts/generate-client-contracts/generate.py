@@ -34,6 +34,10 @@ from termflow_protocol import (
     OAuthAuthorizationDecisionResponse,
     OAuthAuthorizationPreviewResponse,
     OAuthAuthorizationRequest,
+    OAuthDeviceCodeRequest,
+    OAuthDeviceCodeResponse,
+    OAuthDeviceTokenError,
+    OAuthDeviceTokenErrorCode,
     OAuthMetadataResponse,
     OAuthPublicJwk,
     OAuthRevokeResponse,
@@ -60,7 +64,12 @@ from termflow_protocol import (
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = ROOT / "packages/client-contracts/src/generated.ts"
 
-TYPE_ALIASES: tuple[TypeAliasType, ...] = (OAuthScope, TerminalAction, TerminalCloseReason)
+TYPE_ALIASES: tuple[TypeAliasType, ...] = (
+    OAuthScope,
+    OAuthDeviceTokenErrorCode,
+    TerminalAction,
+    TerminalCloseReason,
+)
 CONSTANTS: tuple[tuple[str, object], ...] = (("PROTOCOL_VERSION", PROTOCOL_VERSION),)
 MODELS: tuple[type[BaseModel], ...] = (
     ErrorDetail,
@@ -73,6 +82,9 @@ MODELS: tuple[type[BaseModel], ...] = (
     OAuthPublicJwk,
     OAuthMetadataResponse,
     OAuthAuthorizationRequest,
+    OAuthDeviceCodeRequest,
+    OAuthDeviceCodeResponse,
+    OAuthDeviceTokenError,
     OAuthAuthorizationPreviewResponse,
     OAuthAuthorizationDecisionResponse,
     OAuthTokenResponse,

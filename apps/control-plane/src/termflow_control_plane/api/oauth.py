@@ -15,6 +15,8 @@ from termflow_protocol import (
     OAuthAuthorizationDecisionResponse,
     OAuthAuthorizationPreviewResponse,
     OAuthAuthorizationRequest,
+    OAuthDeviceCodeRequest,
+    OAuthDeviceCodeResponse,
     OAuthMetadataResponse,
     OAuthPublicJwk,
     OAuthRevokeRequest,
@@ -32,11 +34,18 @@ from termflow_control_plane.auth.audit import (
 from termflow_control_plane.auth.dpop import DpopInvalid, DpopNonceRequired, DpopVerifier
 from termflow_control_plane.auth.oauth import FreshTotpVerifier, OAuthService
 from termflow_control_plane.auth.rate_limit import AuthRateLimiter, direct_peer_source
+from termflow_control_plane.auth.sessions import BrowserSessionStore
 from termflow_control_plane.config import Settings
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.repositories import RepositoryBundle
 
-from .dependencies import get_repositories, get_settings, require_admin
+from .dependencies import (
+    get_browser_sessions,
+    get_repositories,
+    get_settings,
+    require_admin,
+    require_web_admin,
+)
 
 router = APIRouter(tags=["oauth"])
 
@@ -123,6 +132,31 @@ async def oauth_metadata(
     return _service(request, repositories, settings).metadata()
 
 
+@router.post(
+    "/api/v1/oauth/device/code",
+    response_model=OAuthDeviceCodeResponse,
+)
+async def create_device_code(
+    body: OAuthDeviceCodeRequest,
+    request: Request,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_settings)],
+    repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
+) -> OAuthDeviceCodeResponse:
+    """Create a short-lived device authorization transaction.
+
+    This endpoint is intentionally independent of administrator credentials;
+    approval is performed by Web C through the existing authorization decision
+    endpoint.
+    """
+
+    limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
+    limiter.check("oauth_device_code", direct_peer_source(request))
+    result = await _service(request, repositories, settings).begin_device(body)
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
 @router.get("/api/v1/oauth/authorize", response_model=None)
 async def authorize_native_client(
     request: Request,
@@ -130,6 +164,7 @@ async def authorize_native_client(
     settings: Annotated[Settings, Depends(get_settings)],
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
     transaction_id: Annotated[UUID | None, Query()] = None,
+    user_code: Annotated[str | None, Query()] = None,
 ) -> OAuthAuthorizationPreviewResponse | RedirectResponse:
     service = _service(request, repositories, settings)
     if transaction_id is not None:
@@ -140,6 +175,16 @@ async def authorize_native_client(
             raise _invalid_request()
         response.headers["Cache-Control"] = "no-store"
         return await service.preview(transaction_id)
+    if user_code is not None:
+        if (
+            set(request.query_params.keys()) != {"user_code"}
+            or len(request.query_params.getlist("user_code")) != 1
+        ):
+            raise _invalid_request()
+        limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
+        limiter.check("native_authorization_preview", direct_peer_source(request))
+        response.headers["Cache-Control"] = "no-store"
+        return await service.preview_user_code(user_code)
     limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
     source = direct_peer_source(request)
     limiter.check("native_authorization", source)
@@ -161,6 +206,7 @@ async def decide_native_authorization(
     response: Response,
     settings: Annotated[Settings, Depends(get_settings)],
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
+    sessions: Annotated[BrowserSessionStore, Depends(get_browser_sessions)],
 ) -> OAuthAuthorizationDecisionResponse:
     limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
     audit = cast(AuthenticationAudit, request.app.state.auth_audit)
@@ -177,7 +223,14 @@ async def decide_native_authorization(
         raise
     try:
         async with limiter.verification_slot():
-            result = await _service(request, repositories, settings).decide(body)
+            session_authenticated = False
+            if body.admin_token is None:
+                await require_web_admin(request, settings, sessions, repositories)
+                session_authenticated = True
+            result = await _service(request, repositories, settings).decide(
+                body,
+                session_authenticated=session_authenticated,
+            )
     except TermFlowError:
         limiter.record_failure("native_authorization_decision", source)
         await audit.record(
@@ -211,8 +264,13 @@ async def exchange_native_token(
     limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
     audit = cast(AuthenticationAudit, request.app.state.auth_audit)
     source = direct_peer_source(request)
+    limiter_purpose = (
+        "oauth_device_token"
+        if body.grant_type == "urn:ietf:params:oauth:grant-type:device_code"
+        else "oauth_token"
+    )
     try:
-        limiter.check("oauth_token", source)
+        limiter.check(limiter_purpose, source)
     except TermFlowError:
         await audit.record(
             AuthAuditOperation.TOKEN_EXCHANGE,
@@ -235,7 +293,7 @@ async def exchange_native_token(
             headers={"DPoP-Nonce": exc.nonce, "Cache-Control": "no-store"},
         ) from exc
     except DpopInvalid as exc:
-        limiter.record_failure("oauth_token", source)
+        limiter.record_failure(limiter_purpose, source)
         await audit.record(
             AuthAuditOperation.TOKEN_EXCHANGE,
             AuthAuditResult.REJECTED,
@@ -246,7 +304,14 @@ async def exchange_native_token(
     except TermFlowError as exc:
         if verified is not None:
             exc.headers.update({"DPoP-Nonce": verified.next_nonce, "Cache-Control": "no-store"})
-        limiter.record_failure("oauth_token", source)
+        if exc.code in {"authorization_pending", "slow_down", "access_denied", "expired_token"}:
+            # These are normal device-grant polling outcomes.  They must not
+            # trigger the credential-failure backoff used for invalid proofs or
+            # malformed grants, otherwise a client following Retry-After would
+            # be rate limited before it can poll again.
+            limiter.record_success(limiter_purpose, source)
+        else:
+            limiter.record_failure(limiter_purpose, source)
         await audit.record(
             AuthAuditOperation.TOKEN_EXCHANGE,
             AuthAuditResult.REJECTED,
@@ -254,7 +319,7 @@ async def exchange_native_token(
             error_code=AuthAuditErrorCode.INVALID_CREDENTIALS,
         )
         raise
-    limiter.record_success("oauth_token", source)
+    limiter.record_success(limiter_purpose, source)
     await audit.record(
         AuthAuditOperation.TOKEN_EXCHANGE,
         AuthAuditResult.OK,

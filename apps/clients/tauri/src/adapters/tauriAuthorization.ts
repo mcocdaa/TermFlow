@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { onOpenUrl } from '@tauri-apps/plugin-deep-link'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import type { AuthorizationBrowserPort, NativeAccessCredential, NativeKeyPort, PublicEcJwk } from '@termflow/client-core'
+import type { OAuthTokenResponse } from '@termflow/client-contracts'
 import { logNativeEvent } from '../diagnostics'
 
 export function createTauriKey(issuer: string): NativeKeyPort {
@@ -68,6 +69,17 @@ export async function exchangeAuthorization(input: { issuer: string; transaction
     void logNativeEvent({ event: 'token_exchange_failed', issuer: input.issuer, level: 'error', errorCode: 'token_exchange_failed' })
     throw error
   }
+}
+
+/** Device-code exchange runs in Rust so it can sign DPoP before a credential exists. */
+export function pollDeviceAuthorization(input: { issuer: string; deviceCode: string; codeVerifier: string; publicJwk: PublicEcJwk }, signal?: AbortSignal): Promise<OAuthTokenResponse> {
+  if (signal?.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'))
+  return invoke<OAuthTokenResponse>('native_exchange_device_code', {
+    issuer: input.issuer,
+    deviceCode: input.deviceCode,
+    codeVerifier: input.codeVerifier,
+    publicJwk: input.publicJwk,
+  })
 }
 
 export async function refreshAuthorization(issuer: string): Promise<NativeAccessCredential> {

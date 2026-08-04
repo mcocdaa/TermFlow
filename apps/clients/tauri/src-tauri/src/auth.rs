@@ -57,11 +57,19 @@ pub struct NativeAuthState {
     http: Client,
 }
 
-#[derive(Debug, Deserialize)]
-struct TokenResponse {
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TokenResponse {
+    #[serde(default = "default_token_type")]
+    token_type: String,
     access_token: String,
     refresh_token: String,
     expires_in: i64,
+    #[serde(default)]
+    scopes: Vec<String>,
+}
+
+fn default_token_type() -> String {
+    "DPoP".to_owned()
 }
 
 #[derive(Debug, Serialize)]
@@ -159,6 +167,13 @@ fn token_error_revokes_credentials(body: &[u8]) -> bool {
         .and_then(|value| value.get("error").cloned())
         .and_then(|value| value.get("code").and_then(Value::as_str).map(str::to_owned))
         .is_some_and(|code| code == "invalid_grant")
+}
+
+fn token_error_code(body: &[u8]) -> Option<String> {
+    serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|value| value.get("error").cloned())
+        .and_then(|value| value.get("code").and_then(Value::as_str).map(str::to_owned))
 }
 
 fn clear_cached_credentials(state: &NativeAuthState, issuer: &str) -> Result<(), String> {
@@ -306,6 +321,9 @@ async fn token_request(
         if token_error_revokes_credentials(&body) {
             return Err(safe_error("invalid_grant"));
         }
+        if let Some(code) = token_error_code(&body) {
+            return Err(code);
+        }
         return Err(safe_error("authorization_required"));
     }
     if let Some(nonce) = response
@@ -412,6 +430,38 @@ pub async fn native_exchange_authorization(
     let _ = redirect_uri;
     let response = token_request(&state, &issuer, json!({"grant_type":"authorization_code","transaction_id":transaction_id,"code_verifier":code_verifier,"public_jwk":public_jwk(&signing_key(&issuer)?)?})).await?;
     store_token_response(&state, &issuer, response).await
+}
+
+/// Exchange a device code before the client has an access token. The Rust
+/// side signs the required DPoP proof with the key held by the native keyring.
+#[tauri::command]
+pub async fn native_exchange_device_code(
+    state: State<'_, NativeAuthState>,
+    issuer: String,
+    device_code: String,
+    code_verifier: String,
+    public_jwk: PublicJwk,
+) -> Result<TokenResponse, String> {
+    let issuer = canonical_issuer(&issuer)?;
+    let key = signing_key(&issuer)?;
+    let key_public = self::public_jwk(&key)?;
+    if thumbprint(&public_jwk) != thumbprint(&key_public) {
+        return Err(safe_error("device_key_invalid"));
+    }
+    let response = token_request(
+        &state,
+        &issuer,
+        json!({
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            "device_code": device_code,
+            "code_verifier": code_verifier,
+            "public_jwk": key_public,
+        }),
+    )
+    .await?;
+    let public_response = response.clone();
+    store_token_response(&state, &issuer, response).await?;
+    Ok(public_response)
 }
 #[tauri::command]
 pub async fn native_refresh_access(
@@ -520,6 +570,10 @@ mod tests {
             br#"{"error":{"code":"invalid_dpop_proof","message":"Authentication failed."}}"#
         ));
         assert!(!token_error_revokes_credentials(b"not-json"));
+        assert_eq!(
+            token_error_code(br#"{"error":{"code":"authorization_pending","message":"Pending."}}"#),
+            Some("authorization_pending".to_owned())
+        );
     }
 
     #[test]

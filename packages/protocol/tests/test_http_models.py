@@ -405,6 +405,8 @@ def test_oauth_metadata_and_browser_preview_are_public_contracts() -> None:
         authorization_endpoint="https://termflow.example/api/v1/oauth/authorize",
         token_endpoint="https://termflow.example/api/v1/oauth/token",
         revocation_endpoint="https://termflow.example/api/v1/oauth/revoke",
+        device_authorization_endpoint="https://termflow.example/api/v1/oauth/device/code",
+        device_verification_uri="https://termflow.example/device",
         response_types_supported=["code"],
         grant_types_supported=["authorization_code", "refresh_token"],
         code_challenge_methods_supported=["S256"],

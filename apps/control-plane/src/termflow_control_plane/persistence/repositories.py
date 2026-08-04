@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+import math
+import secrets
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import case, delete, exists, func, insert, literal, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from termflow_control_plane.auth.pkce import create_s256_challenge
 from termflow_control_plane.auth.secret_box import EncryptedSecret
 
 from .models import (
@@ -156,6 +161,37 @@ class ExchangedAuthorization:
 class RotatedTokenPair:
     access_token: AuthToken
     refresh_token: AuthToken
+
+
+@dataclass(frozen=True, slots=True)
+class CreatedDeviceAuthorization:
+    """Raw device-flow values returned once to the requesting native client."""
+
+    id: UUID
+    device_code: str = field(repr=False)
+    user_code: str = field(repr=False)
+    expires_at: datetime
+    interval: int
+    status: str = "pending"
+
+    @property
+    def authorization_id(self) -> UUID:
+        return self.id
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceAuthorizationRequest:
+    """Persistence-facing input for creating a device authorization transaction."""
+
+    client_id: UUID
+    scopes: tuple[str, ...]
+    pkce_challenge: str
+    expires_at: datetime
+    epoch: int = 1
+    interval: int = 5
+    redirect_uri: str = ""
+    request_state: str = ""
+    transaction_secret: str | None = None
 
 
 class EnrollmentRepository:
@@ -620,8 +656,7 @@ class AuthStateRepository:
                 AuthAuditEvent(
                     operation="auth.reset",
                     result="reset",
-                    source_digest=audit_source_digest
-                    or digest_secret("local-control-plane"),
+                    source_digest=audit_source_digest or digest_secret("local-control-plane"),
                     created_at=observed_at,
                 )
             )
@@ -1007,6 +1042,21 @@ class OAuthAuthorizationRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
+    @staticmethod
+    def _request_value(request: object | None, name: str, default: object = None) -> object:
+        if request is None:
+            return default
+        if isinstance(request, Mapping):
+            return request.get(name, default)
+        return getattr(request, name, default)
+
+    @staticmethod
+    def _new_user_code() -> str:
+        # Avoid visually ambiguous characters while retaining enough entropy for
+        # the short-lived code shown in the Web C approval UI.
+        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        return "-".join("".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(2))
+
     async def create(
         self,
         *,
@@ -1033,6 +1083,471 @@ class OAuthAuthorizationRepository:
             session.add(authorization)
             await session.commit()
             return authorization.id
+
+    async def create_device_authorization(
+        self,
+        request: DeviceAuthorizationRequest | Mapping[str, object] | object | None = None,
+        *,
+        client_id: UUID | None = None,
+        scopes: tuple[str, ...] | None = None,
+        pkce_challenge: str | None = None,
+        expires_at: datetime | None = None,
+        epoch: int | None = None,
+        interval: int | None = None,
+        redirect_uri: str | None = None,
+        request_state: str | None = None,
+        transaction_secret: str | None = None,
+        device_code: str | None = None,
+        user_code: str | None = None,
+        now: datetime | None = None,
+        ttl_seconds: int = 900,
+    ) -> CreatedDeviceAuthorization:
+        """Create a device transaction and return the raw codes exactly once.
+
+        The method accepts a :class:`DeviceAuthorizationRequest` (or a compatible
+        object/mapping) as a convenience for service callers, while explicit
+        keyword arguments remain available to keep this repository independent of
+        HTTP DTOs.  Only digests of the two returned codes are stored.
+        """
+
+        request_client_id = cast(UUID | None, self._request_value(request, "client_id"))
+        request_scopes = cast(
+            tuple[str, ...] | None,
+            self._request_value(request, "scopes"),
+        )
+        request_pkce = cast(str | None, self._request_value(request, "pkce_challenge"))
+        request_expires = cast(datetime | None, self._request_value(request, "expires_at"))
+        request_epoch = cast(int | None, self._request_value(request, "epoch"))
+        request_interval = cast(int | None, self._request_value(request, "interval"))
+        request_redirect = cast(str | None, self._request_value(request, "redirect_uri"))
+        request_state_value = cast(
+            str | None,
+            self._request_value(request, "request_state"),
+        )
+        request_transaction = cast(
+            str | None,
+            self._request_value(request, "transaction_secret"),
+        )
+
+        effective_client_id = client_id if client_id is not None else request_client_id
+        effective_scopes = scopes if scopes is not None else request_scopes
+        effective_pkce = pkce_challenge if pkce_challenge is not None else request_pkce
+        effective_epoch = epoch if epoch is not None else request_epoch
+        effective_interval = interval if interval is not None else request_interval
+        effective_redirect = redirect_uri if redirect_uri is not None else request_redirect
+        effective_state = request_state if request_state is not None else request_state_value
+        effective_transaction = (
+            transaction_secret if transaction_secret is not None else request_transaction
+        )
+        if effective_client_id is None or not isinstance(effective_client_id, UUID):
+            raise ValueError("device authorization requires a native client id")
+        if effective_scopes is None:
+            raise ValueError("device authorization requires scopes")
+        if effective_pkce is None:
+            raise ValueError("device authorization requires a PKCE challenge")
+
+        observed_at = now or datetime.now(UTC)
+        effective_expires = expires_at if expires_at is not None else request_expires
+        if effective_expires is None:
+            if ttl_seconds <= 0:
+                raise ValueError("device authorization TTL must be positive")
+            effective_expires = observed_at + timedelta(seconds=ttl_seconds)
+        effective_epoch = 1 if effective_epoch is None else int(effective_epoch)
+        effective_interval = 5 if effective_interval is None else int(effective_interval)
+        if effective_interval <= 0:
+            raise ValueError("device authorization polling interval must be positive")
+        effective_redirect = "" if effective_redirect is None else str(effective_redirect)
+        effective_state = "" if effective_state is None else str(effective_state)
+        effective_transaction = (
+            secrets.token_urlsafe(32)
+            if effective_transaction is None
+            else str(effective_transaction)
+        )
+        raw_device_code = device_code or secrets.token_urlsafe(32)
+        raw_user_code = user_code or self._new_user_code()
+        authorization_id = uuid4()
+        async with self._sessions() as session:
+            authorization = OAuthAuthorization(
+                id=authorization_id,
+                transaction_digest=digest_secret(effective_transaction),
+                client_id=effective_client_id,
+                redirect_uri=effective_redirect,
+                request_state=effective_state,
+                scopes=_encode_scopes(tuple(str(scope) for scope in effective_scopes)),
+                pkce_challenge=str(effective_pkce),
+                expires_at=effective_expires,
+                epoch=effective_epoch,
+                device_code_digest=digest_secret(raw_device_code),
+                user_code_digest=digest_secret(raw_user_code),
+                device_status="pending",
+                device_interval=effective_interval,
+                created_at=observed_at,
+            )
+            session.add(authorization)
+            await session.commit()
+            return CreatedDeviceAuthorization(
+                id=authorization.id,
+                device_code=raw_device_code,
+                user_code=raw_user_code,
+                expires_at=effective_expires,
+                interval=effective_interval,
+            )
+
+    async def find_by_device_code(
+        self,
+        raw_device_code: str,
+        *,
+        epoch: int = 1,
+        now: datetime | None = None,
+    ) -> OAuthAuthorization | None:
+        """Find a pending/approved transaction without returning the raw code."""
+
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            authorization: OAuthAuthorization | None = await session.scalar(
+                select(OAuthAuthorization).where(
+                    OAuthAuthorization.device_code_digest == digest_secret(raw_device_code),
+                    OAuthAuthorization.epoch == epoch,
+                    OAuthAuthorization.expires_at > observed_at,
+                    OAuthAuthorization.device_status.in_(("pending", "approved")),
+                    OAuthAuthorization.device_exchanged_at.is_(None),
+                    exists(
+                        select(AuthenticationState.id).where(
+                            AuthenticationState.id == 1,
+                            AuthenticationState.epoch == epoch,
+                        )
+                    ),
+                    exists(
+                        select(NativeClient.id).where(
+                            NativeClient.id == OAuthAuthorization.client_id,
+                            NativeClient.revoked_at.is_(None),
+                        )
+                    ),
+                )
+            )
+            return authorization
+
+    async def record_device_poll(
+        self,
+        raw_device_code: str,
+        *,
+        epoch: int,
+        interval: int,
+        now: datetime | None = None,
+    ) -> int | None:
+        """Atomically record a poll, returning seconds to wait when too early."""
+
+        observed_at = now or datetime.now(UTC)
+        cutoff = observed_at - timedelta(seconds=interval)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(OAuthAuthorization)
+                .where(
+                    OAuthAuthorization.device_code_digest == digest_secret(raw_device_code),
+                    OAuthAuthorization.epoch == epoch,
+                    OAuthAuthorization.expires_at > observed_at,
+                    OAuthAuthorization.device_status.in_(("pending", "approved")),
+                    OAuthAuthorization.device_exchanged_at.is_(None),
+                    OAuthAuthorization.consumed_at.is_(None),
+                    exists(
+                        select(AuthenticationState.id).where(
+                            AuthenticationState.id == 1,
+                            AuthenticationState.epoch == epoch,
+                        )
+                    ),
+                    or_(
+                        OAuthAuthorization.device_last_polled_at.is_(None),
+                        OAuthAuthorization.device_last_polled_at <= cutoff,
+                    ),
+                )
+                .values(device_last_polled_at=observed_at)
+                .returning(OAuthAuthorization.device_last_polled_at)
+            )
+            recorded = result.scalar_one_or_none()
+            if recorded is not None:
+                await session.commit()
+                return None
+            last_polled = await session.scalar(
+                select(OAuthAuthorization.device_last_polled_at).where(
+                    OAuthAuthorization.device_code_digest == digest_secret(raw_device_code),
+                    OAuthAuthorization.epoch == epoch,
+                )
+            )
+            await session.commit()
+            if last_polled is None:
+                return None
+            if last_polled.tzinfo is None:
+                last_polled = last_polled.replace(tzinfo=UTC)
+            wait_seconds = (last_polled + timedelta(seconds=interval) - observed_at).total_seconds()
+            return max(1, math.ceil(wait_seconds))
+
+    async def get_device_authorization(
+        self,
+        raw_device_code: str,
+        *,
+        epoch: int = 1,
+    ) -> OAuthAuthorization | None:
+        """Read terminal device state without exposing the raw code."""
+
+        async with self._sessions() as session:
+            authorization: OAuthAuthorization | None = await session.scalar(
+                select(OAuthAuthorization).where(
+                    OAuthAuthorization.device_code_digest == digest_secret(raw_device_code),
+                    OAuthAuthorization.epoch == epoch,
+                )
+            )
+            return authorization
+
+    async def find_by_user_code(
+        self,
+        raw_user_code: str,
+        *,
+        epoch: int = 1,
+        now: datetime | None = None,
+    ) -> OAuthAuthorization | None:
+        """Find a pending/approved transaction by the short user code."""
+
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            authorization: OAuthAuthorization | None = await session.scalar(
+                select(OAuthAuthorization).where(
+                    OAuthAuthorization.user_code_digest == digest_secret(raw_user_code),
+                    OAuthAuthorization.epoch == epoch,
+                    OAuthAuthorization.expires_at > observed_at,
+                    OAuthAuthorization.device_status.in_(("pending", "approved")),
+                    OAuthAuthorization.device_exchanged_at.is_(None),
+                    exists(
+                        select(AuthenticationState.id).where(
+                            AuthenticationState.id == 1,
+                            AuthenticationState.epoch == epoch,
+                        )
+                    ),
+                    exists(
+                        select(NativeClient.id).where(
+                            NativeClient.id == OAuthAuthorization.client_id,
+                            NativeClient.revoked_at.is_(None),
+                        )
+                    ),
+                )
+            )
+            return authorization
+
+    async def mark_approved(
+        self,
+        authorization_id: UUID,
+        *,
+        epoch: int = 1,
+        now: datetime | None = None,
+    ) -> OAuthAuthorization | None:
+        """Atomically move a live pending device request to approved."""
+
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(OAuthAuthorization)
+                .where(
+                    OAuthAuthorization.id == authorization_id,
+                    OAuthAuthorization.epoch == epoch,
+                    OAuthAuthorization.expires_at > observed_at,
+                    OAuthAuthorization.device_status == "pending",
+                    OAuthAuthorization.device_exchanged_at.is_(None),
+                    exists(
+                        select(AuthenticationState.id).where(
+                            AuthenticationState.id == 1,
+                            AuthenticationState.epoch == epoch,
+                        )
+                    ),
+                )
+                .values(
+                    device_status="approved",
+                    approved_at=func.coalesce(OAuthAuthorization.approved_at, observed_at),
+                )
+                .returning(OAuthAuthorization)
+            )
+            approved = result.scalar_one_or_none()
+            await session.commit()
+            return approved
+
+    async def mark_denied(
+        self,
+        authorization_id: UUID,
+        *,
+        epoch: int = 1,
+        now: datetime | None = None,
+    ) -> OAuthAuthorization | None:
+        """Atomically move a live pending device request to denied."""
+
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(OAuthAuthorization)
+                .where(
+                    OAuthAuthorization.id == authorization_id,
+                    OAuthAuthorization.epoch == epoch,
+                    OAuthAuthorization.expires_at > observed_at,
+                    OAuthAuthorization.device_status == "pending",
+                    OAuthAuthorization.device_exchanged_at.is_(None),
+                )
+                .values(device_status="denied", consumed_at=observed_at)
+                .returning(OAuthAuthorization)
+            )
+            denied = result.scalar_one_or_none()
+            await session.commit()
+            return denied
+
+    async def deny_device_authorization(
+        self,
+        authorization_id: UUID,
+        *,
+        epoch: int = 1,
+        now: datetime | None = None,
+    ) -> OAuthAuthorization | None:
+        """Named alias used by service layers for the device denial transition."""
+
+        return await self.mark_denied(authorization_id, epoch=epoch, now=now)
+
+    async def exchange_device_code(
+        self,
+        raw_device_code: str,
+        code_verifier: str,
+        *,
+        epoch: int = 1,
+        now: datetime | None = None,
+    ) -> OAuthAuthorization | None:
+        """Claim an approved device transaction exactly once.
+
+        The conditional update is the one-time exchange boundary: concurrent
+        callers race on the same row, and only the caller that observes the
+        unexchanged marker can return the authorization.
+        """
+
+        observed_at = now or datetime.now(UTC)
+        try:
+            challenge = create_s256_challenge(code_verifier)
+        except (TypeError, ValueError):
+            return None
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(OAuthAuthorization)
+                .where(
+                    OAuthAuthorization.device_code_digest == digest_secret(raw_device_code),
+                    OAuthAuthorization.epoch == epoch,
+                    OAuthAuthorization.pkce_challenge == challenge,
+                    OAuthAuthorization.expires_at > observed_at,
+                    OAuthAuthorization.device_status == "approved",
+                    OAuthAuthorization.device_exchanged_at.is_(None),
+                    OAuthAuthorization.consumed_at.is_(None),
+                    exists(
+                        select(AuthenticationState.id).where(
+                            AuthenticationState.id == 1,
+                            AuthenticationState.epoch == epoch,
+                        )
+                    ),
+                    exists(
+                        select(NativeClient.id).where(
+                            NativeClient.id == OAuthAuthorization.client_id,
+                            NativeClient.revoked_at.is_(None),
+                        )
+                    ),
+                )
+                .values(
+                    device_status="exchanged",
+                    device_exchanged_at=observed_at,
+                    consumed_at=observed_at,
+                )
+                .returning(OAuthAuthorization)
+            )
+            exchanged = result.scalar_one_or_none()
+            await session.commit()
+            return exchanged
+
+    async def exchange_device_code_with_tokens(
+        self,
+        raw_device_code: str,
+        code_verifier: str,
+        *,
+        epoch: int,
+        raw_access_token: str,
+        raw_refresh_token: str,
+        key_thumbprint: str,
+        access_expires_at: datetime,
+        refresh_expires_at: datetime,
+        now: datetime | None = None,
+    ) -> ExchangedAuthorization | None:
+        """Atomically claim a device code and issue its native token pair."""
+
+        observed_at = now or datetime.now(UTC)
+        try:
+            challenge = create_s256_challenge(code_verifier)
+        except (TypeError, ValueError):
+            return None
+        active_client = exists(
+            select(NativeClient.id).where(
+                NativeClient.id == OAuthAuthorization.client_id,
+                NativeClient.key_thumbprint == key_thumbprint,
+                NativeClient.revoked_at.is_(None),
+            )
+        )
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(OAuthAuthorization)
+                .where(
+                    OAuthAuthorization.device_code_digest == digest_secret(raw_device_code),
+                    OAuthAuthorization.epoch == epoch,
+                    OAuthAuthorization.pkce_challenge == challenge,
+                    OAuthAuthorization.expires_at > observed_at,
+                    OAuthAuthorization.device_status == "approved",
+                    OAuthAuthorization.device_exchanged_at.is_(None),
+                    OAuthAuthorization.consumed_at.is_(None),
+                    exists(
+                        select(AuthenticationState.id).where(
+                            AuthenticationState.id == 1,
+                            AuthenticationState.epoch == epoch,
+                        )
+                    ),
+                    active_client,
+                )
+                .values(
+                    device_status="exchanged",
+                    device_exchanged_at=observed_at,
+                    consumed_at=observed_at,
+                )
+                .returning(OAuthAuthorization)
+            )
+            authorization = result.scalar_one_or_none()
+            if authorization is None:
+                await session.commit()
+                return None
+            family_id = uuid4()
+            access = await _insert_auth_token(
+                session,
+                raw_token=raw_access_token,
+                kind="access",
+                encoded_scopes=authorization.scopes,
+                key_thumbprint=key_thumbprint,
+                expires_at=access_expires_at,
+                epoch=epoch,
+                client_id=authorization.client_id,
+                family_id=family_id,
+                now=observed_at,
+            )
+            refresh = await _insert_auth_token(
+                session,
+                raw_token=raw_refresh_token,
+                kind="refresh",
+                encoded_scopes=authorization.scopes,
+                key_thumbprint=key_thumbprint,
+                expires_at=refresh_expires_at,
+                epoch=epoch,
+                client_id=authorization.client_id,
+                family_id=family_id,
+                now=observed_at,
+            )
+            if access is None or refresh is None:
+                await session.rollback()
+                return None
+            await session.commit()
+            return ExchangedAuthorization(authorization, access, refresh)
 
     async def get_active_id(
         self,
@@ -1133,8 +1648,7 @@ class OAuthAuthorizationRepository:
         async with self._sessions() as session:
             authorization: OAuthAuthorization | None = await session.scalar(
                 select(OAuthAuthorization).where(
-                    OAuthAuthorization.transaction_digest
-                    == digest_secret(transaction_secret),
+                    OAuthAuthorization.transaction_digest == digest_secret(transaction_secret),
                     OAuthAuthorization.epoch == epoch,
                     OAuthAuthorization.expires_at > observed_at,
                     OAuthAuthorization.consumed_at.is_(None),
@@ -1222,8 +1736,7 @@ class OAuthAuthorizationRepository:
             result = await session.execute(
                 update(OAuthAuthorization)
                 .where(
-                    OAuthAuthorization.authorization_code_digest
-                    == digest_secret(raw_code),
+                    OAuthAuthorization.authorization_code_digest == digest_secret(raw_code),
                     OAuthAuthorization.epoch == epoch,
                     OAuthAuthorization.pkce_challenge == pkce_challenge,
                     OAuthAuthorization.expires_at > observed_at,

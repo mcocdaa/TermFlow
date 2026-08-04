@@ -37,6 +37,7 @@ pub fn run() {
             auth::native_key_thumbprint,
             auth::native_sign_jwt,
             auth::native_exchange_authorization,
+            auth::native_exchange_device_code,
             auth::native_refresh_access,
             auth::native_request_headers,
             auth::native_remember_dpop_nonce,
