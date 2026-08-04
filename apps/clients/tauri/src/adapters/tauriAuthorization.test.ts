@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 vi.mock('@tauri-apps/plugin-deep-link', () => ({ onOpenUrl: mocks.onOpenUrl }))
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: mocks.openUrl }))
 
-import { tauriAuthorizationBrowser } from './tauriAuthorization'
+import { pollDeviceAuthorization, tauriAuthorizationBrowser } from './tauriAuthorization'
 
 describe('tauriAuthorizationBrowser', () => {
   it('registers the deep-link listener before opening the system browser', async () => {
@@ -53,5 +53,15 @@ describe('tauriAuthorizationBrowser', () => {
       errorDetail: 'Error: ShellExecute failed for <url>',
     }))
     callback.then(() => undefined, () => undefined)
+  })
+})
+
+describe('pollDeviceAuthorization', () => {
+  it('uses the native device exchange command without opening a browser', async () => {
+    mocks.openUrl.mockClear()
+    mocks.invoke.mockResolvedValue({ access_token: 'a', token_type: 'DPoP', expires_in: 60, scopes: [] })
+    await expect(pollDeviceAuthorization({ issuer: 'https://relay.example.com', deviceCode: 'device', codeVerifier: 'verifier', publicJwk: { kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' } })).resolves.toMatchObject({ access_token: 'a' })
+    expect(mocks.invoke).toHaveBeenCalledWith('native_exchange_device_code', { issuer: 'https://relay.example.com', deviceCode: 'device', codeVerifier: 'verifier', publicJwk: expect.any(Object) })
+    expect(mocks.openUrl).not.toHaveBeenCalled()
   })
 })

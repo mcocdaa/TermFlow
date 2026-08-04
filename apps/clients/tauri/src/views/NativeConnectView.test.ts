@@ -37,6 +37,7 @@ async function render(metadata = vi.fn().mockResolvedValue({
     history: createMemoryHistory(),
     routes: [
       { path: '/connect', component: NativeConnectView },
+      { path: '/connect/device', component: { template: '<div>device</div>' } },
       { path: '/requested', component: { template: '<div>requested</div>' } },
     ],
   })
@@ -64,8 +65,17 @@ describe('NativeConnectView', () => {
     expect(wrapper.get('h1').text()).toBe('连接到服务器')
     expect(wrapper.get('label[for="server-url"]').text()).toBe('服务器地址')
     expect(wrapper.get('button[type="submit"]').text()).toBe('申请注册远程控制')
+    expect(wrapper.get('[data-action="device-authorize"]').text()).toContain('在其他设备上授权')
     expect(wrapper.find('.auth-card > p:not(.eyebrow)').exists()).toBe(false)
     expect(wrapper.text()).not.toMatch(/\bB\b|Web C/)
+  })
+
+  it('offers device authorization without invoking the system browser', async () => {
+    const { wrapper, router } = await render()
+    await wrapper.get('[data-action="device-authorize"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/connect/device')
+    expect(mocks.authorizeNativeClient).not.toHaveBeenCalled()
   })
 
   it('disables the action while the existing system-browser OAuth flow is pending', async () => {

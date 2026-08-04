@@ -48,6 +48,14 @@ describe('createTauriHttpTransport', () => {
     expect((tauriFetch.mock.calls[1]?.[1] as RequestInit).headers).toEqual(expect.objectContaining({}))
   })
 
+  it('keeps device-code creation public before a credential exists', async () => {
+    tauriFetch.mockResolvedValue(new Response(JSON.stringify({ device_code: 'd' }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }))
+    await createTauriHttpTransport().request('/api/v1/oauth/device/code', { method: 'POST', body: { client_name: 'TermFlow' } })
+    expect(invoke).not.toHaveBeenCalledWith('native_request_headers', expect.anything())
+  })
+
   it('does not retry a nonce challenge more than once', async () => {
     const headers = [
       { authorization: 'DPoP access', dpop: 'proof-1' },

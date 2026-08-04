@@ -34,11 +34,18 @@ from termflow_control_plane.auth.audit import (
 from termflow_control_plane.auth.dpop import DpopInvalid, DpopNonceRequired, DpopVerifier
 from termflow_control_plane.auth.oauth import FreshTotpVerifier, OAuthService
 from termflow_control_plane.auth.rate_limit import AuthRateLimiter, direct_peer_source
+from termflow_control_plane.auth.sessions import BrowserSessionStore
 from termflow_control_plane.config import Settings
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.repositories import RepositoryBundle
 
-from .dependencies import get_repositories, get_settings, require_admin
+from .dependencies import (
+    get_browser_sessions,
+    get_repositories,
+    get_settings,
+    require_admin,
+    require_web_admin,
+)
 
 router = APIRouter(tags=["oauth"])
 
@@ -199,6 +206,7 @@ async def decide_native_authorization(
     response: Response,
     settings: Annotated[Settings, Depends(get_settings)],
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
+    sessions: Annotated[BrowserSessionStore, Depends(get_browser_sessions)],
 ) -> OAuthAuthorizationDecisionResponse:
     limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
     audit = cast(AuthenticationAudit, request.app.state.auth_audit)
@@ -215,7 +223,14 @@ async def decide_native_authorization(
         raise
     try:
         async with limiter.verification_slot():
-            result = await _service(request, repositories, settings).decide(body)
+            session_authenticated = False
+            if body.admin_token is None:
+                await require_web_admin(request, settings, sessions, repositories)
+                session_authenticated = True
+            result = await _service(request, repositories, settings).decide(
+                body,
+                session_authenticated=session_authenticated,
+            )
     except TermFlowError:
         limiter.record_failure("native_authorization_decision", source)
         await audit.record(

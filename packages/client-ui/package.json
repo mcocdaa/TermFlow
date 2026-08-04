@@ -19,6 +19,7 @@
     "./views/LoginView": "./src/views/LoginView.vue",
     "./views/TerminalView": "./src/views/TerminalView.vue",
     "./components/dashboard/StatusPill": "./src/components/dashboard/StatusPill.vue",
+    "./components/common/ThemedQrCode": "./src/components/common/ThemedQrCode.vue",
     "./components/terminal/TerminalCanvas": "./src/components/terminal/TerminalCanvas.vue",
     "./components/terminal/TerminalTitlebar": "./src/components/terminal/TerminalTitlebar.vue",
     "./components/terminal/TmuxActionMenu": "./src/components/terminal/TmuxActionMenu.vue",

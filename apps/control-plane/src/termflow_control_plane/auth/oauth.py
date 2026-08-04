@@ -237,11 +237,20 @@ class OAuthService:
     async def decide(
         self,
         request: OAuthAuthorizationDecisionRequest,
+        *,
+        session_authenticated: bool = False,
     ) -> OAuthAuthorizationDecisionResponse:
         state = await self._repositories.auth_state.get()
-        supplied = request.admin_token.get_secret_value()
+        supplied = (
+            request.admin_token.get_secret_value() if request.admin_token is not None else None
+        )
         expected = self._settings.admin_token.get_secret_value()
-        if not hmac.compare_digest(supplied, expected):
+        authenticated = (
+            session_authenticated
+            if supplied is None
+            else hmac.compare_digest(supplied, expected)
+        )
+        if not authenticated:
             await self._record_decision_failure(request.transaction_id, state.epoch)
             raise TermFlowError("authentication_failed", 401, "Authentication failed.")
         authorization = await self._repositories.oauth_authorizations.get_active_id(

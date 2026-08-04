@@ -532,7 +532,7 @@ class OAuthAuthorizationPreviewResponse(HttpModel):
 class OAuthAuthorizationDecisionRequest(HttpModel):
     transaction_id: UUID
     decision: Literal["allow", "deny"]
-    admin_token: SecretStr
+    admin_token: SecretStr | None = None
     totp_code: SecretStr | None = None
 
     @field_validator("totp_code", mode="before")

@@ -19,6 +19,8 @@ describe('authentication APIs', () => {
     await api.sessions.completeTotp('challenge /1', '123456')
     await api.security.createTotpSetup({ adminToken: 'admin', totpCode: '123456' })
     await api.oauth.authorizationPreview('transaction /1')
+    await api.oauth.deviceAuthorizationPreview('ABCD-EFGH')
+    await api.oauth.decideAuthorization({ transactionId: 'tx', decision: 'allow' })
     await api.oauth.createDeviceAuthorization({
       clientName: 'TermFlow Desktop',
       platform: 'linux',
@@ -39,6 +41,8 @@ describe('authentication APIs', () => {
       ['/api/v1/admin/sessions/challenge%20%2F1/totp', { method: 'POST', body: { code: '123456' } }],
       ['/api/v1/admin/totp/setups', { method: 'POST', body: { admin_token: 'admin', totp_code: '123456' } }],
       ['/api/v1/oauth/authorize?transaction_id=transaction%20%2F1', { method: 'GET' }],
+      ['/api/v1/oauth/authorize?user_code=ABCD-EFGH', { method: 'GET' }],
+      ['/api/v1/oauth/authorize', { method: 'POST', body: { transaction_id: 'tx', decision: 'allow' } }],
       ['/api/v1/oauth/device/code', { method: 'POST', body: {
         client_name: 'TermFlow Desktop',
         platform: 'linux',

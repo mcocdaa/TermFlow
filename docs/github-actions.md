@@ -58,6 +58,11 @@ docker load -i termflow-control-plane.tar
 导入不会修改 `deploy/compose.yaml`、不会自动重启服务，也不会触碰 `termflow-data`；源代码
 部署仍使用 `docker compose --env-file .env -f deploy/compose.yaml up -d --build`。
 
+原生客户端改动由 `Package C · Native Clients` 打包验证：选择 `windows` 会生成
+`Windows x64 · NSIS` 的 `*-setup.exe`，选择 `all` 则构建全部 C 平台。下载新的 Windows installer 后须在
+目标 Windows 主机覆盖安装；workflow 成功或 Artifact 下载不代表该主机已经替换旧 App。Tag
+Release 复用同一 workflow，并把通过 gate 的 installer 作为 GitHub Release asset 发布。
+
 ## Tag 发布
 
 Tag 必须是 `v` 前缀的受支持 SemVer，例如 `v1.2.3`、`v1.2.3-rc.1`。先在目标 commit 上

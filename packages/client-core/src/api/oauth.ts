@@ -12,7 +12,7 @@ import type { ApiRequest, ApiRequestOptions } from '../http/types'
 export interface AuthorizationDecisionInput {
   transactionId: string
   decision: 'allow' | 'deny'
-  adminToken: string
+  adminToken?: string
   totpCode?: string
 }
 
@@ -64,12 +64,13 @@ export function createOAuthApi(request: ApiRequest) {
       },
     }, signal)),
     authorizationPreview: (transactionId: string, signal?: AbortSignal) => request<OAuthAuthorizationPreviewResponse>(`/api/v1/oauth/authorize?transaction_id=${encodeURIComponent(transactionId)}`, withSignal({}, signal)),
+    deviceAuthorizationPreview: (userCode: string, signal?: AbortSignal) => request<OAuthAuthorizationPreviewResponse>(`/api/v1/oauth/authorize?user_code=${encodeURIComponent(userCode)}`, withSignal({}, signal)),
     decideAuthorization: (input: AuthorizationDecisionInput, signal?: AbortSignal) => request<OAuthAuthorizationDecisionResponse>('/api/v1/oauth/authorize', withSignal({
       method: 'POST',
       body: {
         transaction_id: input.transactionId,
         decision: input.decision,
-        admin_token: input.adminToken,
+        ...(input.adminToken === undefined ? {} : { admin_token: input.adminToken }),
         ...(input.totpCode === undefined ? {} : { totp_code: input.totpCode }),
       },
     }, signal)),

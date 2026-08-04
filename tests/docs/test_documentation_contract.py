@@ -88,6 +88,33 @@ def test_operator_docs_keep_current_install_release_and_native_contracts() -> No
         assert contract in current_docs
 
 
+def test_operator_docs_explain_native_device_authorization_and_windows_replacement() -> None:
+    web_client = Path("docs/web-client.md").read_text()
+    operations = Path("docs/operations.md").read_text()
+    github_actions = Path("docs/github-actions.md").read_text()
+
+    for contract in (
+        "申请注册远程控制",
+        "在其他设备上授权",
+        "15 分钟",
+        "二维码",
+        "Admin Token 只在 Web C 登录时使用",
+    ):
+        assert contract in web_client
+    for contract in (
+        "%LOCALAPPDATA%\\\\termflow\\\\Logs\\\\termflow.log",
+        "覆盖安装",
+        "15 分钟",
+    ):
+        assert contract in operations
+    for contract in (
+        "Package C · Native Clients",
+        "Windows x64 · NSIS",
+        "GitHub Release",
+    ):
+        assert contract in github_actions
+
+
 def test_readme_documents_offline_artifact_install_and_local_image_run() -> None:
     readme = Path("README.md").read_text()
 

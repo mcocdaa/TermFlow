@@ -18,6 +18,12 @@ B 不创建容器内应用日志文件；请使用 `docker compose --env-file .e
 并由容器平台负责保留与轮转。A/Tauri 的本地日志位置见 [README](../README.md#日志位置)；Web C 不写磁盘日志，
 用响应头 `X-Request-ID` 在 B 输出中关联请求。
 
+Windows 上 A 的日志是 `%LOCALAPPDATA%\\termflow\\Logs\\termflow.log`；Tauri 的
+`termflow-client.log` 位于系统应用日志目录。需要新版原生授权或网络能力时，从 Tag Release
+或 `Package C · Native Clients` 下载新的未签名 Windows NSIS 包并覆盖安装；旧安装包不会自动
+替换为新代码。Tauri 的“在其他设备上授权”设备码有效 15 分钟，使用已登录的 Web C 确认；
+Admin Token 仍只用于 Web C 登录。
+
 ## 永久发布、安装与回退
 
 一个通过全部介质 gate 的 `vX.Y.Z` 或 prerelease tag 会创建 GitHub Release，并推送同 tag 的 GHCR

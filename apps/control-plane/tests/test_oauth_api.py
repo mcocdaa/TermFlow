@@ -113,6 +113,40 @@ def test_device_user_code_resolves_the_existing_web_preview(client) -> None:
     assert mixed.status_code == 400
 
 
+def test_device_approval_requires_browser_session_when_admin_token_is_omitted(client) -> None:
+    _, jwk = key_and_jwk()
+    body, _ = _device_request(jwk)
+    created = client.post("/api/v1/oauth/device/code", json=body)
+    assert created.status_code == 200, created.text
+    authorization = asyncio.run(
+        client.app.state.repositories.oauth_authorizations.find_by_user_code(
+            created.json()["user_code"], epoch=1,
+        )
+    )
+    assert authorization is not None
+    transaction_id = str(authorization.id)
+
+    unauthenticated = client.post(
+        "/api/v1/oauth/authorize",
+        json={"transaction_id": transaction_id, "decision": "allow"},
+    )
+    assert unauthenticated.status_code == 401
+
+    login = client.post(
+        "/api/v1/admin/sessions",
+        headers={"Origin": "http://127.0.0.1:8000"},
+        json={"admin_token": "admin-token-that-is-long-enough-for-tests"},
+    )
+    assert login.status_code == 200, login.text
+    approved = client.post(
+        "/api/v1/oauth/authorize",
+        headers={"Origin": "http://127.0.0.1:8000"},
+        json={"transaction_id": transaction_id, "decision": "allow"},
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["status"] == "approved"
+
+
 def test_device_code_approval_reuses_web_decision_and_issues_dpop_tokens(client) -> None:
     key, jwk = key_and_jwk()
     body, verifier = _device_request(jwk)
