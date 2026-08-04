@@ -12,7 +12,10 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import jwt
+import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
+
+pytestmark = pytest.mark.e2e
 
 
 def _b64url(value: bytes) -> str:

@@ -1,43 +1,8 @@
-import { readFileSync, readdirSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { TerminalSession, type TerminalSessionCallbacks } from '@termflow/client-core'
 import { createBrowserTerminalTransport } from '../adapters/browserTerminalTransport'
 
-function productionFiles(directory: string): string[] {
-  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    const path = resolve(directory, entry.name)
-    if (entry.isDirectory()) return entry.name === 'test' ? [] : productionFiles(path)
-    return /\.(ts|vue)$/.test(entry.name) && !entry.name.endsWith('.test.ts') ? [path] : []
-  })
-}
-
-const workspaceRoot = resolve(process.cwd(), '../../..')
-const clientProductionFiles = () => [
-  resolve(workspaceRoot, 'apps/clients/web/src'),
-  resolve(workspaceRoot, 'packages/client-contracts/src'),
-  resolve(workspaceRoot, 'packages/client-core/src'),
-  resolve(workspaceRoot, 'packages/client-ui/src'),
-].flatMap(productionFiles)
-
-const relativeToWorkspace = (file: string) => file.replace(`${workspaceRoot}/`, '')
-
 describe('privacy contracts', () => {
-  it('allows browser persistence only for the theme identifier', () => {
-    const persistence = clientProductionFiles().filter((file) => /localStorage|sessionStorage|indexedDB/i.test(readFileSync(file, 'utf8')))
-    expect(persistence.map(relativeToWorkspace)).toEqual(['apps/clients/web/src/adapters/browserThemePreferences.ts'])
-  })
-
-  it('keeps shared client packages free of direct networking, persistence, clipboard, and native APIs', () => {
-    const packageFiles = [
-      resolve(workspaceRoot, 'packages/client-contracts/src'),
-      resolve(workspaceRoot, 'packages/client-core/src'),
-      resolve(workspaceRoot, 'packages/client-ui/src'),
-    ].flatMap(productionFiles)
-    const forbidden = /navigator\.|localStorage|sessionStorage|indexedDB|\bfetch\(|\bWebSocket\b|@tauri/i
-    expect(packageFiles.filter((file) => forbidden.test(readFileSync(file, 'utf8'))).map(relativeToWorkspace)).toEqual([])
-  })
-
   it('keeps terminal output out of storage, URL, console, and telemetry-shaped globals', () => {
     const outputSample = 'PRIVATE_TERMINAL_OUTPUT_728'
     const received: string[] = []

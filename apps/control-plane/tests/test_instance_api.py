@@ -13,22 +13,6 @@ from termflow_protocol import (
 )
 
 
-def _provision_instance(client, admin_headers):
-    enrollment = client.post("/api/v1/enrollment-tokens", headers=admin_headers).json()["token"]
-    installation = client.post(
-        "/api/v1/installations/enroll",
-        json={"enrollment_token": enrollment},
-    ).json()
-    instance_id = uuid4()
-    registration = client.post(
-        "/api/v1/instances/register",
-        headers={"Authorization": f"Bearer {installation['installation_token']}"},
-        json={"instance_id": str(instance_id), "name": "work"},
-    )
-    assert registration.status_code == 201
-    return instance_id, registration.json()["instance_token"]
-
-
 def _topology() -> TopologySnapshot:
     return TopologySnapshot(
         session_id="$0",
@@ -57,8 +41,8 @@ def _topology() -> TopologySnapshot:
     )
 
 
-def test_admin_can_list_and_read_instances(client, admin_headers) -> None:
-    instance_id, _ = _provision_instance(client, admin_headers)
+def test_admin_can_list_and_read_instances(client, admin_headers, provision_term) -> None:
+    instance_id = provision_term(name="work").instance_id
     listing = client.get("/api/v1/instances", headers=admin_headers)
     assert listing.status_code == 200
     assert listing.json()["instances"][0]["instance_id"] == str(instance_id)
@@ -69,8 +53,12 @@ def test_admin_can_list_and_read_instances(client, admin_headers) -> None:
     assert detail.json()["name"] == "work"
 
 
-def test_offline_topology_and_input_are_rejected(client, admin_headers) -> None:
-    instance_id, _ = _provision_instance(client, admin_headers)
+def test_offline_topology_and_input_are_rejected(
+    client,
+    admin_headers,
+    provision_term,
+) -> None:
+    instance_id = provision_term(name="work").instance_id
     topology = client.get(
         f"/api/v1/instances/{instance_id}/topology",
         headers=admin_headers,
@@ -90,12 +78,17 @@ def test_offline_topology_and_input_are_rejected(client, admin_headers) -> None:
     assert not hasattr(audit[-1], "text")
 
 
-def test_http_input_waits_for_bridge_confirmation(client, admin_headers) -> None:
-    instance_id, instance_token = _provision_instance(client, admin_headers)
+def test_http_input_waits_for_bridge_confirmation(
+    client,
+    admin_headers,
+    provision_term,
+) -> None:
+    term = provision_term(name="work")
+    instance_id = term.instance_id
     topology = _topology()
     with client.websocket_connect(
         "/api/v1/bridge/connect",
-        headers={"Authorization": f"Bearer {instance_token}"},
+        headers={"Authorization": f"Bearer {term.instance_token}"},
     ) as websocket:
         websocket.send_text(
             WireMessage(
@@ -142,8 +135,12 @@ def test_http_input_waits_for_bridge_confirmation(client, admin_headers) -> None
     }
 
 
-def test_control_character_is_rejected_at_http_boundary(client, admin_headers) -> None:
-    instance_id, _ = _provision_instance(client, admin_headers)
+def test_control_character_is_rejected_at_http_boundary(
+    client,
+    admin_headers,
+    provision_term,
+) -> None:
+    instance_id = provision_term(name="work").instance_id
     response = client.post(
         f"/api/v1/instances/{instance_id}/panes/%251/input",
         headers={**admin_headers, "Idempotency-Key": str(uuid4())},

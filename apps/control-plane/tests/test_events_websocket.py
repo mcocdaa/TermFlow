@@ -10,21 +10,6 @@ from termflow_protocol import (
 )
 
 
-def _provision_instance(client, admin_headers):
-    enrollment = client.post("/api/v1/enrollment-tokens", headers=admin_headers).json()["token"]
-    installation = client.post(
-        "/api/v1/installations/enroll",
-        json={"enrollment_token": enrollment},
-    ).json()
-    instance_id = uuid4()
-    registration = client.post(
-        "/api/v1/instances/register",
-        headers={"Authorization": f"Bearer {installation['installation_token']}"},
-        json={"instance_id": str(instance_id), "name": "events"},
-    ).json()
-    return instance_id, registration["instance_token"]
-
-
 def test_events_reject_invalid_admin_token(client) -> None:
     with pytest.raises(WebSocketDisconnect) as caught:
         with client.websocket_connect(
@@ -35,13 +20,14 @@ def test_events_reject_invalid_admin_token(client) -> None:
     assert caught.value.code == 4401
 
 
-def test_matching_pane_output_is_forwarded(client, admin_headers) -> None:
-    instance_id, instance_token = _provision_instance(client, admin_headers)
+def test_matching_pane_output_is_forwarded(client, admin_headers, provision_term) -> None:
+    term = provision_term(name="events")
+    instance_id = term.instance_id
     event_url = f"/api/v1/events?instance_id={instance_id}"
     with client.websocket_connect(event_url, headers=admin_headers) as events:
         with client.websocket_connect(
             "/api/v1/bridge/connect",
-            headers={"Authorization": f"Bearer {instance_token}"},
+            headers={"Authorization": f"Bearer {term.instance_token}"},
         ) as bridge:
             output = PaneOutputPayload.from_bytes("%1", uuid4(), 1, b"hello\xff")
             bridge.send_text(
@@ -59,8 +45,13 @@ def test_matching_pane_output_is_forwarded(client, admin_headers) -> None:
             assert PaneOutputPayload.model_validate(received.payload).to_bytes() == b"hello\xff"
 
 
-def test_replay_cursor_enqueues_request_to_bridge(client, admin_headers) -> None:
-    instance_id, instance_token = _provision_instance(client, admin_headers)
+def test_replay_cursor_enqueues_request_to_bridge(
+    client,
+    admin_headers,
+    provision_term,
+) -> None:
+    term = provision_term(name="events")
+    instance_id = term.instance_id
     stream_id = uuid4()
     query = urlencode(
         {
@@ -72,7 +63,7 @@ def test_replay_cursor_enqueues_request_to_bridge(client, admin_headers) -> None
     )
     with client.websocket_connect(
         "/api/v1/bridge/connect",
-        headers={"Authorization": f"Bearer {instance_token}"},
+        headers={"Authorization": f"Bearer {term.instance_token}"},
     ) as bridge:
         with client.websocket_connect(f"/api/v1/events?{query}", headers=admin_headers):
             request = WireMessage.model_validate(bridge.receive_json())
@@ -88,8 +79,9 @@ def test_replay_cursor_enqueues_request_to_bridge(client, admin_headers) -> None
 def test_browser_cookie_requires_exact_origin_for_event_websocket(
     client,
     admin_headers,
+    provision_term,
 ) -> None:
-    instance_id, _ = _provision_instance(client, admin_headers)
+    instance_id = provision_term(name="events").instance_id
     login = client.post(
         "/api/v1/admin/sessions",
         headers={"Origin": "http://127.0.0.1:8000"},

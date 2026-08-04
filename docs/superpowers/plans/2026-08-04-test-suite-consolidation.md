@@ -40,7 +40,7 @@ npm run test:run
 find apps packages tests -type f \( -name 'test_*.py' -o -name '*.test.ts' -o -name '*.spec.ts' \) -print0 | xargs -0 wc -l | tail -1
 ```
 
-Expected: Python collects 640 tests, Vitest reports 222 passing tests, and test code totals about 20,454 lines. If environment-specific tests cannot execute, retain the collection result and record the exact limitation.
+Expected: Python collects 641 tests, Vitest reports 222 passing tests, and test code totals 20,467 lines. The extra Python test comes from the preserved concurrent commit `8bc6b21`. If environment-specific tests cannot execute, retain the collection result and record the exact limitation.
 
 - [ ] **Step 2: Add the missing module marker without adding a test**
 
@@ -61,7 +61,7 @@ Run:
 .venv/bin/python -m pytest --collect-only -q -p no:cacheprovider --disable-warnings -m 'not e2e and not tmux'
 ```
 
-Expected: E2E selection grows from 8 to 11; the fast selection loses exactly the three real-process unified-auth tests; total collection remains 640.
+Expected: E2E selection grows from 8 to 11; the fast selection loses exactly the three real-process unified-auth tests; total collection remains 641.
 
 ### Task 2: Establish one owner for release and repository contracts
 
@@ -328,7 +328,7 @@ npm run test:run --workspace @termflow/client-ui
 .venv/bin/python -m pytest -q -p no:cacheprovider tests/docs/test_documentation_contract.py
 ```
 
-Expected: 119 client-ui Vitest tests and 11 documentation tests pass.
+Expected: 119 client-ui Vitest tests and 12 documentation tests pass.
 
 - [ ] **Step 2: Reduce responsive assertions to durable invariants**
 
@@ -348,7 +348,7 @@ expect(appCss).toMatch(/\.computer-delete-toast\s*\{[^}]*position:\s*fixed;/)
 
 Remove exact TOTP, titlebar, terminal canvas, shell sizing and term-card CSS strings already covered by component or Playwright behavior tests. Do not create additional `it(...)` blocks.
 
-- [ ] **Step 3: Reduce documentation tests to four durable contracts**
+- [ ] **Step 3: Reduce documentation tests to five durable contracts**
 
 Keep and simplify existing functions so they cover:
 
@@ -356,14 +356,15 @@ Keep and simplify existing functions so they cover:
 2. README links to each current operator document.
 3. Current docs exclude `TERMFLOW_IMAGE` and `TERMFLOW_TRUSTED_WEB_ORIGINS`.
 4. README/operations/GitHub Actions docs include current install command, `docker compose ... up -d --build`, package workflow filenames, GitHub Release/GHCR distinction, `tmux 3.2`, and version precedence.
+5. The existing offline artifact installation and local image loading contract introduced by `8bc6b21` remains unchanged.
 
-Delete exact assertions for theme names, prose wording, UI labels, platform marketing lists and repeated artifact descriptions. Reuse one existing test function for the combined operator command contract; do not add a fifth function.
+Delete exact assertions for theme names, prose wording, UI labels, platform marketing lists and repeated artifact descriptions. Reuse one existing test function for the combined operator command contract; do not add a sixth function.
 
 - [ ] **Step 4: Verify compressed contracts**
 
 Run the Step 1 commands again.
 
-Expected: client-ui remains at 119 tests; documentation tests decrease from 11 to four; all pass.
+Expected: client-ui remains at 119 tests; documentation tests decrease from 12 to five; all pass.
 
 ### Task 6: Final layered verification and handoff
 
@@ -380,7 +381,7 @@ Run:
 npm run test:run
 ```
 
-Expected: Python collects 629 tests, E2E collects 11, and Vitest reports 220 passing tests.
+Expected: Python collects 630 tests, E2E collects 11, and Vitest reports 220 passing tests.
 
 - [ ] **Step 2: Run stable Python layers**
 

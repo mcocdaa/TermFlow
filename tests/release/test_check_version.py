@@ -6,8 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import yaml
-
 from scripts.release.version_files import (
     ANDROID_CONFIG,
     CARGO_LOCK,
@@ -102,12 +100,3 @@ def test_checker_rejects_an_internal_dependency_version_mismatch(tmp_path: Path)
 
     assert result.returncode == 2
     assert "apps/clients/web/package.json" in result.stderr
-
-
-def test_native_package_workflow_is_manual_and_reusable_without_publish_permissions() -> None:
-    path = ROOT / ".github/workflows/tauri-packages.yml"
-    workflow = yaml.safe_load(path.read_text())
-
-    assert set(workflow[True]) == {"workflow_dispatch", "workflow_call"}
-    assert workflow["permissions"] == {"contents": "read"}
-    assert "scripts/release/prepare_version.py" in path.read_text()
