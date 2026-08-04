@@ -26,6 +26,13 @@ type OAuthScope = Literal[
     "computers.write",
 ]
 
+type OAuthDeviceTokenErrorCode = Literal[
+    "authorization_pending",
+    "slow_down",
+    "access_denied",
+    "expired_token",
+]
+
 OAUTH_SCOPES: tuple[OAuthScope, ...] = (
     "terminal.read",
     "terminal.write",
@@ -377,6 +384,8 @@ class OAuthMetadataResponse(HttpModel):
     authorization_endpoint: str = Field(min_length=1, max_length=2048)
     token_endpoint: str = Field(min_length=1, max_length=2048)
     revocation_endpoint: str = Field(min_length=1, max_length=2048)
+    device_authorization_endpoint: str = Field(min_length=1, max_length=2048)
+    device_verification_uri: str = Field(min_length=1, max_length=2048)
     response_types_supported: list[Literal["code"]]
     grant_types_supported: list[Literal["authorization_code", "refresh_token"]]
     code_challenge_methods_supported: list[Literal["S256"]]
@@ -433,6 +442,52 @@ class OAuthAuthorizationRequest(HttpModel):
     @classmethod
     def nonempty_unique_scopes(cls, value: list[OAuthScope]) -> list[OAuthScope]:
         return validate_scopes(value)
+
+
+class OAuthDeviceCodeRequest(HttpModel):
+    client_name: str
+    platform: str = Field(min_length=1, max_length=128)
+    client_version: str | None = Field(default=None, min_length=1, max_length=64)
+    code_challenge: str
+    code_challenge_method: Literal["S256"] = "S256"
+    dpop_jkt: str
+    public_jwk: OAuthPublicJwk
+    scopes: list[OAuthScope]
+
+    @field_validator("client_name")
+    @classmethod
+    def valid_client_name(cls, value: str) -> str:
+        return validate_client_name(value)
+
+    @field_validator("code_challenge")
+    @classmethod
+    def valid_code_challenge(cls, value: str) -> str:
+        validated = validate_pkce_value(value)
+        assert isinstance(validated, str)
+        return validated
+
+    @field_validator("dpop_jkt")
+    @classmethod
+    def valid_dpop_thumbprint(cls, value: str) -> str:
+        return validate_base64url_256(value)
+
+    @field_validator("scopes")
+    @classmethod
+    def nonempty_unique_scopes(cls, value: list[OAuthScope]) -> list[OAuthScope]:
+        return validate_scopes(value)
+
+
+class OAuthDeviceCodeResponse(HttpModel):
+    device_code: str = Field(repr=False, min_length=1)
+    user_code: str = Field(min_length=1)
+    verification_uri: str = Field(min_length=1, max_length=2048)
+    verification_uri_complete: str = Field(min_length=1, max_length=2048)
+    expires_in: int = Field(gt=0)
+    interval: int = Field(gt=0)
+
+
+class OAuthDeviceTokenError(HttpModel):
+    error: OAuthDeviceTokenErrorCode
 
 
 class OAuthAuthorizationPreviewResponse(HttpModel):

@@ -36,6 +36,8 @@ def test_oauth_metadata_uses_only_configured_canonical_issuer(client) -> None:
         "authorization_endpoint": "http://127.0.0.1:8000/api/v1/oauth/authorize",
         "token_endpoint": "http://127.0.0.1:8000/api/v1/oauth/token",
         "revocation_endpoint": "http://127.0.0.1:8000/api/v1/oauth/revoke",
+        "device_authorization_endpoint": "http://127.0.0.1:8000/api/v1/oauth/device/code",
+        "device_verification_uri": "http://127.0.0.1:8000/device",
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
