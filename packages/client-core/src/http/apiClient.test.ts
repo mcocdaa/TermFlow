@@ -100,6 +100,7 @@ describe('createApiClient', () => {
   it.each([
     ['aborted', 'aborted'],
     ['offline', 'offline'],
+    ['http_capability_denied', 'http_capability_denied'],
   ] as const)('maps the %s transport failure without logging payloads', async (transportKind, apiKind) => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const api = createApiClient({ request: vi.fn().mockRejectedValue(new HttpTransportError(transportKind)) })

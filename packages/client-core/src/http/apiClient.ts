@@ -33,6 +33,7 @@ function transportFailure(error: unknown): ApiError {
   if (error instanceof HttpTransportError) {
     if (error.kind === 'aborted') return new ApiError('aborted')
     if (error.kind === 'invalid_request') return new ApiError('validation')
+    if (error.kind === 'http_capability_denied') return new ApiError('http_capability_denied')
   }
   return new ApiError('offline')
 }

@@ -43,7 +43,7 @@ export interface ApiResponse<T> {
 
 export type ApiRequestResponse = <T = void>(path: `/${string}`, options?: ApiRequestOptions) => Promise<ApiResponse<T>>
 
-export type HttpTransportErrorKind = 'aborted' | 'offline' | 'invalid_request'
+export type HttpTransportErrorKind = 'aborted' | 'offline' | 'invalid_request' | 'http_capability_denied'
 
 export class HttpTransportError extends Error {
   constructor(public readonly kind: HttpTransportErrorKind) {
