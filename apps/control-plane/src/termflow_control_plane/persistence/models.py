@@ -161,7 +161,39 @@ class OAuthAuthorization(Base):
     code_issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     code_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # Device Authorization Grant state shares this authorization transaction.  The
+    # short-lived secrets are never persisted in plaintext; only their digests are
+    # stored and indexed for lookups.
+    device_code_digest: Mapped[str | None] = mapped_column(
+        String(64), unique=True, index=True, default=None
+    )
+    user_code_digest: Mapped[str | None] = mapped_column(
+        String(64), unique=True, index=True, default=None
+    )
+    device_status: Mapped[str | None] = mapped_column(String(16), index=True, default=None)
+    device_interval: Mapped[int | None] = mapped_column(Integer, default=None)
+    device_exchanged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    @property
+    def authorization_id(self) -> UUID:
+        """Expose the shared authorization identifier to device-flow callers."""
+
+        return self.id
+
+    @property
+    def status(self) -> str | None:
+        """Compatibility alias for the device-flow lifecycle status."""
+
+        return self.device_status
+
+    @property
+    def interval(self) -> int | None:
+        """Compatibility alias for the server-advised polling interval."""
+
+        return self.device_interval
 
 
 class AuthToken(Base):
