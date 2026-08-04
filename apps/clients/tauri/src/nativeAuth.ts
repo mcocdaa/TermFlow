@@ -5,6 +5,7 @@ import { createMemoryAccessVault } from './adapters/memoryAccessVault'
 import { createTauriKey, exchangeAuthorization, tauriAuthorizationBrowser } from './adapters/tauriAuthorization'
 import { buildVersion } from './buildVersion'
 import { serverConfig } from './serverConfig'
+import { logNativeEvent } from './diagnostics'
 
 const vault = createMemoryAccessVault()
 const cryptoPort = {
@@ -13,6 +14,7 @@ const cryptoPort = {
 }
 
 export async function authorizeNativeClient(issuer: string, authorizeEndpoint: string, scopes: OAuthScope[]) {
+  void logNativeEvent({ event: 'connect_started', issuer })
   await serverConfig.replace(issuer)
   const key = createTauriKey(serverConfig.current)
   const session = new NativeAuthorizationSession({
@@ -27,5 +29,12 @@ export async function authorizeNativeClient(issuer: string, authorizeEndpoint: s
     createId: () => globalThis.crypto.randomUUID(),
     exchange: ({ issuer: target, transaction, verifier, redirectUri }) => exchangeAuthorization({ issuer: target, transaction, verifier, redirectUri }),
   })
-  return session.authorize()
+  try {
+    const credential = await session.authorize()
+    void logNativeEvent({ event: 'token_exchange_succeeded', issuer })
+    return credential
+  } catch (error) {
+    void logNativeEvent({ event: 'token_exchange_failed', issuer, level: 'error', errorCode: 'authorization_failed' })
+    throw error
+  }
 }

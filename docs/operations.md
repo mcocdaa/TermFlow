@@ -12,6 +12,12 @@ mTLS 的证书签发、校验与轮换不属于 TermFlow，也不会被默认镜
 应由部署者提供 HTTPS/WSS 入口，并把用户实际访问的 canonical URL 写入
 `TERMFLOW_PUBLIC_BASE_URL`；B 不因这个配置而自行提供 TLS。
 
+### 日志收集
+
+B 不创建容器内应用日志文件；请使用 `docker compose --env-file .env -f deploy/compose.yaml logs -f control-plane`，
+并由容器平台负责保留与轮转。A/Tauri 的本地日志位置见 [README](../README.md#日志位置)；Web C 不写磁盘日志，
+用响应头 `X-Request-ID` 在 B 输出中关联请求。
+
 ## 永久发布、安装与回退
 
 一个通过全部介质 gate 的 `vX.Y.Z` 或 prerelease tag 会创建 GitHub Release，并推送同 tag 的 GHCR

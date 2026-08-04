@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { fetch } from '@tauri-apps/plugin-http'
 import { HttpTransportError, type HttpRequest, type HttpTransport } from '@termflow/client-core'
 import { serverConfig } from '../serverConfig'
+import { logNativeEvent } from '../diagnostics'
 
 interface NativeHeaders { authorization: string; dpop: string }
 const PUBLIC_PATHS = new Set(['/.well-known/oauth-authorization-server', '/healthz'])
@@ -65,10 +66,17 @@ export function createTauriHttpTransport(): HttpTransport {
         if ((response.headers.get('content-type') ?? '').includes('application/json')) {
           try { body = await response.json() } catch { body = undefined }
         }
+        void logNativeEvent({
+          event: 'http_response',
+          issuer: serverConfig.current,
+          requestId: response.headers.get('x-request-id') ?? undefined,
+          errorCode: response.status >= 400 ? `http_${response.status}` : undefined,
+        })
         return { status: response.status, headers: response.headers, body }
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') throw new HttpTransportError('aborted')
         if (isHttpCapabilityFailure(error)) throw new HttpTransportError('http_capability_denied')
+        void logNativeEvent({ event: 'http_request_failed', issuer: serverConfig.current, level: 'error', errorCode: 'offline' })
         throw new HttpTransportError('offline')
       }
     },

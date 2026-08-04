@@ -1,4 +1,5 @@
 mod auth;
+mod diagnostics;
 
 use auth::NativeAuthState;
 
@@ -22,6 +23,14 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(NativeAuthState::default())
+        .setup(|app| {
+            let log_dir = app
+                .path()
+                .app_log_dir()
+                .unwrap_or_else(|_| app.path().app_data_dir().unwrap_or_default());
+            app.manage(diagnostics::NativeLogger::new(log_dir));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             auth::native_public_jwk,
             auth::native_key_thumbprint,
@@ -30,6 +39,7 @@ pub fn run() {
             auth::native_refresh_access,
             auth::native_request_headers,
             auth::native_remember_dpop_nonce,
+            diagnostics::native_log,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run TermFlow client");

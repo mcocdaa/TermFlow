@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { onOpenUrl } from '@tauri-apps/plugin-deep-link'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import type { AuthorizationBrowserPort, NativeAccessCredential, NativeKeyPort, PublicEcJwk } from '@termflow/client-core'
+import { logNativeEvent } from '../diagnostics'
 
 export function createTauriKey(issuer: string): NativeKeyPort {
   return {
@@ -18,7 +19,11 @@ export const tauriAuthorizationBrowser: AuthorizationBrowserPort = {
     const pending = pendingCallback
     if (pending === undefined) throw new Error('authorization_listener_missing')
     await pending.ready
-    await openUrl(url)
+    void logNativeEvent({ event: 'browser_open_started', issuer: new URL(url).origin })
+    try { await openUrl(url) } catch (error) {
+      void logNativeEvent({ event: 'browser_open_failed', issuer: new URL(url).origin, level: 'error', errorCode: 'browser_open_failed' })
+      throw error
+    }
   },
   waitForCallback: (state, signal) => new Promise((resolve, reject) => {
     let disposed = false
@@ -35,7 +40,11 @@ export const tauriAuthorizationBrowser: AuthorizationBrowserPort = {
       const match = urls.find((value) => {
         try { return new URL(value).searchParams.get('state') === state } catch { return false }
       })
-      if (match !== undefined) { dispose(); resolve(match) }
+      if (match !== undefined) {
+        dispose()
+        void logNativeEvent({ event: 'authorization_callback_received', issuer: new URL(match).origin })
+        resolve(match)
+      }
     }).then((listener) => { if (disposed) listener(); else unlisten = listener })
     pendingCallback = current
     void current.ready.catch((error: unknown) => { dispose(); reject(error) })
@@ -43,9 +52,14 @@ export const tauriAuthorizationBrowser: AuthorizationBrowserPort = {
 }
 
 export async function exchangeAuthorization(input: { issuer: string; transaction: string; verifier: string; redirectUri: string }): Promise<NativeAccessCredential> {
-  return invoke<NativeAccessCredential>('native_exchange_authorization', {
-    issuer: input.issuer, transactionId: input.transaction, codeVerifier: input.verifier, redirectUri: input.redirectUri,
-  })
+  try {
+    return await invoke<NativeAccessCredential>('native_exchange_authorization', {
+      issuer: input.issuer, transactionId: input.transaction, codeVerifier: input.verifier, redirectUri: input.redirectUri,
+    })
+  } catch (error) {
+    void logNativeEvent({ event: 'token_exchange_failed', issuer: input.issuer, level: 'error', errorCode: 'token_exchange_failed' })
+    throw error
+  }
 }
 
 export async function refreshAuthorization(issuer: string): Promise<NativeAccessCredential> {
