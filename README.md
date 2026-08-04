@@ -143,6 +143,18 @@ B+Web C 的容器化启动参见 [deploy/compose.yaml](deploy/compose.yaml) 与
 [.env.example](.env.example)。默认只映射 `127.0.0.1:8765`；公网部署应在 B
 前放置 HTTPS/WSS 反向代理。
 
+## 日志位置
+
+Computer A 的 CLI 与 Bridge 写入结构化 JSONL 日志，默认 10 MiB 轮转并保留 5 份：Linux 为
+`~/.local/state/termflow/log/termflow.log`，macOS 为 `~/Library/Logs/termflow/termflow.log`，
+Windows 为 `%LOCALAPPDATA%\\termflow\\Logs\\termflow.log`。Tauri 客户端写入系统应用日志目录中的
+`termflow-client.log`。日志不包含 token、验证码、PKCE、Cookie 或终端输入输出；Web C 不写本地
+日志，使用响应头 `X-Request-ID` 关联 B 日志。B 在 Docker 中只输出 stdout/stderr：
+
+```bash
+docker compose --env-file .env -f deploy/compose.yaml logs -f control-plane
+```
+
 ## 文档
 
 - [架构与进程边界](docs/architecture.md)

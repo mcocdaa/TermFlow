@@ -14,6 +14,13 @@ uv run --package termflow-node termflow list --json
 要求 Python 3.12、tmux 3.2+。`termflow doctor --repair` 只会修复已知 TermFlow 文件权限，
 并在 tmux 仍存活时重启缺失 Bridge；它不会删除状态、杀 tmux 或执行远端命令。
 
+## 查看客户端日志
+
+A 的日志位于 Linux `~/.local/state/termflow/log/termflow.log`、macOS `~/Library/Logs/termflow/termflow.log`、
+Windows `%LOCALAPPDATA%\\termflow\\Logs\\termflow.log`；Tauri 为系统应用日志目录下的 `termflow-client.log`。
+Web C 不保存本地日志；使用页面显示的 `X-Request-ID` 在 `docker compose logs` 中搜索。凭据和终端内容被过滤，
+不会出现在日志中。
+
 ## Release 安装器或升级失败
 
 正式 Linux A 使用 GitHub Release 的 `install-termflow-node.sh`。手动 A workflow 的 Artifact

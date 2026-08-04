@@ -53,3 +53,8 @@ For downloadable packages, use the reusable workflows documented in
 [`docs/github-actions.md`](../../docs/github-actions.md). WSL can run the shared
 TypeScript tests and Linux checks, but it cannot provide evidence for a native
 Windows installer or an iOS device build.
+
+Native diagnostics are written by the Tauri process to the platform application
+log directory as `termflow-client.log` (10 MiB rotation, five backups). Web C
+intentionally writes no files. Do not share credentials or terminal contents
+when collecting client diagnostics.
