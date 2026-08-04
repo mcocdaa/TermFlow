@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Protocol
 from uuid import UUID, uuid4
 
+from .runner import tmux_subprocess_environment
+
 MAX_CHUNK_BYTES = 65_536
 DEFAULT_RING_BYTES = 1024 * 1024
 
@@ -139,7 +141,7 @@ class PosixPtyAdapter:
         try:
             _set_winsize(slave_fd, rows, cols)
             slave_tty = os.ttyname(slave_fd)
-            environment = os.environ.copy()
+            environment = tmux_subprocess_environment()
             environment.pop("TMUX", None)
             environment["TERMFLOW_PROXY_CLIENT"] = "1"
             environment["TERM"] = "xterm-256color"

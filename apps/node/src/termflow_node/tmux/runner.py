@@ -52,6 +52,21 @@ def _diagnostic_output(value: str | None) -> str:
     return repr(compact)
 
 
+def tmux_subprocess_environment() -> dict[str, str]:
+    """Prevent frozen private libraries from leaking into external tmux."""
+
+    environment = os.environ.copy()
+    if not getattr(sys, "frozen", False):
+        return environment
+
+    original_library_path = environment.pop("LD_LIBRARY_PATH_ORIG", None)
+    if original_library_path is None:
+        environment.pop("LD_LIBRARY_PATH", None)
+    else:
+        environment["LD_LIBRARY_PATH"] = original_library_path
+    return environment
+
+
 @dataclass(frozen=True, slots=True)
 class TmuxSessionIdentity:
     session_id: str
@@ -80,6 +95,7 @@ def _subprocess_run(
         capture_output=capture_output,
         text=text,
         check=check,
+        env=tmux_subprocess_environment(),
     )
 
 
@@ -238,7 +254,12 @@ class TmuxRunner:
 
     def capture_pane(self, pane_id: str) -> bytes:
         argv = self._argv("capture-pane", "-p", "-e", "-S", "-", "-t", pane_id)
-        result = subprocess.run(argv, capture_output=True, check=False)
+        result = subprocess.run(
+            argv,
+            capture_output=True,
+            check=False,
+            env=tmux_subprocess_environment(),
+        )
         if result.returncode != 0:
             raise TmuxCommandError(argv, result.returncode)
         return result.stdout

@@ -2,6 +2,7 @@ from pathlib import Path
 from subprocess import CompletedProcess
 
 import pytest
+from termflow_node.tmux import runner as runner_module
 from termflow_node.tmux.runner import (
     SocketPathTooLong,
     TmuxCommandError,
@@ -9,6 +10,29 @@ from termflow_node.tmux.runner import (
     TmuxUnavailable,
     UnsupportedTmuxVersion,
 )
+
+
+def test_frozen_tmux_process_restores_original_library_path(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        captured.update(kwargs)
+        return CompletedProcess(argv, 0, stdout="tmux 3.4\n", stderr="")
+
+    monkeypatch.setattr(runner_module.sys, "frozen", True, raising=False)
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/pyinstaller-private")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/usr/lib/x86_64-linux-gnu")
+    monkeypatch.setattr(runner_module.subprocess, "run", fake_run)
+
+    runner_module._subprocess_run(
+        ["tmux", "-V"], capture_output=True, text=True, check=False
+    )
+
+    environment = captured["env"]
+    assert isinstance(environment, dict)
+    assert environment["LD_LIBRARY_PATH"] == "/usr/lib/x86_64-linux-gnu"
+    assert "LD_LIBRARY_PATH_ORIG" not in environment
 
 
 class FakeRun:

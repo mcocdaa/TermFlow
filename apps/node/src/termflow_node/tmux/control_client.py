@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from .control_parser import ControlNotification, parse_control_line
+from .runner import tmux_subprocess_environment
 
 
 class ControlClientNotStarted(RuntimeError):
@@ -34,6 +35,7 @@ class TmuxControlClient:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
+            env=tmux_subprocess_environment(),
         )
         await self.write_command("refresh-client -f pause-after=5")
 
@@ -71,6 +73,7 @@ class TmuxControlClient:
             pane_id,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
+            env=tmux_subprocess_environment(),
         )
         stdout, _ = await process.communicate()
         if process.returncode != 0:
