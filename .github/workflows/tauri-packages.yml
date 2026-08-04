@@ -77,7 +77,7 @@ jobs:
           set -euo pipefail
           release_tag="$RELEASE_TAG"
           python scripts/release/prepare_version.py \
-            --tag "$release_tag" --resolve-only >/dev/null
+            --tag "$release_tag" --resolve-only
           if [[ -n "$release_tag" ]]; then
             artifact_prefix="termflow-${release_tag}"
             retention_days=1
@@ -104,7 +104,7 @@ jobs:
       - name: Materialize build version
         env:
           TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
-        run: python scripts/release/prepare_version.py >/dev/null
+        run: python scripts/release/prepare_version.py
       - uses: actions/setup-node@v4
         with:
           node-version: "22.23.2"
@@ -142,7 +142,7 @@ jobs:
       - name: Materialize build version
         env:
           TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
-        run: python scripts/release/prepare_version.py >/dev/null
+        run: python scripts/release/prepare_version.py
       - uses: actions/setup-node@v4
         with:
           node-version: "22.23.2"
@@ -196,7 +196,7 @@ jobs:
       - name: Materialize build version
         env:
           TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
-        run: python scripts/release/prepare_version.py >/dev/null
+        run: python scripts/release/prepare_version.py
       - uses: actions/setup-node@v4
         with:
           node-version: "22.23.2"
@@ -254,7 +254,7 @@ jobs:
       - name: Materialize build version
         env:
           TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
-        run: python scripts/release/prepare_version.py >/dev/null
+        run: python scripts/release/prepare_version.py
       - uses: actions/setup-node@v4
         with:
           node-version: "22.23.2"
@@ -308,7 +308,7 @@ jobs:
       - name: Materialize build version
         env:
           TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
-        run: python scripts/release/prepare_version.py >/dev/null
+        run: python scripts/release/prepare_version.py
       - uses: actions/setup-node@v4
         with:
           node-version: "22.23.2"

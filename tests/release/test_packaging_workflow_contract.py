@@ -187,3 +187,10 @@ def test_every_native_runner_materializes_before_reading_package_manifests() -> 
         )
         assert materialize < rust_cache
         assert materialize < npm_install
+
+
+def test_packaging_workflows_do_not_use_unix_null_device_redirection() -> None:
+    """Materialization steps must run on both Bash and PowerShell runners."""
+
+    for path in (NODE_WORKFLOW, CONTROL_PLANE_WORKFLOW, CLIENT_WORKFLOW):
+        assert ">/dev/null" not in path.read_text()
