@@ -143,7 +143,8 @@ def test_client_workflow_is_manual_and_reusable() -> None:
     assert "release_tag" in triggers["workflow_call"]["inputs"]
     assert triggers["workflow_call"]["inputs"]["version"]["default"] == ""
     assert workflow["permissions"] == {"contents": "read"}
-    assert set(workflow["jobs"]) == {
+    jobs = workflow["jobs"]
+    assert set(jobs) == {
         "validate-version",
         "windows-nsis",
         "linux-packages",
@@ -151,10 +152,23 @@ def test_client_workflow_is_manual_and_reusable() -> None:
         "android-debug-apk",
         "ios-simulator-app",
     }
+    for job_name, runner, platform in (
+        ("windows-nsis", "windows-latest", "windows"),
+        ("linux-packages", "ubuntu-22.04", "linux"),
+        ("macos-packages", "macos-15", "macos"),
+        ("android-debug-apk", "ubuntu-latest", "android"),
+        ("ios-simulator-app", "macos-15", "ios"),
+    ):
+        job = jobs[job_name]
+        assert job["runs-on"] == runner
+        assert job["needs"] == "validate-version"
+        assert "needs.validate-version.result == 'success'" in job["if"]
+        assert f"inputs.platform == '{platform}'" in job["if"]
 
 
 def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() -> None:
     text = CLIENT_WORKFLOW.read_text()
+    jobs = _workflow(CLIENT_WORKFLOW)["jobs"]
 
     assert "artifact_prefix=termflow" in text
     assert 'artifact_prefix="termflow-${release_tag}"' in text
@@ -177,6 +191,23 @@ def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() ->
         assert required in text
     for forbidden in ("contents: write", "gh release", "softprops/action-gh-release"):
         assert forbidden not in text
+    expected_paths = {
+        "windows-nsis": ("bundle/nsis/*-setup.exe",),
+        "linux-packages": ("bundle/deb/*.deb", "bundle/appimage/*.AppImage"),
+        "macos-packages": ("TermFlow-macos-arm64.app.zip", "bundle/dmg/*.dmg"),
+        "android-debug-apk": ("outputs/apk/**/*-debug.apk",),
+        "ios-simulator-app": ("TermFlow-ios-simulator-aarch64.app.zip",),
+    }
+    for job_name, paths in expected_paths.items():
+        upload = next(
+            step for step in jobs[job_name]["steps"]
+            if step.get("uses") == "actions/upload-artifact@v4"
+        )["with"]
+        assert upload["if-no-files-found"] == "error"
+        assert upload["retention-days"] == (
+            "${{ fromJSON(needs.validate-version.outputs.retention_days) }}"
+        )
+        assert all(path in upload["path"] for path in paths)
 
 
 def test_every_native_runner_materializes_before_reading_package_manifests() -> None:

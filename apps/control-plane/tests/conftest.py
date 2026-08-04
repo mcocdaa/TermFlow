@@ -12,12 +12,14 @@ from termflow_control_plane.persistence.database import Database
 class ProvisionedComputer(NamedTuple):
     installation_id: UUID
     installation_token: str
+    response: dict[str, object]
 
 
 class ProvisionedTerm(NamedTuple):
     computer: ProvisionedComputer
     instance_id: UUID
     instance_token: str
+    response: dict[str, object]
 
 
 @pytest.fixture
@@ -50,7 +52,9 @@ def provision_computer(
     def provision(
         *,
         display_name: str | None = None,
-        **metadata: str,
+        hostname: str | None = None,
+        platform: str | None = None,
+        client_version: str | None = None,
     ) -> ProvisionedComputer:
         enrollment = client.post(
             "/api/v1/enrollment-tokens",
@@ -58,9 +62,14 @@ def provision_computer(
             json={"display_name": display_name} if display_name is not None else None,
         )
         enrollment.raise_for_status()
-        install_payload = {
+        metadata = {
+            "hostname": hostname,
+            "platform": platform,
+            "client_version": client_version,
+        }
+        install_payload: dict[str, object] = {
             "enrollment_token": enrollment.json()["token"],
-            **metadata,
+            **{key: value for key, value in metadata.items() if value is not None},
         }
         installed = client.post("/api/v1/installations/enroll", json=install_payload)
         installed.raise_for_status()
@@ -68,6 +77,7 @@ def provision_computer(
         return ProvisionedComputer(
             installation_id=UUID(str(response["installation_id"])),
             installation_token=str(response["installation_token"]),
+            response=response,
         )
 
     return provision
@@ -83,9 +93,15 @@ def provision_term(
         computer: ProvisionedComputer | None = None,
         instance_id: UUID | None = None,
         name: str = "term",
-        **computer_metadata: str,
+        hostname: str | None = None,
+        platform: str | None = None,
+        client_version: str | None = None,
     ) -> ProvisionedTerm:
-        owner = computer or provision_computer(**computer_metadata)
+        owner = computer or provision_computer(
+            hostname=hostname,
+            platform=platform,
+            client_version=client_version,
+        )
         term_id = instance_id or uuid4()
         registered = client.post(
             "/api/v1/instances/register",
@@ -98,6 +114,7 @@ def provision_term(
             computer=owner,
             instance_id=term_id,
             instance_token=str(response["instance_token"]),
+            response=response,
         )
 
     return provision

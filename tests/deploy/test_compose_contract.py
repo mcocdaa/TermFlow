@@ -35,6 +35,10 @@ def test_release_image_smoke_is_independent_from_runtime_compose() -> None:
 def test_full_verification_checks_source_build_compose_configuration() -> None:
     verify = Path("scripts/verify.sh").read_text()
 
+    for required in ("pytest -q", "ruff check .", "mypy", "docker compose"):
+        assert required in verify
+    for destructive in ("rm -", "docker stop", "kill-server"):
+        assert destructive not in verify
     assert "TERMFLOW_IMAGE" not in verify
     assert "TERMFLOW_ADMIN_TOKEN=\"verify-admin-token-that-is-long-enough\"" in verify
     assert "docker compose -f deploy/compose.yaml config --quiet" in verify
