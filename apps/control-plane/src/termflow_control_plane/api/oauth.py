@@ -221,9 +221,9 @@ async def decide_native_authorization(
             error_code=AuthAuditErrorCode.RATE_LIMITED,
         )
         raise
+    session_authenticated = False
     try:
         async with limiter.verification_slot():
-            session_authenticated = False
             if body.admin_token is None:
                 await require_web_admin(request, settings, sessions, repositories)
                 session_authenticated = True
@@ -232,7 +232,12 @@ async def decide_native_authorization(
                 session_authenticated=session_authenticated,
             )
     except TermFlowError:
-        limiter.record_failure("native_authorization_decision", source)
+        # A missing/invalid browser session must not lock the user out of the
+        # same authorization attempt after they complete Web C login. Once a
+        # browser session (or legacy admin token) has authenticated, failures
+        # such as a bad TOTP are still subject to progressive backoff.
+        if body.admin_token is not None or session_authenticated:
+            limiter.record_failure("native_authorization_decision", source)
         await audit.record(
             AuthAuditOperation.NATIVE_AUTHORIZATION,
             AuthAuditResult.REJECTED,

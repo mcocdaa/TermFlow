@@ -128,6 +128,7 @@ def test_device_approval_requires_browser_session_when_admin_token_is_omitted(cl
 
     unauthenticated = client.post(
         "/api/v1/oauth/authorize",
+        headers={"Origin": "http://127.0.0.1:8000"},
         json={"transaction_id": transaction_id, "decision": "allow"},
     )
     assert unauthenticated.status_code == 401
@@ -137,7 +138,7 @@ def test_device_approval_requires_browser_session_when_admin_token_is_omitted(cl
         headers={"Origin": "http://127.0.0.1:8000"},
         json={"admin_token": "admin-token-that-is-long-enough-for-tests"},
     )
-    assert login.status_code == 200, login.text
+    assert login.status_code == 201, login.text
     approved = client.post(
         "/api/v1/oauth/authorize",
         headers={"Origin": "http://127.0.0.1:8000"},

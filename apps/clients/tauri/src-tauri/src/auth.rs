@@ -28,9 +28,9 @@ const ACCESS_EARLY_SECONDS: i64 = 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublicJwk {
-    kty: &'static str,
-    crv: &'static str,
-    alg: &'static str,
+    kty: String,
+    crv: String,
+    alg: String,
     x: String,
     y: String,
 }
@@ -222,9 +222,9 @@ fn public_jwk(key: &SigningKey) -> Result<PublicJwk, String> {
     let x = point.x().ok_or_else(|| safe_error("device_key_invalid"))?;
     let y = point.y().ok_or_else(|| safe_error("device_key_invalid"))?;
     Ok(PublicJwk {
-        kty: "EC",
-        crv: "P-256",
-        alg: "ES256",
+        kty: "EC".to_owned(),
+        crv: "P-256".to_owned(),
+        alg: "ES256".to_owned(),
         x: URL_SAFE_NO_PAD.encode(x),
         y: URL_SAFE_NO_PAD.encode(y),
     })
@@ -516,6 +516,16 @@ pub fn native_remember_dpop_nonce(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_jwk_accepts_owned_ipc_payload() {
+        let public: PublicJwk =
+            serde_json::from_str(r#"{"kty":"EC","crv":"P-256","alg":"ES256","x":"x","y":"y"}"#)
+                .unwrap();
+        assert_eq!(public.kty, "EC");
+        assert_eq!(public.crv, "P-256");
+    }
+
     #[test]
     fn public_material_and_debug_output_never_include_private_key() {
         let key = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);

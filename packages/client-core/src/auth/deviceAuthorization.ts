@@ -13,8 +13,8 @@ export interface DeviceAuthorizationSessionOptions {
   intervalSeconds?: number
   poll: (input: DeviceAuthorizationPollInput, signal?: AbortSignal) => Promise<OAuthTokenResponse>
   vault: CredentialVaultPort
-  /** Injected in tests; the default waits in milliseconds and observes abort. */
-  sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>
+  /** Platform-provided wait primitive; the shared core never owns timers. */
+  sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void>
   now?: () => number
 }
 
@@ -41,23 +41,6 @@ function abortError(): Error {
   return error
 }
 
-function defaultSleep(milliseconds: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.reject(abortError())
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(done, milliseconds)
-    const onAbort = () => {
-      clearTimeout(timer)
-      signal.removeEventListener('abort', onAbort)
-      reject(abortError())
-    }
-    function done() {
-      signal.removeEventListener('abort', onAbort)
-      resolve()
-    }
-    signal.addEventListener('abort', onAbort, { once: true })
-  })
-}
-
 function asCredential(response: OAuthTokenResponse, now: () => number): NativeAccessCredential {
   return {
     accessToken: response.access_token,
@@ -77,10 +60,7 @@ export class DeviceAuthorizationSession {
   private cancelled = false
 
   constructor(private readonly options: DeviceAuthorizationSessionOptions) {
-    const injectedSleep = options.sleep
-    this.sleep = injectedSleep === undefined
-      ? defaultSleep
-      : (milliseconds, signal) => this.waitWithAbort(injectedSleep(milliseconds), signal)
+    this.sleep = (milliseconds, signal) => this.waitWithAbort(options.sleep(milliseconds), signal)
     this.now = options.now ?? (() => Date.now())
   }
 

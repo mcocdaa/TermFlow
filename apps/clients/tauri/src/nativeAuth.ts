@@ -9,6 +9,26 @@ import { serverConfig } from './serverConfig'
 import { logNativeEvent } from './diagnostics'
 
 const vault = createMemoryAccessVault()
+
+function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(new DOMException('The device authorization was cancelled.', 'AbortError'))
+  }
+  return new Promise((resolve, reject) => {
+    const timer = globalThis.setTimeout(done, milliseconds)
+    const onAbort = () => {
+      globalThis.clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      reject(new DOMException('The device authorization was cancelled.', 'AbortError'))
+    }
+    function done() {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 const cryptoPort = {
   randomBytes(length: number) { const value = new Uint8Array(length); globalThis.crypto.getRandomValues(value); return value },
   async sha256(input: Uint8Array) { return new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', input.slice().buffer)) },
@@ -77,6 +97,7 @@ export async function beginNativeDeviceAuthorization(input: NativeDeviceAuthoriz
     interval: response.interval,
     poll: input.poll,
     vault,
+    sleep,
   })
   return { response, session }
 }

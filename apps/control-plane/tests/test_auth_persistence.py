@@ -46,7 +46,7 @@ async def test_fresh_database_is_migrated_and_starts_at_auth_epoch_one(tmp_path)
                 await connection.run_sync(lambda sync: inspect(sync).get_table_names())
             )
             revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-        assert revision == "0004"
+        assert revision == "0005"
         assert {
             "authentication_state",
             "totp_setups",
@@ -84,7 +84,7 @@ def test_existing_unified_auth_database_is_upgraded_with_oauth_request_state(tmp
             }
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
         assert "request_state" in new_columns
-        assert revision == "0004"
+        assert revision == "0005"
     finally:
         engine.dispose()
 
@@ -880,7 +880,7 @@ async def test_unversioned_current_database_is_stamped_then_upgraded(tmp_path) -
     try:
         async with database.engine.connect() as connection:
             revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-            assert revision == "0004"
+            assert revision == "0005"
     finally:
         await database.dispose()
 

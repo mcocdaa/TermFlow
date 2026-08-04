@@ -41,7 +41,7 @@ def test_checked_in_client_contracts_match_python_models(tmp_path: Path) -> None
     assert "export interface NativeClientResponse" in rendered
     assert "export interface NativeClientListResponse" in rendered
     assert "export interface NativeClientDeleteResponse" in rendered
-    assert 'grant_types_supported: ("authorization_code" | "refresh_token")[]' in rendered
+    assert 'grant_types_supported: ("authorization_code" | "refresh_token" | "urn:ietf:params:oauth:grant-type:device_code")[]' in rendered
     assert "export interface ErrorEnvelope" in rendered
     assert "server_url: string" in rendered
     assert "login_command: string" in rendered
