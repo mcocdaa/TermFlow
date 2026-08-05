@@ -64,8 +64,12 @@ describe('NativeConnectView', () => {
     expect(wrapper.get('.eyebrow').text()).toBe('Connect to Server')
     expect(wrapper.get('h1').text()).toBe('连接到服务器')
     expect(wrapper.get('label[for="server-url"]').text()).toBe('服务器地址')
-    expect(wrapper.get('button[type="submit"]').text()).toBe('申请注册远程控制')
-    expect(wrapper.get('[data-action="device-authorize"]').text()).toContain('在其他设备上授权')
+    expect(wrapper.get('[data-action="browser-login"]').text()).toContain('本机浏览器登录')
+    expect(wrapper.get('[data-action="device-authorize"]').text()).toContain('其他设备授权')
+    expect(wrapper.find('.native-auth-options').classes()).toContain('native-auth-options')
+    expect(wrapper.get('[data-action="browser-login"]').attributes('title')).toContain('本机系统浏览器')
+    expect(wrapper.get('[data-action="device-authorize"]').attributes('title')).toContain('不会打开本机浏览器')
+    expect(wrapper.findAll('.native-auth-options > button')).toHaveLength(2)
     expect(wrapper.find('.auth-card > p:not(.eyebrow)').exists()).toBe(false)
     expect(wrapper.text()).not.toMatch(/\bB\b|Web C/)
   })
@@ -86,9 +90,11 @@ describe('NativeConnectView', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    const button = wrapper.get('button[type="submit"]')
+    const button = wrapper.get('[data-action="browser-login"]')
+    const deviceButton = wrapper.get('[data-action="device-authorize"]')
     expect(button.attributes()).toHaveProperty('disabled')
-    expect(button.text()).toBe('等待服务器管理员审批')
+    expect(deviceButton.attributes()).toHaveProperty('disabled')
+    expect(button.text()).toContain('等待浏览器审批')
     expect(mocks.authorizeNativeClient).toHaveBeenCalledWith(
       'https://relay.example.com',
       'https://relay.example.com/api/v1/oauth/authorize',
@@ -130,6 +136,6 @@ describe('NativeConnectView', () => {
 
     expect(wrapper.get('[role="alert"]').text()).toBe(expected)
     expect(wrapper.text()).not.toMatch(/token|secret|credential|authorization_callback_invalid/i)
-    expect(wrapper.get('button[type="submit"]').text()).toBe('申请注册远程控制')
+    expect(wrapper.get('[data-action="browser-login"]').text()).toContain('本机浏览器登录')
   })
 })

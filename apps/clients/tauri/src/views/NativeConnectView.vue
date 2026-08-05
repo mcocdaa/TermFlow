@@ -5,9 +5,24 @@
       <form @submit.prevent="connect">
         <label for="server-url">服务器地址</label><input id="server-url" v-model="issuer" type="url" inputmode="url" autocomplete="url" required />
         <p v-if="message" class="form-error" role="alert">{{ message }}</p>
-        <button class="primary-button" type="submit" :disabled="busy">{{ busy ? '等待服务器管理员审批' : '申请注册远程控制' }}</button>
+        <div class="native-auth-options">
+          <button
+            class="primary-button"
+            type="submit"
+            data-action="browser-login"
+            title="通过本机系统浏览器登录并审批此客户端。"
+            :disabled="busy"
+          >{{ busy ? '等待浏览器审批' : '本机浏览器登录' }}</button>
+          <button
+            class="secondary-button"
+            type="button"
+            data-action="device-authorize"
+            title="使用已登录的其他设备完成授权，不会打开本机浏览器。"
+            :disabled="busy"
+            @click="router.push({ path: '/connect/device', query: route.query })"
+          >其他设备授权</button>
+        </div>
       </form>
-      <button class="secondary-button" type="button" data-action="device-authorize" @click="router.push({ path: '/connect/device', query: route.query })">在其他设备上授权</button>
     </div>
   </section>
 </template>
@@ -62,3 +77,22 @@ async function connect() {
   finally { busy.value = false }
 }
 </script>
+
+<style scoped>
+.native-auth-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.native-auth-options > button {
+  width: 100%;
+}
+
+@media (max-width: 35rem) {
+  .native-auth-options {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
