@@ -3,7 +3,7 @@ import { onOpenUrl } from '@tauri-apps/plugin-deep-link'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import type { AuthorizationBrowserPort, NativeAccessCredential, NativeKeyPort, PublicEcJwk } from '@termflow/client-core'
 import type { OAuthTokenResponse } from '@termflow/client-contracts'
-import { logNativeEvent } from '../diagnostics'
+import { logNativeEvent, sanitizeNativeDetail } from '../diagnostics'
 
 export function createTauriKey(issuer: string): NativeKeyPort {
   return {
@@ -15,15 +15,6 @@ export function createTauriKey(issuer: string): NativeKeyPort {
 
 let pendingCallback: { ready: Promise<void> } | undefined
 
-function safeErrorDetail(error: unknown): string {
-  const raw = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
-  return raw
-    .replace(/https?:\/\/[^\s]+/gi, '<url>')
-    .replace(/termflow:\/\/[^\s]+/gi, '<callback>')
-    .replace(/(access_token|refresh_token|code|token|secret|dpop)=[^&\s]+/gi, '$1=<redacted>')
-    .slice(0, 256)
-}
-
 export const tauriAuthorizationBrowser: AuthorizationBrowserPort = {
   open: async (url) => {
     const pending = pendingCallback
@@ -31,7 +22,7 @@ export const tauriAuthorizationBrowser: AuthorizationBrowserPort = {
     await pending.ready
     void logNativeEvent({ event: 'browser_open_started', issuer: new URL(url).origin })
     try { await openUrl(url) } catch (error) {
-      void logNativeEvent({ event: 'browser_open_failed', issuer: new URL(url).origin, level: 'error', errorCode: 'browser_open_failed', errorDetail: safeErrorDetail(error) })
+      void logNativeEvent({ event: 'browser_open_failed', issuer: new URL(url).origin, level: 'error', errorCode: 'browser_open_failed', errorDetail: sanitizeNativeDetail(error) })
       throw error
     }
   },
@@ -59,7 +50,7 @@ export const tauriAuthorizationBrowser: AuthorizationBrowserPort = {
     pendingCallback = current
     void current.ready.catch((error: unknown) => {
       dispose()
-      void logNativeEvent({ event: 'authorization_callback_listener_failed', level: 'error', errorCode: 'authorization_listener_failed', errorDetail: safeErrorDetail(error) })
+      void logNativeEvent({ event: 'authorization_callback_listener_failed', level: 'error', errorCode: 'authorization_listener_failed', errorDetail: sanitizeNativeDetail(error) })
       reject(error)
     })
   }),
@@ -71,7 +62,7 @@ export async function exchangeAuthorization(input: { issuer: string; transaction
       issuer: input.issuer, transactionId: input.transaction, codeVerifier: input.verifier, redirectUri: input.redirectUri,
     })
   } catch (error) {
-    void logNativeEvent({ event: 'token_exchange_failed', issuer: input.issuer, level: 'error', errorCode: 'token_exchange_failed', errorDetail: safeErrorDetail(error) })
+    void logNativeEvent({ event: 'token_exchange_failed', issuer: input.issuer, level: 'error', errorCode: 'token_exchange_failed', errorDetail: sanitizeNativeDetail(error) })
     throw error
   }
 }
@@ -86,7 +77,7 @@ export function pollDeviceAuthorization(input: { issuer: string; deviceCode: str
     publicJwk: input.publicJwk,
   }).catch((error) => {
     if ((error as Error)?.name !== 'AbortError') {
-      void logNativeEvent({ event: 'device_token_exchange_failed', issuer: input.issuer, level: 'error', errorCode: 'device_token_exchange_failed', errorDetail: safeErrorDetail(error) })
+      void logNativeEvent({ event: 'device_token_exchange_failed', issuer: input.issuer, level: 'error', errorCode: 'device_token_exchange_failed', errorDetail: sanitizeNativeDetail(error) })
     }
     throw error
   })

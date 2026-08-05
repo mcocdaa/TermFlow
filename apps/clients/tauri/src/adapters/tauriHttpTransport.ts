@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { fetch } from '@tauri-apps/plugin-http'
 import { HttpTransportError, type HttpRequest, type HttpTransport } from '@termflow/client-core'
 import { serverConfig } from '../serverConfig'
-import { logNativeEvent } from '../diagnostics'
+import { logNativeEvent, sanitizeNativeDetail } from '../diagnostics'
 
 interface NativeHeaders { authorization: string; dpop: string }
 const PUBLIC_PATHS = new Set(['/.well-known/oauth-authorization-server', '/healthz', '/api/v1/oauth/device/code'])
@@ -12,14 +12,6 @@ function safePath(path: string) { return path.startsWith('/') && !path.startsWit
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return `${error.name}: ${error.message}`
   return typeof error === 'string' ? error : ''
-}
-
-function safeErrorDetail(error: unknown): string {
-  return errorMessage(error)
-    .replace(/https?:\/\/[^\s]+/gi, '<url>')
-    .replace(/termflow:\/\/[^\s]+/gi, '<callback>')
-    .replace(/(access_token|refresh_token|code|token|secret|dpop)=[^&\s]+/gi, '$1=<redacted>')
-    .slice(0, 256)
 }
 
 function isHttpCapabilityFailure(error: unknown): boolean {
@@ -84,10 +76,10 @@ export function createTauriHttpTransport(): HttpTransport {
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') throw new HttpTransportError('aborted')
         if (isHttpCapabilityFailure(error)) {
-          void logNativeEvent({ event: 'http_request_failed', issuer: serverConfig.current, level: 'error', errorCode: 'http_capability_denied', errorDetail: safeErrorDetail(error) })
+          void logNativeEvent({ event: 'http_request_failed', issuer: serverConfig.current, level: 'error', errorCode: 'http_capability_denied', errorDetail: sanitizeNativeDetail(error) })
           throw new HttpTransportError('http_capability_denied')
         }
-        void logNativeEvent({ event: 'http_request_failed', issuer: serverConfig.current, level: 'error', errorCode: 'offline', errorDetail: safeErrorDetail(error) })
+        void logNativeEvent({ event: 'http_request_failed', issuer: serverConfig.current, level: 'error', errorCode: 'offline', errorDetail: sanitizeNativeDetail(error) })
         throw new HttpTransportError('offline')
       }
     },

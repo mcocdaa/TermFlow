@@ -8,7 +8,10 @@ const { invoke, tauriFetch, logNativeEvent } = vi.hoisted(() => ({
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: tauriFetch }))
-vi.mock('../diagnostics', () => ({ logNativeEvent }))
+vi.mock('../diagnostics', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../diagnostics')>()
+  return { ...actual, logNativeEvent }
+})
 
 import { serverConfig } from '../serverConfig'
 import { createTauriHttpTransport } from './tauriHttpTransport'

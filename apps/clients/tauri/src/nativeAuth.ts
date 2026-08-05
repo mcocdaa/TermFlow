@@ -6,18 +6,9 @@ import { createMemoryAccessVault } from './adapters/memoryAccessVault'
 import { createTauriKey, exchangeAuthorization, tauriAuthorizationBrowser } from './adapters/tauriAuthorization'
 import { buildVersion } from './buildVersion'
 import { serverConfig } from './serverConfig'
-import { logNativeEvent } from './diagnostics'
+import { logNativeEvent, sanitizeNativeDetail } from './diagnostics'
 
 const vault = createMemoryAccessVault()
-
-function safeErrorDetail(error: unknown): string {
-  const raw = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
-  return raw
-    .replace(/https?:\/\/[^\s]+/gi, '<url>')
-    .replace(/termflow:\/\/[^\s]+/gi, '<callback>')
-    .replace(/(access_token|refresh_token|code|token|secret|dpop)=[^&\s]+/gi, '$1=<redacted>')
-    .slice(0, 256)
-}
 
 function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) {
@@ -64,7 +55,7 @@ export async function authorizeNativeClient(issuer: string, authorizeEndpoint: s
     void logNativeEvent({ event: 'token_exchange_succeeded', issuer })
     return credential
   } catch (error) {
-    void logNativeEvent({ event: 'token_exchange_failed', issuer, level: 'error', errorCode: 'authorization_failed', errorDetail: safeErrorDetail(error) })
+    void logNativeEvent({ event: 'token_exchange_failed', issuer, level: 'error', errorCode: 'authorization_failed', errorDetail: sanitizeNativeDetail(error) })
     throw error
   }
 }
@@ -101,7 +92,7 @@ export async function beginNativeDeviceAuthorization(input: NativeDeviceAuthoriz
       scopes: input.scopes,
     })
   } catch (error) {
-    void logNativeEvent({ event: 'device_code_request_failed', issuer: input.issuer, level: 'error', errorCode: 'device_code_request_failed', errorDetail: safeErrorDetail(error) })
+    void logNativeEvent({ event: 'device_code_request_failed', issuer: input.issuer, level: 'error', errorCode: 'device_code_request_failed', errorDetail: sanitizeNativeDetail(error) })
     throw error
   }
   const session = new DeviceAuthorizationSession({

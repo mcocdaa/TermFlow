@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 vi.mock('@tauri-apps/plugin-deep-link', () => ({ onOpenUrl: mocks.onOpenUrl }))
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: mocks.openUrl }))
 
-import { pollDeviceAuthorization, tauriAuthorizationBrowser } from './tauriAuthorization'
+import { exchangeAuthorization, pollDeviceAuthorization, tauriAuthorizationBrowser } from './tauriAuthorization'
 
 describe('tauriAuthorizationBrowser', () => {
   it('registers the deep-link listener before opening the system browser', async () => {
@@ -64,5 +64,26 @@ describe('pollDeviceAuthorization', () => {
     await expect(pollDeviceAuthorization({ issuer: 'https://relay.example.com', deviceCode: 'device', codeVerifier: 'verifier', publicJwk: { kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' } })).resolves.toMatchObject({ access_token: 'a' })
     expect(mocks.invoke).toHaveBeenCalledWith('native_exchange_device_code', { issuer: 'https://relay.example.com', deviceCode: 'device', codeVerifier: 'verifier', publicJwk: expect.any(Object) })
     expect(mocks.openUrl).not.toHaveBeenCalled()
+  })
+})
+
+describe('exchangeAuthorization', () => {
+  it('records sanitized token exchange details without credentials', async () => {
+    mocks.invoke.mockRejectedValueOnce(new Error('token=secret https://relay.example/auth?code=secret'))
+
+    await expect(exchangeAuthorization({
+      issuer: 'https://relay.example.com',
+      transaction: 'transaction-1',
+      verifier: 'verifier-secret',
+      redirectUri: 'termflow://auth/callback?code=secret',
+    })).rejects.toThrow('token=secret')
+
+    expect(mocks.invoke).toHaveBeenCalledWith('native_log', expect.objectContaining({
+      event: 'token_exchange_failed',
+      errorCode: 'token_exchange_failed',
+      errorDetail: 'Error: token=<redacted> <url>',
+    }))
+    const logCall = mocks.invoke.mock.calls.find(([command]) => command === 'native_log')
+    expect(JSON.stringify(logCall)).not.toContain('verifier-secret')
   })
 })

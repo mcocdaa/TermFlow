@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { logNativeEvent } from './diagnostics'
+import { logNativeEvent, sanitizeNativeDetail } from './diagnostics'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
@@ -30,5 +30,15 @@ describe('native diagnostics', () => {
       errorCode: 'browser_open_failed',
       errorDetail: 'Error: shell execute failed',
     }))
+  })
+
+  it('redacts credential-shaped body, authorization, and DPoP details', () => {
+    const detail = sanitizeNativeDetail(new Error('request body {"access_token":"secret","refresh_token":"refresh"} Authorization: Bearer bearer-secret DPoP: eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiIxIn0.signature'))
+    expect(detail).not.toContain('secret')
+    expect(detail).not.toContain('bearer-secret')
+    expect(detail).not.toContain('eyJ')
+    expect(detail).not.toContain('"refresh_token":"refresh"')
+    expect(detail).toContain('<redacted>')
+    expect(detail.length).toBeLessThanOrEqual(256)
   })
 })
