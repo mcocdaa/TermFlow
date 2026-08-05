@@ -1,5 +1,6 @@
 import stat
 from datetime import UTC, datetime
+from subprocess import CompletedProcess
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -9,6 +10,7 @@ from termflow_node.config.store import ConfigStore
 from termflow_node.diagnostics import run_diagnostics
 from termflow_node.instances.models import InstanceLifecycle, LocalInstance, RemoteAccessState
 from termflow_node.instances.store import InstanceStore
+from termflow_node.tmux import runner as runner_module
 
 
 def test_doctor_is_read_only_by_default_and_can_repair_known_permissions(tmp_path) -> None:
@@ -65,3 +67,41 @@ def test_doctor_repair_does_not_bypass_activation_required(tmp_path, monkeypatch
     check = next(check for check in checks if check.name == f"instance:{instance_id}")
     assert not check.ok
     assert "remote_access=activation_required" in check.detail
+
+
+def test_doctor_tmux_probe_does_not_inherit_frozen_private_library_paths(
+    tmp_path, monkeypatch
+) -> None:
+    config_store = ConfigStore(tmp_path / "config" / "config.json")
+    config_store.save(
+        InstallationConfig(
+            server_url="https://termflow.example.com",
+            installation_id=uuid4(),
+            installation_token="secret",
+        )
+    )
+    instance_store = InstanceStore(tmp_path / "state" / "instances")
+    captured: dict[str, object] = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        captured.update(kwargs)
+        return CompletedProcess(argv, 0, stdout="tmux 3.4\n", stderr="")
+
+    monkeypatch.setattr(runner_module.sys, "frozen", True, raising=False)
+    monkeypatch.setenv("PATH", "/usr/local/bin:/usr/bin")
+    monkeypatch.setenv("LANG", "zh_CN.UTF-8")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/pyinstaller-private")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/tmp/pyinstaller-private")
+    monkeypatch.setattr(runner_module.subprocess, "run", fake_run)
+
+    checks = run_diagnostics(config_store, instance_store, repair=False)
+
+    tmux_check = next(check for check in checks if check.name == "tmux")
+    assert tmux_check.ok
+    environment = captured["env"]
+    assert isinstance(environment, dict)
+    assert environment["PATH"] == "/usr/local/bin:/usr/bin"
+    assert environment["LANG"] == "zh_CN.UTF-8"
+    assert "LD_LIBRARY_PATH" not in environment
+    assert "LD_LIBRARY_PATH_ORIG" not in environment

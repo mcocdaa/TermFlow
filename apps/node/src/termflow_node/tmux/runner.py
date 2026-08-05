@@ -59,11 +59,13 @@ def tmux_subprocess_environment() -> dict[str, str]:
     if not getattr(sys, "frozen", False):
         return environment
 
-    original_library_path = environment.pop("LD_LIBRARY_PATH_ORIG", None)
-    if original_library_path is None:
-        environment.pop("LD_LIBRARY_PATH", None)
-    else:
-        environment["LD_LIBRARY_PATH"] = original_library_path
+    # PyInstaller's bootloader prepends its private directory to
+    # ``LD_LIBRARY_PATH``.  Restoring ``LD_LIBRARY_PATH_ORIG`` is not safe:
+    # depending on the launcher it can itself contain the private directory.
+    # tmux is an external system executable, so let the dynamic linker resolve
+    # its dependencies from the host and remove both bootstrap variables.
+    environment.pop("LD_LIBRARY_PATH", None)
+    environment.pop("LD_LIBRARY_PATH_ORIG", None)
     return environment
 
 

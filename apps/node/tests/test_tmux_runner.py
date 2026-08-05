@@ -12,7 +12,7 @@ from termflow_node.tmux.runner import (
 )
 
 
-def test_frozen_tmux_process_restores_original_library_path(monkeypatch) -> None:
+def test_frozen_tmux_process_does_not_expose_pyinstaller_library_paths(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     def fake_run(argv, **kwargs):
@@ -21,8 +21,10 @@ def test_frozen_tmux_process_restores_original_library_path(monkeypatch) -> None
         return CompletedProcess(argv, 0, stdout="tmux 3.4\n", stderr="")
 
     monkeypatch.setattr(runner_module.sys, "frozen", True, raising=False)
+    monkeypatch.setenv("PATH", "/usr/local/bin:/usr/bin")
+    monkeypatch.setenv("LANG", "zh_CN.UTF-8")
     monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/pyinstaller-private")
-    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/usr/lib/x86_64-linux-gnu")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/tmp/pyinstaller-private")
     monkeypatch.setattr(runner_module.subprocess, "run", fake_run)
 
     runner_module._subprocess_run(
@@ -31,7 +33,9 @@ def test_frozen_tmux_process_restores_original_library_path(monkeypatch) -> None
 
     environment = captured["env"]
     assert isinstance(environment, dict)
-    assert environment["LD_LIBRARY_PATH"] == "/usr/lib/x86_64-linux-gnu"
+    assert environment["PATH"] == "/usr/local/bin:/usr/bin"
+    assert environment["LANG"] == "zh_CN.UTF-8"
+    assert "LD_LIBRARY_PATH" not in environment
     assert "LD_LIBRARY_PATH_ORIG" not in environment
 
 
