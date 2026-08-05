@@ -31,11 +31,12 @@
 import { ApiError } from '@termflow/client-core'
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useClientRuntime } from '@termflow/client-ui'
+import { useBottomToast, useClientRuntime } from '@termflow/client-ui'
 import { authorizeNativeClient } from '../nativeAuth'
 import { canonicalAuthorizeEndpoint, canonicalIssuer, serverConfig } from '../serverConfig'
 
 const runtime = useClientRuntime(); const router = useRouter(); const route = useRoute()
+const toast = useBottomToast()
 const issuer = ref(serverConfig.current); const message = ref(''); const busy = ref(false)
 
 function registrationErrorMessage(error: unknown): string {
@@ -71,6 +72,7 @@ async function connect() {
     if (metadata.issuer !== canonical) throw new Error('issuer_mismatch')
     const authorizeEndpoint = canonicalAuthorizeEndpoint(canonical, metadata.authorization_endpoint)
     await authorizeNativeClient(canonical, authorizeEndpoint, metadata.scopes_supported)
+    toast.show({ text: '已连接', tone: 'success' })
     const target = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') && !route.query.redirect.startsWith('//') ? route.query.redirect : '/'
     await router.replace(target)
   } catch (error) { message.value = registrationErrorMessage(error) }

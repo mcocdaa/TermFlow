@@ -26,8 +26,9 @@ function runtime(): ClientRuntime {
 async function render(client = runtime()) {
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/connect/device', component: NativeDeviceAuthorizeView }, { path: '/connect', component: { template: '<div />' } }, { path: '/', component: { template: '<div />' } }] })
   await router.push('/connect/device'); await router.isReady()
-  const wrapper = mount(NativeDeviceAuthorizeView, { global: { plugins: [router, createClientUi(client)] } })
-  return { wrapper, router, client }
+  const clientUi = createClientUi(client)
+  const wrapper = mount(NativeDeviceAuthorizeView, { global: { plugins: [router, clientUi] } })
+  return { wrapper, router, client, clientUi }
 }
 
 beforeEach(() => {
@@ -121,5 +122,17 @@ describe('NativeDeviceAuthorizeView', () => {
     const { wrapper } = await render()
     await flushPromises()
     expect(wrapper.get('[role="status"]').text()).toContain('等待浏览器确认')
+  })
+
+  it('shows the shared connection toast before navigating after approval', async () => {
+    const session = { authorize: vi.fn().mockResolvedValue({}), cancel: vi.fn() }
+    mocks.begin.mockResolvedValue({
+      response: { device_code: 'secret-device-code', user_code: 'ABCD-EFGH', verification_uri: 'https://relay.example.com/device', verification_uri_complete: 'https://relay.example.com/device?code=ABCD-EFGH', expires_in: 600, interval: 1 },
+      session,
+    })
+    const { clientUi } = await render()
+    await flushPromises()
+
+    expect(clientUi.toast.current.value).toEqual({ text: '已连接', tone: 'success' })
   })
 })

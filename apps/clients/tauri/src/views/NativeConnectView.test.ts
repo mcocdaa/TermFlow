@@ -25,6 +25,7 @@ vi.mock('../serverConfig', () => ({
 function runtimeWith(metadata: ClientRuntime['api']['oauth']['metadata']): ClientRuntime {
   return {
     api: { oauth: { metadata } },
+    clock: { now: () => 0, setTimeout: () => 1, clearTimeout: () => undefined, setInterval: () => 1, clearInterval: () => undefined },
   } as unknown as ClientRuntime
 }
 
@@ -43,10 +44,11 @@ async function render(metadata = vi.fn().mockResolvedValue({
   })
   await router.push('/connect?redirect=/requested')
   await router.isReady()
+  const clientUi = createClientUi(runtimeWith(metadata))
   const wrapper = mount(NativeConnectView, {
-    global: { plugins: [router, createClientUi(runtimeWith(metadata))] },
+    global: { plugins: [router, clientUi] },
   })
-  return { wrapper, router }
+  return { wrapper, router, clientUi }
 }
 
 beforeEach(() => {
@@ -75,7 +77,7 @@ describe('NativeConnectView', () => {
   })
 
   it('offers device authorization without invoking the system browser', async () => {
-    const { wrapper, router } = await render()
+    const { wrapper, router, clientUi } = await render()
     await wrapper.get('[data-action="device-authorize"]').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/connect/device')
@@ -85,7 +87,7 @@ describe('NativeConnectView', () => {
   it('disables the action while the existing system-browser OAuth flow is pending', async () => {
     let finishAuthorization!: () => void
     mocks.authorizeNativeClient.mockReturnValue(new Promise<void>((resolve) => { finishAuthorization = resolve }))
-    const { wrapper, router } = await render()
+    const { wrapper, router, clientUi } = await render()
 
     await wrapper.get('form').trigger('submit')
     await flushPromises()
@@ -104,6 +106,7 @@ describe('NativeConnectView', () => {
     finishAuthorization()
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/requested')
+    expect(clientUi.toast.current.value).toEqual({ text: '已连接', tone: 'success' })
   })
 
   it.each([

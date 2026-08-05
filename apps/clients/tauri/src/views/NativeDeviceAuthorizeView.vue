@@ -39,13 +39,14 @@ import { ApiError } from '@termflow/client-core'
 import { arch, platform } from '@tauri-apps/plugin-os'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ThemedQrCode, useClientRuntime } from '@termflow/client-ui'
+import { ThemedQrCode, useBottomToast, useClientRuntime } from '@termflow/client-ui'
 import { beginNativeDeviceAuthorization } from '../nativeAuth'
 import { buildVersion } from '../buildVersion'
 import { canonicalIssuer, serverConfig } from '../serverConfig'
 import { pollDeviceAuthorization } from '../adapters/tauriAuthorization'
 
 const runtime = useClientRuntime()
+const toast = useBottomToast()
 const route = useRoute()
 const router = useRouter()
 const issuer = ref(serverConfig.current)
@@ -104,6 +105,7 @@ async function start() {
     void result.session.authorize().then(() => {
       status.value = '授权成功，正在打开工作区…'
       stopTimer()
+      toast.show({ text: '已连接', tone: 'success' })
       const target = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') && !route.query.redirect.startsWith('//') ? route.query.redirect : '/'
       return router.replace(target)
     }).catch((error) => { if ((error as Error)?.name !== 'AbortError') { message.value = actionableMessage(error); status.value = '' } })
