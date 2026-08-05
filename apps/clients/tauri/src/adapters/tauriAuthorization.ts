@@ -20,6 +20,7 @@ function safeErrorDetail(error: unknown): string {
   return raw
     .replace(/https?:\/\/[^\s]+/gi, '<url>')
     .replace(/termflow:\/\/[^\s]+/gi, '<callback>')
+    .replace(/(access_token|refresh_token|code|token|secret|dpop)=[^&\s]+/gi, '$1=<redacted>')
     .slice(0, 256)
 }
 
@@ -56,7 +57,11 @@ export const tauriAuthorizationBrowser: AuthorizationBrowserPort = {
       }
     }).then((listener) => { if (disposed) listener(); else unlisten = listener })
     pendingCallback = current
-    void current.ready.catch((error: unknown) => { dispose(); reject(error) })
+    void current.ready.catch((error: unknown) => {
+      dispose()
+      void logNativeEvent({ event: 'authorization_callback_listener_failed', level: 'error', errorCode: 'authorization_listener_failed', errorDetail: safeErrorDetail(error) })
+      reject(error)
+    })
   }),
 }
 
@@ -66,7 +71,7 @@ export async function exchangeAuthorization(input: { issuer: string; transaction
       issuer: input.issuer, transactionId: input.transaction, codeVerifier: input.verifier, redirectUri: input.redirectUri,
     })
   } catch (error) {
-    void logNativeEvent({ event: 'token_exchange_failed', issuer: input.issuer, level: 'error', errorCode: 'token_exchange_failed' })
+    void logNativeEvent({ event: 'token_exchange_failed', issuer: input.issuer, level: 'error', errorCode: 'token_exchange_failed', errorDetail: safeErrorDetail(error) })
     throw error
   }
 }
@@ -79,6 +84,11 @@ export function pollDeviceAuthorization(input: { issuer: string; deviceCode: str
     deviceCode: input.deviceCode,
     codeVerifier: input.codeVerifier,
     publicJwk: input.publicJwk,
+  }).catch((error) => {
+    if ((error as Error)?.name !== 'AbortError') {
+      void logNativeEvent({ event: 'device_token_exchange_failed', issuer: input.issuer, level: 'error', errorCode: 'device_token_exchange_failed', errorDetail: safeErrorDetail(error) })
+    }
+    throw error
   })
 }
 

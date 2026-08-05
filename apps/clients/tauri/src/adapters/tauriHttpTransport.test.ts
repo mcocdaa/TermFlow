@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { invoke, tauriFetch } = vi.hoisted(() => ({
+const { invoke, tauriFetch, logNativeEvent } = vi.hoisted(() => ({
   invoke: vi.fn(),
   tauriFetch: vi.fn(),
+  logNativeEvent: vi.fn(),
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: tauriFetch }))
+vi.mock('../diagnostics', () => ({ logNativeEvent }))
 
 import { serverConfig } from '../serverConfig'
 import { createTauriHttpTransport } from './tauriHttpTransport'
@@ -15,6 +17,7 @@ describe('createTauriHttpTransport', () => {
   beforeEach(() => {
     invoke.mockReset()
     tauriFetch.mockReset()
+    logNativeEvent.mockReset()
     serverConfig.current = 'https://b.example'
   })
 
@@ -101,12 +104,18 @@ describe('createTauriHttpTransport', () => {
 
     await expect(createTauriHttpTransport().request('/healthz', { method: 'GET' }))
       .rejects.toMatchObject({ kind: 'http_capability_denied' })
+    expect(logNativeEvent).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'http_request_failed', errorCode: 'http_capability_denied', level: 'error',
+    }))
   })
 
   it('keeps ordinary fetch failures classified as offline', async () => {
-    tauriFetch.mockRejectedValue(new TypeError('Failed to fetch'))
+    tauriFetch.mockRejectedValue(new TypeError('Failed to fetch https://relay.example/api?access_token=secret'))
 
     await expect(createTauriHttpTransport().request('/healthz', { method: 'GET' }))
       .rejects.toMatchObject({ kind: 'offline' })
+    expect(logNativeEvent).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'http_request_failed', errorCode: 'offline', errorDetail: 'TypeError: Failed to fetch <url>',
+    }))
   })
 })

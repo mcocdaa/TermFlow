@@ -10,8 +10,16 @@ const PUBLIC_PATHS = new Set(['/.well-known/oauth-authorization-server', '/healt
 function safePath(path: string) { return path.startsWith('/') && !path.startsWith('//') && !path.includes('://') && !path.includes('\\') }
 
 function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message
+  if (error instanceof Error) return `${error.name}: ${error.message}`
   return typeof error === 'string' ? error : ''
+}
+
+function safeErrorDetail(error: unknown): string {
+  return errorMessage(error)
+    .replace(/https?:\/\/[^\s]+/gi, '<url>')
+    .replace(/termflow:\/\/[^\s]+/gi, '<callback>')
+    .replace(/(access_token|refresh_token|code|token|secret|dpop)=[^&\s]+/gi, '$1=<redacted>')
+    .slice(0, 256)
 }
 
 function isHttpCapabilityFailure(error: unknown): boolean {
@@ -75,8 +83,11 @@ export function createTauriHttpTransport(): HttpTransport {
         return { status: response.status, headers: response.headers, body }
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') throw new HttpTransportError('aborted')
-        if (isHttpCapabilityFailure(error)) throw new HttpTransportError('http_capability_denied')
-        void logNativeEvent({ event: 'http_request_failed', issuer: serverConfig.current, level: 'error', errorCode: 'offline' })
+        if (isHttpCapabilityFailure(error)) {
+          void logNativeEvent({ event: 'http_request_failed', issuer: serverConfig.current, level: 'error', errorCode: 'http_capability_denied', errorDetail: safeErrorDetail(error) })
+          throw new HttpTransportError('http_capability_denied')
+        }
+        void logNativeEvent({ event: 'http_request_failed', issuer: serverConfig.current, level: 'error', errorCode: 'offline', errorDetail: safeErrorDetail(error) })
         throw new HttpTransportError('offline')
       }
     },

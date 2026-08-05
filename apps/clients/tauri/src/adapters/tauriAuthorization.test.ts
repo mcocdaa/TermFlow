@@ -52,6 +52,7 @@ describe('tauriAuthorizationBrowser', () => {
       errorCode: 'browser_open_failed',
       errorDetail: 'Error: ShellExecute failed for <url>',
     }))
+    expect(JSON.stringify(mocks.invoke.mock.calls)).not.toContain('secret')
     callback.then(() => undefined, () => undefined)
   })
 })
