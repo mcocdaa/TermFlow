@@ -97,6 +97,8 @@
   .dialog-panel h2 { margin: 0; }
   .delete-term-dialog { width: min(100%, 34rem); }
   .delete-term-dialog p { line-height: 1.6; }
+  .delete-computer-dialog { width: min(100%, 34rem); }
+  .delete-computer-dialog p { line-height: 1.6; }
   .delete-term-activation { display: block; overflow-wrap: anywhere; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-terminal); color: var(--color-terminal-foreground); font-family: var(--font-mono); }
   .enrollment-create-form { display: grid; gap: var(--space-3); margin-block-start: var(--space-5); }
   .enrollment-secret { display: grid; gap: var(--space-3); }

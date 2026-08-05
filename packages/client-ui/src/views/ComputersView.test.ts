@@ -52,7 +52,7 @@ describe('ComputersView', () => {
     expect(rename).toHaveBeenCalledWith('machine-1', '构建主机')
   })
 
-  it('confirms and removes an offline Computer with a dismissing bottom success toast', async () => {
+  it('confirms and removes an offline Computer with the shared dialog and a dismissing bottom success toast', async () => {
     const offlineComputer = {
       ...computer,
       installation_id: 'machine-offline',
@@ -74,20 +74,19 @@ describe('ComputersView', () => {
         clearInterval: () => undefined,
       },
     })
-    const confirm = vi.spyOn(window, 'confirm')
     const wrapper = mountComputers(runtime)
     await flushPromises()
 
     const action = wrapper.get('[data-computer-id="machine-offline"] [data-action="delete-computer"]')
     expect(action.attributes('disabled')).toBeUndefined()
-    confirm.mockReturnValueOnce(false)
     await action.trigger('click')
     expect(remove).not.toHaveBeenCalled()
-    confirm.mockReturnValueOnce(true)
-    await action.trigger('click')
+    const dialog = wrapper.get('[role="alertdialog"]')
+    expect(dialog.text()).toContain('删除电脑')
+    expect(dialog.text()).toContain('离线工作站')
+    await dialog.get('[data-action="confirm-delete-computer"]').trigger('click')
     await flushPromises()
 
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('离线工作站'))
     expect(remove).toHaveBeenCalledWith('machine-offline')
     expect(wrapper.find('[data-computer-id="machine-offline"]').exists()).toBe(false)
     const notice = wrapper.get('[data-delete-notice]')
@@ -100,10 +99,9 @@ describe('ComputersView', () => {
     expect(wrapper.find('[data-delete-notice]').exists()).toBe(false)
     wrapper.unmount()
     expect(clearTimeout).not.toHaveBeenCalled()
-    confirm.mockRestore()
   })
 
-  it('shows a bottom error toast when deleting a Computer fails', async () => {
+  it('keeps the confirmation dialog open and shows an inline error when deleting a Computer fails', async () => {
     const offlineComputer = { ...computer, installation_id: 'machine-offline', online: false, terms: [] }
     const list = vi.fn().mockResolvedValue({ computers: [offlineComputer] })
     const remove = vi.fn().mockRejectedValue(new Error('network failure'))
@@ -118,20 +116,16 @@ describe('ComputersView', () => {
         clearInterval: () => undefined,
       },
     })
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const wrapper = mountComputers(runtime)
     await flushPromises()
     await wrapper.get('[data-action="delete-computer"]').trigger('click')
+    await wrapper.get('[data-action="confirm-delete-computer"]').trigger('click')
     await flushPromises()
 
-    const notice = wrapper.get('[data-delete-notice]')
-    expect(notice.attributes('role')).toBe('alert')
-    expect(notice.attributes('data-tone')).toBe('error')
-    expect(notice.text()).toBe('无法删除电脑。')
+    expect(wrapper.get('[role="alertdialog"] [role="alert"]').text()).toBe('无法删除电脑。')
     expect(wrapper.find('[data-computer-id="machine-offline"]').exists()).toBe(true)
     wrapper.unmount()
-    expect(clearTimeout).toHaveBeenCalledWith(23)
-    confirm.mockRestore()
+    expect(clearTimeout).not.toHaveBeenCalled()
   })
 
   it('rejects control characters before sending a rename request', async () => {

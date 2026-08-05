@@ -23,6 +23,6 @@ const format = formatBRecordedTime
 const onlineTermCount = (computer: ComputerSummary) => computer.terms.filter((term) => term.online).length
 function requestRemove(computer: ComputerSummary) {
   if (onlineTermCount(computer) > 0) return
-  if (window.confirm(`确定删除电脑“${computer.display_name}”吗？删除后需要重新注册。`)) emit('remove', computer)
+  emit('remove', computer)
 }
 </script>
