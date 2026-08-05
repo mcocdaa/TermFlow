@@ -3,19 +3,9 @@
     <div class="auth-card device-auth-card">
       <header class="native-device-heading">
         <div><p class="eyebrow">Cross-device authorization</p><h1>在其他设备上授权</h1></div>
-        <button v-if="!started" class="secondary-button" type="button" data-action="back-to-connect" @click="backToConnect">返回连接</button>
       </header>
 
-      <template v-if="!started">
-        <div class="device-start-form">
-          <label for="device-server-url">服务器地址</label>
-          <input id="device-server-url" v-model="issuer" type="url" inputmode="url" autocomplete="url" required />
-          <p v-if="message" class="form-error" role="alert">{{ message }}</p>
-          <button class="primary-button" type="button" :disabled="busy" @click="start">{{ busy ? '正在生成设备码…' : '生成设备授权码' }}</button>
-        </div>
-      </template>
-
-      <template v-else>
+      <template v-if="started">
         <div class="native-device-layout">
           <div class="native-device-qr">
             <ThemedQrCode v-if="response" :value="response.verification_uri_complete" alt="设备授权二维码" />
@@ -39,6 +29,7 @@
           <button class="primary-button" type="button" data-action="regenerate" :disabled="busy" @click="regenerate">重新生成</button>
         </div>
       </template>
+      <p v-else-if="message" class="form-error" role="alert">{{ message }}</p>
     </div>
   </section>
 </template>
@@ -46,7 +37,7 @@
 <script setup lang="ts">
 import { ApiError } from '@termflow/client-core'
 import { arch, platform } from '@tauri-apps/plugin-os'
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ThemedQrCode, useClientRuntime } from '@termflow/client-ui'
 import { beginNativeDeviceAuthorization } from '../nativeAuth'
@@ -137,6 +128,7 @@ async function backToConnect() {
 
 async function regenerate() { session.value?.cancel(); stopTimer(); started.value = false; response.value = undefined; session.value = undefined; await start() }
 
+onMounted(() => { void start() })
 onBeforeUnmount(() => { session.value?.cancel(); stopTimer() })
 </script>
 

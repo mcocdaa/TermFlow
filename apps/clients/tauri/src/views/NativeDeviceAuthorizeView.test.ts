@@ -41,18 +41,19 @@ beforeEach(() => {
 })
 
 describe('NativeDeviceAuthorizeView', () => {
-  it('keeps the start form spaced and offers one return-to-connect action', async () => {
+  it('generates a device code immediately and offers one return-to-connect action', async () => {
     const { wrapper } = await render()
+    await flushPromises()
 
-    expect(wrapper.find('.device-start-form').exists()).toBe(true)
-    expect(wrapper.find('.device-start-form').findAll('label, input, button')).toHaveLength(3)
-    expect(wrapper.get('[data-action="back-to-connect"]').text()).toBe('返回连接')
+    expect(mocks.begin).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.device-start-form').exists()).toBe(false)
+    expect(wrapper.find('.native-device-layout').exists()).toBe(true)
+    expect(wrapper.get('[data-action="back-to-connect"]').text()).toBe('返回')
     expect(wrapper.findAll('[data-action="back-to-connect"]')).toHaveLength(1)
   })
 
   it('starts device authorization with a themed two-column QR layout and never opens a browser', async () => {
     const { wrapper } = await render()
-    await wrapper.get('button.primary-button').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('ABCD-EFGH')
     expect(wrapper.text()).toContain('https://relay.example.com/device')
@@ -73,7 +74,6 @@ describe('NativeDeviceAuthorizeView', () => {
   it('copies the device code from the adjacent SVG action and reports success', async () => {
     const client = runtime()
     const { wrapper } = await render(client)
-    await wrapper.get('button.primary-button').trigger('click')
     await flushPromises()
 
     await wrapper.get('[data-action="copy-device-code"]').trigger('click')
@@ -83,7 +83,6 @@ describe('NativeDeviceAuthorizeView', () => {
 
   it('cancels the active session and returns to connect', async () => {
     const { wrapper, router } = await render()
-    await wrapper.get('button.primary-button').trigger('click')
     await flushPromises()
 
     await wrapper.get('[data-action="back-to-connect"]').trigger('click')
@@ -104,7 +103,6 @@ describe('NativeDeviceAuthorizeView', () => {
         session: { authorize: vi.fn().mockReturnValue(new Promise(() => undefined)), cancel: vi.fn() },
       })
     const { wrapper } = await render()
-    await wrapper.get('button.primary-button').trigger('click')
     await flushPromises()
     await wrapper.get('[data-action="regenerate"]').trigger('click')
     await flushPromises()
@@ -121,7 +119,6 @@ describe('NativeDeviceAuthorizeView', () => {
       session,
     })
     const { wrapper } = await render()
-    await wrapper.get('button.primary-button').trigger('click')
     await flushPromises()
     expect(wrapper.get('[role="status"]').text()).toContain('等待浏览器确认')
   })
