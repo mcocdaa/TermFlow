@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from termflow_node.config.models import InstallationConfig
 from termflow_node.config.store import ConfigStore
-from termflow_node.control_plane_client import InsecureServerUrl, validate_server_url
+from termflow_node.control_plane_client import (
+    ControlPlaneClient,
+    InsecureServerUrl,
+    validate_server_url,
+)
 from termflow_node.instances.manager import InstanceManager, launch_bridge
 from termflow_node.instances.models import LocalInstance, RemoteAccessState
 from termflow_node.instances.store import InstanceStore
@@ -36,11 +42,16 @@ def _mode(path: Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
 
 
+def probe_control_plane_health(config: InstallationConfig) -> tuple[bool, str]:
+    return asyncio.run(ControlPlaneClient().probe_health(str(config.server_url)))
+
+
 def run_diagnostics(
     config_store: ConfigStore,
     instance_store: InstanceStore,
     *,
     repair: bool,
+    check_control_plane: bool = False,
 ) -> list[DiagnosticCheck]:
     checks = [
         DiagnosticCheck(
@@ -77,6 +88,9 @@ def run_diagnostics(
             config = config_store.load()
             validate_server_url(str(config.server_url))
             checks.append(DiagnosticCheck("server_url", True, "TLS policy accepted"))
+            if check_control_plane:
+                reachable, detail = probe_control_plane_health(config)
+                checks.append(DiagnosticCheck("control_plane", reachable, detail))
         except (OSError, ValueError, InsecureServerUrl) as exc:
             checks.append(DiagnosticCheck("server_url", False, str(exc)))
 
@@ -108,7 +122,13 @@ def run_diagnostics(
                 (
                     f"tmux={'up' if tmux_alive else 'down'} "
                     f"bridge={'up' if bridge_alive else 'down'} "
+                    f"remote={record.remote_status.value.replace('_', '-')} "
                     f"remote_access={record.remote_access}"
+                    + (
+                        f" last_sync_error={record.last_sync_error}"
+                        if record.last_sync_error is not None
+                        else ""
+                    )
                 ),
             )
         )

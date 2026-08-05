@@ -117,7 +117,7 @@ class TermRenamer:
         identity = self._runner.session_identity(record.session_id)
         updated = record.model_copy(
             update={
-                "schema_version": 3,
+                "schema_version": 4,
                 "name": identity.session_name,
                 "session_name": identity.session_name,
                 "session_id": identity.session_id,

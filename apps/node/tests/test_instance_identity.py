@@ -97,7 +97,7 @@ def test_legacy_identity_migration_preserves_the_authoritative_tmux_name(
 
     migrated, argv = manager.attach(str(legacy.instance_id))
 
-    assert migrated.schema_version == 3
+    assert migrated.schema_version == 4
     assert migrated.session_id == "$3"
     assert migrated.name == expected_name
     assert migrated.session_name == expected_name
@@ -136,6 +136,32 @@ def test_already_migrated_record_refreshes_local_tmux_rename_by_stable_id(tmp_pa
     assert argv[-1] == "$3"
 
 
+def test_v4_record_uses_its_stable_tmux_id(tmp_path) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    instance_id = uuid4()
+    record = LocalInstance(
+        schema_version=4,
+        instance_id=instance_id,
+        name="stable",
+        session_id="$9",
+        session_name="stable",
+        socket_path=(store.instance_dir(instance_id) / "tmux.sock").absolute(),
+        created_at=datetime.now(UTC),
+        lifecycle=InstanceLifecycle.RUNNING,
+    )
+    store.save(record)
+    fake = FakeRunner(record.socket_path, session_name="stable")
+    manager = InstanceManager(
+        store,
+        bridge_launcher=lambda instance: 123,
+        runner_factory=lambda path: fake,
+    )
+
+    _, argv = manager.attach(str(instance_id))
+
+    assert ("session_identity", "$9") in fake.calls
+
+
 def test_list_migrates_legacy_identity_before_display(tmp_path) -> None:
     store = InstanceStore(tmp_path / "instances")
     legacy = _legacy(store, "legacy-display")
@@ -150,7 +176,7 @@ def test_list_migrates_legacy_identity_before_display(tmp_path) -> None:
 
     assert listing.instances[0].session_id == "$3"
     assert listing.instances[0].name == "local-list-name"
-    assert listing.instances[0].schema_version == 3
+    assert listing.instances[0].schema_version == 4
 
 
 def test_kill_targets_stable_session_id_not_display_name(tmp_path) -> None:

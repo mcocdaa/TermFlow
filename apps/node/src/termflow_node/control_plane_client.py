@@ -8,7 +8,11 @@ from urllib.parse import urlsplit
 
 import httpx
 from pydantic import SecretStr
-from termflow_protocol import InstallationEnrollResponse, InstanceRegisterResponse
+from termflow_protocol import (
+    InstallationEnrollResponse,
+    InstanceListResponse,
+    InstanceRegisterResponse,
+)
 
 from termflow_node import __version__
 from termflow_node.config.models import InstallationConfig
@@ -80,3 +84,31 @@ class ControlPlaneClient:
         )
         store.save(updated)
         return updated
+
+    async def list_owned_instances(
+        self,
+        installation: InstallationConfig,
+    ) -> InstanceListResponse:
+        base_url = validate_server_url(str(installation.server_url))
+        async with httpx.AsyncClient(transport=self._transport, timeout=10.0) as client:
+            response = await client.get(
+                f"{base_url}/api/v1/instances/mine",
+                headers={
+                    "Authorization": (
+                        "Bearer " + installation.installation_token.get_secret_value()
+                    )
+                },
+            )
+            response.raise_for_status()
+            return InstanceListResponse.model_validate(response.json())
+
+    async def probe_health(self, server_url: str) -> tuple[bool, str]:
+        base_url = validate_server_url(server_url)
+        try:
+            async with httpx.AsyncClient(transport=self._transport, timeout=3.0) as client:
+                response = await client.get(f"{base_url}/healthz")
+        except httpx.HTTPError as exc:
+            return False, str(exc) or type(exc).__name__
+        if response.is_success:
+            return True, "reachable"
+        return False, f"HTTP {response.status_code}"

@@ -79,7 +79,7 @@ class InstanceActivator:
             self._manager.require_running_tmux(record)
             required = self._manager.stop_bridge(record).model_copy(
                 update={
-                    "schema_version": 3,
+                    "schema_version": 4,
                     "remote_access": RemoteAccessState.ACTIVATION_REQUIRED,
                     "instance_token": None,
                     "bridge_pid": None,
@@ -93,7 +93,7 @@ class InstanceActivator:
             )
             active = registered.model_copy(
                 update={
-                    "schema_version": 3,
+                    "schema_version": 4,
                     "remote_access": RemoteAccessState.ACTIVE,
                 }
             )

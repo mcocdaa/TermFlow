@@ -6,9 +6,10 @@ import httpx
 import pytest
 from termflow_node import __version__
 from termflow_node.cli import app
+from termflow_node.config.models import InstallationConfig
 from termflow_node.config.store import ConfigStore
 from termflow_node.control_plane_client import ControlPlaneClient, InsecureServerUrl
-from termflow_protocol import InstallationEnrollResponse
+from termflow_protocol import InstallationEnrollResponse, InstanceListResponse
 from typer.testing import CliRunner
 
 
@@ -46,6 +47,42 @@ async def test_enrollment_client_rejects_public_plain_http() -> None:
     client = ControlPlaneClient(transport=httpx.MockTransport(lambda request: httpx.Response(500)))
     with pytest.raises(InsecureServerUrl):
         await client.enroll("http://termflow.example.com", "secret")
+
+
+@pytest.mark.asyncio
+async def test_instance_sync_client_uses_its_installation_token() -> None:
+    installation = InstallationConfig(
+        server_url="https://termflow.example.com",
+        installation_id=uuid4(),
+        installation_token="installation-secret-token-that-is-long-enough",
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == "https://termflow.example.com/api/v1/instances/mine"
+        assert request.headers["Authorization"] == (
+            "Bearer installation-secret-token-that-is-long-enough"
+        )
+        return httpx.Response(200, json={"instances": []})
+
+    client = ControlPlaneClient(transport=httpx.MockTransport(handler))
+
+    response = await client.list_owned_instances(installation)
+
+    assert response == InstanceListResponse(instances=[])
+
+
+@pytest.mark.asyncio
+async def test_health_client_reports_the_control_plane_availability() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == "https://termflow.example.com/healthz"
+        return httpx.Response(200, json={"status": "ok"})
+
+    client = ControlPlaneClient(transport=httpx.MockTransport(handler))
+
+    ok, detail = await client.probe_health("https://termflow.example.com")
+
+    assert ok is True
+    assert detail == "reachable"
 
 
 def test_login_saves_private_config_without_printing_tokens(tmp_path, monkeypatch, caplog) -> None:

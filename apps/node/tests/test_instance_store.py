@@ -3,7 +3,11 @@ import stat
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from termflow_node.instances.models import InstanceLifecycle, LocalInstance
+from termflow_node.instances.models import (
+    InstanceLifecycle,
+    LocalInstance,
+    RemoteInstanceStatus,
+)
 from termflow_node.instances.store import InstanceStore
 
 
@@ -69,7 +73,7 @@ def test_v1_metadata_loads_as_an_unmigrated_record(tmp_path) -> None:
     assert record.remote_access.value == "active"
 
 
-def test_v2_loads_active_and_next_save_writes_v3(tmp_path) -> None:
+def test_v2_loads_active_and_next_save_writes_v4(tmp_path) -> None:
     store = InstanceStore(tmp_path / "instances")
     instance_id = uuid4()
     directory = store.instance_dir(instance_id)
@@ -98,7 +102,61 @@ def test_v2_loads_active_and_next_save_writes_v3(tmp_path) -> None:
     assert record.remote_access.value == "active"
     store.save(record)
     dumped = json.loads(path.read_text())
-    assert dumped["schema_version"] == 3
+    assert dumped["schema_version"] == 4
     assert dumped["session_id"] == "$7"
     assert dumped["remote_access"] == "active"
-    assert store.load(instance_id).schema_version == 3
+    assert store.load(instance_id).schema_version == 4
+
+
+def test_v3_metadata_gains_unknown_remote_state_and_saves_as_v4(tmp_path) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    instance_id = uuid4()
+    directory = store.instance_dir(instance_id)
+    directory.mkdir(parents=True, mode=0o700)
+    path = store.metadata_path(instance_id)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 3,
+                "instance_id": str(instance_id),
+                "name": "legacy-v3",
+                "session_id": "$8",
+                "session_name": "legacy-v3",
+                "socket_path": str(directory / "tmux.sock"),
+                "created_at": datetime.now(UTC).isoformat(),
+                "bridge_pid": None,
+                "instance_token": None,
+                "lifecycle": "stopped",
+                "remote_access": "active",
+            }
+        )
+    )
+    path.chmod(0o600)
+
+    record = store.load(instance_id)
+
+    assert record.remote_status is RemoteInstanceStatus.UNKNOWN
+    assert record.last_synced_at is None
+    assert record.last_sync_error is None
+    store.save(record)
+    dumped = json.loads(path.read_text())
+    assert dumped["schema_version"] == 4
+    assert dumped["remote_status"] == "unknown"
+    assert dumped["last_synced_at"] is None
+    assert dumped["last_sync_error"] is None
+
+
+def test_remove_deletes_only_the_validated_instance_directory(tmp_path) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    record = LocalInstance(
+        instance_id=uuid4(),
+        name="stale",
+        socket_path=tmp_path / "tmux.sock",
+        created_at=datetime.now(UTC),
+        lifecycle=InstanceLifecycle.STOPPED,
+    )
+    store.save(record)
+
+    store.remove(record.instance_id)
+
+    assert not store.instance_dir(record.instance_id).exists()

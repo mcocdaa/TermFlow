@@ -21,10 +21,17 @@ class RemoteAccessState(StrEnum):
     ACTIVATION_REQUIRED = "activation_required"
 
 
+class RemoteInstanceStatus(StrEnum):
+    UNKNOWN = "unknown"
+    ONLINE = "online"
+    OFFLINE = "offline"
+    REMOTE_DELETED = "remote_deleted"
+
+
 class LocalInstance(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[1, 2, 3] = 1
+    schema_version: Literal[1, 2, 3, 4] = 1
     instance_id: UUID
     name: str
     session_id: str | None = None
@@ -35,6 +42,9 @@ class LocalInstance(BaseModel):
     instance_token: SecretStr | None = None
     lifecycle: InstanceLifecycle
     remote_access: RemoteAccessState = RemoteAccessState.ACTIVE
+    remote_status: RemoteInstanceStatus = RemoteInstanceStatus.UNKNOWN
+    last_synced_at: datetime | None = None
+    last_sync_error: str | None = None
 
     @model_validator(mode="after")
     def stable_identity_matches_schema(self) -> "LocalInstance":
@@ -42,6 +52,6 @@ class LocalInstance(BaseModel):
             self.session_id.startswith("$") and self.session_id[1:].isdigit()
         ):
             raise ValueError("session_id must be a stable tmux Session ID")
-        if self.schema_version in {2, 3} and self.session_id is None:
+        if self.schema_version in {2, 3, 4} and self.session_id is None:
             raise ValueError(f"schema version {self.schema_version} requires session_id")
         return self

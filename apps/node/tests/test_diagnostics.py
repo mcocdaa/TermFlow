@@ -8,7 +8,12 @@ from termflow_node import diagnostics
 from termflow_node.config.models import InstallationConfig
 from termflow_node.config.store import ConfigStore
 from termflow_node.diagnostics import run_diagnostics
-from termflow_node.instances.models import InstanceLifecycle, LocalInstance, RemoteAccessState
+from termflow_node.instances.models import (
+    InstanceLifecycle,
+    LocalInstance,
+    RemoteAccessState,
+    RemoteInstanceStatus,
+)
 from termflow_node.instances.store import InstanceStore
 from termflow_node.tmux import runner as runner_module
 
@@ -105,3 +110,52 @@ def test_doctor_tmux_probe_does_not_inherit_frozen_private_library_paths(
     assert environment["LANG"] == "zh_CN.UTF-8"
     assert "LD_LIBRARY_PATH" not in environment
     assert "LD_LIBRARY_PATH_ORIG" not in environment
+
+
+def test_doctor_distinguishes_local_runtime_from_remote_connection(tmp_path, monkeypatch) -> None:
+    config_store = ConfigStore(tmp_path / "config" / "config.json")
+    config_store.save(
+        InstallationConfig(
+            server_url="https://termflow.example.com",
+            installation_id=uuid4(),
+            installation_token="secret",
+        )
+    )
+    instance_store = InstanceStore(tmp_path / "state" / "instances")
+    instance_id = uuid4()
+    instance_store.save(
+        LocalInstance(
+            schema_version=4,
+            instance_id=instance_id,
+            name="offline-everywhere",
+            session_id="$4",
+            session_name="offline-everywhere",
+            socket_path=instance_store.instance_dir(instance_id) / "tmux.sock",
+            created_at=datetime.now(UTC),
+            lifecycle=InstanceLifecycle.STOPPED,
+            remote_status=RemoteInstanceStatus.OFFLINE,
+            last_sync_error="previous sync timed out",
+        )
+    )
+    monkeypatch.setattr(diagnostics, "probe_instance_health", lambda record: (False, False))
+    monkeypatch.setattr(
+        diagnostics,
+        "probe_control_plane_health",
+        lambda config: (False, "relay unavailable"),
+        raising=False,
+    )
+
+    checks = run_diagnostics(
+        config_store,
+        instance_store,
+        repair=False,
+        check_control_plane=True,
+    )
+
+    relay = next(check for check in checks if check.name == "control_plane")
+    instance = next(check for check in checks if check.name == f"instance:{instance_id}")
+    assert relay.ok is False
+    assert relay.detail == "relay unavailable"
+    assert instance.ok is False
+    assert "tmux=down bridge=down remote=offline" in instance.detail
+    assert "last_sync_error=previous sync timed out" in instance.detail

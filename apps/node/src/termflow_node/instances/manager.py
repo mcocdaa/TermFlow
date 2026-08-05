@@ -115,7 +115,7 @@ class InstanceManager:
             identity = runner.session_identity(name)
             identified = record.model_copy(
                 update={
-                    "schema_version": 3,
+                    "schema_version": 4,
                     "session_id": identity.session_id,
                     "session_name": identity.session_name,
                     "name": identity.session_name,
@@ -141,7 +141,7 @@ class InstanceManager:
     def current(self, instance_id: UUID) -> LocalInstance:
         record = self._store.load(instance_id)
         runner = self._runner_factory(record.socket_path)
-        target = record.session_id if record.schema_version in {2, 3} else None
+        target = record.session_id if record.schema_version in {2, 3, 4} else None
         identity = runner.session_identity(target)
         resolved_name = identity.session_name
         if record.schema_version == 1 and identity.session_name == "main":
@@ -150,7 +150,7 @@ class InstanceManager:
                 runner.rename_session(identity.session_id, resolved_name)
         current = record.model_copy(
             update={
-                "schema_version": 3,
+                "schema_version": 4,
                 "session_id": identity.session_id,
                 "session_name": resolved_name,
                 "name": resolved_name,

@@ -21,6 +21,7 @@ from termflow_node.instances.activation import ActivationError, default_instance
 from termflow_node.instances.manager import InstanceManager
 from termflow_node.instances.models import LocalInstance, RemoteAccessState
 from termflow_node.instances.store import InstanceStore
+from termflow_node.instances.synchronization import InstanceSynchronizer
 from termflow_node.logging import configure_logging, log_event
 
 app = typer.Typer(
@@ -97,6 +98,11 @@ def _status_payload(record: LocalInstance) -> dict[str, object]:
         "name": record.name,
         "lifecycle": record.lifecycle,
         "remote_access": record.remote_access,
+        "remote_status": record.remote_status,
+        "last_synced_at": (
+            record.last_synced_at.isoformat() if record.last_synced_at is not None else None
+        ),
+        "last_sync_error": record.last_sync_error,
         "tmux_alive": tmux_alive,
         "bridge_alive": bridge_alive,
         "socket_path": str(record.socket_path),
@@ -115,6 +121,7 @@ def _status_line(payload: dict[str, object]) -> str:
     return (
         f"{payload['instance_id']} {payload['name']} "
         f"{payload['lifecycle']} {health} "
+        f"remote={str(payload['remote_status']).replace('_', '-')} "
         f"remote_access={payload['remote_access']}"
     )
 
@@ -162,6 +169,37 @@ def activate(identifier: str) -> None:
             status="already_active",
         )
         typer.echo(f"Remote access already active for {result.instance.instance_id}")
+
+
+@app.command()
+def sync() -> None:
+    """Synchronize local Instance metadata with the Control Plane."""
+
+    result = asyncio.run(InstanceSynchronizer.from_defaults().sync())
+    typer.echo(result.summary())
+    if result.error is not None:
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def prune(
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    force: Annotated[bool, typer.Option("--force")] = False,
+) -> None:
+    """Remove only stale local metadata after explicit confirmation."""
+
+    synchronizer = InstanceSynchronizer.from_defaults()
+    candidates = synchronizer.prune_candidates()
+    if dry_run:
+        synchronizer.print_candidates(candidates)
+        return
+    if not candidates:
+        typer.echo("No stale instances to remove")
+        return
+    if not force and not typer.confirm(f"清理 {len(candidates)} 个失效实例？"):
+        raise typer.Abort()
+    removed = synchronizer.remove_candidates(candidates)
+    typer.echo(f"Removed {len(removed)} stale instances")
 
 
 @app.command("list")
@@ -215,7 +253,12 @@ def doctor(
 ) -> None:
     """Inspect local requirements and per-Instance health."""
 
-    checks = run_diagnostics(ConfigStore.default(), InstanceStore.default(), repair=repair)
+    checks = run_diagnostics(
+        ConfigStore.default(),
+        InstanceStore.default(),
+        repair=repair,
+        check_control_plane=True,
+    )
     for check in checks:
         typer.echo(f"{'ok' if check.ok else 'error'} {check.name}: {check.detail}")
     if any(not check.ok for check in checks):

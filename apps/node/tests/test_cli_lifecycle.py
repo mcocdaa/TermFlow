@@ -6,8 +6,14 @@ from uuid import uuid4
 from termflow_node import __version__, cli
 from termflow_node.instances.activation import ActivationError, ActivationResult
 from termflow_node.instances.manager import AmbiguousInstance, InstanceManager
-from termflow_node.instances.models import InstanceLifecycle, LocalInstance, RemoteAccessState
+from termflow_node.instances.models import (
+    InstanceLifecycle,
+    LocalInstance,
+    RemoteAccessState,
+    RemoteInstanceStatus,
+)
 from termflow_node.instances.store import InstanceStore
+from termflow_node.instances.synchronization import SyncResult
 from typer.testing import CliRunner
 
 
@@ -51,11 +57,11 @@ def test_list_shows_independent_instance_health(tmp_path, monkeypatch) -> None:
     result = CliRunner().invoke(cli.app, ["list"])
     assert result.exit_code == 0, result.output
     assert (
-        f"{first.instance_id} alpha running bridge-running remote_access=active"
+        f"{first.instance_id} alpha running bridge-running remote=unknown remote_access=active"
         in result.stdout
     )
     assert (
-        f"{second.instance_id} beta running bridge-down remote_access=active"
+        f"{second.instance_id} beta running bridge-down remote=unknown remote_access=active"
         in result.stdout
     )
     assert "connected" not in result.stdout
@@ -76,6 +82,124 @@ def test_list_json_has_no_credentials(tmp_path, monkeypatch) -> None:
     assert "token" not in result.stdout.lower()
 
 
+def test_list_reports_remote_state_and_last_sync_error(tmp_path, monkeypatch) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    record = _record(store.root, "removed-remotely").model_copy(
+        update={
+            "remote_status": RemoteInstanceStatus.REMOTE_DELETED,
+            "last_sync_error": "relay unavailable",
+        }
+    )
+    store.save(record)
+    monkeypatch.setattr(InstanceStore, "default", classmethod(lambda cls: store))
+    monkeypatch.setattr(cli, "probe_instance_health", lambda record: (False, False))
+
+    result = CliRunner().invoke(cli.app, ["list", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload[0]["remote_status"] == "remote_deleted"
+    assert payload[0]["last_sync_error"] == "relay unavailable"
+    assert "remote=remote-deleted" in CliRunner().invoke(cli.app, ["list"]).stdout
+
+
+def test_sync_command_reports_completed_sync(tmp_path, monkeypatch) -> None:
+    class FakeSynchronizer:
+        @classmethod
+        def from_defaults(cls):
+            return cls()
+
+        async def sync(self) -> SyncResult:
+            return SyncResult(remote_deleted=[uuid4()], updated=[uuid4()])
+
+    monkeypatch.setattr(cli, "InstanceSynchronizer", FakeSynchronizer, raising=False)
+
+    result = CliRunner().invoke(cli.app, ["sync"])
+
+    assert result.exit_code == 0, result.output
+    assert "Synced 1 instances; 1 removed remotely" in result.stdout
+
+
+def test_prune_dry_run_does_not_remove_metadata(monkeypatch) -> None:
+    class FakeSynchronizer:
+        removed = False
+
+        @classmethod
+        def from_defaults(cls):
+            return cls()
+
+        def prune_candidates(self):
+            return ["stale-instance"]
+
+        def print_candidates(self, candidates):
+            print("stale-instance remote=remote_deleted tmux=down bridge=down")
+
+        def remove_candidates(self, candidates):
+            self.removed = True
+            return []
+
+    monkeypatch.setattr(cli, "InstanceSynchronizer", FakeSynchronizer, raising=False)
+
+    result = CliRunner().invoke(cli.app, ["prune", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "stale-instance" in result.stdout
+    assert FakeSynchronizer.removed is False
+
+
+def test_prune_requires_confirmation_unless_force(monkeypatch) -> None:
+    class FakeSynchronizer:
+        removed = False
+
+        @classmethod
+        def from_defaults(cls):
+            return cls()
+
+        def prune_candidates(self):
+            return ["stale-instance"]
+
+        def print_candidates(self, candidates):
+            pass
+
+        def remove_candidates(self, candidates):
+            type(self).removed = True
+            return candidates
+
+    monkeypatch.setattr(cli, "InstanceSynchronizer", FakeSynchronizer, raising=False)
+
+    result = CliRunner().invoke(cli.app, ["prune"], input="n\n")
+
+    assert result.exit_code != 0
+    assert FakeSynchronizer.removed is False
+
+
+def test_prune_force_removes_without_interactive_confirmation(monkeypatch) -> None:
+    class FakeSynchronizer:
+        removed = False
+
+        @classmethod
+        def from_defaults(cls):
+            return cls()
+
+        def prune_candidates(self):
+            return ["stale-instance"]
+
+        def print_candidates(self, candidates):
+            pass
+
+        def remove_candidates(self, candidates):
+            type(self).removed = True
+            return candidates
+
+    monkeypatch.setattr(cli, "InstanceSynchronizer", FakeSynchronizer, raising=False)
+
+    result = CliRunner().invoke(cli.app, ["prune", "--force"])
+
+    assert result.exit_code == 0, result.output
+    assert FakeSynchronizer.removed is True
+    assert "Removed 1 stale instances" in result.stdout
+
+
 def test_list_marks_activation_required_without_claiming_connection(
     tmp_path, monkeypatch
 ) -> None:
@@ -92,7 +216,7 @@ def test_list_marks_activation_required_without_claiming_connection(
     result = CliRunner().invoke(cli.app, ["list"])
 
     assert result.exit_code == 0, result.output
-    assert "activation-required remote_access=activation_required" in result.stdout
+    assert "activation-required remote=unknown remote_access=activation_required" in result.stdout
     assert "connected" not in result.stdout
 
 

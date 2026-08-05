@@ -53,7 +53,7 @@ class InstanceStore:
             if instance.instance_token is not None
             else None
         )
-        serialized_version = 3 if instance.session_id is not None else instance.schema_version
+        serialized_version = 4 if instance.session_id is not None else instance.schema_version
         payload = json.dumps(
             {
                 "schema_version": serialized_version,
@@ -67,6 +67,13 @@ class InstanceStore:
                 "instance_token": token,
                 "lifecycle": instance.lifecycle,
                 "remote_access": instance.remote_access.value,
+                "remote_status": instance.remote_status.value,
+                "last_synced_at": (
+                    instance.last_synced_at.isoformat()
+                    if instance.last_synced_at is not None
+                    else None
+                ),
+                "last_sync_error": instance.last_sync_error,
             },
             separators=(",", ":"),
         ).encode("utf-8")
@@ -118,3 +125,13 @@ class InstanceStore:
             path.unlink()
         if directory.exists():
             directory.rmdir()
+
+    def remove(self, instance_id: UUID) -> None:
+        """Remove one validated, exact Instance metadata directory."""
+
+        record = self.load(instance_id)
+        if record.instance_id != instance_id:
+            raise InsecureInstanceMetadata(str(self.metadata_path(instance_id)))
+        path = self.metadata_path(instance_id)
+        path.unlink()
+        self.instance_dir(instance_id).rmdir()
