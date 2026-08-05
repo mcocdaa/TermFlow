@@ -29,6 +29,7 @@
       <RouterLink to="/computers"><MonitorCog :size="18" aria-hidden="true" />电脑管理</RouterLink>
       <RouterLink to="/settings"><Settings :size="18" aria-hidden="true" />设置</RouterLink>
     </nav>
+    <BottomToast />
   </div>
 </template>
 
@@ -37,6 +38,7 @@ import { LayoutDashboard, LogOut, MonitorCog, Settings } from '@lucide/vue'
 import { computed } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import ThemePicker from './components/settings/ThemePicker.vue'
+import BottomToast from './components/common/BottomToast.vue'
 import { useSession } from './composables/useSession'
 import { useTerminalPageLock } from './composables/useTerminalPageLock'
 

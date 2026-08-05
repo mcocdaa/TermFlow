@@ -1,9 +1,11 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { defineComponent } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
 import type { ClientRuntime } from '../runtime'
 import { createClientUi } from '../runtime'
 import { createFakeRuntime } from '../test/fakeRuntime'
 import ComputersView from './ComputersView.vue'
+import BottomToast from '../components/common/BottomToast.vue'
 
 type Computer = Awaited<ReturnType<ClientRuntime['api']['computers']['list']>>['computers'][number]
 
@@ -17,7 +19,7 @@ const computer: Computer = {
 }
 
 function mountComputers(runtime: ClientRuntime) {
-  return mount(ComputersView, { global: { plugins: [createClientUi(runtime)] } })
+  return mount(defineComponent({ components: { BottomToast, ComputersView }, template: '<ComputersView /><BottomToast />' }), { global: { plugins: [createClientUi(runtime)] } })
 }
 
 describe('ComputersView', () => {
@@ -89,14 +91,14 @@ describe('ComputersView', () => {
 
     expect(remove).toHaveBeenCalledWith('machine-offline')
     expect(wrapper.find('[data-computer-id="machine-offline"]').exists()).toBe(false)
-    const notice = wrapper.get('[data-delete-notice]')
+    const notice = wrapper.get('[data-bottom-toast]')
     expect(notice.attributes('role')).toBe('status')
     expect(notice.attributes('data-tone')).toBe('success')
     expect(notice.text()).toBe('已删除')
     expect(wrapper.find('.computers-view > .form-error').exists()).toBe(false)
     dismissNotice?.()
     await wrapper.vm.$nextTick()
-    expect(wrapper.find('[data-delete-notice]').exists()).toBe(false)
+    expect(wrapper.find('[data-bottom-toast]').exists()).toBe(false)
     wrapper.unmount()
     expect(clearTimeout).not.toHaveBeenCalled()
   })
@@ -190,7 +192,7 @@ describe('ComputersView', () => {
     await flushPromises()
 
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
-    const notice = wrapper.get('[data-delete-notice]')
+    const notice = wrapper.get('[data-bottom-toast]')
     expect(notice.attributes('data-tone')).toBe('success')
     expect(notice.attributes('role')).toBe('status')
     expect(notice.text()).toBe('已添加')

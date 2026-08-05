@@ -1,7 +1,8 @@
 import type { ApiClient, TerminalSessionCallbacks, TerminalSessionLike } from '@termflow/client-core'
 import { inject, type App } from 'vue'
 import { createSessionActions, type SessionActions } from './composables/useSession'
-import { clientRuntimeKey, sessionActionsKey, themeStateKey } from './runtimeKey'
+import { createBottomToast, type BottomToastController } from './composables/useBottomToast'
+import { bottomToastKey, clientRuntimeKey, sessionActionsKey, themeStateKey } from './runtimeKey'
 import { createThemeState, type ThemeState } from './theme/theme'
 
 export interface ClipboardPort {
@@ -49,6 +50,7 @@ export interface ClientUiOptions {
 export interface ClientUiPlugin {
   readonly session: SessionActions
   readonly theme: ThemeState
+  readonly toast: BottomToastController
   install(app: App): void
 }
 
@@ -63,13 +65,16 @@ export function createClientUi(runtime: ClientRuntime, options: ClientUiOptions 
   Object.freeze(runtime)
   const session = createSessionActions(runtime.api)
   const theme = options.theme ?? defaultThemeState()
+  const toast = createBottomToast(runtime.clock)
   return {
     session,
     theme,
+    toast,
     install(app) {
       app.provide(clientRuntimeKey, runtime)
       app.provide(sessionActionsKey, session)
       app.provide(themeStateKey, theme)
+      app.provide(bottomToastKey, toast)
     },
   }
 }
