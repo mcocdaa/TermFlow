@@ -13,6 +13,7 @@ async function mountLogin(runtime: ClientRuntime, path = '/login') {
     routes: [
       { path: '/login', component: LoginView },
       { path: '/computers', component: { template: '<div />' } },
+      { path: '/device', component: { template: '<div />' } },
       { path: '/', component: { template: '<div />' } },
     ],
   })
@@ -22,6 +23,20 @@ async function mountLogin(runtime: ClientRuntime, path = '/login') {
 }
 
 describe('LoginView', () => {
+  it('offers cross-device authorization from the login page with a hover explanation', async () => {
+    const runtime = createFakeRuntime()
+    const { router, wrapper } = await mountLogin(runtime)
+
+    const entry = wrapper.get('[data-action="device-authorize"]')
+    expect(entry.element.tagName).toBe('A')
+    expect(entry.attributes('href')).toBe('/device')
+    expect(entry.attributes('title')).toContain('已登录的浏览器')
+
+    await entry.trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/device')
+  })
+
   it('submits the token once through runtime, clears it, and navigates only to a safe redirect', async () => {
     const secret = 'tf_admin_super_secret_93'
     const login = vi.fn().mockResolvedValue({ authenticated: true, expires_at: '2026-08-01T01:00:00Z' })

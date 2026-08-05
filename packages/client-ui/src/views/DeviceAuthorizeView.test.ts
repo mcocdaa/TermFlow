@@ -23,6 +23,21 @@ async function mountDevice(runtime: ClientRuntime, path = '/device?code=ABCD-EFG
 }
 
 describe('DeviceAuthorizeView', () => {
+  it('has a single return-to-login entry before device lookup', async () => {
+    const runtime = createFakeRuntime()
+    const { router, wrapper } = await mountDevice(runtime, '/device')
+
+    const back = wrapper.get('[data-action="back-to-login"]')
+    expect(back.element.tagName).toBe('A')
+    expect(back.attributes('href')).toBe('/login')
+    expect(wrapper.findAll('[data-action="back-to-login"]')).toHaveLength(1)
+    expect(wrapper.findAll('[data-action="cancel-device"]')).toHaveLength(0)
+
+    await back.trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/login')
+  })
+
   it('loads a user code, displays device metadata, and approves with the browser session/TOTP', async () => {
     const decideAuthorization = vi.fn().mockResolvedValue({ status: 'approved', callback_uri: 'termflow://auth/callback?state=s&transaction_id=11111111-1111-4111-8111-111111111111' })
     const runtime = createFakeRuntime({ api: { oauth: {
@@ -34,6 +49,9 @@ describe('DeviceAuthorizeView', () => {
     expect(wrapper.text()).toContain('Android')
     expect(wrapper.text()).toContain('terminal.read')
     expect(wrapper.text()).toContain('ABCD-EFGH')
+    expect(wrapper.find('.device-authorize-layout').exists()).toBe(true)
+    expect(wrapper.find('.device-authorize-qr').exists()).toBe(true)
+    expect(wrapper.find('.device-authorize-status').exists()).toBe(true)
     await wrapper.get('#device-authorize-totp').setValue('123456')
     await wrapper.get('form').trigger('submit')
     await flushPromises()

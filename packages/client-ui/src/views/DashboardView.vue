@@ -1,6 +1,6 @@
 <template>
   <section class="dashboard-view" aria-labelledby="dashboard-title">
-    <header class="page-heading"><div><p class="eyebrow">实时状态</p><h1 id="dashboard-title">控制中心</h1></div><button class="text-button" type="button" @click="refresh">刷新</button></header>
+    <header class="page-heading"><div><p class="eyebrow">实时状态</p><h1 id="dashboard-title">控制中心</h1></div><div class="page-heading-actions"><RouterLink data-action="device-authorize" class="text-button" to="/device" title="在已登录的浏览器中确认这台设备的授权请求。">设备授权</RouterLink><button class="text-button" type="button" @click="refresh">刷新</button></div></header>
     <p v-if="message" role="alert" class="form-error">{{ message }}</p>
     <p v-if="loading && !snapshot" class="muted" aria-live="polite">正在读取状态…</p>
     <template v-if="snapshot">
@@ -19,6 +19,7 @@
 <script setup lang="ts">
 import { ApiError } from '@termflow/client-core'
 import { computed, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import ComputerCard from '../components/dashboard/ComputerCard.vue'
 import DeleteTermDialog from '../components/dashboard/DeleteTermDialog.vue'
 import MetricCard from '../components/dashboard/MetricCard.vue'

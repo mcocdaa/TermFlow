@@ -1,10 +1,12 @@
 <template>
-  <section class="authorize-view">
-    <div class="auth-card consent-card">
-      <p class="eyebrow">Cross-device authorization</p>
-      <h1>授权新设备</h1>
+  <section class="authorize-view" aria-labelledby="device-authorize-title">
+    <div class="auth-card consent-card device-consent-card">
+      <header class="authorize-card-heading">
+        <div><p class="eyebrow">Cross-device authorization</p><h1 id="device-authorize-title">授权新设备</h1></div>
+        <RouterLink data-action="back-to-login" class="secondary-button" to="/login">返回登录</RouterLink>
+      </header>
       <template v-if="preview === null && !loading">
-        <form data-action="lookup-device" class="security-form" @submit.prevent="lookup">
+        <form data-action="lookup-device" class="security-form device-code-lookup" @submit.prevent="lookup">
           <label for="device-user-code">设备码</label>
           <input id="device-user-code" v-model="userCode" inputmode="text" autocomplete="off" placeholder="ABCD-EFGH" required />
           <p v-if="message" role="alert" class="form-error">{{ message }}</p>
@@ -13,21 +15,28 @@
       </template>
       <p v-else-if="loading">正在读取设备授权…</p>
       <template v-else-if="preview">
-        <p class="form-hint">请确认以下设备请求后再授权。设备码：<code>{{ userCode }}</code></p>
-        <dl class="consent-details">
-          <div><dt>客户端</dt><dd>{{ preview.client_name }}</dd></div>
-          <div><dt>平台</dt><dd>{{ preview.platform }}{{ preview.client_version ? ` · ${preview.client_version}` : '' }}</dd></div>
-          <div><dt>权限</dt><dd>{{ preview.scopes.join(' · ') }}</dd></div>
-          <div><dt>有效期至</dt><dd>{{ formatExpiry(preview.expires_at) }}<span class="status-pill">{{ statusLabel }}</span></dd></div>
-        </dl>
-        <form class="security-form" @submit.prevent="decide('allow')">
-          <template v-if="preview.totp_required">
-            <label for="device-authorize-totp">当前验证码</label>
-            <input id="device-authorize-totp" v-model="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required />
-          </template>
-          <p v-if="message" role="alert" class="form-error">{{ message }}</p>
-          <div class="dialog-actions"><button class="secondary-button" type="button" :disabled="busy" @click="decide('deny')">拒绝</button><button class="primary-button" type="submit" :disabled="busy">允许此设备</button></div>
-        </form>
+        <div class="device-authorize-layout">
+          <div class="device-authorize-qr">
+            <ThemedQrCode :value="verificationUrl" alt="设备授权二维码" />
+            <span class="form-hint">设备码 <code>{{ userCode }}</code></span>
+          </div>
+          <div class="device-authorize-status">
+            <dl class="consent-details">
+              <div><dt>客户端</dt><dd>{{ preview.client_name }}</dd></div>
+              <div><dt>平台</dt><dd>{{ preview.platform }}{{ preview.client_version ? ` · ${preview.client_version}` : '' }}</dd></div>
+              <div><dt>权限</dt><dd>{{ preview.scopes.join(' · ') }}</dd></div>
+              <div><dt>有效期至</dt><dd>{{ formatExpiry(preview.expires_at) }}<span class="status-pill">{{ statusLabel }}</span></dd></div>
+            </dl>
+            <form class="security-form" @submit.prevent="decide('allow')">
+              <template v-if="preview.totp_required">
+                <label for="device-authorize-totp">当前验证码</label>
+                <input id="device-authorize-totp" v-model="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required />
+              </template>
+              <p v-if="message" role="alert" class="form-error">{{ message }}</p>
+              <div class="dialog-actions"><button class="secondary-button" type="button" :disabled="busy" @click="decide('deny')">拒绝</button><button class="primary-button" type="submit" :disabled="busy">允许此设备</button></div>
+            </form>
+          </div>
+        </div>
       </template>
       <p v-if="success" role="status" class="form-success">{{ success }}</p>
     </div>
@@ -37,8 +46,9 @@
 <script setup lang="ts">
 import type { OAuthAuthorizationPreviewResponse } from '@termflow/client-contracts'
 import { computed, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { ApiError } from '@termflow/client-core'
+import ThemedQrCode from '../components/common/ThemedQrCode.vue'
 import { useClientRuntime } from '../runtime'
 
 const runtime = useClientRuntime()
@@ -53,6 +63,16 @@ const message = ref('')
 const success = ref('')
 
 const statusLabel = computed(() => new Date(preview.value?.expires_at ?? 0).getTime() > Date.now() ? '待确认' : '已过期')
+const verificationUrl = computed(() => {
+  if (preview.value === null || !userCode.value) return ''
+  try {
+    const url = new URL('/device', preview.value.issuer)
+    url.searchParams.set('code', userCode.value)
+    return url.toString()
+  } catch {
+    return `${preview.value.issuer.replace(/\/$/, '')}/device?code=${encodeURIComponent(userCode.value)}`
+  }
+})
 
 function normalizeCode(value: string): string {
   return value.trim().toUpperCase().replace(/\s+/g, '')

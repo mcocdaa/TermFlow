@@ -40,6 +40,7 @@ async function mountDashboard(runtime: ClientRuntime) {
     history: createMemoryHistory(),
     routes: [
       { path: '/', component: DashboardView },
+      { path: '/device', component: { template: '<div />' } },
       { path: '/terms/:termId', component: { template: '<div />' } },
     ],
   })
@@ -49,6 +50,17 @@ async function mountDashboard(runtime: ClientRuntime) {
 }
 
 describe('DashboardView', () => {
+  it('provides a device authorization entry in the heading actions', async () => {
+    const runtime = createFakeRuntime()
+    const wrapper = await mountDashboard(runtime)
+    await flushPromises()
+
+    const entry = wrapper.get('[data-action="device-authorize"]')
+    expect(entry.element.tagName).toBe('A')
+    expect(entry.attributes('href')).toBe('/device')
+    expect(entry.attributes('title')).toContain('已登录的浏览器')
+  })
+
   it('renders runtime metrics and Computers with complete Term rows', async () => {
     const getDashboard = vi.fn().mockResolvedValue(dashboard)
     const runtime = createFakeRuntime({ api: { dashboard: { get: getDashboard } } as unknown as ClientRuntime['api'] })
