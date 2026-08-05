@@ -15,14 +15,13 @@
         <p v-if="message" role="alert" class="form-error">{{ message }}</p>
         <button class="primary-button" type="submit" :disabled="busy">{{ busy ? '正在验证…' : challengeId === null ? '登录' : '验证并登录' }}</button>
       </form>
-      <RouterLink data-action="device-authorize" class="secondary-button device-authorize-entry" to="/device" title="在已登录的浏览器中确认这台设备的授权请求。">在其他设备上授权</RouterLink>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
 import { nextTick, ref } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ApiError } from '@termflow/client-core'
 import { useSession } from '../composables/useSession'
 

@@ -50,15 +50,12 @@ async function mountDashboard(runtime: ClientRuntime) {
 }
 
 describe('DashboardView', () => {
-  it('provides a device authorization entry in the heading actions', async () => {
+  it('keeps the dashboard heading free of device approval actions', async () => {
     const runtime = createFakeRuntime()
     const wrapper = await mountDashboard(runtime)
     await flushPromises()
 
-    const entry = wrapper.get('[data-action="device-authorize"]')
-    expect(entry.element.tagName).toBe('A')
-    expect(entry.attributes('href')).toBe('/device')
-    expect(entry.attributes('title')).toContain('已登录的浏览器')
+    expect(wrapper.find('[data-action="device-authorize"]').exists()).toBe(false)
   })
 
   it('renders runtime metrics and Computers with complete Term rows', async () => {

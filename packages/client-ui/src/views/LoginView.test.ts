@@ -23,18 +23,11 @@ async function mountLogin(runtime: ClientRuntime, path = '/login') {
 }
 
 describe('LoginView', () => {
-  it('offers cross-device authorization from the login page with a hover explanation', async () => {
+  it('keeps the login page focused on administrator authentication', async () => {
     const runtime = createFakeRuntime()
-    const { router, wrapper } = await mountLogin(runtime)
+    const { wrapper } = await mountLogin(runtime)
 
-    const entry = wrapper.get('[data-action="device-authorize"]')
-    expect(entry.element.tagName).toBe('A')
-    expect(entry.attributes('href')).toBe('/device')
-    expect(entry.attributes('title')).toContain('已登录的浏览器')
-
-    await entry.trigger('click')
-    await flushPromises()
-    expect(router.currentRoute.value.path).toBe('/device')
+    expect(wrapper.find('[data-action="device-authorize"]').exists()).toBe(false)
   })
 
   it('submits the token once through runtime, clears it, and navigates only to a safe redirect', async () => {
