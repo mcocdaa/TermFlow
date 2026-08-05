@@ -313,7 +313,7 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
   }
 
   await page.getByRole('link', { name: '电脑管理' }).first().click()
-  await expect(page.locator('.computer-table-head [role="columnheader"]')).toHaveText(['名称', '终端', '最近在线', '注册时间'])
+  await expect(page.locator('.computer-table-head [role="columnheader"]')).toHaveText(['名称', '终端', '最近在线', '注册时间', '操作'])
   const computerRow = page.locator('.computer-table-row').first()
   await expect(computerRow.locator('.status-pill')).toHaveCount(1)
   await expect(computerRow.locator('.status-pill')).toContainText(/在线 \(\d+\)|离线 \(0\)/)
