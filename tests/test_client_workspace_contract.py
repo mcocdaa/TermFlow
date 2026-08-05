@@ -1,4 +1,5 @@
 import json
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -7,6 +8,26 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _manifest(relative: str) -> dict[str, Any]:
     return json.loads((ROOT / relative).read_text())
+
+
+def test_python_lock_uses_portable_public_pypi_sources() -> None:
+    lock = tomllib.loads((ROOT / "uv.lock").read_text())
+    packages = lock["package"]
+    registries = {
+        package["source"]["registry"]
+        for package in packages
+        if "registry" in package["source"]
+    }
+    artifact_urls = [
+        artifact["url"]
+        for package in packages
+        for artifact in ([package["sdist"]] if "sdist" in package else [])
+        + package.get("wheels", [])
+    ]
+
+    assert registries == {"https://pypi.org/simple"}
+    assert artifact_urls
+    assert all(url.startswith("https://files.pythonhosted.org/") for url in artifact_urls)
 
 
 def test_client_workspace_has_one_lock_and_fixed_dependency_direction() -> None:
