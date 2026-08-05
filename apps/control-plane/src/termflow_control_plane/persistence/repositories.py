@@ -399,6 +399,18 @@ class InstanceRepository:
             result = await session.scalars(select(Instance).order_by(Instance.created_at))
             return list(result)
 
+    async def list_for_installation(self, installation_id: UUID) -> list[Instance]:
+        async with self._sessions() as session:
+            result = await session.scalars(
+                select(Instance)
+                .where(
+                    Instance.installation_id == installation_id,
+                    Instance.revoked_at.is_(None),
+                )
+                .order_by(Instance.created_at)
+            )
+            return list(result)
+
     async def rename(self, instance_id: UUID, name: str) -> Instance | None:
         async with self._sessions() as session:
             instance = await session.get(Instance, instance_id)

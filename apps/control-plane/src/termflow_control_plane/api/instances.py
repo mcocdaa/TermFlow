@@ -105,6 +105,19 @@ async def list_instances(
     )
 
 
+@router.get("/mine", response_model=InstanceListResponse)
+async def list_owned_instances(
+    installation: Annotated[Installation, Depends(require_installation)],
+    repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
+    registry: Annotated[LiveInstanceRegistry, Depends(get_registry)],
+) -> InstanceListResponse:
+    instances = await repositories.instances.list_for_installation(installation.id)
+    online = await registry.online_ids()
+    return InstanceListResponse(
+        instances=[_instance_response(instance, instance.id in online) for instance in instances]
+    )
+
+
 @router.get(
     "/{instance_id}",
     response_model=InstanceResponse,

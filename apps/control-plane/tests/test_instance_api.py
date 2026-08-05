@@ -53,6 +53,29 @@ def test_admin_can_list_and_read_instances(client, admin_headers, provision_term
     assert detail.json()["name"] == "work"
 
 
+def test_installation_lists_only_its_own_instances(
+    client,
+    provision_computer,
+    provision_term,
+) -> None:
+    owner = provision_computer(display_name="owner")
+    owned_term = provision_term(computer=owner, name="owned")
+    provision_term(name="another-computer")
+
+    listing = client.get(
+        "/api/v1/instances/mine",
+        headers={"Authorization": f"Bearer {owner.installation_token}"},
+    )
+
+    assert listing.status_code == 200
+    instances = listing.json()["instances"]
+    assert len(instances) == 1
+    assert instances[0]["instance_id"] == str(owned_term.instance_id)
+    assert instances[0]["name"] == "owned"
+    assert instances[0]["installation_id"] == str(owner.installation_id)
+    assert instances[0]["online"] is False
+
+
 def test_offline_topology_and_input_are_rejected(
     client,
     admin_headers,
