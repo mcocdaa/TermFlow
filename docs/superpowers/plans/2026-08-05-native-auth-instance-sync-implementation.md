@@ -10,16 +10,18 @@
 
 ## 当前交付状态（2026-08-06）
 
-| Task | 实现状态 | 已验证证据 | 尚缺的验收 |
+| Task | 实现提交 | 已验证证据 | 尚缺的验收 |
 | --- | --- | --- | --- |
-| 1 | 已提交 | installation-scoped 实例查询及控制平面测试 | 无 |
-| 2 | 已提交 | 单元测试；隔离 A/B 流程已实际验证“B 删除离线 Term -> A sync -> dry-run -> force prune” | 无 |
-| 3 | 已提交 | Web C/Tauri 单元测试覆盖共享底部 Toast | 无 |
-| 4 | 已提交 | Web C 单元测试和真实浏览器设备审批流程 | 无 |
-| 5 | 已提交 | Tauri TypeScript/Rust 测试及无安装包 release 构建 | 最新 Windows 安装包的真实运行验证 |
-| 6 | 部分完成 | Playwright 18/18（桌面与移动）；设备码审批、A/B 同步清理、聚合验证（672 passed、1 skipped）、控制平面镜像自检 | 安装最新 Windows 包后的浏览器回调、设备码、重启恢复和日志；GitHub Actions Windows/Linux/Android/iOS 构建矩阵 |
+| 1 | `a01c5bd` | installation-scoped 实例查询及控制平面测试 | 无 |
+| 2 | `a288daf`、`355feb1` | 单元测试；隔离 A/B 流程已实际验证“B 删除离线 Term -> A sync -> dry-run -> force prune” | 无 |
+| 3 | `d6b7137` | Web C/Tauri 单元测试覆盖共享底部 Toast | 无 |
+| 4 | `283e5c9`、`ce61448` | Web C 单元测试和真实浏览器设备审批流程 | 无 |
+| 5 | `9b7d18d` | Tauri TypeScript/Rust 测试及无安装包 release 构建 | 最新 Windows 安装包的真实运行验证 |
+| 6 | `1fde6a0` | Playwright 18/18（桌面与移动）；设备码审批、A/B 同步清理、聚合验证（672 passed、1 skipped）、控制平面镜像自检 | 安装最新 Windows 包后的浏览器回调、设备码、重启恢复和日志；GitHub Actions Windows/Linux/Android/iOS 构建矩阵 |
 
 本机证据不替代 Windows 实机和 GitHub Actions。Task 6 只有在其余两项都通过后才可标为完成。
+
+> **复选框说明：** Task 1-5 的细粒度复选框是实施前写下的 TDD/实现过程，未在历史提交时逐行回填；它们不是未实现项。上述表格是当前交付状态的唯一依据。Task 6 的复选框是仍在执行的验收门槛，状态以其标记为准。
 
 ---
 
@@ -517,7 +519,7 @@ termflow doctor
 
 先在 B 删除一个 offline Term，再运行 `sync`，确认它显示 `remote_deleted`；`prune --dry-run` 只列候选；确认后 `prune --force` 删除本地元数据；再次 `list/doctor` 不得显示可用实例。
 
-- [ ] **Step 5: 运行聚合验证并记录证据**
+- [x] **Step 5: 运行本机聚合验证并记录证据**
 
 ```bash
 PATH=/home/mcocdaa/.nvm/versions/node/v22.23.2/bin:$PATH \
@@ -527,7 +529,11 @@ UV_DEFAULT_INDEX=https://pypi.org/simple \
 
 `verify.sh` 覆盖 contracts、Vitest、类型检查、生产构建、pytest、Ruff、mypy、Tauri 和 Docker，但不会调用 Playwright。因此 Web E2E 必须作为上面的独立命令保留。默认 E2E runner 会清理临时目录；视觉审查时使用 `TERMFLOW_E2E_KEEP=1` 保存截图和 `.last-run.json`。
 
-已于 2026-08-06 完成本机部分：`verify.sh` 通过（pytest `672 passed, 1 skipped`），控制平面镜像自检通过，Web E2E `18/18` 通过。真实 Windows 链路和 GitHub Actions 跨平台矩阵尚未完成，故本步骤与 Task 6 保持未完成。
+已于 2026-08-06 完成：`verify.sh` 通过（pytest `672 passed, 1 skipped`），控制平面镜像自检通过，Web E2E `18/18` 通过。
+
+- [ ] **Step 6: 验证 GitHub Actions 跨平台打包矩阵**
+
+在 `main` 上触发 `Package C · Native Clients`，选择 `platform=all`；确认 Windows、Linux、macOS、Android、iOS job 均成功。下载 Windows NSIS artifact 后执行 Step 3 的实机闭环。该 workflow 只能由已登录 GitHub 的操作者手动触发，或由 `v*` tag 的 release workflow 调用。
 
 Commit: `git add tests .github/workflows && git commit -m "test: verify native auth and node sync flows"`
 
