@@ -11,7 +11,7 @@
 ## 当前交付状态（2026-08-06）
 
 - 已提交：Task 1-4，分别覆盖安装范围实例查询、A 的同步/清理命令、共享底部 Toast，以及设置中的设备授权入口。
-- 已实现且正在收尾审查：Task 5。原生浏览器回调和设备码流程共用授权状态；刷新令牌与 DPoP 私钥仍留在 Rust/keyring，WebView 只保留进程内 access credential。
+- 已实现且完成本机审查：Task 5。原生浏览器回调和设备码流程共用授权状态；刷新令牌与 DPoP 私钥仍留在 Rust/keyring，WebView 只保留进程内 access credential。
 - 已在本机验证：Web C 的 Playwright 桌面/移动流程、A/B 的“B 删除离线 Term -> A sync -> dry-run -> force prune”流程、Python/TypeScript/Rust 测试、Tauri 无安装包 release 构建，以及最新 B + Web C Docker 镜像。
 - 尚未完成真实验收：安装最新 Windows 包后的浏览器回调、设备码、重启恢复和诊断日志；GitHub Actions 的 Windows/Linux/Android/iOS 构建矩阵。它们仍是 Task 6 的发布前门槛，不能由本机单测替代。
 
