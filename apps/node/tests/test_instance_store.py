@@ -3,12 +3,13 @@ import stat
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import pytest
 from termflow_node.instances.models import (
     InstanceLifecycle,
     LocalInstance,
     RemoteInstanceStatus,
 )
-from termflow_node.instances.store import InstanceStore
+from termflow_node.instances.store import InsecureInstanceMetadata, InstanceStore
 
 
 def test_instance_metadata_is_private_and_round_trips_secret(tmp_path) -> None:
@@ -160,3 +161,43 @@ def test_remove_deletes_only_the_validated_instance_directory(tmp_path) -> None:
     store.remove(record.instance_id)
 
     assert not store.instance_dir(record.instance_id).exists()
+
+
+def test_remove_deletes_validated_runtime_artifacts_with_metadata(tmp_path) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    record = LocalInstance(
+        instance_id=uuid4(),
+        name="stale-with-logs",
+        socket_path=tmp_path / "tmux.sock",
+        created_at=datetime.now(UTC),
+        lifecycle=InstanceLifecycle.STOPPED,
+    )
+    store.save(record)
+    bridge_log = store.instance_dir(record.instance_id) / "bridge.log"
+    bridge_log.write_text("bridge stopped\n")
+    bridge_log.chmod(0o600)
+
+    store.remove(record.instance_id)
+
+    assert not store.instance_dir(record.instance_id).exists()
+
+
+def test_remove_refuses_unknown_files_in_a_validated_instance_directory(tmp_path) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    record = LocalInstance(
+        instance_id=uuid4(),
+        name="stale-with-unknown-file",
+        socket_path=tmp_path / "tmux.sock",
+        created_at=datetime.now(UTC),
+        lifecycle=InstanceLifecycle.STOPPED,
+    )
+    store.save(record)
+    unknown = store.instance_dir(record.instance_id) / "keep-me.txt"
+    unknown.write_text("not a TermFlow artifact\n")
+    unknown.chmod(0o600)
+
+    with pytest.raises(InsecureInstanceMetadata):
+        store.remove(record.instance_id)
+
+    assert store.metadata_path(record.instance_id).exists()
+    assert unknown.exists()

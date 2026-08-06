@@ -154,6 +154,26 @@ def test_prune_only_selects_instances_with_no_local_runtime(tmp_path) -> None:
     assert candidates[0].bridge_alive is False
 
 
+def test_prune_keeps_remote_instances_even_when_their_local_runtime_is_down(tmp_path) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    remote_offline = _record(store, "offline-on-relay").model_copy(
+        update={"remote_status": RemoteInstanceStatus.OFFLINE}
+    )
+    store.save(remote_offline)
+    synchronizer = InstanceSynchronizer(
+        store,
+        FakeControlPlaneClient(InstanceListResponse(instances=[])),
+        InstallationConfig(
+            server_url="https://relay.example.com",
+            installation_id=uuid4(),
+            installation_token="installation-token-for-test",
+        ),
+        health_probe=lambda _record: (False, False),
+    )
+
+    assert synchronizer.prune_candidates() == []
+
+
 def test_remove_candidates_deletes_only_selected_metadata(tmp_path) -> None:
     store = InstanceStore(tmp_path / "instances")
     selected = _record(store, "selected").model_copy(

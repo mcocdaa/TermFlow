@@ -112,6 +112,8 @@ class InstanceSynchronizer:
     def prune_candidates(self) -> list[PruneCandidate]:
         candidates: list[PruneCandidate] = []
         for record in self._store.list().instances:
+            if record.remote_status is not RemoteInstanceStatus.REMOTE_DELETED:
+                continue
             tmux_alive, bridge_alive = self._health_probe(record)
             if not tmux_alive and not bridge_alive:
                 candidates.append(

@@ -127,11 +127,33 @@ class InstanceStore:
             directory.rmdir()
 
     def remove(self, instance_id: UUID) -> None:
-        """Remove one validated, exact Instance metadata directory."""
+        """Remove one validated Instance directory containing only known artifacts."""
 
         record = self.load(instance_id)
         if record.instance_id != instance_id:
             raise InsecureInstanceMetadata(str(self.metadata_path(instance_id)))
-        path = self.metadata_path(instance_id)
-        path.unlink()
-        self.instance_dir(instance_id).rmdir()
+        directory = self.instance_dir(instance_id)
+        directory_metadata = directory.lstat()
+        if (
+            not stat.S_ISDIR(directory_metadata.st_mode)
+            or directory_metadata.st_uid != os.getuid()
+            or stat.S_IMODE(directory_metadata.st_mode) & 0o077
+        ):
+            raise InsecureInstanceMetadata(str(directory))
+        allowed_artifacts = {"metadata.json", "bridge.log"}
+        for artifact in directory.iterdir():
+            metadata = artifact.lstat()
+            if (
+                artifact.name not in allowed_artifacts
+                or not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) & 0o077
+            ):
+                raise InsecureInstanceMetadata(str(artifact))
+        # bridge.log is created by A's bridge; sockets live in the separate
+        # private runtime directory and are not recursively removed here.
+        for name in ("bridge.log", "metadata.json"):
+            artifact = directory / name
+            if artifact.exists():
+                artifact.unlink()
+        directory.rmdir()
