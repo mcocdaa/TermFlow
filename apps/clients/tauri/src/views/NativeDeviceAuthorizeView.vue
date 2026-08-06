@@ -7,26 +7,28 @@
 
       <template v-if="started">
         <div class="native-device-layout">
+          <div class="native-device-details">
+            <div class="native-device-server">
+              <span class="form-hint">服务器地址</span>
+              <code>{{ issuer }}</code>
+            </div>
+            <div class="native-device-status">
+              <p v-if="status" role="status" class="form-success">{{ status }}</p>
+              <p v-if="message" role="alert" class="form-error">{{ message }}</p>
+            </div>
+            <div class="native-device-actions">
+              <button class="secondary-button" type="button" data-action="back-to-connect" :disabled="busy" @click="backToConnect">返回</button>
+              <button class="primary-button" type="button" data-action="regenerate" :disabled="busy" @click="regenerate">重新生成</button>
+            </div>
+          </div>
           <div class="native-device-qr">
             <ThemedQrCode v-if="response" :value="response.verification_uri_complete" alt="设备授权二维码" />
-            <span class="form-hint">扫描二维码，在已登录的浏览器中确认授权</span>
-          </div>
-          <div class="native-device-details">
             <div class="device-code" aria-live="polite">
               <span class="form-hint">设备码</span>
               <div class="device-code-value"><strong>{{ response?.user_code }}</strong><button class="icon-button" type="button" data-action="copy-device-code" aria-label="复制设备码" title="复制设备码" :disabled="busy" @click="copyCode"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8V5.5A1.5 1.5 0 0 1 9.5 4h9A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H16M5.5 8h9A1.5 1.5 0 0 1 16 9.5v9A1.5 1.5 0 0 1 14.5 20h-9A1.5 1.5 0 0 1 4 18.5v-9A1.5 1.5 0 0 1 5.5 8Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg></button></div>
               <span class="form-hint">{{ expiryLabel }}</span>
             </div>
-            <div class="native-device-status">
-              <p v-if="status" role="status" class="form-success">{{ status }}</p>
-              <p v-if="message" role="alert" class="form-error">{{ message }}</p>
-              <p class="form-hint">验证地址</p><code class="device-verification-url">{{ response?.verification_uri }}</code>
-            </div>
           </div>
-        </div>
-        <div class="dialog-actions">
-          <button class="secondary-button" type="button" data-action="back-to-connect" :disabled="busy" @click="backToConnect">返回</button>
-          <button class="primary-button" type="button" data-action="regenerate" :disabled="busy" @click="regenerate">重新生成</button>
         </div>
       </template>
       <p v-else-if="message" class="form-error" role="alert">{{ message }}</p>
@@ -138,10 +140,12 @@ onBeforeUnmount(() => { session.value?.cancel(); stopTimer() })
 .native-device-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
 .native-device-heading h1 { margin-block-end: 0; }
 .device-start-form { display: grid; gap: var(--space-3); margin-block-start: var(--space-5); }
-.native-device-layout { display: grid; grid-template-columns: minmax(12rem, 18rem) minmax(0, 1fr); align-items: center; gap: clamp(var(--space-5), 5vw, 4rem); margin-block-start: var(--space-5); }
-.native-device-qr { display: grid; justify-items: center; gap: var(--space-3); }
+.native-device-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(14rem, 18rem); align-items: stretch; gap: clamp(var(--space-5), 5vw, 4rem); margin-block-start: var(--space-5); }
+.native-device-qr { display: grid; justify-items: center; align-content: center; gap: var(--space-3); }
 .native-device-qr .themed-qr-code { width: min(100%, 18rem); }
-.native-device-details { display: grid; gap: var(--space-5); min-width: 0; }
+.native-device-details { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; }
+.native-device-server { display: grid; gap: var(--space-2); min-width: 0; }
+.native-device-server code { overflow-wrap: anywhere; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-terminal); color: var(--color-terminal-foreground); font-family: var(--font-mono); }
 .device-code { display: grid; gap: var(--space-2); }
 .device-code-value { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
 .device-code-value strong { font-family: var(--font-mono); font-size: clamp(1.4rem, 3vw, 2rem); letter-spacing: .08em; overflow-wrap: anywhere; }
@@ -150,9 +154,10 @@ onBeforeUnmount(() => { session.value?.cancel(); stopTimer() })
 .icon-button:disabled { cursor: not-allowed; opacity: .55; }
 .native-device-status { display: grid; gap: var(--space-2); min-width: 0; }
 .native-device-status p { margin: 0; }
-.device-verification-url { display: block; overflow-wrap: anywhere; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-terminal); color: var(--color-terminal-foreground); font-family: var(--font-mono); }
+.native-device-actions { display: flex; justify-content: center; gap: var(--space-3); margin-block-start: auto; }
 @media (max-width: 42rem) {
   .native-device-layout { grid-template-columns: 1fr; gap: var(--space-5); }
+  .native-device-qr { order: -1; }
   .native-device-heading { align-items: flex-start; }
 }
 </style>

@@ -1,5 +1,32 @@
 import type { PkcePair } from './pkce'
-import type { AuthorizationBrowserPort, CredentialVaultPort, NativeAccessCredential, NativeClientDescriptor, NativeKeyPort } from './ports'
+import { createAuthorizationStateMachine } from './authorizationState'
+import type { AuthorizationBrowserPort, AuthorizationStateListener, CredentialVaultPort, NativeAccessCredential, NativeClientDescriptor, NativeKeyPort } from './ports'
+
+const transactionIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export function isValidNativeAuthorizationCallback(value: string, state: string): boolean {
+  try {
+    const callback = new URL(value)
+    const keys = [...callback.searchParams.keys()]
+    const transaction = callback.searchParams.get('transaction_id')
+    return callback.protocol === 'termflow:'
+      && callback.username === ''
+      && callback.password === ''
+      && callback.hostname === 'auth'
+      && callback.port === ''
+      && callback.pathname === '/callback'
+      && callback.hash === ''
+      && callback.searchParams.get('state') === state
+      && callback.searchParams.getAll('state').length === 1
+      && callback.searchParams.getAll('transaction_id').length === 1
+      && transaction !== null
+      && transactionIdPattern.test(transaction)
+      && keys.length === 2
+      && keys.every(key => key === 'state' || key === 'transaction_id')
+  } catch {
+    return false
+  }
+}
 
 export interface AuthorizationExchangeRequest {
   issuer: string
@@ -9,7 +36,7 @@ export interface AuthorizationExchangeRequest {
   key: NativeKeyPort
 }
 
-export interface NativeAuthorizationOptions {
+export interface NativeAuthorizationOptions extends AuthorizationStateListener {
   issuer: string
   authorizeEndpoint: string
   client: NativeClientDescriptor
@@ -27,44 +54,70 @@ export class NativeAuthorizationSession {
   constructor(private readonly options: NativeAuthorizationOptions) {}
 
   async authorize(signal?: AbortSignal): Promise<NativeAccessCredential> {
-    const state = this.options.createId()
-    const pkce = await this.options.createPkce()
-    const redirectUri = this.options.redirectUri ?? 'termflow://auth/callback'
-    const url = new URL(this.options.authorizeEndpoint)
-    url.searchParams.set('response_type', 'code')
-    url.searchParams.set('redirect_uri', redirectUri)
-    url.searchParams.set('state', state)
-    url.searchParams.set('code_challenge', pkce.challenge)
-    url.searchParams.set('code_challenge_method', pkce.method)
-    url.searchParams.set('dpop_jkt', await this.options.key.thumbprint())
-    url.searchParams.set('client_name', this.options.client.name)
-    url.searchParams.set('platform', this.options.client.platform)
-    url.searchParams.set('client_version', this.options.client.version)
-    url.searchParams.set('public_jwk', JSON.stringify(await this.options.key.publicJwk()))
-    for (const scope of this.options.scopes) url.searchParams.append('scopes', scope)
-    const callbackPromise = this.options.browser.waitForCallback(state, signal)
-    await this.options.browser.open(url.toString())
-
-    const callback = new URL(await callbackPromise)
-    const transaction = callback.searchParams.get('transaction_id')
-    const callbackKeys = [...callback.searchParams.keys()]
-    if (callback.protocol !== 'termflow:' || callback.hostname !== 'auth' || callback.pathname !== '/callback'
-      || callback.searchParams.get('state') !== state
-      || callbackKeys.length !== 2
-      || callback.searchParams.getAll('state').length !== 1
-      || callback.searchParams.getAll('transaction_id').length !== 1
-      || !callbackKeys.every(key => key === 'state' || key === 'transaction_id')
-      || transaction === null) {
-      throw new Error('authorization_callback_invalid')
+    const progress = createAuthorizationStateMachine({ onState: this.options.onState })
+    progress.requesting()
+    if (signal?.aborted) {
+      progress.cancelled()
+      throw new Error('authorization_cancelled')
     }
-    const credential = await this.options.exchange({
-      issuer: this.options.issuer,
-      transaction,
-      verifier: pkce.verifier,
-      redirectUri,
-      key: this.options.key,
-    })
-    await this.options.vault.replace(this.options.issuer, credential)
-    return credential
+    try {
+      const state = this.options.createId()
+      const pkce = await this.options.createPkce()
+      const redirectUri = this.options.redirectUri ?? 'termflow://auth/callback'
+      const url = new URL(this.options.authorizeEndpoint)
+      url.searchParams.set('response_type', 'code')
+      url.searchParams.set('redirect_uri', redirectUri)
+      url.searchParams.set('state', state)
+      url.searchParams.set('code_challenge', pkce.challenge)
+      url.searchParams.set('code_challenge_method', pkce.method)
+      url.searchParams.set('dpop_jkt', await this.options.key.thumbprint())
+      url.searchParams.set('client_name', this.options.client.name)
+      url.searchParams.set('platform', this.options.client.platform)
+      url.searchParams.set('client_version', this.options.client.version)
+      url.searchParams.set('public_jwk', JSON.stringify(await this.options.key.publicJwk()))
+      for (const scope of this.options.scopes) url.searchParams.append('scopes', scope)
+      const callbackAbort = new AbortController()
+      const cancelCallback = () => callbackAbort.abort()
+      signal?.addEventListener('abort', cancelCallback, { once: true })
+      const callbackPromise = this.options.browser
+        .waitForCallback(state, callbackAbort.signal)
+        .finally(() => signal?.removeEventListener('abort', cancelCallback))
+      try {
+        if (callbackAbort.signal.aborted) await callbackPromise
+        await this.options.browser.open(url.toString())
+      } catch (error) {
+        cancelCallback()
+        // The adapter owns the native listener. Ensure a failed browser launch
+        // releases it before surfacing the launch failure to the view.
+        await callbackPromise.catch(() => undefined)
+        throw error
+      }
+      progress.pending()
+
+      const callbackValue = await callbackPromise
+      if (!isValidNativeAuthorizationCallback(callbackValue, state)) {
+        throw new Error('authorization_callback_invalid')
+      }
+      const callback = new URL(callbackValue)
+      const transaction = callback.searchParams.get('transaction_id')
+      if (transaction === null) {
+        throw new Error('authorization_callback_invalid')
+      }
+      progress.approved()
+      const credential = await this.options.exchange({
+        issuer: this.options.issuer,
+        transaction,
+        verifier: pkce.verifier,
+        redirectUri,
+        key: this.options.key,
+      })
+      await this.options.vault.replace(this.options.issuer, credential)
+      progress.connected()
+      return credential
+    } catch (error) {
+      if ((error as Error)?.name === 'AbortError' || (error as Error)?.message === 'authorization_cancelled') progress.cancelled()
+      else progress.failed()
+      throw error
+    }
   }
 }

@@ -35,7 +35,7 @@
 
 <script setup lang="ts">
 import { LayoutDashboard, LogOut, MonitorCog, Settings } from '@lucide/vue'
-import { computed } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import ThemePicker from './components/settings/ThemePicker.vue'
 import BottomToast from './components/common/BottomToast.vue'
@@ -44,11 +44,28 @@ import { useTerminalPageLock } from './composables/useTerminalPageLock'
 
 const router = useRouter()
 const route = useRoute()
-const { logoutSession, sessionState } = useSession()
+const { logoutSession, refreshSession, sessionState } = useSession()
 const terminalLayout = computed(() => route.meta.terminal === true)
 const bareLayout = computed(() => route.meta.bare === true)
 useTerminalPageLock(terminalLayout)
 const routeViewKey = computed(() => terminalLayout.value ? `term:${String(route.params.termId)}` : 'shared-client-route')
+onMounted(async () => {
+  // Vue mounts before the initial browser navigation is necessarily resolved.
+  // Wait for it so `/login` is already known to be a bare route before
+  // deciding whether a runtime session can be restored.
+  await router.isReady()
+  // Bare routes, including the browser login page, deliberately do not have a
+  // session yet.  Avoid a predictable 401 probe there: it is noisy in the
+  // browser and makes an otherwise healthy login view look like a failure.
+  if (!bareLayout.value) {
+    void refreshSession()
+  }
+})
+watch(bareLayout, (isBare, wasBare) => {
+  if (wasBare && !isBare) {
+    void refreshSession()
+  }
+})
 async function logout() {
   await logoutSession()
   await router.replace('/login')

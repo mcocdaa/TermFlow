@@ -1,14 +1,14 @@
 import { arch, platform } from '@tauri-apps/plugin-os'
-import { DeviceAuthorizationSession, NativeAuthorizationSession, createPkce } from '@termflow/client-core'
+import { DeviceAuthorizationSession, NativeAuthorizationSession, createPkce, type DeviceAuthorizationPollResponse } from '@termflow/client-core'
 import type { OAuthScope } from '@termflow/client-contracts'
-import type { OAuthDeviceCodeResponse, OAuthPublicJwk, OAuthTokenResponse } from '@termflow/client-contracts'
-import { createMemoryAccessVault } from './adapters/memoryAccessVault'
+import type { OAuthDeviceCodeResponse, OAuthPublicJwk } from '@termflow/client-contracts'
 import { createTauriKey, exchangeAuthorization, tauriAuthorizationBrowser } from './adapters/tauriAuthorization'
+import { createTauriCredentialVault } from './adapters/tauriCredentialVault'
 import { buildVersion } from './buildVersion'
 import { serverConfig } from './serverConfig'
 import { logNativeEvent, sanitizeNativeDetail } from './diagnostics'
 
-const vault = createMemoryAccessVault()
+const vault = createTauriCredentialVault()
 
 function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) {
@@ -73,7 +73,7 @@ export interface NativeDeviceAuthorizationInput {
     publicJwk: OAuthPublicJwk
     scopes: OAuthScope[]
   }): Promise<OAuthDeviceCodeResponse>
-  poll(input: { deviceCode: string; codeVerifier: string; publicJwk: OAuthPublicJwk }, signal?: AbortSignal): Promise<OAuthTokenResponse>
+  poll(input: { deviceCode: string; codeVerifier: string; publicJwk: OAuthPublicJwk }, signal?: AbortSignal): Promise<DeviceAuthorizationPollResponse>
 }
 
 export async function beginNativeDeviceAuthorization(input: NativeDeviceAuthorizationInput) {

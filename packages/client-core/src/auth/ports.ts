@@ -37,3 +37,8 @@ export interface NativeClientDescriptor {
   platform: string
   version: string
 }
+
+export interface AuthorizationStateListener {
+  onState?: (state: AuthorizationState) => void
+}
+import type { AuthorizationState } from './authorizationState'

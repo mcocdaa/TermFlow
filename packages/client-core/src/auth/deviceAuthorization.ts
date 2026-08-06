@@ -1,8 +1,11 @@
 import type { OAuthDeviceTokenErrorCode, OAuthPublicJwk, OAuthTokenResponse } from '@termflow/client-contracts'
 import type { DeviceAuthorizationPollInput } from '../api/oauth'
-import type { CredentialVaultPort, NativeAccessCredential } from './ports'
+import { createAuthorizationStateMachine } from './authorizationState'
+import type { AuthorizationStateListener, CredentialVaultPort, NativeAccessCredential } from './ports'
 
-export interface DeviceAuthorizationSessionOptions {
+export type DeviceAuthorizationPollResponse = OAuthTokenResponse | NativeAccessCredential
+
+export interface DeviceAuthorizationSessionOptions extends AuthorizationStateListener {
   issuer: string
   deviceCode: string
   codeVerifier: string
@@ -11,7 +14,7 @@ export interface DeviceAuthorizationSessionOptions {
   interval?: number
   /** Alias accepted when callers use the RFC terminology. */
   intervalSeconds?: number
-  poll: (input: DeviceAuthorizationPollInput, signal?: AbortSignal) => Promise<OAuthTokenResponse>
+  poll: (input: DeviceAuthorizationPollInput, signal?: AbortSignal) => Promise<DeviceAuthorizationPollResponse>
   vault: CredentialVaultPort
   /** Platform-provided wait primitive; the shared core never owns timers. */
   sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void>
@@ -41,7 +44,8 @@ function abortError(): Error {
   return error
 }
 
-function asCredential(response: OAuthTokenResponse, now: () => number): NativeAccessCredential {
+function asCredential(response: DeviceAuthorizationPollResponse, now: () => number): NativeAccessCredential {
+  if ('accessToken' in response) return response
   return {
     accessToken: response.access_token,
     expiresAt: new Date(now() + response.expires_in * 1000).toISOString(),
@@ -57,20 +61,23 @@ export class DeviceAuthorizationSession {
   private readonly cancellation = new AbortController()
   private readonly sleep: (milliseconds: number, signal: AbortSignal) => Promise<void>
   private readonly now: () => number
+  private readonly progress
   private cancelled = false
 
   constructor(private readonly options: DeviceAuthorizationSessionOptions) {
     this.sleep = (milliseconds, signal) => this.waitWithAbort(options.sleep(milliseconds), signal)
     this.now = options.now ?? (() => Date.now())
+    this.progress = createAuthorizationStateMachine({ onState: options.onState })
   }
 
   cancel(): void {
     this.cancelled = true
     this.cancellation.abort()
+    this.progress.cancelled()
   }
 
-  /** Returns the wire OAuth response and stores a native short-lived credential on success. */
-  async poll(signal?: AbortSignal): Promise<OAuthTokenResponse> {
+  /** Returns an HTTP OAuth response or an access-only native response. */
+  async poll(signal?: AbortSignal): Promise<DeviceAuthorizationPollResponse> {
     const combined = this.combinedSignal(signal)
     let interval = this.initialInterval()
     const input: DeviceAuthorizationPollInput = {
@@ -79,31 +86,41 @@ export class DeviceAuthorizationSession {
       publicJwk: this.options.publicJwk,
     }
 
-    while (true) {
-      this.throwIfAborted(combined)
-      await this.sleep(interval * 1000, combined)
-      this.throwIfAborted(combined)
-      try {
-        // Race the transport with cancellation as well as passing the signal
-        // through; adapters should abort their request, but a pure injected
-        // test transport is not required to implement AbortSignal semantics.
-        const response = await this.waitWithAbort(this.options.poll(input, combined), combined)
+    this.progress.requesting()
+    this.progress.pending()
+    try {
+      while (true) {
         this.throwIfAborted(combined)
-        await this.options.vault.replace(this.options.issuer, asCredential(response, this.now))
-        return response
-      } catch (error) {
+        await this.sleep(interval * 1000, combined)
         this.throwIfAborted(combined)
-        const code = errorCode(error)
-        if (!DEVICE_POLL_GRANT_ERRORS.has(code as OAuthDeviceTokenErrorCode)) throw error
-        if (code === 'authorization_pending') continue
-        if (code === 'slow_down') {
-          interval += 5
-          continue
+        try {
+          // Race the transport with cancellation as well as passing the signal
+          // through; adapters should abort their request, but a pure injected
+          // test transport is not required to implement AbortSignal semantics.
+          const response = await this.waitWithAbort(this.options.poll(input, combined), combined)
+          this.throwIfAborted(combined)
+          this.progress.approved()
+          await this.options.vault.replace(this.options.issuer, asCredential(response, this.now))
+          this.progress.connected()
+          return response
+        } catch (error) {
+          this.throwIfAborted(combined)
+          const code = errorCode(error)
+          if (!DEVICE_POLL_GRANT_ERRORS.has(code as OAuthDeviceTokenErrorCode)) throw error
+          if (code === 'authorization_pending') continue
+          if (code === 'slow_down') {
+            interval += 5
+            continue
+          }
+          // access_denied and expired_token are terminal and are deliberately
+          // rethrown so callers can present an actionable state.
+          throw error
         }
-        // access_denied and expired_token are terminal and are deliberately
-        // rethrown so callers can present an actionable state.
-        throw error
       }
+    } catch (error) {
+      if ((error as Error)?.name === 'AbortError') this.progress.cancelled()
+      else this.progress.failed()
+      throw error
     }
   }
 

@@ -57,19 +57,29 @@ pub struct NativeAuthState {
     http: Client,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct TokenResponse {
-    #[serde(default = "default_token_type")]
-    token_type: String,
     access_token: String,
     refresh_token: String,
     expires_in: i64,
-    #[serde(default)]
-    scopes: Vec<String>,
 }
 
-fn default_token_type() -> String {
-    "DPoP".to_owned()
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeAuthorizationExchangeRequest {
+    issuer: String,
+    transaction_id: String,
+    code_verifier: String,
+    redirect_uri: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeDeviceExchangeRequest {
+    issuer: String,
+    device_code: String,
+    code_verifier: String,
+    public_jwk: PublicJwk,
 }
 
 #[derive(Debug, Serialize)]
@@ -421,11 +431,14 @@ pub fn native_sign_jwt(issuer: String, signing_input: Vec<u8>) -> Result<Vec<u8>
 #[tauri::command]
 pub async fn native_exchange_authorization(
     state: State<'_, NativeAuthState>,
-    issuer: String,
-    transaction_id: String,
-    code_verifier: String,
-    redirect_uri: String,
+    request: NativeAuthorizationExchangeRequest,
 ) -> Result<AccessCredential, String> {
+    let NativeAuthorizationExchangeRequest {
+        issuer,
+        transaction_id,
+        code_verifier,
+        redirect_uri,
+    } = request;
     let issuer = canonical_issuer(&issuer)?;
     let _ = redirect_uri;
     let response = token_request(&state, &issuer, json!({"grant_type":"authorization_code","transaction_id":transaction_id,"code_verifier":code_verifier,"public_jwk":public_jwk(&signing_key(&issuer)?)?})).await?;
@@ -437,11 +450,14 @@ pub async fn native_exchange_authorization(
 #[tauri::command]
 pub async fn native_exchange_device_code(
     state: State<'_, NativeAuthState>,
-    issuer: String,
-    device_code: String,
-    code_verifier: String,
-    public_jwk: PublicJwk,
-) -> Result<TokenResponse, String> {
+    request: NativeDeviceExchangeRequest,
+) -> Result<AccessCredential, String> {
+    let NativeDeviceExchangeRequest {
+        issuer,
+        device_code,
+        code_verifier,
+        public_jwk,
+    } = request;
     let issuer = canonical_issuer(&issuer)?;
     let key = signing_key(&issuer)?;
     let key_public = self::public_jwk(&key)?;
@@ -459,9 +475,7 @@ pub async fn native_exchange_device_code(
         }),
     )
     .await?;
-    let public_response = response.clone();
-    store_token_response(&state, &issuer, response).await?;
-    Ok(public_response)
+    store_token_response(&state, &issuer, response).await
 }
 #[tauri::command]
 pub async fn native_refresh_access(
@@ -471,6 +485,18 @@ pub async fn native_refresh_access(
     let issuer = canonical_issuer(&issuer)?;
     let _refresh_guard = state.refresh_gate.lock().await;
     refresh_access(&state, &issuer).await
+}
+
+/// Removes the refresh credential for one canonical issuer. The device P-256
+/// key is intentionally retained so a later authorization keeps the same
+/// device identity without exposing that key to the WebView.
+#[tauri::command]
+pub fn native_clear_credentials(
+    state: State<'_, NativeAuthState>,
+    issuer: String,
+) -> Result<(), String> {
+    let issuer = canonical_issuer(&issuer)?;
+    clear_native_credentials(&state, &issuer)
 }
 
 #[tauri::command]

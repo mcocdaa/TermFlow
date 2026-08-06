@@ -55,14 +55,53 @@ describe('tauriAuthorizationBrowser', () => {
     expect(JSON.stringify(mocks.invoke.mock.calls)).not.toContain('secret')
     callback.then(() => undefined, () => undefined)
   })
+
+  it('ignores malformed deep links even when their state matches', async () => {
+    let receive: ((urls: string[]) => void) | undefined
+    mocks.onOpenUrl.mockImplementation((callback: (urls: string[]) => void) => {
+      receive = callback
+      return Promise.resolve(vi.fn())
+    })
+    const callback = tauriAuthorizationBrowser.waitForCallback('state-3')
+    let settled = false
+    void callback.then(() => { settled = true })
+    await Promise.resolve()
+
+    const malformedCallbacks = [
+      'https://attacker.example/callback?state=state-3&transaction_id=11111111-1111-4111-8111-111111111111',
+      'termflow://auth:444/callback?state=state-3&transaction_id=11111111-1111-4111-8111-111111111111',
+      'termflow://user@auth/callback?state=state-3&transaction_id=11111111-1111-4111-8111-111111111111',
+      'termflow://auth/callback?state=state-3&transaction_id=11111111-1111-4111-8111-111111111111#fragment',
+      'termflow://auth/callback?state=state-3&transaction_id=not-a-uuid',
+    ]
+    for (const malformed of malformedCallbacks) receive?.([malformed])
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    expect(mocks.invoke).toHaveBeenCalledWith('native_log', expect.objectContaining({
+      event: 'authorization_callback_invalid', errorCode: 'authorization_callback_invalid',
+    }))
+
+    receive?.(['termflow://auth/callback?state=state-3&transaction_id=11111111-1111-4111-8111-111111111111'])
+    await expect(callback).resolves.toContain('transaction_id=')
+  })
+
+  it('rejects a pre-aborted listener without registering a deep link', async () => {
+    mocks.onOpenUrl.mockClear()
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(tauriAuthorizationBrowser.waitForCallback('state-aborted', controller.signal))
+      .rejects.toThrow('authorization_cancelled')
+    expect(mocks.onOpenUrl).not.toHaveBeenCalled()
+  })
 })
 
 describe('pollDeviceAuthorization', () => {
   it('uses the native device exchange command without opening a browser', async () => {
     mocks.openUrl.mockClear()
-    mocks.invoke.mockResolvedValue({ access_token: 'a', token_type: 'DPoP', expires_in: 60, scopes: [] })
-    await expect(pollDeviceAuthorization({ issuer: 'https://relay.example.com', deviceCode: 'device', codeVerifier: 'verifier', publicJwk: { kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' } })).resolves.toMatchObject({ access_token: 'a' })
-    expect(mocks.invoke).toHaveBeenCalledWith('native_exchange_device_code', { issuer: 'https://relay.example.com', deviceCode: 'device', codeVerifier: 'verifier', publicJwk: expect.any(Object) })
+    mocks.invoke.mockResolvedValue({ accessToken: 'a', expiresAt: '2026-08-05T12:00:00Z', tokenType: 'DPoP' })
+    await expect(pollDeviceAuthorization({ issuer: 'https://relay.example.com', deviceCode: 'device', codeVerifier: 'verifier', publicJwk: { kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' } })).resolves.toMatchObject({ accessToken: 'a' })
+    expect(mocks.invoke).toHaveBeenCalledWith('native_exchange_device_code', { request: { issuer: 'https://relay.example.com', deviceCode: 'device', codeVerifier: 'verifier', publicJwk: expect.any(Object) } })
     expect(mocks.openUrl).not.toHaveBeenCalled()
   })
 })

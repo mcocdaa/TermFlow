@@ -112,4 +112,59 @@ describe('shared application routes', () => {
     expect(logout.get('.logout-label').text()).toBe('退出')
     dashboard.unmount()
   })
+
+  it('restores an existing runtime session when the application starts', async () => {
+    const status = vi.fn().mockResolvedValue({ authenticated: true, expires_at: '2026-08-05T12:00:00Z' })
+    const router = createRouter({ history: createMemoryHistory(), routes: clientRoutes })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(App, {
+      global: { plugins: [router, createClientUi(createFakeRuntime({
+        api: { sessions: { status } } as unknown as ReturnType<typeof createFakeRuntime>['api'],
+      }))] },
+    })
+
+    await flushPromises()
+
+    expect(status).toHaveBeenCalledOnce()
+    expect(wrapper.find('[data-action="logout"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('does not probe a browser session on a bare login route', async () => {
+    const status = vi.fn().mockResolvedValue({ authenticated: false, expires_at: null })
+    const router = createRouter({ history: createMemoryHistory(), routes: clientRoutes })
+    await router.push('/login')
+    await router.isReady()
+    const wrapper = mount(App, {
+      global: { plugins: [router, createClientUi(createFakeRuntime({
+        api: { sessions: { status } } as unknown as ReturnType<typeof createFakeRuntime>['api'],
+      }))] },
+    })
+
+    await flushPromises()
+
+    expect(status).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('restores a native session after leaving a bare connection route', async () => {
+    const status = vi.fn().mockResolvedValue({ authenticated: true, expires_at: '2026-08-05T12:00:00Z' })
+    const router = createRouter({ history: createMemoryHistory(), routes: clientRoutes })
+    await router.push('/login')
+    await router.isReady()
+    const wrapper = mount(App, {
+      global: { plugins: [router, createClientUi(createFakeRuntime({
+        api: { sessions: { status } } as unknown as ReturnType<typeof createFakeRuntime>['api'],
+      }))] },
+    })
+    await flushPromises()
+
+    await router.push('/')
+    await flushPromises()
+
+    expect(status).toHaveBeenCalledOnce()
+    expect(wrapper.find('[data-action="logout"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
 })
