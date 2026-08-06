@@ -116,6 +116,26 @@ def test_installer_checks_checksum_and_updates_only_user_prefix(tmp_path: Path) 
     assert (home / ".local/opt/termflow-node/v0.1.0/VERSION").read_text() == "0.1.0\n"
 
 
+def test_installer_replaces_an_existing_development_build_with_the_same_version(
+    tmp_path: Path,
+) -> None:
+    release = _make_release_directory(tmp_path)
+    home = tmp_path / "home"
+    old = home / ".local/opt/termflow-node/v0.1.0/termflow/termflow"
+    old.parent.mkdir(parents=True)
+    old.write_text("#!/usr/bin/env bash\necho old-development-build\n")
+    old.chmod(0o755)
+    bin_directory = home / ".local/bin"
+    bin_directory.mkdir(parents=True)
+    (bin_directory / "termflow").symlink_to(old)
+
+    result = _run_installer(release, home, _render_installer(tmp_path))
+
+    assert result.returncode == 0, result.stderr
+    assert "old-development-build" not in old.read_text()
+    assert old.read_text().endswith("echo 0.1.0\n")
+
+
 def test_bad_checksum_preserves_existing_termflow(tmp_path: Path) -> None:
     home = tmp_path / "home"
     old = home / ".local/opt/termflow-node/v0.0.9/termflow/termflow"

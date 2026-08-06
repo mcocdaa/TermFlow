@@ -49,13 +49,24 @@ IFS= read -r installed_version < "${candidate}/VERSION"
 [[ "${installed_version}" == "${VERSION}" ]] || fail "release archive version does not match ${TAG}"
 
 mkdir -p "${PREFIX}/opt/termflow-node" "${BIN_DIRECTORY}"
+staged_directory="${PREFIX}/opt/termflow-node/.${TAG}.new.$$"
+rollback_directory="${PREFIX}/opt/termflow-node/.${TAG}.previous.$$"
+[[ ! -e "${staged_directory}" && ! -e "${rollback_directory}" ]] \
+  || fail "temporary installation path already exists"
+cp -a "${candidate}" "${staged_directory}"
 if [[ -e "${VERSION_DIRECTORY}" ]]; then
   [[ -x "${VERSION_DIRECTORY}/termflow/termflow" ]] || fail "existing ${TAG} installation is invalid"
-else
-  mv "${candidate}" "${VERSION_DIRECTORY}"
+  mv "${VERSION_DIRECTORY}" "${rollback_directory}"
+fi
+if ! mv "${staged_directory}" "${VERSION_DIRECTORY}"; then
+  if [[ -e "${rollback_directory}" ]]; then
+    mv "${rollback_directory}" "${VERSION_DIRECTORY}"
+  fi
+  fail "could not install ${TAG}"
 fi
 
 temporary_link="${BIN_DIRECTORY}/.termflow-${TAG}.tmp"
 ln -s "../opt/termflow-node/${TAG}/termflow/termflow" "${temporary_link}"
 mv -Tf "${temporary_link}" "${BIN_DIRECTORY}/termflow"
+rm -rf "${rollback_directory}"
 printf 'Installed TermFlow %s at %s\n' "${VERSION}" "${BIN_DIRECTORY}/termflow"
