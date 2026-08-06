@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto'
+import { createHash, createHmac, generateKeyPairSync } from 'node:crypto'
 import { expect, test, type Page } from '@playwright/test'
 
 const adminToken = process.env.TERMFLOW_E2E_ADMIN_TOKEN ?? ''
@@ -47,6 +47,33 @@ async function loginWithAdminToken(page: Page) {
   await expect(page.getByRole('heading', { name: '控制中心' })).toBeVisible()
 }
 
+async function createPendingDeviceAuthorization(page: Page) {
+  const { publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+  const exported = publicKey.export({ format: 'jwk' })
+  if (typeof exported.x !== 'string' || typeof exported.y !== 'string') {
+    throw new Error('Generated device key is missing P-256 coordinates')
+  }
+  const publicJwk = { kty: 'EC', crv: 'P-256', alg: 'ES256', x: exported.x, y: exported.y }
+  const thumbprint = createHash('sha256')
+    .update(JSON.stringify({ crv: publicJwk.crv, kty: publicJwk.kty, x: publicJwk.x, y: publicJwk.y }))
+    .digest('base64url')
+  const challenge = createHash('sha256').update('v'.repeat(43)).digest('base64url')
+  const response = await page.request.post('/api/v1/oauth/device/code', {
+    data: {
+      client_name: 'Browser device approval E2E',
+      platform: 'Windows',
+      client_version: '0.0.1-e2e',
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      dpop_jkt: thumbprint,
+      public_jwk: publicJwk,
+      scopes: ['terminal.read', 'computers.read'],
+    },
+  })
+  expect(response.ok()).toBe(true)
+  return response.json() as Promise<{ user_code: string }>
+}
+
 async function expectOnlyMainContentScrolls(page: Page) {
   const geometry = await page.evaluate(async () => {
     const main = document.querySelector<HTMLElement>('main')!
@@ -89,6 +116,48 @@ async function expectOnlyMainContentScrolls(page: Page) {
   expect(geometry.headerTop).toBeCloseTo(geometry.beforeHeaderTop, 1)
   expect(geometry.navigationTop).toBeCloseTo(geometry.beforeNavigationTop, 1)
 }
+
+test('approves a pending device code from settings and refreshes authorized clients', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The device approval trajectory runs once on desktop')
+  const pending = await createPendingDeviceAuthorization(page)
+
+  await loginWithAdminToken(page)
+  await page.locator('.side-nav a[href="/settings"]').click()
+  const clients = page.locator('section.settings-panel').filter({ has: page.getByRole('heading', { name: '已授权客户端' }) })
+  await expect(clients.getByText('Browser device approval E2E')).toHaveCount(0)
+
+  await clients.getByRole('button', { name: '授权新客户端' }).click()
+  const dialog = page.getByRole('dialog', { name: '授权新客户端' })
+  await dialog.getByLabel('设备码').fill((await pending).user_code)
+  const preview = page.waitForResponse((response) =>
+    response.request().method() === 'GET'
+    && response.url().includes('/api/v1/oauth/authorize?user_code=')
+    && response.ok(),
+  )
+  await dialog.getByRole('button', { name: '继续' }).click()
+  await preview
+  await expect(dialog).toContainText('Browser device approval E2E')
+  await expect(dialog).toContainText('Windows · 0.0.1-e2e')
+
+  const approved = page.waitForResponse((response) =>
+    response.request().method() === 'POST'
+    && response.url().endsWith('/api/v1/oauth/authorize')
+    && response.ok(),
+  )
+  const refreshed = page.waitForResponse((response) =>
+    response.request().method() === 'GET'
+    && response.url().endsWith('/api/v1/admin/clients')
+    && response.ok(),
+  )
+  await dialog.getByRole('button', { name: '允许此设备' }).click()
+  await approved
+  await refreshed
+
+  await expect(dialog).toHaveCount(0)
+  await expect(clients.getByText('Browser device approval E2E')).toBeVisible()
+  await expect(page.locator('[data-bottom-toast]')).toContainText('已授权')
+  if (screenshotDir) await page.screenshot({ path: `${screenshotDir}/settings-device-approval.png`, fullPage: true })
+})
 
 test('uses env-authoritative relay settings and the complete authenticator lifecycle', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The stateful security trajectory runs once on desktop')

@@ -10,10 +10,16 @@
 
 ## 当前交付状态（2026-08-06）
 
-- 已提交：Task 1-4，分别覆盖安装范围实例查询、A 的同步/清理命令、共享底部 Toast，以及设置中的设备授权入口。
-- 已实现且完成本机审查：Task 5。原生浏览器回调和设备码流程共用授权状态；刷新令牌与 DPoP 私钥仍留在 Rust/keyring，WebView 只保留进程内 access credential。
-- 已在本机验证：Web C 的 Playwright 桌面/移动流程、A/B 的“B 删除离线 Term -> A sync -> dry-run -> force prune”流程、Python/TypeScript/Rust 测试、Tauri 无安装包 release 构建，以及最新 B + Web C Docker 镜像。
-- 尚未完成真实验收：安装最新 Windows 包后的浏览器回调、设备码、重启恢复和诊断日志；GitHub Actions 的 Windows/Linux/Android/iOS 构建矩阵。它们仍是 Task 6 的发布前门槛，不能由本机单测替代。
+| Task | 实现状态 | 已验证证据 | 尚缺的验收 |
+| --- | --- | --- | --- |
+| 1 | 已提交 | installation-scoped 实例查询及控制平面测试 | 无 |
+| 2 | 已提交 | 单元测试；隔离 A/B 流程已实际验证“B 删除离线 Term -> A sync -> dry-run -> force prune” | 无 |
+| 3 | 已提交 | Web C/Tauri 单元测试覆盖共享底部 Toast | 无 |
+| 4 | 已提交 | Web C 单元测试和真实浏览器设备审批流程 | 无 |
+| 5 | 已提交 | Tauri TypeScript/Rust 测试及无安装包 release 构建 | 最新 Windows 安装包的真实运行验证 |
+| 6 | 部分完成 | Playwright 18/18（桌面与移动）；设备码审批、A/B 同步清理、聚合验证（672 passed、1 skipped）、控制平面镜像自检 | 安装最新 Windows 包后的浏览器回调、设备码、重启恢复和日志；GitHub Actions Windows/Linux/Android/iOS 构建矩阵 |
+
+本机证据不替代 Windows 实机和 GitHub Actions。Task 6 只有在其余两项都通过后才可标为完成。
 
 ---
 
@@ -233,7 +239,7 @@ async def list_owned_instances(
 - 存在于远程集合的记录设为 `online` 或 `offline`，按 response 的 `online` 字段写入。
 - 本地存在、远程不存在的记录设为 `remote_deleted`。
 - 请求异常时所有记录保留原状态，只写 `last_sync_error` 和同步时间，并返回可打印结果。
-- `prune_candidates` 只返回 `remote_deleted` 且 tmux/bridge 都 down，或本地 tmux/bridge 都 down 的记录。
+- `prune_candidates` 只返回同时满足 `remote_deleted`、tmux down、bridge down 的记录。远程仍存在的本地离线记录必须保留。
 
 为 CLI 提供确定的默认构造入口，避免命令层自行拼装依赖：
 
@@ -458,22 +464,25 @@ Commit: `git add packages/client-core/src apps/clients/tauri/src apps/clients/ta
 **Files:**
 - Modify: `tests/e2e/test_device_authorization.py`
 - Modify: `tests/e2e/conftest.py` only to add isolated Web C browser fixtures
+- Modify: `apps/clients/web/e2e/settings-auth.spec.ts` to cover approval from Settings and the post-approval client-list/Toast state
 - Modify: `apps/clients/tauri/src/views/NativeConnectView.test.ts` and `NativeDeviceAuthorizeView.test.ts` when browser findings require a contract update
 - Verify only: `.github/workflows/tauri-packages.yml` existing Windows/Linux/Android/iOS matrix; no workflow change is part of this plan
 
-- [ ] **Step 1: 启动隔离 B/Web C 并运行 Web 流程**
+- [x] **Step 1: 启动隔离 B/Web C 并运行 Web 流程**
 
 使用仓库已有的本地验证入口，不向线上服务写数据：
 
 ```bash
 PATH=/home/mcocdaa/.nvm/versions/node/v22.23.2/bin:$PATH \
 UV_DEFAULT_INDEX=https://pypi.org/simple \
-./scripts/run-web-e2e.sh
+TERMFLOW_E2E_KEEP=1 ./scripts/run-web-e2e.sh
 ```
 
 验收：管理员 Token 登录后，在设置页打开“授权新客户端”，输入设备码并批准；弹窗关闭、客户端列表刷新、底部 Toast 出现；登录页和控制中心均没有设备授权按钮。
 
-- [ ] **Step 2: 检查桌面和手机布局**
+已于 2026-08-06 验证：Playwright 18/18 通过；`settings-auth.spec.ts` 覆盖设置页批准设备码、列表刷新和“已授权”底部 Toast。
+
+- [x] **Step 2: 检查桌面和手机布局**
 
 在真实浏览器分别使用约 `1440x900` 和 `390x844` 视口，截图保存到隔离测试产物目录。检查：
 
@@ -485,6 +494,8 @@ UV_DEFAULT_INDEX=https://pypi.org/simple \
 header/nav 固定，内容区独立滚动。
 ```
 
+已于 2026-08-06 检查保留的桌面、移动控制中心和双重认证截图；固定框架、窄屏底部导航、内容滚动和主题二维码均正常。Tauri WebView 的实机视觉验收仍属于 Windows 安装包步骤。
+
 - [ ] **Step 3: 验证 Windows 安装包真实闭环**
 
 安装最新 Windows 包后记录 `termflow-client.log`，分别执行：
@@ -494,12 +505,13 @@ header/nav 固定，内容区独立滚动。
 3. 重启应用，确认 Rust keyring refresh 能恢复访问；
 4. 断开服务器，确认页面显示网络阶段错误且日志不泄露敏感字段。
 
-- [ ] **Step 4: 验证 A 同步和清理**
+- [x] **Step 4: 验证 A 同步和清理**
 
 ```bash
 termflow sync
 termflow list --json
 termflow prune --dry-run
+termflow prune --force
 termflow doctor
 ```
 
@@ -513,7 +525,9 @@ UV_DEFAULT_INDEX=https://pypi.org/simple \
 ./scripts/verify.sh
 ```
 
-保存 pytest、Vitest、Rust、Web E2E 和 Tauri 构建输出；只有这些输出及真实 Windows 链路都成功后，才可声称本轮完成。
+`verify.sh` 覆盖 contracts、Vitest、类型检查、生产构建、pytest、Ruff、mypy、Tauri 和 Docker，但不会调用 Playwright。因此 Web E2E 必须作为上面的独立命令保留。默认 E2E runner 会清理临时目录；视觉审查时使用 `TERMFLOW_E2E_KEEP=1` 保存截图和 `.last-run.json`。
+
+已于 2026-08-06 完成本机部分：`verify.sh` 通过（pytest `672 passed, 1 skipped`），控制平面镜像自检通过，Web E2E `18/18` 通过。真实 Windows 链路和 GitHub Actions 跨平台矩阵尚未完成，故本步骤与 Task 6 保持未完成。
 
 Commit: `git add tests .github/workflows && git commit -m "test: verify native auth and node sync flows"`
 
