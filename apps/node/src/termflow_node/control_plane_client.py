@@ -102,6 +102,22 @@ class ControlPlaneClient:
             response.raise_for_status()
             return InstanceListResponse.model_validate(response.json())
 
+    async def installation_revoked(self, installation: InstallationConfig) -> bool:
+        base_url = validate_server_url(str(installation.server_url))
+        async with httpx.AsyncClient(transport=self._transport, timeout=3.0) as client:
+            response = await client.get(
+                f"{base_url}/api/v1/instances/mine",
+                headers={
+                    "Authorization": (
+                        "Bearer " + installation.installation_token.get_secret_value()
+                    )
+                },
+            )
+        if response.status_code in {401, 403, 404}:
+            return True
+        response.raise_for_status()
+        return False
+
     async def probe_health(self, server_url: str) -> tuple[bool, str]:
         base_url = validate_server_url(server_url)
         try:

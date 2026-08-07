@@ -61,10 +61,20 @@ def login(
 ) -> None:
     """Enroll this computer with one Control Plane."""
 
+    normalized_server = validate_server_url(server)
     store = ConfigStore.default()
     if store.exists() and not force:
-        raise typer.BadParameter("A login already exists; pass --force to replace it.")
-    normalized_server = validate_server_url(server)
+        stored = store.load()
+        revoked = False
+        if str(stored.server_url).rstrip("/") == normalized_server:
+            try:
+                revoked = asyncio.run(
+                    ControlPlaneClient().installation_revoked(stored)
+                )
+            except Exception:
+                revoked = False
+        if not revoked:
+            raise typer.BadParameter("A login already exists; pass --force to replace it.")
     try:
         response = asyncio.run(ControlPlaneClient().enroll(normalized_server, enrollment_token))
     except Exception:
