@@ -138,6 +138,14 @@ test('approves a pending device code from settings and refreshes authorized clie
   await preview
   await expect(dialog).toContainText('Browser device approval E2E')
   await expect(dialog).toContainText('Windows · 0.0.1-e2e')
+  const approvalDialogGeometry = await dialog.evaluate((panel) => {
+    const box = panel.getBoundingClientRect()
+    return { left: box.left, right: box.right, centerDelta: Math.abs((box.left + box.width / 2) - window.innerWidth / 2), viewportWidth: window.innerWidth }
+  })
+  expect(approvalDialogGeometry.left).toBeGreaterThanOrEqual(0)
+  expect(approvalDialogGeometry.right).toBeLessThanOrEqual(approvalDialogGeometry.viewportWidth)
+  expect(approvalDialogGeometry.centerDelta).toBeLessThan(2)
+  if (screenshotDir) await page.screenshot({ path: `${screenshotDir}/settings-device-pending.png`, fullPage: true })
 
   const approved = page.waitForResponse((response) =>
     response.request().method() === 'POST'
@@ -157,6 +165,30 @@ test('approves a pending device code from settings and refreshes authorized clie
   await expect(clients.getByText('Browser device approval E2E')).toBeVisible()
   await expect(page.locator('[data-bottom-toast]')).toContainText('已授权')
   if (screenshotDir) await page.screenshot({ path: `${screenshotDir}/settings-device-approval.png`, fullPage: true })
+
+  await clients.getByRole('button', { name: '撤销' }).click()
+  const revokeDialog = page.getByRole('alertdialog', { name: '撤销客户端' })
+  await expect(revokeDialog).toBeVisible()
+  await expect(revokeDialog).toContainText('Browser device approval E2E')
+  const revokeGeometry = await revokeDialog.evaluate((panel) => {
+    const box = panel.getBoundingClientRect()
+    return { left: box.left, right: box.right, centerDelta: Math.abs((box.left + box.width / 2) - window.innerWidth / 2), viewportWidth: window.innerWidth }
+  })
+  expect(revokeGeometry.left).toBeGreaterThanOrEqual(0)
+  expect(revokeGeometry.right).toBeLessThanOrEqual(revokeGeometry.viewportWidth)
+  expect(revokeGeometry.centerDelta).toBeLessThan(2)
+  if (screenshotDir) await page.screenshot({ path: `${screenshotDir}/settings-revoke-dialog.png`, fullPage: true })
+  const revoked = page.waitForResponse((response) =>
+    response.request().method() === 'DELETE'
+    && response.url().includes('/api/v1/admin/clients/')
+    && response.ok(),
+  )
+  await revokeDialog.getByLabel('管理员 Token').fill(adminToken)
+  await revokeDialog.getByRole('button', { name: '确认撤销' }).click()
+  await revoked
+  await expect(revokeDialog).toHaveCount(0)
+  await expect(clients.getByText('Browser device approval E2E')).toHaveCount(0)
+  await expect(page.locator('[data-bottom-toast]')).toContainText('已撤销')
 })
 
 test('uses env-authoritative relay settings and the complete authenticator lifecycle', async ({ page }, testInfo) => {
