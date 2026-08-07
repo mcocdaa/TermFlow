@@ -1,7 +1,7 @@
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from termflow_node import __version__, cli
@@ -256,6 +256,38 @@ def test_ambiguous_name_reports_candidate_ids(tmp_path) -> None:
         assert str(second.instance_id) in str(error)
     else:
         raise AssertionError("expected ambiguous Instance name")
+
+
+def test_resolve_short_id_prefix(tmp_path) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    record = _record(store.root, "alpha")
+    store.save(record)
+    manager = InstanceManager(store, bridge_launcher=lambda instance: 123)
+    resolved = manager.resolve(record.instance_id.hex[:8])
+    assert resolved.instance_id == record.instance_id
+
+
+def test_resolve_ambiguous_id_prefix_reports_candidates(tmp_path) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    first = _record(store.root, "first")
+    second = _record(store.root, "second")
+    shared_prefix = first.instance_id.hex[:8]
+    first = first.model_copy(
+        update={"instance_id": UUID(f"{shared_prefix}-0000-0000-0000-000000000001")}
+    )
+    second = second.model_copy(
+        update={"instance_id": UUID(f"{shared_prefix}-0000-0000-0000-000000000002")}
+    )
+    store.save(first)
+    store.save(second)
+    manager = InstanceManager(store, bridge_launcher=lambda instance: 123)
+    try:
+        manager.resolve(shared_prefix)
+    except AmbiguousInstance as error:
+        assert str(first.instance_id) in str(error)
+        assert str(second.instance_id) in str(error)
+    else:
+        raise AssertionError("expected ambiguous Instance ID prefix")
 
 
 class FakeActivator:

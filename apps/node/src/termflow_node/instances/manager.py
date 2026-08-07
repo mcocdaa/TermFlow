@@ -177,19 +177,28 @@ class InstanceManager:
         try:
             instance_id = UUID(identifier)
         except ValueError:
-            matches = [
-                current
-                for instance in self.list_current().instances
-                if (current := self._current_if_available(instance)).name == identifier
+            instances = [self._current_if_available(i) for i in self.list_current().instances]
+            by_name = [instance for instance in instances if instance.name == identifier]
+            by_prefix = [
+                instance
+                for instance in instances
+                if instance.instance_id.hex.startswith(identifier.lower())
             ]
-            if not matches:
-                raise InstanceResolutionError(f"No Instance named {identifier!r}") from None
-            if len(matches) > 1:
-                candidates = ", ".join(str(instance.instance_id) for instance in matches)
+            if len(by_name) == 1:
+                return by_name[0]
+            if len(by_prefix) == 1:
+                return by_prefix[0]
+            if len(by_name) > 1:
+                candidates = ", ".join(str(instance.instance_id) for instance in by_name)
                 raise AmbiguousInstance(
                     f"Instance name {identifier!r} is ambiguous; candidates: {candidates}"
                 ) from None
-            return matches[0]
+            if len(by_prefix) > 1:
+                candidates = ", ".join(str(instance.instance_id) for instance in by_prefix)
+                raise AmbiguousInstance(
+                    f"Instance ID prefix {identifier!r} is ambiguous; candidates: {candidates}"
+                ) from None
+            raise InstanceResolutionError(f"No Instance named {identifier!r}") from None
         return self.current(instance_id)
 
     def attach(self, identifier: str) -> tuple[LocalInstance, list[str]]:
