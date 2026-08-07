@@ -101,6 +101,11 @@
   .delete-term-dialog p { line-height: 1.6; }
   .delete-computer-dialog { width: min(100%, 34rem); }
   .delete-computer-dialog p { line-height: 1.6; }
+  .device-approval-dialog, .revoke-client-dialog { width: min(100%, 36rem); display: grid; gap: var(--space-4); }
+  .device-approval-dialog .security-form, .revoke-client-dialog .security-form { width: 100%; margin-block-start: 0; }
+  .device-approval-details { margin: 0; }
+  .device-approval-details div { align-items: baseline; }
+  .revoke-client-dialog > p { margin: 0; color: var(--color-text-secondary); line-height: 1.6; }
   .delete-term-activation { display: block; overflow-wrap: anywhere; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-terminal); color: var(--color-terminal-foreground); font-family: var(--font-mono); }
   .enrollment-create-form { display: grid; gap: var(--space-3); margin-block-start: var(--space-5); }
   .enrollment-secret { display: grid; gap: var(--space-3); }
@@ -184,7 +189,7 @@
   .qr-dialog-panel > header { min-height: 2.75rem; align-items: center; text-align: start; }
   .qr-dialog-panel > p { margin: 0; color: var(--color-text-secondary); line-height: 1.6; }
   .connection-qr p { color: var(--color-text-secondary); line-height: 1.6; }
-  .security-form, .inline-security-form, .revoke-form { width: min(100%, 34rem); margin-block-start: 0; }
+  .security-form, .inline-security-form { width: min(100%, 34rem); margin-block-start: 0; }
   .settings-action-button { width: fit-content; }
   .security-setting-row { position: relative; display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-elevated); }
   .security-setting-row > div { display: grid; gap: var(--space-1); }

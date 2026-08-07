@@ -25,6 +25,10 @@ describe('DeviceAuthorizationApprovalDialog', () => {
 
     expect(deviceAuthorizationPreview).toHaveBeenCalledWith('ABCD-EFGH')
     expect(wrapper.text()).toContain('TermFlow Windows')
+    const dialog = wrapper.get('[data-action="device-approval-dialog"]')
+    expect(dialog.classes()).toContain('device-approval-dialog')
+    expect(wrapper.find('.device-approval-details').exists()).toBe(true)
+    expect(wrapper.find('.dialog-actions').exists()).toBe(true)
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     expect(decideAuthorization).toHaveBeenCalledWith({ transactionId: preview.transaction_id, decision: 'allow' })
