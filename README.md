@@ -22,9 +22,11 @@ termflow login --server https://termflow.example.com --code '<一次性注册码
 termflow new --name project-a
 ```
 
-将 `vX.Y.Z` 替换为需要的精确 GitHub Release tag。安装器会保留旧版本；回退 A 时，只需重新运行
-旧 tag 的同一命令。上面的 URL 使用官方仓库；Fork 发布时把 `mcocdaa/TermFlow` 替换为
-自己的 `<owner>/<repository>`。确保 `~/.local/bin` 已在当前 shell 的 `PATH` 中。
+将 `vX.Y.Z` 替换为需要的精确 GitHub Release tag。安装器会保留其他版本目录；重新安装
+相同版本时执行替换更新（旧二进制先备份、验证新包后再覆盖，失败自动回滚），因此 A 升级只需
+重跑同一命令。回退 A 时，重新运行旧 tag 的同一命令即可。上面的 URL 使用官方仓库；Fork
+发布时把 `mcocdaa/TermFlow` 替换为自己的 `<owner>/<repository>`。确保 `~/.local/bin`
+已在当前 shell 的 `PATH` 中。
 
 B 与 Web C 由当前 checkout 的同一份 Dockerfile 构建。先切换到需要部署的精确源码 tag 或 commit，
 再复制并填写管理员 token 和公开 URL：
@@ -56,8 +58,10 @@ TERMFLOW_RELEASE_BASE_URL="$(python3 -c 'from pathlib import Path; print(Path.cw
 ~/.local/bin/termflow doctor
 ```
 
-B + Web C 的 tar 先导入 Docker，并保留 `docker load` 输出的完整镜像名；从源码 Compose
-切换到该 artifact 时只执行 `down`，不要加 `--volumes`，这样会保留 `termflow-data`：
+B + Web C 的 tar 先导入 Docker，再通过 `.env` 里的 `TERMFLOW_IMAGE` 让同一个 Compose 文件直接使用
+已加载的镜像（不构建），全部环境变量、端口与数据卷仍由 `.env` 和 `deploy/compose.yaml` 管理；
+从源码 Compose 切换到该 artifact 时只执行 `down`，不要加 `--volumes`，这样会保留
+`termflow-data`：
 
 ```bash
 cd "/path/to/termflow-control-plane"
@@ -66,16 +70,8 @@ test -n "$IMAGE_NAME"
 
 cd /path/to/TermFlow
 set -a; source .env; set +a
-docker compose --env-file .env -f deploy/compose.yaml down
-docker run -d --name termflow-control-plane --restart unless-stopped \
-  --env-file .env \
-  --publish "127.0.0.1:${TERMFLOW_HOST_PORT:-8765}:8000" \
-  --volume "${TERMFLOW_DATA_VOLUME:-termflow-data}:/app/data" \
-  --env TERMFLOW_DATABASE_URL=sqlite+aiosqlite:////app/data/termflow.db \
-  --env TERMFLOW_STATIC_DIR=/app/frontend-dist \
-  --env TERMFLOW_ALLOW_INSECURE_LOOPBACK="${TERMFLOW_ALLOW_INSECURE_LOOPBACK:-true}" \
-  --env TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE=/app/data/totp-master-key \
-  "$IMAGE_NAME"
+TERMFLOW_IMAGE="$IMAGE_NAME" \
+  docker compose --env-file .env -f deploy/compose.yaml up -d --no-build
 curl -fsS http://127.0.0.1:8765/healthz
 ```
 

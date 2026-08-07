@@ -50,7 +50,14 @@ IFS= read -r installed_version < "${candidate}/VERSION"
 
 mkdir -p "${PREFIX}/opt/termflow-node" "${BIN_DIRECTORY}"
 if [[ -e "${VERSION_DIRECTORY}" ]]; then
-  [[ -x "${VERSION_DIRECTORY}/termflow/termflow" ]] || fail "existing ${TAG} installation is invalid"
+  [[ -x "${VERSION_DIRECTORY}/termflow/termflow" ]] \
+    || fail "existing ${TAG} installation is invalid"
+  backup="${VERSION_DIRECTORY}.old.$$"
+  if ! mv "${VERSION_DIRECTORY}" "${backup}" || ! mv "${candidate}" "${VERSION_DIRECTORY}"; then
+    mv "${backup}" "${VERSION_DIRECTORY}" 2>/dev/null || true
+    fail "could not replace existing ${TAG} installation"
+  fi
+  rm -rf "${backup}"
 else
   mv "${candidate}" "${VERSION_DIRECTORY}"
 fi
