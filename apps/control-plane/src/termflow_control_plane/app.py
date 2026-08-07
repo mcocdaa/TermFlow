@@ -247,10 +247,6 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
                 getattr(settings, "oauth_device_poll_budget_capacity", 60),
                 float(getattr(settings, "oauth_device_poll_budget_refill_seconds", 60)),
             ),
-            "oauth_device_code": (
-                getattr(settings, "oauth_device_poll_budget_capacity", 60),
-                float(getattr(settings, "oauth_device_poll_budget_refill_seconds", 60)),
-            ),
         },
     )
     app.state.dpop_verifier = DpopVerifier()
