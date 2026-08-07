@@ -186,6 +186,7 @@ def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() ->
         "--bundles app,dmg",
         "android build --debug --ci --target aarch64 --apk",
         "ios build --debug --ci --target aarch64-sim --no-sign",
+        "gen/apple/build/arm64-sim/*.app",
         "actions/upload-artifact@v4",
     ):
         assert required in text
