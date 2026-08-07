@@ -16,10 +16,6 @@
               <p v-if="status" role="status" class="form-success">{{ status }}</p>
               <p v-if="message" role="alert" class="form-error">{{ message }}</p>
             </div>
-            <div class="native-device-actions">
-              <button class="secondary-button" type="button" data-action="back-to-connect" :disabled="busy" @click="backToConnect">返回</button>
-              <button class="primary-button" type="button" data-action="regenerate" :disabled="busy" @click="regenerate">重新生成</button>
-            </div>
           </div>
           <div class="native-device-qr">
             <ThemedQrCode v-if="response" :value="response.verification_uri_complete" alt="设备授权二维码" />
@@ -29,6 +25,10 @@
               <span class="form-hint">{{ expiryLabel }}</span>
             </div>
           </div>
+        </div>
+        <div class="native-device-actions">
+          <button class="secondary-button" type="button" data-action="back-to-connect" :disabled="busy" @click="backToConnect">返回</button>
+          <button class="primary-button" type="button" data-action="regenerate" :disabled="busy" @click="regenerate">重新生成</button>
         </div>
       </template>
       <p v-else-if="message" class="form-error" role="alert">{{ message }}</p>
@@ -146,7 +146,7 @@ onBeforeUnmount(() => { session.value?.cancel(); stopTimer() })
 .native-device-layout { width: min(100%, 48rem); margin-inline: auto; display: grid; grid-template-columns: minmax(15rem, 18rem) minmax(0, 1fr); align-items: stretch; gap: clamp(var(--space-5), 5vw, 4rem); margin-block-start: var(--space-5); }
 .native-device-qr { display: grid; justify-items: center; align-content: center; gap: var(--space-3); }
 .native-device-qr .themed-qr-code { width: min(100%, 18rem); }
-.native-device-details { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; }
+.native-device-details { display: flex; flex-direction: column; justify-content: center; gap: var(--space-5); min-width: 0; }
 .native-device-server { display: grid; gap: var(--space-2); min-width: 0; }
 .native-device-server code { overflow-wrap: anywhere; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-terminal); color: var(--color-terminal-foreground); font-family: var(--font-mono); }
 .device-code { display: grid; gap: var(--space-2); }
@@ -157,7 +157,7 @@ onBeforeUnmount(() => { session.value?.cancel(); stopTimer() })
 .icon-button:disabled { cursor: not-allowed; opacity: .55; }
 .native-device-status { display: grid; gap: var(--space-2); min-width: 0; }
 .native-device-status p { margin: 0; }
-.native-device-actions { display: flex; justify-content: center; gap: var(--space-3); margin-block-start: auto; }
+.native-device-actions { display: flex; justify-content: center; gap: var(--space-3); width: min(100%, 48rem); margin-inline: auto; margin-block-start: var(--space-5); }
 @media (max-width: 42rem) {
   .device-auth-card { width: 100%; }
   .native-device-layout { width: 100%; grid-template-columns: 1fr; gap: var(--space-5); }
