@@ -142,7 +142,7 @@ onBeforeUnmount(() => { session.value?.cancel(); stopTimer() })
 .native-device-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
 .native-device-heading h1 { margin-block-end: 0; }
 .device-start-form { display: grid; gap: var(--space-3); margin-block-start: var(--space-5); }
-.native-device-layout { width: min(100%, 48rem); margin-inline: auto; display: grid; grid-template-columns: minmax(15rem, 18rem) minmax(0, 1fr); align-items: stretch; gap: clamp(var(--space-5), 5vw, 4rem); margin-block-start: var(--space-5); border: 1px solid var(--color-online); border-radius: var(--radius-lg); padding: clamp(var(--space-3), 3vw, var(--space-5)); background: var(--color-panel); }
+.native-device-layout { width: min(100%, 48rem); margin-inline: auto; display: grid; grid-template-columns: minmax(15rem, 18rem) minmax(0, 1fr); align-items: stretch; gap: clamp(var(--space-5), 5vw, 4rem); margin-block-start: 2rem; }
 .native-device-qr { display: grid; justify-items: center; align-content: center; gap: var(--space-3); }
 .native-device-qr .themed-qr-code { width: min(100%, 18rem); }
 .native-device-details { display: flex; flex-direction: column; justify-content: center; gap: var(--space-5); min-width: 0; }
@@ -156,7 +156,7 @@ onBeforeUnmount(() => { session.value?.cancel(); stopTimer() })
 .icon-button:disabled { cursor: not-allowed; opacity: .55; }
 .native-device-status { display: grid; gap: var(--space-2); min-width: 0; }
 .native-device-status p { margin: 0; }
-.native-device-actions { display: flex; justify-content: center; gap: var(--space-3); width: min(100%, 48rem); margin-inline: auto; margin-block-start: var(--space-5); }
+.native-device-actions { display: flex; justify-content: center; gap: var(--space-3); width: min(100%, 48rem); margin-inline: auto; margin-block-start: 2rem; }
 @media (max-width: 42rem) {
   .device-auth-card { width: 100%; }
   .native-device-layout { width: 100%; grid-template-columns: 1fr; gap: var(--space-5); }
