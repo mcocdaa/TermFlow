@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
 from termflow_node import __version__, cli
 from termflow_node.instances.activation import ActivationError, ActivationResult
 from termflow_node.instances.manager import AmbiguousInstance, InstanceManager
@@ -35,6 +36,27 @@ def test_version_reports_the_node_package_version() -> None:
 
     assert result.exit_code == 0, result.output
     assert result.stdout.strip() == __version__
+
+
+def test_exec_tmux_removes_frozen_library_paths(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_exec(file, argv, env):
+        captured.update(file=file, argv=argv, env=env)
+        raise SystemExit
+
+    monkeypatch.setattr(cli.os, "execvpe", fake_exec)
+    from termflow_node.tmux import runner as runner_module
+
+    monkeypatch.setattr(runner_module.sys, "frozen", True, raising=False)
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/pyinstaller-private")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/tmp/pyinstaller-private")
+
+    with pytest.raises(SystemExit):
+        cli._exec_tmux(["tmux", "-S", "/tmp/termflow.sock", "attach-session"])
+
+    assert "LD_LIBRARY_PATH" not in captured["env"]
+    assert "LD_LIBRARY_PATH_ORIG" not in captured["env"]
 
 
 def test_list_shows_independent_instance_health(tmp_path, monkeypatch) -> None:

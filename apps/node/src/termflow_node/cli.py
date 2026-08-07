@@ -6,7 +6,7 @@ import asyncio
 import json
 import os
 import signal
-from typing import Annotated
+from typing import Annotated, NoReturn
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -23,6 +23,11 @@ from termflow_node.instances.models import LocalInstance, RemoteAccessState
 from termflow_node.instances.store import InstanceStore
 from termflow_node.instances.synchronization import InstanceSynchronizer
 from termflow_node.logging import configure_logging, log_event
+from termflow_node.tmux.runner import tmux_subprocess_environment
+
+
+def _exec_tmux(argv: list[str]) -> NoReturn:
+    os.execvpe(argv[0], argv, tmux_subprocess_environment())
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -142,7 +147,7 @@ def new(name: Annotated[str, typer.Option("--name", help="Local Instance name.")
 
     ConfigStore.default().load()
     _, argv = InstanceManager(InstanceStore.default()).create(name)
-    os.execvp(argv[0], argv)
+    _exec_tmux(argv)
 
 
 @app.command()
@@ -150,7 +155,7 @@ def attach(identifier: str) -> None:
     """Attach to an exact UUID or uniquely named existing Instance."""
 
     _, argv = InstanceManager(InstanceStore.default()).attach(identifier)
-    os.execvp(argv[0], argv)
+    _exec_tmux(argv)
 
 
 @app.command()
