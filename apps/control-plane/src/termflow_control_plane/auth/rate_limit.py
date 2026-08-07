@@ -6,7 +6,7 @@ import asyncio
 import math
 import time
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from threading import Lock
@@ -180,7 +180,10 @@ class AuthRateLimiter:
         while len(self._states) >= self._max_entries:
             self._states.popitem(last=False)
         purpose, _ = key
-        capacity, refill_seconds = self._purpose_budgets.get(purpose, (self._capacity, self._refill_seconds))
+        budget = self._purpose_budgets.get(purpose)
+        capacity, refill_seconds = (
+            budget if budget is not None else (self._capacity, self._refill_seconds)
+        )
         state = _SourceState(
             tokens=float(capacity),
             updated_at=now,
