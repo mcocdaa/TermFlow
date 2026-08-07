@@ -21,6 +21,8 @@ class _SourceState:
     tokens: float
     updated_at: float
     last_seen_at: float
+    capacity: float
+    refill_seconds: float
     failures: int = 0
     next_allowed_at: float = 0.0
 
@@ -51,6 +53,7 @@ class AuthRateLimiter:
         max_entries: int = 4096,
         state_ttl_seconds: float = 900.0,
         max_concurrent_verifications: int = 16,
+        purpose_budgets: Mapping[str, tuple[int, float]] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if capacity < 1 or global_capacity < 1:
@@ -68,6 +71,7 @@ class AuthRateLimiter:
 
         self._capacity = capacity
         self._refill_seconds = refill_seconds
+        self._purpose_budgets = dict(purpose_budgets or {})
         self._global_capacity = global_capacity
         self._global_refill_seconds = global_refill_seconds
         self._max_backoff_seconds = max_backoff_seconds
@@ -104,7 +108,7 @@ class AuthRateLimiter:
             self._refill_source(state, now)
             wait = max(
                 state.next_allowed_at - now,
-                self._bucket_wait(state.tokens, self._refill_seconds),
+                self._bucket_wait(state.tokens, state.refill_seconds),
             )
             if wait > 0:
                 self._touch_locked(key, state, now)
@@ -175,10 +179,14 @@ class AuthRateLimiter:
             return state
         while len(self._states) >= self._max_entries:
             self._states.popitem(last=False)
+        purpose, _ = key
+        capacity, refill_seconds = self._purpose_budgets.get(purpose, (self._capacity, self._refill_seconds))
         state = _SourceState(
-            tokens=float(self._capacity),
+            tokens=float(capacity),
             updated_at=now,
             last_seen_at=now,
+            capacity=float(capacity),
+            refill_seconds=refill_seconds,
         )
         self._states[key] = state
         return state
@@ -204,8 +212,8 @@ class AuthRateLimiter:
     def _refill_source(self, state: _SourceState, now: float) -> None:
         elapsed = max(0.0, now - state.updated_at)
         state.tokens = min(
-            float(self._capacity),
-            state.tokens + elapsed / self._refill_seconds,
+            float(state.capacity),
+            state.tokens + elapsed / state.refill_seconds,
         )
         state.updated_at = now
 

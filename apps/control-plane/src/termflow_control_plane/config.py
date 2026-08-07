@@ -75,6 +75,8 @@ class Settings(BaseSettings):
     auth_cli_token_ttl_seconds: int = Field(default=15 * 60, ge=60, le=24 * 60 * 60)
     auth_attempt_budget_capacity: int = Field(default=5, ge=1, le=100)
     auth_attempt_refill_seconds: int = Field(default=60, ge=1, le=60 * 60)
+    oauth_device_poll_budget_capacity: int = Field(default=60, ge=1, le=600)
+    oauth_device_poll_budget_refill_seconds: int = Field(default=60, ge=1, le=60 * 60)
     auth_max_challenge_attempts: int = Field(default=5, ge=1, le=10)
     auth_max_backoff_seconds: int = Field(default=5 * 60, ge=1, le=60 * 60)
     auth_global_verification_capacity: int = Field(default=32, ge=1, le=1024)

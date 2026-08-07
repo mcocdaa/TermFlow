@@ -242,6 +242,16 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         capacity=getattr(settings, "auth_attempt_budget_capacity", 5),
         refill_seconds=float(getattr(settings, "auth_attempt_refill_seconds", 60)),
         max_backoff_seconds=getattr(settings, "auth_max_backoff_seconds", 300),
+        purpose_budgets={
+            "oauth_device_token": (
+                getattr(settings, "oauth_device_poll_budget_capacity", 60),
+                float(getattr(settings, "oauth_device_poll_budget_refill_seconds", 60)),
+            ),
+            "oauth_device_code": (
+                getattr(settings, "oauth_device_poll_budget_capacity", 60),
+                float(getattr(settings, "oauth_device_poll_budget_refill_seconds", 60)),
+            ),
+        },
     )
     app.state.dpop_verifier = DpopVerifier()
 

@@ -326,6 +326,17 @@ async fn token_request(
     } else {
         first
     };
+    // Remember any nonce the server issued, including on non-success responses
+    // such as authorization_pending.  Without this the next poll repeats the
+    // 401 nonce challenge, doubling requests per poll and exhausting the
+    // server's auth budget before the user can approve the device grant.
+    if let Some(nonce) = response
+        .headers()
+        .get("DPoP-Nonce")
+        .and_then(|value| value.to_str().ok())
+    {
+        remember_dpop_nonce(state, issuer, nonce)?;
+    }
     if !response.status().is_success() {
         let body = response.bytes().await.unwrap_or_default();
         if token_error_revokes_credentials(&body) {
@@ -335,13 +346,6 @@ async fn token_request(
             return Err(code);
         }
         return Err(safe_error("authorization_required"));
-    }
-    if let Some(nonce) = response
-        .headers()
-        .get("DPoP-Nonce")
-        .and_then(|value| value.to_str().ok())
-    {
-        remember_dpop_nonce(state, issuer, nonce)?;
     }
     response
         .json::<TokenResponse>()

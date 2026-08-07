@@ -64,6 +64,23 @@ def test_source_bucket_allows_five_then_refills_once_per_minute() -> None:
     assert _rate_limited(limiter, "web_session", "192.0.2.1").retry_after == 60
 
 
+def test_purpose_budget_overrides_default_capacity_and_refill() -> None:
+    clock = ManualClock()
+    limiter = _limiter(clock, purpose_budgets={"oauth_device_token": (60, 1.0)})
+
+    for _ in range(60):
+        limiter.check("oauth_device_token", "192.0.2.20")
+
+    assert _rate_limited(limiter, "oauth_device_token", "192.0.2.20").retry_after == 1
+
+    clock.advance(1.0)
+    limiter.check("oauth_device_token", "192.0.2.20")
+
+    for _ in range(5):
+        limiter.check("other_purpose", "192.0.2.20")
+    assert _rate_limited(limiter, "other_purpose", "192.0.2.20").retry_after == 60
+
+
 def test_failures_back_off_one_two_four_seconds_and_cap_at_five_minutes() -> None:
     clock = ManualClock()
     limiter = _limiter(clock, capacity=1000)
