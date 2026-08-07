@@ -1,15 +1,19 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { ApiError } from '@termflow/client-core'
 import { createClientUi, type ClientRuntime } from '@termflow/client-ui'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import NativeDeviceAuthorizeView from './NativeDeviceAuthorizeView.vue'
 
 const mocks = vi.hoisted(() => ({
-  begin: vi.fn(), openUrl: vi.fn(), metadata: vi.fn(), replaceServer: vi.fn(),
+  begin: vi.fn(), openUrl: vi.fn(), metadata: vi.fn(), replaceServer: vi.fn(), verifyNativeConnection: vi.fn(),
 }))
 
 vi.mock('@xterm/xterm', () => ({ Terminal: class {} }))
-vi.mock('../nativeAuth', () => ({ beginNativeDeviceAuthorization: mocks.begin }))
+vi.mock('../nativeAuth', () => ({
+  beginNativeDeviceAuthorization: mocks.begin,
+  verifyNativeConnection: mocks.verifyNativeConnection,
+}))
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: mocks.openUrl }))
 vi.mock('../serverConfig', () => ({
   canonicalIssuer: (value: string) => new URL(value).origin,
@@ -19,7 +23,10 @@ vi.mock('@tauri-apps/plugin-os', () => ({ platform: () => 'linux', arch: () => '
 
 function runtime(): ClientRuntime {
   return {
-    api: { oauth: { metadata: mocks.metadata } },
+    api: {
+      oauth: { metadata: mocks.metadata },
+      sessions: { status: mocks.verifyNativeConnection },
+    },
     clipboard: { writeText: vi.fn() },
   } as unknown as ClientRuntime
 }
@@ -36,6 +43,7 @@ beforeEach(() => {
   mocks.begin.mockReset(); mocks.openUrl.mockReset(); mocks.replaceServer.mockReset();
   mocks.metadata.mockReset().mockResolvedValue({ issuer: 'https://relay.example.com', scopes_supported: ['terminal:read'] })
   mocks.replaceServer.mockResolvedValue(undefined)
+  mocks.verifyNativeConnection.mockReset().mockResolvedValue({ authenticated: true, expires_at: null })
   mocks.begin.mockResolvedValue({
     response: { device_code: 'secret-device-code', user_code: 'ABCD-EFGH', verification_uri: 'https://relay.example.com/device', verification_uri_complete: 'https://relay.example.com/device?code=ABCD-EFGH', expires_in: 600, interval: 1 },
     session: { authorize: vi.fn().mockResolvedValue({}), cancel: vi.fn() },
@@ -139,6 +147,23 @@ describe('NativeDeviceAuthorizeView', () => {
     const { clientUi } = await render()
     await flushPromises()
 
+    expect(mocks.verifyNativeConnection).toHaveBeenCalled()
     expect(clientUi.toast.current.value).toEqual({ text: '已连接', tone: 'success' })
+  })
+
+  it('stays on the device page when the protected request is denied after approval', async () => {
+    const session = { authorize: vi.fn().mockResolvedValue({}), cancel: vi.fn() }
+    mocks.begin.mockResolvedValue({
+      response: { device_code: 'secret-device-code', user_code: 'ABCD-EFGH', verification_uri: 'https://relay.example.com/device', verification_uri_complete: 'https://relay.example.com/device?code=ABCD-EFGH', expires_in: 600, interval: 1 },
+      session,
+    })
+    mocks.verifyNativeConnection.mockRejectedValue(new ApiError('http_capability_denied'))
+    const { wrapper, router, clientUi } = await render()
+    await flushPromises()
+
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true)
+    expect(wrapper.get('[role="alert"]').text()).toBe('客户端网络权限配置无效。请升级或重新安装 TermFlow。')
+    expect(router.currentRoute.value.path).toBe('/connect/device')
+    expect(clientUi.toast.current.value).toBeNull()
   })
 })

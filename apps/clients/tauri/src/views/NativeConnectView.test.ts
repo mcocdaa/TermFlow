@@ -7,12 +7,16 @@ import NativeConnectView from './NativeConnectView.vue'
 
 const mocks = vi.hoisted(() => ({
   authorizeNativeClient: vi.fn(),
+  verifyNativeConnection: vi.fn(),
   replaceServer: vi.fn(),
   serverConfig: { current: 'https://relay.example.com' },
 }))
 
 vi.mock('@xterm/xterm', () => ({ Terminal: class {} }))
-vi.mock('../nativeAuth', () => ({ authorizeNativeClient: mocks.authorizeNativeClient }))
+vi.mock('../nativeAuth', () => ({
+  authorizeNativeClient: mocks.authorizeNativeClient,
+  verifyNativeConnection: mocks.verifyNativeConnection,
+}))
 vi.mock('../serverConfig', () => ({
   canonicalIssuer: (value: string) => new URL(value).origin,
   canonicalAuthorizeEndpoint: (_issuer: string, value: string) => value,
@@ -57,6 +61,8 @@ beforeEach(() => {
   mocks.replaceServer.mockReset()
   mocks.replaceServer.mockResolvedValue(undefined)
   mocks.serverConfig.current = 'https://relay.example.com'
+  mocks.verifyNativeConnection.mockReset()
+  mocks.verifyNativeConnection.mockResolvedValue(undefined)
 })
 
 describe('NativeConnectView', () => {
@@ -139,6 +145,30 @@ describe('NativeConnectView', () => {
 
     expect(wrapper.get('[role="alert"]').text()).toBe(expected)
     expect(wrapper.text()).not.toMatch(/token|secret|credential|authorization_callback_invalid/i)
+    expect(wrapper.get('[data-action="browser-login"]').text()).toContain('本机浏览器登录')
+  })
+
+  it('verifies the stored credential before leaving the connection page', async () => {
+    const { wrapper, router } = await render()
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.verifyNativeConnection).toHaveBeenCalled()
+    expect(router.currentRoute.value.path).toBe('/requested')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  })
+
+  it('stays on the connection page when the protected request is denied', async () => {
+    mocks.verifyNativeConnection.mockRejectedValue(new ApiError('http_capability_denied'))
+    const { wrapper, router } = await render()
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true)
+    expect(wrapper.get('[role="alert"]').text()).toBe('客户端网络权限配置无效。请升级或重新安装 TermFlow。')
+    expect(router.currentRoute.value.path).toBe('/connect')
     expect(wrapper.get('[data-action="browser-login"]').text()).toContain('本机浏览器登录')
   })
 })

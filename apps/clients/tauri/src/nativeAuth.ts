@@ -2,6 +2,7 @@ import { arch, platform } from '@tauri-apps/plugin-os'
 import { DeviceAuthorizationSession, NativeAuthorizationSession, createPkce, type DeviceAuthorizationPollResponse } from '@termflow/client-core'
 import type { OAuthScope } from '@termflow/client-contracts'
 import type { OAuthDeviceCodeResponse, OAuthPublicJwk } from '@termflow/client-contracts'
+import type { ClientRuntime } from '@termflow/client-ui'
 import { createTauriKey, exchangeAuthorization, tauriAuthorizationBrowser } from './adapters/tauriAuthorization'
 import { createTauriCredentialVault } from './adapters/tauriCredentialVault'
 import { buildVersion } from './buildVersion'
@@ -9,6 +10,10 @@ import { serverConfig } from './serverConfig'
 import { logNativeEvent, sanitizeNativeDetail } from './diagnostics'
 
 const vault = createTauriCredentialVault()
+
+export async function verifyNativeConnection(runtime: Pick<ClientRuntime, 'api'>): Promise<void> {
+  await runtime.api.sessions.status()
+}
 
 function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) {

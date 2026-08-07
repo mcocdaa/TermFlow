@@ -32,7 +32,7 @@ import { ApiError } from '@termflow/client-core'
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useBottomToast, useClientRuntime } from '@termflow/client-ui'
-import { authorizeNativeClient } from '../nativeAuth'
+import { authorizeNativeClient, verifyNativeConnection } from '../nativeAuth'
 import { canonicalAuthorizeEndpoint, canonicalIssuer, serverConfig } from '../serverConfig'
 
 const runtime = useClientRuntime(); const router = useRouter(); const route = useRoute()
@@ -72,6 +72,7 @@ async function connect() {
     if (metadata.issuer !== canonical) throw new Error('issuer_mismatch')
     const authorizeEndpoint = canonicalAuthorizeEndpoint(canonical, metadata.authorization_endpoint)
     await authorizeNativeClient(canonical, authorizeEndpoint, metadata.scopes_supported)
+    await verifyNativeConnection(runtime)
     toast.show({ text: '已连接', tone: 'success' })
     const target = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') && !route.query.redirect.startsWith('//') ? route.query.redirect : '/'
     await router.replace(target)

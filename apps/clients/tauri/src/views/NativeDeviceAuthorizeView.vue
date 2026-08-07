@@ -42,7 +42,7 @@ import { arch, platform } from '@tauri-apps/plugin-os'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ThemedQrCode, useBottomToast, useClientRuntime } from '@termflow/client-ui'
-import { beginNativeDeviceAuthorization } from '../nativeAuth'
+import { beginNativeDeviceAuthorization, verifyNativeConnection } from '../nativeAuth'
 import { buildVersion } from '../buildVersion'
 import { canonicalIssuer, serverConfig } from '../serverConfig'
 import { pollDeviceAuthorization } from '../adapters/tauriAuthorization'
@@ -64,7 +64,8 @@ let timer: ReturnType<typeof setInterval> | undefined
 const expiryLabel = computed(() => remaining.value > 0 ? `有效期剩余 ${Math.ceil(remaining.value / 1000)} 秒` : '设备码已过期')
 
 function actionableMessage(error: unknown): string {
-  const code = error instanceof ApiError ? error.code : error instanceof Error ? error.message : typeof error === 'string' ? error : ''
+  const code = error instanceof ApiError ? error.kind : error instanceof Error ? error.message : typeof error === 'string' ? error : ''
+  if (code === 'http_capability_denied') return '客户端网络权限配置无效。请升级或重新安装 TermFlow。'
   if (code === 'authorization_pending') return '浏览器尚未确认，请继续等待。'
   if (code === 'slow_down') return '请求过于频繁，已自动放慢轮询。'
   if (code === 'access_denied') return '浏览器拒绝了这次授权。请重新生成设备码。'
@@ -104,7 +105,8 @@ async function start() {
       if (remaining.value === 0) { result.session.cancel(); status.value = ''; message.value = '设备码已过期，请重新生成。'; stopTimer() }
     }, 1000)
     busy.value = false
-    void result.session.authorize().then(() => {
+    void result.session.authorize().then(async () => {
+      await verifyNativeConnection(runtime)
       status.value = '授权成功，正在打开工作区…'
       stopTimer()
       toast.show({ text: '已连接', tone: 'success' })
@@ -137,10 +139,11 @@ onBeforeUnmount(() => { session.value?.cancel(); stopTimer() })
 </script>
 
 <style scoped>
+.device-auth-card { width: min(100%, 56rem); }
 .native-device-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
 .native-device-heading h1 { margin-block-end: 0; }
 .device-start-form { display: grid; gap: var(--space-3); margin-block-start: var(--space-5); }
-.native-device-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(14rem, 18rem); align-items: stretch; gap: clamp(var(--space-5), 5vw, 4rem); margin-block-start: var(--space-5); }
+.native-device-layout { width: min(100%, 48rem); margin-inline: auto; display: grid; grid-template-columns: minmax(15rem, 18rem) minmax(0, 1fr); align-items: stretch; gap: clamp(var(--space-5), 5vw, 4rem); margin-block-start: var(--space-5); }
 .native-device-qr { display: grid; justify-items: center; align-content: center; gap: var(--space-3); }
 .native-device-qr .themed-qr-code { width: min(100%, 18rem); }
 .native-device-details { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; }
@@ -156,7 +159,8 @@ onBeforeUnmount(() => { session.value?.cancel(); stopTimer() })
 .native-device-status p { margin: 0; }
 .native-device-actions { display: flex; justify-content: center; gap: var(--space-3); margin-block-start: auto; }
 @media (max-width: 42rem) {
-  .native-device-layout { grid-template-columns: 1fr; gap: var(--space-5); }
+  .device-auth-card { width: 100%; }
+  .native-device-layout { width: 100%; grid-template-columns: 1fr; gap: var(--space-5); }
   .native-device-qr { order: -1; }
   .native-device-heading { align-items: flex-start; }
 }
