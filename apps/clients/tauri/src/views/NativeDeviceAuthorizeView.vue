@@ -8,6 +8,11 @@
       <template v-if="started">
         <div class="native-device-layout">
           <div class="native-device-details">
+            <div class="device-code" aria-live="polite">
+              <span class="form-hint">设备码</span>
+              <div class="device-code-value"><strong>{{ response?.user_code }}</strong><button class="icon-button" type="button" data-action="copy-device-code" aria-label="复制设备码" title="复制设备码" :disabled="busy" @click="copyCode"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8V5.5A1.5 1.5 0 0 1 9.5 4h9A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H16M5.5 8h9A1.5 1.5 0 0 1 16 9.5v9A1.5 1.5 0 0 1 14.5 20h-9A1.5 1.5 0 0 1 4 18.5v-9A1.5 1.5 0 0 1 5.5 8Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg></button></div>
+              <span class="form-hint">{{ expiryLabel }}</span>
+            </div>
             <div class="native-device-server">
               <span class="form-hint">服务器地址</span>
               <code>{{ issuer }}</code>
@@ -19,11 +24,6 @@
           </div>
           <div class="native-device-qr">
             <ThemedQrCode v-if="response" :value="response.verification_uri_complete" alt="设备授权二维码" />
-            <div class="device-code" aria-live="polite">
-              <span class="form-hint">设备码</span>
-              <div class="device-code-value"><strong>{{ response?.user_code }}</strong><button class="icon-button" type="button" data-action="copy-device-code" aria-label="复制设备码" title="复制设备码" :disabled="busy" @click="copyCode"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8V5.5A1.5 1.5 0 0 1 9.5 4h9A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H16M5.5 8h9A1.5 1.5 0 0 1 16 9.5v9A1.5 1.5 0 0 1 14.5 20h-9A1.5 1.5 0 0 1 4 18.5v-9A1.5 1.5 0 0 1 5.5 8Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg></button></div>
-              <span class="form-hint">{{ expiryLabel }}</span>
-            </div>
           </div>
         </div>
         <div class="native-device-actions">
