@@ -23,6 +23,7 @@ from termflow_node.config.models import InstallationConfig
 from termflow_node.control_plane_client import ControlPlaneClient, validate_server_url
 from termflow_node.instances.models import LocalInstance, RemoteAccessState
 from termflow_node.instances.store import InstanceStore
+from termflow_node.logging import log_event
 
 from .backoff import ReconnectBackoff
 
@@ -214,11 +215,18 @@ class BridgeTransport:
         token = self._instance.instance_token
         if token is None:
             raise RuntimeError("Instance registration did not produce a credential")
+        websocket_url = bridge_websocket_url(
+            str(self._installation.server_url),
+            allow_insecure_http=self._installation.allow_insecure_http,
+        )
+        if websocket_url.startswith("ws://"):
+            log_event(
+                "bridge_insecure_transport",
+                server_host=self._installation.server_url.host,
+                status="warning",
+            )
         async with self._connect(
-            bridge_websocket_url(
-                str(self._installation.server_url),
-                allow_insecure_http=self._installation.allow_insecure_http,
-            ),
+            websocket_url,
             additional_headers={
                 "Authorization": f"Bearer {token.get_secret_value()}",
             },

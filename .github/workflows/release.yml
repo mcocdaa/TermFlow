@@ -21,8 +21,8 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       is_prerelease: ${{ steps.version.outputs.is_prerelease }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
         with:
           python-version: "3.12"
       - name: Resolve release tag
@@ -66,9 +66,11 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+      attestations: write
+      id-token: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5
         with:
           path: release-assets
           merge-multiple: true
@@ -89,3 +91,18 @@ jobs:
             --generate-notes \
             --notes "Windows package is unsigned. Android uses a debug key. iOS is Simulator-only." \
             "${prerelease[@]}"
+      - uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
+        with:
+          subject-path: "release-assets/*"
+      - uses: sigstore/cosign-installer@f713795cb21599bc4e5c4b58cbad1da852d7eeb9  # v3
+      - name: Verify the signed control-plane image
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image_tag="${GITHUB_REF_NAME//+/_}"
+          cosign verify \
+            "ghcr.io/${owner}/termflow-control-plane:${image_tag}" \
+            --certificate-identity-regexp "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/package-control-plane.yml" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            >/dev/null

@@ -43,6 +43,12 @@ curl -fsSL https://github.com/mcocdaa/TermFlow/releases/download/vX.Y.Z/install-
 不删除旧版本，也不应输出任何注册码或 token。上面的 URL 是官方仓库；Fork 发布时替换为
 自己的 owner/repository。回退 A 时重新运行旧 tag 的安装命令即可。
 
+发布签名校验：每个 Release 的产物都会附带 GitHub Artifact Attestations（build
+provenance）。若本机已安装 GitHub CLI，安装器会用 `gh attestation verify` 额外校验 archive
+的 provenance 并拒绝校验失败的安装；没有 `gh` 时回退到纯 checksum 校验（checksum 与 archive
+同源下载，仅防传输损坏，不防 Release 被完全控制）。生产环境建议先安装 GitHub CLI 再执行安装
+命令。
+
 B + Web C 的默认 Compose 从当前 checkout 构建，不绑定 GitHub 所有者、Registry 或镜像 tag。
 部署前切换到已验证的精确源码 tag 或 commit，然后运行：
 
@@ -55,6 +61,19 @@ docker compose --env-file .env -f deploy/compose.yaml up -d --build
 回退 B 时切换到已验证的旧源码 tag 或 commit，重复 `up -d --build`；不要执行 `down --volumes`，
 也不要删除 `termflow-data`。GitHub Actions 或 Fork 可以使用同一个 Dockerfile 构建、标记和发布镜像，
 但镜像来源不属于普通 Compose 的运行时配置。
+
+TOTP 主密钥迁移（升级到独立密钥卷时）：新版 Compose 把自动生成的 TOTP 主密钥放在独立的
+`termflow-totp-key` 卷，与数据库卷分离。若旧部署已在 `termflow-data` 卷中生成
+`totp-master-key`，先停容器，把旧密钥文件复制进新卷再启动，避免已绑定的验证器全部失效：
+
+```bash
+docker compose --env-file .env -f deploy/compose.yaml stop
+docker run --rm \
+  --mount "source=termflow-data,target=/from" \
+  --mount "source=termflow-totp-key,target=/to" \
+  alpine sh -c 'test -f /from/totp-master-key && cp /from/totp-master-key /to/totp-master-key || echo "no legacy key file"'
+docker compose --env-file .env -f deploy/compose.yaml up -d
+```
 
 如果要直接运行正式 GHCR 镜像，镜像地址必须由部署者明确选择；它不是 `.env` 的必填项，也不会
 被默认 Compose 隐式替换：

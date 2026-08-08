@@ -30,10 +30,16 @@ Web C 的登录页把 Admin Token 交换为 8 小时内存会话。启用双重�
 有 scopes 的 CLI token，再用该 Bearer 访问资源。原生客户端在系统浏览器完成授权后，使用
 OAuth access/refresh token 和 DPoP 访问资源。
 
-TOTP 的主密钥只由 B 读取：单实例默认在 `termflow-data` 中自动生成 0600 文件，多实例必须
-显式共享同一密钥。验证器丢失不能在 Web C、App 或 EXE 中恢复；必须由拥有 Docker 主机权限的
-管理员在容器内运行 `termflow-control auth totp reset`。认证失败和验证码尝试由 B 限速，
-挑战过期或超过尝试次数后不会继续接受该挑战。
+TOTP 的主密钥只由 B 读取：单实例默认在独立于数据库卷的 `termflow-totp-key` 卷中自动生成
+0600 文件（与数据库分离，卷快照不会同时泄露密文与密钥），多实例必须显式共享同一密钥。
+验证器丢失不能在 Web C、App 或 EXE 中恢复；必须由拥有 Docker 主机权限的管理员在容器内
+运行 `termflow-control auth totp reset`。认证失败和验证码尝试由 B 限速（每来源桶 +
+全局桶，全局桶容量由 `TERMFLOW_AUTH_GLOBAL_VERIFICATION_CAPACITY` 控制），挑战过期或
+超过尝试次数后不会继续接受该挑战。
+
+凭据轮换：`termflow-control auth rotate` 在保留 TOTP 的情况下推进全局认证 epoch，立即
+吊销全部 Web、原生和 CLI 凭据；`auth totp reset` 则同时清除 TOTP。两者都需要容器内本地
+确认。修改 `TERMFLOW_ADMIN_TOKEN` 并重启不会自动撤销已签发的凭据，请使用上述命令。
 
 Computer 的注册时间由 B 创建 Installation 时记录，最近在线时间由 B 收到 A 的注册、
 心跳或拓扑更新时记录；两者都以 UTC 存储和传输，不依赖 A 的本地时钟。Web C 按当前
@@ -51,13 +57,32 @@ socket 的同 OS 用户进程视为可信。`termflow kill` 只操作精确解�
 公网 B 必须使用 HTTPS/WSS；明文 HTTP/WS 只允许 `127.0.0.1`、`localhost` 或 `::1`。
 DNS、TLS、反向代理和可选 mTLS 由部署者的外部边缘服务负责，TermFlow 容器只接收代理转发的
 HTTP/WS。`TERMFLOW_PUBLIC_BASE_URL` 是用户、A、Web C 和原生客户端共同使用的 canonical
-origin；添加电脑返回的登录命令也从它生成。
+origin；添加电脑返回的登录命令也从它生成。反向代理部署时认证限速默认按直连 IP 计源，
+所有用户共享代理 IP 的预算；仅在信任代理正确追加 `X-Forwarded-For` 时显式设置
+`TERMFLOW_TRUST_PROXY=true` 才会按转发头计源。非回环的明文 `PUBLIC_BASE_URL` 会在启动时
+拒绝；HTTPS 部署自动附加 HSTS 响应头。
 token 不放 URL。B 不持久化终端输入、输出、屏幕快照或录像；SQLite 和审计只含身份、
 字节数、动作、结果等元数据。A 的短期输出环只存在于 Bridge 内存，进程退出即消失。
+终端输入审计（来源会话、累计字节数）以聚合日志写入 stdout 并进入容器日志系统，不落
+SQLite；`docker logs` 由 Compose 的 `max-size` 配置轮转。
+
+A 端 `--allow-insecure-http` 会以明文传输注册凭据与终端流量：该开关只输出警告并标记
+`status`/日志为 `insecure`，不会拒绝公网 HTTP 目标。仅应在受信任的专用局域网使用；公网
+部署必须使用 HTTPS。
 
 每个 Term 同时只有一个可输入的远程 tmux client，新连接显式替换旧连接。单帧最大
 64 KiB，并有输入速率、队列和背压上限。远程连接关闭只 detach 代理 client，不能结束
 tmux server/session 或 Pane 进程。
+
+原生 C 的所有 HTTP 与 WebSocket 流量都由 Rust 侧统一发出：WebView 不再持有
+`http`/`websocket` 插件权限，`native_request_headers`/`native_http_request`/
+`native_terminal_connect` 会把目标严格限定为配置 issuer 的 origin 与 `/api/` 路径前缀，
+Access Token 不进入 JavaScript 环境；DPoP 签名输入被限定为规范 JWT 结构。客户端日志在
+Rust 统一脱敏后落盘。
+
+安装与供应链：Release 产物携带 GitHub Artifact Attestations（build provenance），镜像
+以 cosign keyless 签名并附带 SBOM；`install-termflow-node.sh` 在有 GitHub CLI 时校验
+attestation。CI 引用完整 commit SHA 且权限最小化。
 
 容器默认只映射 loopback。需要远程访问时，应使用可信反向代理终止 TLS，并保护
 Admin Token。不要把数据库、A 配置、Bridge 日志或 tmux socket 上传为诊断附件。

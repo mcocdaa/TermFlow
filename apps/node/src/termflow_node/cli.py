@@ -67,11 +67,20 @@ def login(
     allow_insecure_http: bool = typer.Option(
         False,
         "--allow-insecure-http",
-        help="Permit a plain-HTTP Control Plane URL on a trusted LAN.",
+        help=(
+            "Permit a plain-HTTP Control Plane URL on a trusted LAN. "
+            "WARNING: credentials and terminal traffic are unencrypted."
+        ),
     ),
 ) -> None:
     """Enroll this computer with one Control Plane."""
 
+    if allow_insecure_http and urlsplit(server).scheme == "http":
+        typer.echo(
+            "WARNING: connecting to a plain-HTTP Control Plane. "
+            "Enrollment tokens and terminal traffic will be sent unencrypted "
+            "and can be intercepted on the network."
+        )
     normalized_server = validate_server_url(server, allow_insecure_http=allow_insecure_http)
     store = ConfigStore.default()
     if store.exists() and not force:
@@ -117,7 +126,7 @@ def login(
     typer.echo(f"Installation {config.installation_id} enrolled at {config.server_url.host}")
 
 
-def _status_payload(record: LocalInstance) -> dict[str, object]:
+def _status_payload(record: LocalInstance, *, insecure: bool) -> dict[str, object]:
     tmux_alive, bridge_alive = probe_instance_health(record)
     return {
         "instance_id": str(record.instance_id),
@@ -131,6 +140,7 @@ def _status_payload(record: LocalInstance) -> dict[str, object]:
         "last_sync_error": record.last_sync_error,
         "tmux_alive": tmux_alive,
         "bridge_alive": bridge_alive,
+        "transport": "insecure" if insecure else "secure",
         "socket_path": str(record.socket_path),
     }
 
@@ -144,11 +154,13 @@ def _status_line(payload: dict[str, object]) -> str:
         health = "bridge-running"
     else:
         health = "bridge-down"
+    transport = "" if payload["transport"] == "secure" else " INSECURE"
     return (
         f"{payload['instance_id']} {payload['name']} "
         f"{payload['lifecycle']} {health} "
         f"remote={str(payload['remote_status']).replace('_', '-')} "
         f"remote_access={payload['remote_access']}"
+        f"{transport}"
     )
 
 
@@ -238,8 +250,10 @@ def list_instances(
     """List local Instances without contacting the Control Plane."""
 
     store = InstanceStore.default()
+    insecure = ConfigStore.default().load().allow_insecure_http
     payloads = [
-        _status_payload(record) for record in InstanceManager(store).list_current().instances
+        _status_payload(record, insecure=insecure)
+        for record in InstanceManager(store).list_current().instances
     ]
     if json_output:
         typer.echo(json.dumps(payloads, separators=(",", ":")))
@@ -256,7 +270,8 @@ def status(
     """Show one local Instance status."""
 
     record = InstanceManager(InstanceStore.default()).resolve(identifier)
-    payload = _status_payload(record)
+    insecure = ConfigStore.default().load().allow_insecure_http
+    payload = _status_payload(record, insecure=insecure)
     typer.echo(json.dumps(payload, separators=(",", ":")) if json_output else _status_line(payload))
 
 
