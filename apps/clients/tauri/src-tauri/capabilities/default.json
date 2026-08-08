@@ -8,16 +8,6 @@
     "core:event:default",
     "opener:default",
     "deep-link:default",
-    {
-      "identifier": "http:default",
-      "allow": [
-        { "url": "https://*" },
-        { "url": "http://127.0.0.1:*" },
-        { "url": "http://localhost:*" },
-        { "url": "http://[\\:\\:1]:*" }
-      ]
-    },
-    "websocket:default",
     "os:default",
     "store:default",
     "clipboard-manager:allow-write-text"

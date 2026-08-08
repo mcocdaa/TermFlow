@@ -84,11 +84,11 @@ pub struct NativeDeviceExchangeRequest {
 
 #[derive(Debug, Serialize)]
 pub struct NativeHeaders {
-    authorization: String,
-    dpop: String,
+    pub(crate) authorization: String,
+    pub(crate) dpop: String,
 }
 
-fn safe_error(code: &str) -> String {
+pub(crate) fn safe_error(code: &str) -> String {
     code.to_owned()
 }
 fn now_unix() -> Result<i64, String> {
@@ -97,7 +97,7 @@ fn now_unix() -> Result<i64, String> {
         .map(|value| value.as_secs() as i64)
         .map_err(|_| safe_error("clock_invalid"))
 }
-fn canonical_issuer(value: &str) -> Result<String, String> {
+pub(crate) fn canonical_issuer(value: &str) -> Result<String, String> {
     let url = Url::parse(value).map_err(|_| safe_error("issuer_invalid"))?;
     if !matches!(url.scheme(), "http" | "https")
         || url.username() != ""
@@ -113,6 +113,51 @@ fn canonical_issuer(value: &str) -> Result<String, String> {
         return Err(safe_error("https_required"));
     }
     Ok(url.origin().ascii_serialization())
+}
+
+fn assert_api_target(issuer: &str, target: &str) -> Result<Url, String> {
+    let url = Url::parse(target).map_err(|_| safe_error("url_invalid"))?;
+    if url.username() != "" || url.password().is_some() {
+        return Err(safe_error("url_not_allowed"));
+    }
+    let base = Url::parse(issuer).map_err(|_| safe_error("issuer_invalid"))?;
+    if url.origin() != base.origin() {
+        return Err(safe_error("url_not_allowed"));
+    }
+    if !url.path().starts_with("/api/") {
+        return Err(safe_error("url_not_allowed"));
+    }
+    Ok(url)
+}
+
+fn validate_dpop_signing_input(input: &[u8]) -> Result<(), String> {
+    let text = std::str::from_utf8(input).map_err(|_| safe_error("signing_input_invalid"))?;
+    let mut parts = text.split('.');
+    let header_segment = parts.next().ok_or(safe_error("signing_input_invalid"))?;
+    let payload_segment = parts.next().ok_or(safe_error("signing_input_invalid"))?;
+    if parts.next().is_some() {
+        return Err(safe_error("signing_input_invalid"));
+    }
+    let header = decode_jwt_segment(header_segment)?;
+    if header.get("typ").and_then(Value::as_str) != Some("dpop+jwt")
+        || header.get("alg").and_then(Value::as_str) != Some("ES256")
+    {
+        return Err(safe_error("signing_input_invalid"));
+    }
+    let payload = decode_jwt_segment(payload_segment)?;
+    for field in ["jti", "htm", "htu"] {
+        if !payload.get(field).and_then(Value::as_str).is_some() {
+            return Err(safe_error("signing_input_invalid"));
+        }
+    }
+    Ok(())
+}
+
+fn decode_jwt_segment(segment: &str) -> Result<Value, String> {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(segment)
+        .map_err(|_| safe_error("signing_input_invalid"))?;
+    serde_json::from_slice(&bytes).map_err(|_| safe_error("signing_input_invalid"))
 }
 fn issuer_key(issuer: &str, kind: &str) -> String {
     format!(
@@ -428,6 +473,7 @@ pub fn native_key_thumbprint(issuer: String) -> Result<String, String> {
 #[tauri::command]
 pub fn native_sign_jwt(issuer: String, signing_input: Vec<u8>) -> Result<Vec<u8>, String> {
     let issuer = canonical_issuer(&issuer)?;
+    validate_dpop_signing_input(&signing_input)?;
     let signature: Signature = signing_key(&issuer)?.sign(&signing_input);
     Ok(signature.to_bytes().to_vec())
 }
@@ -512,6 +558,7 @@ pub async fn native_request_headers(
     nonce: Option<String>,
 ) -> Result<NativeHeaders, String> {
     let issuer = canonical_issuer(&issuer)?;
+    assert_api_target(&issuer, &url)?;
     let access = current_access(&state, &issuer).await?;
     let nonce = match nonce {
         Some(value) => {
@@ -541,6 +588,182 @@ pub fn native_remember_dpop_nonce(
 ) -> Result<(), String> {
     let issuer = canonical_issuer(&issuer)?;
     remember_dpop_nonce(&state, &issuer, &nonce)
+}
+
+fn is_public_api_path(path: &str) -> bool {
+    let path = path.split('?').next().unwrap_or(path);
+    matches!(
+        path,
+        "/.well-known/oauth-authorization-server" | "/healthz" | "/api/v1/oauth/device/code"
+    )
+}
+
+fn assert_http_target(issuer: &str, path: &str) -> Result<Url, String> {
+    if !path.starts_with('/') || path.starts_with("//") || path.contains("://") || path.contains('\\')
+    {
+        return Err(safe_error("url_not_allowed"));
+    }
+    let url = Url::parse(&format!("{issuer}{path}")).map_err(|_| safe_error("url_invalid"))?;
+    let base = Url::parse(issuer).map_err(|_| safe_error("issuer_invalid"))?;
+    if url.origin() != base.origin()
+        || url.username() != ""
+        || url.password().is_some()
+    {
+        return Err(safe_error("url_not_allowed"));
+    }
+    if !is_public_api_path(path) && !url.path().starts_with("/api/") {
+        return Err(safe_error("url_not_allowed"));
+    }
+    Ok(url)
+}
+
+pub(crate) async fn request_auth_headers(
+    state: &NativeAuthState,
+    issuer: &str,
+    method: &str,
+    url: &str,
+) -> Result<NativeHeaders, String> {
+    let access = current_access(state, issuer).await?;
+    let nonce = remembered_dpop_nonce(state, issuer)?;
+    let proof = dpop_proof(
+        &signing_key(issuer)?,
+        method,
+        url,
+        nonce.as_deref(),
+        Some(&access.access_token),
+    )?;
+    Ok(NativeHeaders {
+        authorization: format!("DPoP {}", access.access_token),
+        dpop: proof,
+    })
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeHttpResponse {
+    status: u16,
+    headers: HashMap<String, String>,
+    body: Option<Value>,
+}
+
+/// The only WebView-visible HTTP channel. The Rust side pins the target to
+/// the configured issuer origin and `/api/` prefix (or the public bootstrap
+/// paths), signs DPoP locally, and never hands the raw access token to JS.
+#[tauri::command]
+pub async fn native_http_request(
+    state: State<'_, NativeAuthState>,
+    issuer: String,
+    path: String,
+    method: String,
+    headers: Option<HashMap<String, String>>,
+    body: Option<Value>,
+    nonce: Option<String>,
+) -> Result<NativeHttpResponse, String> {
+    let issuer = canonical_issuer(&issuer)?;
+    let _ = assert_http_target(&issuer, &path)?;
+    let url = format!("{issuer}{path}");
+    let method = method.to_uppercase();
+    let is_public = is_public_api_path(&path);
+    let access = if is_public {
+        None
+    } else {
+        Some(current_access(&state, &issuer).await?)
+    };
+    let remembered = if is_public {
+        None
+    } else {
+        remembered_dpop_nonce(&state, &issuer)?
+    };
+    let effective_nonce = nonce.or(remembered);
+
+    let send = |request_nonce: Option<String>| -> Result<reqwest::RequestBuilder, String> {
+        let mut builder = match method.as_str() {
+            "GET" => state.http.get(&url),
+            "POST" => state.http.post(&url),
+            "PATCH" => state.http.patch(&url),
+            "DELETE" => state.http.delete(&url),
+            _ => return Err(safe_error("method_not_allowed")),
+        };
+        for (name, value) in headers.iter().flatten() {
+            builder = builder.header(name, value);
+        }
+        if !is_public {
+            let key = signing_key(&issuer)?;
+            let proof = dpop_proof(
+                &key,
+                &method,
+                &url,
+                request_nonce.as_deref(),
+                access.as_ref().map(|value| value.access_token.as_str()),
+            )?;
+            builder = builder
+                .header("Authorization", format!("DPoP {}", access.as_ref().unwrap().access_token))
+                .header("DPoP", proof);
+        }
+        if let Some(value) = &body {
+            builder = builder.json(value);
+        }
+        Ok(builder)
+    };
+
+    let first = send(effective_nonce.clone())?
+        .send()
+        .await
+        .map_err(|_| safe_error("request_failed"))?;
+    let response = if first.status() == StatusCode::UNAUTHORIZED && !is_public {
+        if let Some(nonce) = first
+            .headers()
+            .get("DPoP-Nonce")
+            .and_then(|value| value.to_str().ok())
+        {
+            send(Some(nonce.to_owned()))?
+                .send()
+                .await
+                .map_err(|_| safe_error("request_failed"))?
+        } else {
+            first
+        }
+    } else {
+        first
+    };
+    if !is_public {
+        if let Some(nonce) = response
+            .headers()
+            .get("DPoP-Nonce")
+            .and_then(|value| value.to_str().ok())
+        {
+            remember_dpop_nonce(&state, &issuer, nonce)?;
+        }
+    }
+    let status = response.status().as_u16();
+    let response_headers = response
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_owned(),
+                value.to_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect::<HashMap<String, String>>();
+    let body_value = if response_headers
+        .get("content-type")
+        .unwrap_or(&String::new())
+        .contains("application/json")
+    {
+        response
+            .json::<Value>()
+            .await
+            .map(Some)
+            .unwrap_or(None)
+    } else {
+        None
+    };
+    Ok(NativeHttpResponse {
+        status,
+        headers: response_headers,
+        body: body_value,
+    })
 }
 
 #[cfg(test)]
@@ -599,6 +822,44 @@ mod tests {
             Some("nonce-two".to_owned())
         );
         assert!(remember_dpop_nonce(&state, "https://one.example", "bad nonce").is_err());
+    }
+
+    #[test]
+    fn api_target_must_match_issuer_origin_and_api_prefix() {
+        let issuer = "https://b.example";
+        assert!(assert_api_target(issuer, "https://b.example/api/v1/dashboard").is_ok());
+        assert!(assert_api_target(issuer, "https://attacker.example/api/v1/dashboard").is_err());
+        assert!(assert_api_target(issuer, "https://b.example/other").is_err());
+        assert!(assert_api_target(issuer, "https://b.example/").is_err());
+        assert!(assert_api_target(issuer, "https://user:pass@b.example/api/v1/dashboard").is_err());
+    }
+
+    #[test]
+    fn http_target_allows_public_paths_without_api_prefix() {
+        let issuer = "https://b.example";
+        assert!(assert_http_target(issuer, "/api/v1/dashboard").is_ok());
+        assert!(assert_http_target(issuer, "/.well-known/oauth-authorization-server").is_ok());
+        assert!(assert_http_target(issuer, "/healthz").is_ok());
+        assert!(assert_http_target(issuer, "/api/v1/oauth/device/code").is_ok());
+        assert!(assert_http_target(issuer, "/not-api").is_err());
+        assert!(assert_http_target(issuer, "//attacker.example/api/v1/x").is_err());
+        assert!(assert_http_target(issuer, "/api/v1/../secret").is_ok());
+    }
+
+    #[test]
+    fn dpop_signing_input_must_be_two_part_dpop_jwt() {
+        let key = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
+        let jwk = public_jwk(&key).unwrap();
+        let header = jwt_segment(&json!({"typ": "dpop+jwt", "alg": "ES256", "jwk": jwk})).unwrap();
+        let claims = jwt_segment(&json!({"jti": "abc", "htm": "GET", "htu": "https://b.example/api"})).unwrap();
+        let valid = format!("{header}.{claims}");
+        assert!(validate_dpop_signing_input(valid.as_bytes()).is_ok());
+        assert!(validate_dpop_signing_input(b"not-a-jwt".as_slice()).is_err());
+        let missing_htu = jwt_segment(&json!({"jti": "abc", "htm": "GET"})).unwrap();
+        assert!(validate_dpop_signing_input(format!("{header}.{missing_htu}").as_bytes()).is_err());
+        let wrong_alg = jwt_segment(&json!({"typ": "dpop+jwt", "alg": "RS256", "jwk": {}})).unwrap();
+        assert!(validate_dpop_signing_input(format!("{wrong_alg}.{claims}").as_bytes()).is_err());
+        assert!(validate_dpop_signing_input(format!("{header}.{claims}.extra").as_bytes()).is_err());
     }
 
     #[test]

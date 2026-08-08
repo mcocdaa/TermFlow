@@ -1,81 +1,47 @@
 import { invoke } from '@tauri-apps/api/core'
-import { fetch } from '@tauri-apps/plugin-http'
-import { HttpTransportError, type HttpRequest, type HttpTransport } from '@termflow/client-core'
+import { HttpTransportError, type HeaderReader, type HttpRequest, type HttpTransport } from '@termflow/client-core'
 import { serverConfig } from '../serverConfig'
 import { logNativeEvent, sanitizeNativeDetail } from '../diagnostics'
 
-interface NativeHeaders { authorization: string; dpop: string }
-const PUBLIC_PATHS = new Set(['/.well-known/oauth-authorization-server', '/healthz', '/api/v1/oauth/device/code'])
-
-function safePath(path: string) { return path.startsWith('/') && !path.startsWith('//') && !path.includes('://') && !path.includes('\\') }
+interface NativeHttpResponse { status: number; headers: Record<string, string>; body: unknown }
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return `${error.name}: ${error.message}`
   return typeof error === 'string' ? error : ''
 }
 
-function isHttpCapabilityFailure(error: unknown): boolean {
-  const message = errorMessage(error).toLowerCase()
-  return message.includes('error deserializing scope:')
-    || message.includes('url not allowed on the configured scope:')
+function reader(headers: Record<string, string>): HeaderReader {
+  return { get: (name: string) => headers[name.toLowerCase()] ?? null }
 }
 
 export function createTauriHttpTransport(): HttpTransport {
   return {
     async request(path: `/${string}`, request: HttpRequest) {
-      if (!safePath(path)) throw new HttpTransportError('invalid_request')
-      const url = new URL(path, `${serverConfig.current}/`).toString()
-      const isPublic = PUBLIC_PATHS.has(path.split('?')[0] ?? path)
-      const body = request.body === undefined ? undefined : JSON.stringify(request.body)
-      const send = async (nonce?: string) => {
-        const headers = new Headers({ accept: 'application/json', ...(request.headers ?? {}) })
-        if (!isPublic) {
-          const native = await invoke<NativeHeaders>('native_request_headers', {
-            issuer: serverConfig.current,
-            method: request.method,
-            url,
-            ...(nonce === undefined ? {} : { nonce }),
-          })
-          headers.set('authorization', native.authorization)
-          headers.set('dpop', native.dpop)
-        }
-        const init: RequestInit = { method: request.method, headers }
-        if (body !== undefined) { headers.set('content-type', 'application/json'); init.body = body }
-        if (request.signal !== undefined) init.signal = request.signal
-        return fetch(url, init)
-      }
-      const rememberNonce = async (response: Response) => {
-        if (isPublic) return
-        const nonce = response.headers.get('dpop-nonce')
-        if (nonce !== null) {
-          await invoke('native_remember_dpop_nonce', {
-            issuer: serverConfig.current,
-            nonce,
-          })
-        }
-      }
+      const body = request.body === undefined ? undefined : JSON.parse(JSON.stringify(request.body))
+      const headers: Record<string, string> = {}
+      for (const [name, value] of Object.entries(request.headers ?? {})) headers[name] = value
+      const send = async (nonce?: string) => invoke<NativeHttpResponse>('native_http_request', {
+        issuer: serverConfig.current,
+        path,
+        method: request.method,
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
+        ...(body === undefined ? {} : { body }),
+        ...(nonce === undefined ? {} : { nonce }),
+      })
       try {
         let response = await send()
-        await rememberNonce(response)
-        const nonce = response.status === 401 ? response.headers.get('dpop-nonce') : null
-        if (!isPublic && nonce !== null) {
-          response = await send(nonce)
-          await rememberNonce(response)
-        }
-        let body: unknown
-        if ((response.headers.get('content-type') ?? '').includes('application/json')) {
-          try { body = await response.json() } catch { body = undefined }
+        if (response.status === 401 && response.headers['dpop-nonce'] !== undefined) {
+          response = await send(response.headers['dpop-nonce'])
         }
         void logNativeEvent({
           event: 'http_response',
           issuer: serverConfig.current,
-          requestId: response.headers.get('x-request-id') ?? undefined,
+          requestId: response.headers['x-request-id'] ?? undefined,
           errorCode: response.status >= 400 ? `http_${response.status}` : undefined,
         })
-        return { status: response.status, headers: response.headers, body }
+        return { status: response.status, headers: reader(response.headers), body: response.body }
       } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') throw new HttpTransportError('aborted')
-        if (isHttpCapabilityFailure(error)) {
+        if (errorMessage(error).includes('url_not_allowed') || errorMessage(error).includes('method_not_allowed')) {
           void logNativeEvent({ event: 'http_request_failed', issuer: serverConfig.current, level: 'error', errorCode: 'http_capability_denied', errorDetail: sanitizeNativeDetail(error) })
           throw new HttpTransportError('http_capability_denied')
         }

@@ -1,5 +1,6 @@
 mod auth;
 mod diagnostics;
+mod terminal_socket;
 
 use auth::NativeAuthState;
 use tauri::Manager;
@@ -18,12 +19,11 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_http::init())
-        .plugin(tauri_plugin_websocket::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(NativeAuthState::default())
+        .manage(terminal_socket::TerminalSocketState::default())
         .setup(|app| {
             let log_dir = app
                 .path()
@@ -42,6 +42,10 @@ pub fn run() {
             auth::native_clear_credentials,
             auth::native_request_headers,
             auth::native_remember_dpop_nonce,
+            auth::native_http_request,
+            terminal_socket::native_terminal_connect,
+            terminal_socket::native_terminal_send,
+            terminal_socket::native_terminal_close,
             diagnostics::native_log,
         ])
         .run(tauri::generate_context!())
