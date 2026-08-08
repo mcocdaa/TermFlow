@@ -31,7 +31,11 @@ pub struct TerminalSocketState {
     sockets: Mutex<HashMap<String, OpenSocket>>,
 }
 
-fn validate_terminal_targets(issuer: &str, proof_url: &str, socket_url: &str) -> Result<(), String> {
+fn validate_terminal_targets(
+    issuer: &str,
+    proof_url: &str,
+    socket_url: &str,
+) -> Result<(), String> {
     let base = url::Url::parse(issuer).map_err(|_| auth::safe_error("issuer_invalid"))?;
     for target in [proof_url, socket_url] {
         let mut parsed = url::Url::parse(target).map_err(|_| auth::safe_error("url_invalid"))?;
@@ -63,7 +67,10 @@ fn take_sink(state: &TerminalSocketState, id: &str) -> Result<SocketSink, String
     let socket = sockets
         .get_mut(id)
         .ok_or_else(|| auth::safe_error("socket_not_found"))?;
-    socket.sink.take().ok_or_else(|| auth::safe_error("socket_busy"))
+    socket
+        .sink
+        .take()
+        .ok_or_else(|| auth::safe_error("socket_busy"))
 }
 
 fn restore_sink(state: &TerminalSocketState, id: &str, sink: SocketSink) {
@@ -119,15 +126,18 @@ pub async fn native_terminal_connect(
         while let Some(message) = read.next().await {
             match message {
                 Ok(WsMessage::Text(text)) => {
-                    let _ = on_message
-                        .send(serde_json::json!({"type": "Text", "data": text.as_str()}));
+                    let _ =
+                        on_message.send(serde_json::json!({"type": "Text", "data": text.as_str()}));
                 }
                 Ok(WsMessage::Binary(bytes)) => {
                     let _ = on_message
                         .send(serde_json::json!({"type": "Binary", "data": bytes.to_vec()}));
                 }
                 Ok(WsMessage::Close(frame)) => {
-                    let code: u16 = frame.as_ref().map(|frame| frame.code.into()).unwrap_or(1000);
+                    let code: u16 = frame
+                        .as_ref()
+                        .map(|frame| frame.code.into())
+                        .unwrap_or(1000);
                     let _ = on_message
                         .send(serde_json::json!({"type": "Close", "data": {"code": code}}));
                     break;

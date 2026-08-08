@@ -599,16 +599,16 @@ fn is_public_api_path(path: &str) -> bool {
 }
 
 fn assert_http_target(issuer: &str, path: &str) -> Result<Url, String> {
-    if !path.starts_with('/') || path.starts_with("//") || path.contains("://") || path.contains('\\')
+    if !path.starts_with('/')
+        || path.starts_with("//")
+        || path.contains("://")
+        || path.contains('\\')
     {
         return Err(safe_error("url_not_allowed"));
     }
     let url = Url::parse(&format!("{issuer}{path}")).map_err(|_| safe_error("url_invalid"))?;
     let base = Url::parse(issuer).map_err(|_| safe_error("issuer_invalid"))?;
-    if url.origin() != base.origin()
-        || url.username() != ""
-        || url.password().is_some()
-    {
+    if url.origin() != base.origin() || url.username() != "" || url.password().is_some() {
         return Err(safe_error("url_not_allowed"));
     }
     if !is_public_api_path(path) && !url.path().starts_with("/api/") {
@@ -697,7 +697,10 @@ pub async fn native_http_request(
                 access.as_ref().map(|value| value.access_token.as_str()),
             )?;
             builder = builder
-                .header("Authorization", format!("DPoP {}", access.as_ref().unwrap().access_token))
+                .header(
+                    "Authorization",
+                    format!("DPoP {}", access.as_ref().unwrap().access_token),
+                )
                 .header("DPoP", proof);
         }
         if let Some(value) = &body {
@@ -751,11 +754,7 @@ pub async fn native_http_request(
         .unwrap_or(&String::new())
         .contains("application/json")
     {
-        response
-            .json::<Value>()
-            .await
-            .map(Some)
-            .unwrap_or(None)
+        response.json::<Value>().await.map(Some).unwrap_or(None)
     } else {
         None
     };
@@ -851,15 +850,20 @@ mod tests {
         let key = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
         let jwk = public_jwk(&key).unwrap();
         let header = jwt_segment(&json!({"typ": "dpop+jwt", "alg": "ES256", "jwk": jwk})).unwrap();
-        let claims = jwt_segment(&json!({"jti": "abc", "htm": "GET", "htu": "https://b.example/api"})).unwrap();
+        let claims =
+            jwt_segment(&json!({"jti": "abc", "htm": "GET", "htu": "https://b.example/api"}))
+                .unwrap();
         let valid = format!("{header}.{claims}");
         assert!(validate_dpop_signing_input(valid.as_bytes()).is_ok());
         assert!(validate_dpop_signing_input(b"not-a-jwt".as_slice()).is_err());
         let missing_htu = jwt_segment(&json!({"jti": "abc", "htm": "GET"})).unwrap();
         assert!(validate_dpop_signing_input(format!("{header}.{missing_htu}").as_bytes()).is_err());
-        let wrong_alg = jwt_segment(&json!({"typ": "dpop+jwt", "alg": "RS256", "jwk": {}})).unwrap();
+        let wrong_alg =
+            jwt_segment(&json!({"typ": "dpop+jwt", "alg": "RS256", "jwk": {}})).unwrap();
         assert!(validate_dpop_signing_input(format!("{wrong_alg}.{claims}").as_bytes()).is_err());
-        assert!(validate_dpop_signing_input(format!("{header}.{claims}.extra").as_bytes()).is_err());
+        assert!(
+            validate_dpop_signing_input(format!("{header}.{claims}.extra").as_bytes()).is_err()
+        );
     }
 
     #[test]

@@ -45,10 +45,7 @@ fn redact_json_values(text: &str, key: &str) -> String {
     let mut search_from = 0;
     let mut scan = 0;
     let bytes = text.as_bytes();
-    while let Some(found) = lower[scan..]
-        .find(&needle)
-        .map(|offset| offset + scan)
-    {
+    while let Some(found) = lower[scan..].find(&needle).map(|offset| offset + scan) {
         let after_key = found + needle.len();
         let mut probe = after_key;
         while probe < bytes.len() && bytes[probe] != b':' {
@@ -94,14 +91,9 @@ fn redact_authorization_values(text: &str) -> String {
     let mut search_from = 0;
     let mut scan = 0;
     let bytes = text.as_bytes();
-    while let Some(found) = lower[scan..]
-        .find(needle)
-        .map(|offset| offset + scan)
-    {
+    while let Some(found) = lower[scan..].find(needle).map(|offset| offset + scan) {
         let mut probe = found + needle.len();
-        while probe < bytes.len()
-            && (bytes[probe].is_ascii_whitespace() || bytes[probe] == b':')
-        {
+        while probe < bytes.len() && (bytes[probe].is_ascii_whitespace() || bytes[probe] == b':') {
             probe += 1;
         }
         if probe < bytes.len() && bytes[probe] == b'"' {
@@ -153,7 +145,9 @@ fn redact_jwt_segments(text: &str) -> String {
                 .collect();
             if candidate == "eyj" {
                 let mut end = index + 3;
-                while end < chars.len() && (chars[end].is_ascii_alphanumeric() || matches!(chars[end], '-' | '_' | '.')) {
+                while end < chars.len()
+                    && (chars[end].is_ascii_alphanumeric() || matches!(chars[end], '-' | '_' | '.'))
+                {
                     end += 1;
                 }
                 let token: String = chars[index..end].iter().collect();
@@ -269,7 +263,7 @@ impl NativeLogger {
         let safe_request_id = request_id.map(|value| value.chars().take(128).collect::<String>());
         let safe_error_code = error_code.map(|value| value.chars().take(64).collect::<String>());
         let safe_error_detail = error_detail
-            .map(|value| sanitize_error_detail(&value))
+            .map(sanitize_error_detail)
             .map(|value| value.chars().take(256).collect::<String>());
         let record = Event {
             timestamp,
@@ -320,7 +314,8 @@ mod tests {
 
     #[test]
     fn sanitizer_redacts_authorization_headers_case_insensitively() {
-        let text = "Authorization: DPoP eyJtoken.eyJpayload.sig and authorization: Bearer secret-value";
+        let text =
+            "Authorization: DPoP eyJtoken.eyJpayload.sig and authorization: Bearer secret-value";
         let sanitized = sanitize_error_detail(text);
         assert!(!sanitized.contains("secret-value"));
         assert!(!sanitized.contains("eyJtoken"));
