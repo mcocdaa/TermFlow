@@ -262,7 +262,8 @@ def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() ->
     for job_name, paths in expected_paths.items():
         upload = next(
             step for step in jobs[job_name]["steps"]
-            if step.get("uses") == "actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4"
+            if step.get("uses")
+            == "actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4"
         )["with"]
         assert upload["if-no-files-found"] == "error"
         assert upload["retention-days"] == (
