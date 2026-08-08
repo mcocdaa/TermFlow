@@ -241,3 +241,29 @@ def test_audit_schema_has_metadata_only_columns() -> None:
         "created_at",
     }
     assert names.isdisjoint({"text", "input", "output", "payload", "content", "data"})
+
+
+@pytest.mark.asyncio
+async def test_revoked_native_client_reactivates_on_get_or_create(
+    repositories: RepositoryBundle,
+) -> None:
+    client = await repositories.native_clients.create(
+        display_name="Desktop C",
+        public_jwk='{"kty":"EC"}',
+        key_thumbprint="thumb-abc",
+        platform="windows",
+        scopes=("computers.read",),
+        client_version="0.0.1",
+    )
+    assert await repositories.native_clients.revoke(client.id)
+
+    reactivated = await repositories.native_clients.get_or_create(
+        display_name="Desktop C",
+        public_jwk='{"kty":"EC"}',
+        key_thumbprint="thumb-abc",
+        platform="windows",
+        scopes=("computers.read",),
+        client_version="0.0.1",
+    )
+    assert reactivated.id == client.id
+    assert reactivated.revoked_at is None

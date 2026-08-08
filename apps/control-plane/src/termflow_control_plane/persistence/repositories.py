@@ -925,10 +925,17 @@ class NativeClientRepository:
         scopes: tuple[str, ...],
         client_version: str | None = None,
     ) -> NativeClient:
-        """Return the stable JKT owner, including across concurrent first authorization."""
+        """Return the stable JKT owner, including across concurrent first authorization.
+
+        A previously revoked client is reactivated: revocation ends existing
+        sessions, but the same device key may start a fresh authorization
+        flow (kick off, not permanent ban).
+        """
 
         existing = await self.get_by_thumbprint(key_thumbprint)
         if existing is not None:
+            if existing.revoked_at is not None:
+                return await self.reactivate(existing.id) or existing
             return existing
         try:
             return await self.create(
@@ -943,6 +950,8 @@ class NativeClientRepository:
             winner = await self.get_by_thumbprint(key_thumbprint)
             if winner is None:
                 raise
+            if winner.revoked_at is not None:
+                return await self.reactivate(winner.id) or winner
             return winner
 
     async def get(self, client_id: UUID) -> NativeClient | None:
@@ -1048,6 +1057,25 @@ class NativeClientRepository:
                 )
             await session.commit()
             return revoked
+
+    async def reactivate(self, client_id: UUID) -> NativeClient | None:
+        """Clear revocation so the same device key can start a new flow.
+
+        Old tokens stay revoked; the next successful authorization issues
+        fresh ones.
+        """
+
+        observed_at = datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(NativeClient)
+                .where(NativeClient.id == client_id, NativeClient.revoked_at.is_not(None))
+                .values(revoked_at=None, updated_at=observed_at)
+                .returning(NativeClient)
+            )
+            client = result.scalar_one_or_none()
+            await session.commit()
+            return client
 
 
 class OAuthAuthorizationRepository:
