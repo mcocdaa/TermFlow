@@ -7,7 +7,7 @@
       <TotpPanel @changed="totpEnabled = $event.enabled" />
       <AuthorizedClientsPanel v-if="runtime.capabilities.manageAuthorizedClients" :totp-enabled="totpEnabled" />
     </template>
-    <section v-else class="settings-panel" aria-labelledby="device-connection-heading"><div class="settings-panel-heading"><div><p class="eyebrow">Device Connection</p><h2 id="device-connection-heading">设备连接</h2></div></div><p>安全设置只能从已认证 Web C 管理；本机只保存自己的设备凭据。</p></section>
+    <section v-else class="settings-panel" aria-labelledby="device-connection-heading"><div class="settings-panel-heading"><div><p class="eyebrow">Device Connection</p><h2 id="device-connection-heading">设备连接</h2></div></div><p>安全设置只能从已认证的网页管理端修改；本机只保存自己的设备凭据。</p></section>
   </div>
 </template>
 

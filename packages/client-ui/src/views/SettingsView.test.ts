@@ -41,7 +41,7 @@ describe('SettingsView', () => {
     })
     const wrapper = await mountSettings(runtime)
 
-    expect(wrapper.text()).toContain('安全设置只能从已认证 Web C 管理')
+    expect(wrapper.text()).toContain('安全设置只能从已认证的网页管理端修改')
     expect(wrapper.find('#totp-admin-token').exists()).toBe(false)
   })
 })
