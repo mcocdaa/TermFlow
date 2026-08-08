@@ -1,6 +1,5 @@
 services:
   control-plane:
-    image: ${TERMFLOW_IMAGE:-termflow-control-plane:local}
     build:
       context: ..
       dockerfile: deploy/Dockerfile.control-plane
