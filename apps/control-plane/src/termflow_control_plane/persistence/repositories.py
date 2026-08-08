@@ -9,10 +9,11 @@ import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import case, delete, exists, func, insert, literal, or_, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -2319,8 +2320,11 @@ class RepositoryBundle:
                 ("auth_challenges", AuthChallenge),
                 ("oauth_authorizations", OAuthAuthorization),
             ):
-                result = await session.execute(
-                    delete(model).where(model.expires_at < now)
+                result = cast(
+                    CursorResult[Any],
+                    await session.execute(
+                        delete(model).where(model.expires_at < now)
+                    ),
                 )
                 counts[name] = int(result.rowcount or 0)
             await session.commit()
