@@ -59,11 +59,11 @@ jobs:
       artifact_prefix: ${{ steps.version.outputs.artifact_prefix }}
       retention_days: ${{ steps.version.outputs.retention_days }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22.23.2"
           cache: npm
@@ -97,15 +97,15 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Materialize build version
         env:
           TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
         run: python scripts/release/prepare_version.py
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22.23.2"
           cache: npm
@@ -116,7 +116,7 @@ jobs:
       - run: npm ci
       - name: Build unsigned NSIS installer
         run: npm run tauri:build --workspace @termflow/tauri-client -- --bundles nsis --ci
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ needs.validate-version.outputs.artifact_prefix }}-windows-x64-nsis
           path: apps/clients/tauri/src-tauri/target/release/bundle/nsis/*-setup.exe
@@ -135,15 +135,15 @@ jobs:
     env:
       APPIMAGE_EXTRACT_AND_RUN: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Materialize build version
         env:
           TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
         run: python scripts/release/prepare_version.py
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22.23.2"
           cache: npm
@@ -170,7 +170,7 @@ jobs:
             echo "Expected one deb and one AppImage; found deb=$deb_count AppImage=$appimage_count" >&2
             exit 1
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ needs.validate-version.outputs.artifact_prefix }}-linux-x64
           path: |
@@ -189,15 +189,15 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Materialize build version
         env:
           TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
         run: python scripts/release/prepare_version.py
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22.23.2"
           cache: npm
@@ -228,7 +228,7 @@ jobs:
             echo "Expected exactly one macOS DMG" >&2
             exit 1
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ needs.validate-version.outputs.artifact_prefix }}-macos-arm64
           path: |
@@ -247,23 +247,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Materialize build version
         env:
           TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
         run: python scripts/release/prepare_version.py
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22.23.2"
           cache: npm
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
@@ -284,7 +284,7 @@ jobs:
             echo "Expected exactly one debug APK, found $apk_count" >&2
             exit 1
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ needs.validate-version.outputs.artifact_prefix }}-android-arm64-debug
           path: apps/clients/tauri/src-tauri/gen/android/app/build/outputs/apk/**/*-debug.apk
@@ -301,15 +301,15 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Materialize build version
         env:
           TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
         run: python scripts/release/prepare_version.py
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22.23.2"
           cache: npm
@@ -336,7 +336,7 @@ jobs:
           fi
           ditto -c -k --sequesterRsrc --keepParent \
             "$1" "$RUNNER_TEMP/termflow-artifacts/TermFlow-ios-simulator-aarch64.app.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ needs.validate-version.outputs.artifact_prefix }}-ios-simulator-aarch64
           path: ${{ runner.temp }}/termflow-artifacts/TermFlow-ios-simulator-aarch64.app.zip

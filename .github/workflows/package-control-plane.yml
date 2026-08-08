@@ -40,8 +40,8 @@ jobs:
       artifact_name: ${{ steps.context.outputs.artifact_name }}
       retention_days: ${{ steps.context.outputs.retention_days }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Resolve validated package context
@@ -70,8 +70,8 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Materialize build version
@@ -90,7 +90,7 @@ jobs:
           scripts/release/archive_control_plane_image.sh \
             "$LOCAL_IMAGE" release-assets/termflow-control-plane.tar
           scripts/verify-control-plane-image.sh "$LOCAL_IMAGE"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ needs.prepare.outputs.artifact_name }}
           path: release-assets/termflow-control-plane.tar
@@ -107,8 +107,8 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Materialize build version
