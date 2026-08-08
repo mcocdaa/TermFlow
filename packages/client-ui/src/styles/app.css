@@ -103,6 +103,7 @@
   .delete-computer-dialog p { line-height: 1.6; }
   .device-approval-dialog, .revoke-client-dialog { width: min(100%, 36rem); display: grid; gap: var(--space-4); }
   .device-approval-dialog .security-form, .revoke-client-dialog .security-form { width: 100%; margin-block-start: 0; }
+  .protection-dialog .security-form { width: 100%; margin-block-start: var(--space-4); }
   .device-approval-details { margin: 0; }
   .device-approval-details div { align-items: baseline; }
   .revoke-client-dialog > p { margin: 0; color: var(--color-text-secondary); line-height: 1.6; }

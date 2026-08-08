@@ -1,5 +1,5 @@
 import type { ClientRuntime } from '@termflow/client-ui'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { browserRuntime, createBrowserRuntime } from './runtime'
 
 describe('browser runtime composition', () => {
@@ -30,5 +30,30 @@ describe('browser runtime composition', () => {
     expect(browserRuntime.visibility.subscribe).toBeTypeOf('function')
     expect(browserRuntime.canonicalServerUrl).toBe('http://localhost:3000')
     expect(browserRuntime.platform).toBeTypeOf('string')
+  })
+
+  it('sends HTTP(S) authorization callbacks to the callback URL and custom schemes home', () => {
+    const assign = vi.fn()
+    const original = globalThis.location
+    Object.defineProperty(globalThis, 'location', {
+      value: { origin: 'http://localhost:3000', assign },
+      configurable: true,
+    })
+    try {
+      browserRuntime.authorizationCompletion.navigate(
+        'https://example.com/auth/callback?state=abc'
+      )
+      expect(assign).toHaveBeenCalledWith('https://example.com/auth/callback?state=abc')
+
+      browserRuntime.authorizationCompletion.navigate('termflow://auth/callback?state=abc')
+      expect(assign).toHaveBeenLastCalledWith(
+        new URL('/', 'http://localhost:3000').toString()
+      )
+    } finally {
+      Object.defineProperty(globalThis, 'location', {
+        value: original,
+        configurable: true,
+      })
+    }
   })
 })

@@ -13,7 +13,7 @@
           <div><dt>权限</dt><dd>{{ preview.scopes.join(' · ') }}</dd></div>
         </dl>
         <form class="security-form" @submit.prevent="decide('allow')">
-          <label for="authorize-admin-token">管理员 Token</label>
+          <label for="authorize-admin-token">管理员令牌</label>
           <input id="authorize-admin-token" v-model="adminToken" type="password" autocomplete="off" required />
           <template v-if="preview.totp_required">
             <label for="authorize-totp">当前验证码</label>

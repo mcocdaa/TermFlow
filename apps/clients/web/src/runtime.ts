@@ -26,7 +26,20 @@ function browserDependencies(): ClientRuntime {
     clock,
     visibility: createBrowserVisibility(),
     capabilities: { manageSecurity: true, manageAuthorizedClients: true },
-    authorizationCompletion: { navigate: (callbackUri) => globalThis.location.assign(callbackUri) },
+    authorizationCompletion: {
+      navigate: (callbackUri) => {
+        try {
+          const parsed = new URL(callbackUri)
+          if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+            globalThis.location.assign(callbackUri)
+            return
+          }
+        } catch {
+          // fall through to the home page
+        }
+        globalThis.location.assign(new URL('/', globalThis.location.origin).toString())
+      },
+    },
     canonicalServerUrl: browserCanonicalServerUrl(),
     platform: browserPlatform(),
   }

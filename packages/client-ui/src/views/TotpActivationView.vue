@@ -44,7 +44,7 @@
         </template>
         <template v-else-if="!status.configured || reconfiguring">
           <form data-action="begin-totp-setup" class="security-form" @submit.prevent="beginSetup">
-            <label for="activation-admin-token">管理员 Token</label>
+            <label for="activation-admin-token">管理员令牌</label>
             <input id="activation-admin-token" v-model="adminToken" name="setup-admin-token" type="password" autocomplete="off" required />
             <template v-if="status.configured">
               <label for="activation-current-code">当前验证器验证码</label>
