@@ -204,4 +204,75 @@ def test_auth_totp_reset_atomically_revokes_credentials_and_preserves_native_key
         None,
         None,
     )
-    assert len(source_digest) == 64
+
+
+def test_auth_rotate_revokes_credentials_but_preserves_totp(tmp_path: Path) -> None:
+    database_path = tmp_path / "rotate-confirm.db"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    native_client_id, public_jwk = asyncio.run(_seed_reset_database(database_url))
+    result = CliRunner().invoke(
+        app,
+        ["auth", "rotate"],
+        input="y\n",
+        env={
+            "TERMFLOW_ADMIN_TOKEN": ADMIN_TOKEN,
+            "TERMFLOW_DATABASE_URL": database_url,
+        },
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "epoch 2" in result.output.lower()
+    assert "authenticator-secret" not in result.output
+
+    with sqlite3.connect(database_path) as connection:
+        epoch, ciphertext, generation = connection.execute(
+            "SELECT epoch, totp_ciphertext, totp_generation "
+            "FROM authentication_state WHERE id = 1"
+        ).fetchone()
+        assert connection.execute(
+            "SELECT COUNT(*) FROM auth_challenges WHERE completed_at IS NULL"
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM auth_tokens WHERE revoked_at IS NULL"
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM oauth_authorizations WHERE consumed_at IS NULL"
+        ).fetchone()[0] == 0
+        stored_jwk, revoked_at = connection.execute(
+            "SELECT public_jwk, revoked_at FROM native_clients WHERE id = ?",
+            (native_client_id.hex,),
+        ).fetchone()
+        operation, result_text = connection.execute(
+            "SELECT operation, result FROM auth_audit_events"
+        ).fetchone()
+
+    assert (epoch, generation) == (2, 1)
+    assert ciphertext is not None
+    assert stored_jwk == public_jwk
+    assert revoked_at is None
+    assert (operation, result_text) == ("auth.rotate", "rotated")
+
+
+def test_auth_rotate_aborts_without_explicit_interactive_confirmation(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "rotate-abort.db"
+    database_url = f"sqlite+aiosqlite:///{database_path}"
+    asyncio.run(_seed_reset_database(database_url))
+    runner = CliRunner()
+    env = {
+        "TERMFLOW_ADMIN_TOKEN": ADMIN_TOKEN,
+        "TERMFLOW_DATABASE_URL": database_url,
+    }
+
+    declined = runner.invoke(app, ["auth", "rotate"], input="n\n", env=env)
+    eof = runner.invoke(app, ["auth", "rotate"], input="", env=env)
+
+    assert declined.exit_code != 0
+    assert eof.exit_code != 0
+    with sqlite3.connect(database_path) as connection:
+        epoch, ciphertext = connection.execute(
+            "SELECT epoch, totp_ciphertext FROM authentication_state WHERE id = 1"
+        ).fetchone()
+    assert epoch == 1
+    assert ciphertext is not None

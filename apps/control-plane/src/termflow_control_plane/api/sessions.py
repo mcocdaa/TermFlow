@@ -18,7 +18,7 @@ from termflow_control_plane.auth.audit import (
     AuthAuditResult,
     AuthenticationAudit,
 )
-from termflow_control_plane.auth.rate_limit import AuthRateLimiter, direct_peer_source
+from termflow_control_plane.auth.rate_limit import AuthRateLimiter, client_source
 from termflow_control_plane.auth.service import AuthenticationRejected, AuthenticationService
 from termflow_control_plane.auth.sessions import (
     BrowserSessionStore,
@@ -91,7 +91,7 @@ async def create_browser_session(
     authentication: Annotated[AuthenticationService, Depends(get_authentication_service)],
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
 ) -> BrowserSessionResponse | BrowserSessionChallengeResponse:
-    source = direct_peer_source(http_request)
+    source = client_source(http_request)
     limiter: AuthRateLimiter = http_request.app.state.auth_rate_limiter
     audit: AuthenticationAudit = http_request.app.state.auth_audit
     if not origin_allowed(http_request.headers.get("origin"), settings):
@@ -159,7 +159,7 @@ async def complete_browser_session_totp(
     authentication: Annotated[AuthenticationService, Depends(get_authentication_service)],
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
 ) -> BrowserSessionResponse:
-    source = direct_peer_source(http_request)
+    source = client_source(http_request)
     limiter: AuthRateLimiter = http_request.app.state.auth_rate_limiter
     audit: AuthenticationAudit = http_request.app.state.auth_audit
     if not origin_allowed(http_request.headers.get("origin"), settings):

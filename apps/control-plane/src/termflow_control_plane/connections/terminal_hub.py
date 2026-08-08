@@ -54,6 +54,7 @@ class BrowserTerminal:
         self.remote_closed = False
         self.input_bytes = 0
         self.input_audited = False
+        self.input_logged_at: float | None = None
         self.open_audited = False
         self.close_audited = False
         self.pending_actions: dict[UUID, str | None] = {}

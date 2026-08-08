@@ -36,6 +36,7 @@ def totp_client(tmp_path, monkeypatch):
         admin_token=ADMIN_TOKEN,
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'totp-api.db'}",
         allow_insecure_loopback=True,
+        enable_docs=True,
         totp_master_key=encoded_key,
         auth_attempt_budget_capacity=100,
         auth_attempt_refill_seconds=1,

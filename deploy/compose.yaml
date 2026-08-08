@@ -19,7 +19,7 @@ services:
       TERMFLOW_BROWSER_SESSION_TTL_SECONDS: ${TERMFLOW_BROWSER_SESSION_TTL_SECONDS:-28800}
       TERMFLOW_BROWSER_SESSION_CAPACITY: ${TERMFLOW_BROWSER_SESSION_CAPACITY:-4096}
       TERMFLOW_TOTP_MASTER_KEY:
-      TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE: /app/data/totp-master-key
+      TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE: /app/totp-secrets/totp-master-key
       TERMFLOW_ENROLLMENT_TOKEN_TTL_SECONDS: ${TERMFLOW_ENROLLMENT_TOKEN_TTL_SECONDS:-60}
       TERMFLOW_TERMINAL_MAX_FRAME_BYTES: ${TERMFLOW_TERMINAL_MAX_FRAME_BYTES:-65536}
       TERMFLOW_TERMINAL_INPUT_RATE_BYTES_PER_SECOND: ${TERMFLOW_TERMINAL_INPUT_RATE_BYTES_PER_SECOND:-262144}
@@ -30,7 +30,13 @@ services:
       - 127.0.0.1:${TERMFLOW_HOST_PORT:-8765}:8000
     volumes:
       - termflow-data:/app/data
+      - termflow-totp-key:/app/totp-secrets
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
       interval: 10s
@@ -41,3 +47,5 @@ services:
 volumes:
   termflow-data:
     name: ${TERMFLOW_DATA_VOLUME:-termflow-data}
+  termflow-totp-key:
+    name: ${TERMFLOW_TOTP_KEY_VOLUME:-termflow-totp-key}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import math
 import time
 from collections import OrderedDict
@@ -37,6 +38,31 @@ def direct_peer_source(request: Request) -> str:
     """Return only the ASGI peer address, deliberately ignoring proxy headers."""
 
     return request.client.host if request.client is not None else "unknown-peer"
+
+
+def _first_forwarded_address(value: str | None) -> str | None:
+    if not value:
+        return None
+    candidate = value.split(",", 1)[0].strip()
+    try:
+        return ipaddress.ip_address(candidate).compressed
+    except ValueError:
+        return None
+
+
+def client_source(request: Request) -> str:
+    """Resolve the authentication source, honoring X-Forwarded-For only when trusted.
+
+    The reverse proxy deployment option (TERMFLOW_TRUST_PROXY=true) is the only
+    path that reads forwarded headers; by default only the direct peer is used.
+    An unparseable first forwarded address falls back to the direct peer so an
+    attacker-supplied header can never widen the rate-limit budget.
+    """
+
+    if not getattr(request.app.state.settings, "trust_proxy", False):
+        return direct_peer_source(request)
+    forwarded = _first_forwarded_address(request.headers.get("X-Forwarded-For"))
+    return forwarded or direct_peer_source(request)
 
 
 class AuthRateLimiter:

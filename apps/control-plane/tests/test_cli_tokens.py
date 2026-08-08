@@ -53,6 +53,7 @@ def cli_token_client(tmp_path: Path) -> Iterator[TestClient]:
         admin_token=ADMIN_TOKEN,
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'cli-token.db'}",
         allow_insecure_loopback=True,
+        enable_docs=True,
         totp_master_key=key,
         auth_cli_token_ttl_seconds=120,
         auth_attempt_budget_capacity=100,

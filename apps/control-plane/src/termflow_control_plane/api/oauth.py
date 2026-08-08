@@ -33,7 +33,7 @@ from termflow_control_plane.auth.audit import (
 )
 from termflow_control_plane.auth.dpop import DpopInvalid, DpopNonceRequired, DpopVerifier
 from termflow_control_plane.auth.oauth import FreshTotpVerifier, OAuthService
-from termflow_control_plane.auth.rate_limit import AuthRateLimiter, direct_peer_source
+from termflow_control_plane.auth.rate_limit import AuthRateLimiter, client_source
 from termflow_control_plane.auth.sessions import BrowserSessionStore
 from termflow_control_plane.config import Settings
 from termflow_control_plane.errors import TermFlowError
@@ -151,7 +151,7 @@ async def create_device_code(
     """
 
     limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
-    limiter.check("oauth_device_code", direct_peer_source(request))
+    limiter.check("oauth_device_code", client_source(request))
     result = await _service(request, repositories, settings).begin_device(body)
     response.headers["Cache-Control"] = "no-store"
     return result
@@ -182,11 +182,11 @@ async def authorize_native_client(
         ):
             raise _invalid_request()
         limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
-        limiter.check("native_authorization_preview", direct_peer_source(request))
+        limiter.check("native_authorization_preview", client_source(request))
         response.headers["Cache-Control"] = "no-store"
         return await service.preview_user_code(user_code)
     limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
-    source = direct_peer_source(request)
+    source = client_source(request)
     limiter.check("native_authorization", source)
     transaction = await service.begin(_parse_authorization_request(request))
     return RedirectResponse(
@@ -210,7 +210,7 @@ async def decide_native_authorization(
 ) -> OAuthAuthorizationDecisionResponse:
     limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
     audit = cast(AuthenticationAudit, request.app.state.auth_audit)
-    source = direct_peer_source(request)
+    source = client_source(request)
     try:
         limiter.check("native_authorization_decision", source)
     except TermFlowError:
@@ -268,7 +268,7 @@ async def exchange_native_token(
         raise TermFlowError("invalid_dpop_proof", 401, "DPoP proof is required.")
     limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
     audit = cast(AuthenticationAudit, request.app.state.auth_audit)
-    source = direct_peer_source(request)
+    source = client_source(request)
     limiter_purpose = (
         "oauth_device_token"
         if body.grant_type == "urn:ietf:params:oauth:grant-type:device_code"

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from typing import Protocol
 from uuid import UUID
 
@@ -43,6 +45,11 @@ class AuditWriter(Protocol):
     ) -> object: ...
 
     async def flush(self) -> None: ...
+
+
+logger = logging.getLogger(__name__)
+
+_INPUT_AUDIT_INTERVAL_SECONDS = 5.0
 
 
 class TerminalRouteError(RuntimeError):
@@ -278,6 +285,24 @@ class TerminalRouter:
             )
             raise
         terminal.input_bytes += len(data)
+        self._log_input_aggregate(terminal)
+
+    def _log_input_aggregate(self, terminal: BrowserTerminal) -> None:
+        """Emit a bounded stdout audit line per terminal, at most every interval."""
+
+        now = time.monotonic()
+        if (
+            terminal.input_logged_at is not None
+            and now - terminal.input_logged_at < _INPUT_AUDIT_INTERVAL_SECONDS
+        ):
+            return
+        terminal.input_logged_at = now
+        logger.info(
+            "audit event=terminal.input instance=%s session_key=%s input_bytes=%d",
+            terminal.instance_id,
+            terminal.session_key,
+            terminal.input_bytes,
+        )
 
     def _record_input_total(self, terminal: BrowserTerminal) -> None:
         if terminal.input_audited or terminal.input_bytes == 0:

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from termflow_control_plane.auth.rate_limit import (
     AuthRateLimiter,
+    client_source,
     direct_peer_source,
 )
 from termflow_control_plane.errors import TermFlowError
@@ -187,6 +189,44 @@ def test_direct_peer_source_ignores_forwarding_headers() -> None:
             },
         )
 
+    assert response.json() == {"source": "testclient"}
+
+
+def _source_app(*, trust_proxy: bool = False) -> FastAPI:
+    app = FastAPI()
+    app.state.settings = SimpleNamespace(trust_proxy=trust_proxy)
+
+    @app.get("/source")
+    async def source(request: Request) -> dict[str, str]:
+        return {"source": client_source(request)}
+
+    return app
+
+
+def test_client_source_ignores_forwarding_headers_by_default() -> None:
+    with TestClient(_source_app()) as client:
+        response = client.get(
+            "/source",
+            headers={"X-Forwarded-For": "198.51.100.88"},
+        )
+    assert response.json() == {"source": "testclient"}
+
+
+def test_client_source_uses_first_forwarded_address_when_proxy_is_trusted() -> None:
+    with TestClient(_source_app(trust_proxy=True)) as client:
+        response = client.get(
+            "/source",
+            headers={"X-Forwarded-For": "203.0.113.7, 10.0.0.1"},
+        )
+    assert response.json() == {"source": "203.0.113.7"}
+
+
+def test_client_source_falls_back_to_peer_on_malformed_forwarded_header() -> None:
+    with TestClient(_source_app(trust_proxy=True)) as client:
+        response = client.get(
+            "/source",
+            headers={"X-Forwarded-For": "not-an-ip"},
+        )
     assert response.json() == {"source": "testclient"}
 
 

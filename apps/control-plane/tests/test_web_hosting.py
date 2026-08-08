@@ -11,6 +11,7 @@ def _client(tmp_path: Path, static_dir: Path) -> TestClient:
     settings = Settings(
         admin_token="admin-token-that-is-long-enough-for-tests",
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'web.db'}",
+        allow_insecure_loopback=True,
         static_dir=static_dir,
     )
     return TestClient(create_app(settings=settings, database=Database(settings.database_url)))
@@ -63,10 +64,46 @@ def test_web_responses_have_baseline_security_headers(tmp_path: Path) -> None:
         response = client.get("/")
 
     assert "default-src 'self'" in response.headers["content-security-policy"]
+    assert "connect-src 'self'" in response.headers["content-security-policy"]
+    assert "ws:" not in response.headers["content-security-policy"]
+    assert "wss:" not in response.headers["content-security-policy"]
     assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
     assert response.headers["referrer-policy"] == "no-referrer"
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["x-frame-options"] == "DENY"
+    assert "strict-transport-security" not in response.headers
+
+
+def test_https_deployment_emits_strict_transport_security(tmp_path: Path) -> None:
+    static_dir = tmp_path / "dist"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text("<!doctype html><title>TermFlow</title>")
+
+    settings = Settings(
+        admin_token="admin-token-that-is-long-enough-for-tests",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'hsts.db'}",
+        public_base_url="https://termflow.example",
+        static_dir=static_dir,
+    )
+    with TestClient(
+        create_app(settings=settings, database=Database(settings.database_url))
+    ) as client:
+        response = client.get("/")
+
+    assert response.headers["strict-transport-security"] == (
+        "max-age=63072000; includeSubDomains"
+    )
+
+
+def test_docs_and_openapi_are_disabled_by_default(tmp_path: Path) -> None:
+    static_dir = tmp_path / "dist"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text("<!doctype html><title>TermFlow</title>")
+
+    with _client(tmp_path, static_dir) as client:
+        assert client.get("/docs").status_code == 404
+        assert client.get("/redoc").status_code == 404
+        assert client.get("/openapi.json").status_code == 404
 
 
 def test_source_only_run_keeps_api_available_when_web_build_is_absent(tmp_path: Path) -> None:

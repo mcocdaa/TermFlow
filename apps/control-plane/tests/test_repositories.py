@@ -267,3 +267,55 @@ async def test_revoked_native_client_reactivates_on_get_or_create(
     )
     assert reactivated.id == client.id
     assert reactivated.revoked_at is None
+
+
+@pytest.mark.asyncio
+async def test_purge_expired_removes_expired_rows_and_keeps_native_clients(
+    repositories: RepositoryBundle,
+) -> None:
+    observed_at = datetime.now(UTC)
+    past = observed_at - timedelta(minutes=5)
+    future = observed_at + timedelta(minutes=5)
+
+    await repositories.enrollments.create(
+        hash_token("purge-enrollment"), past
+    )
+    await repositories.enrollments.create(
+        hash_token("keep-enrollment"), future
+    )
+    issued = await repositories.auth_tokens.issue(
+        hash_token("purge-cli-token"),
+        kind="cli",
+        scopes=("admin",),
+        key_thumbprint=None,
+        expires_at=past,
+        epoch=1,
+    )
+    assert issued is not None
+
+    counts = await repositories.purge_expired(now=observed_at)
+
+    assert counts["enrollment_tokens"] == 1
+    assert counts["auth_tokens"] >= 1
+    assert counts["totp_setups"] == 0
+    assert counts["auth_challenges"] == 0
+    assert counts["oauth_authorizations"] == 0
+    assert "native_clients" not in counts
+    consumed = await repositories.enrollments.consume(
+        hash_token("keep-enrollment"), now=observed_at
+    )
+    assert consumed is not None
+
+
+@pytest.mark.asyncio
+async def test_rotate_credentials_bumps_epoch_without_clearing_totp(
+    repositories: RepositoryBundle,
+) -> None:
+    state = await repositories.auth_state.get()
+    original_epoch = state.epoch
+
+    epoch = await repositories.auth_state.rotate_credentials()
+
+    assert epoch == original_epoch + 1
+    rotated = await repositories.auth_state.get()
+    assert rotated.epoch == epoch

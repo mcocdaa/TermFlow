@@ -20,7 +20,7 @@ from termflow_control_plane.auth.audit import (
     AuthAuditResult,
     AuthenticationAudit,
 )
-from termflow_control_plane.auth.rate_limit import AuthRateLimiter, direct_peer_source
+from termflow_control_plane.auth.rate_limit import AuthRateLimiter, client_source
 from termflow_control_plane.auth.service import (
     AuthenticationRejected,
     AuthenticationService,
@@ -50,7 +50,7 @@ async def _audit_rejected(
     await audit.record(
         operation,
         AuthAuditResult.REJECTED,
-        direct_peer_source(request),
+        client_source(request),
         error_code=AuthAuditErrorCode.INVALID_CREDENTIALS,
     )
 
@@ -63,7 +63,7 @@ async def _audit_ok(
     await audit.record(
         operation,
         AuthAuditResult.OK,
-        direct_peer_source(request),
+        client_source(request),
     )
 
 
@@ -73,7 +73,7 @@ async def _limiter(
     operation: AuthAuditOperation = AuthAuditOperation.TOTP_VERIFICATION,
 ) -> tuple[AuthRateLimiter, str]:
     limiter: AuthRateLimiter = request.app.state.auth_rate_limiter
-    source = direct_peer_source(request)
+    source = client_source(request)
     try:
         limiter.check(purpose, source)
     except TermFlowError:

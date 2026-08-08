@@ -40,7 +40,7 @@ from termflow_control_plane.auth.master_key import resolve_totp_master_key
 from termflow_control_plane.auth.rate_limit import AuthRateLimiter
 from termflow_control_plane.auth.secret_box import AesGcmSecretBox
 from termflow_control_plane.auth.service import AuthenticationRejected, AuthenticationService
-from termflow_control_plane.auth.sessions import BrowserSessionStore
+from termflow_control_plane.auth.sessions import BrowserSessionStore, browser_cookie_policy
 from termflow_control_plane.config import Settings
 from termflow_control_plane.connections.event_hub import EventHub
 from termflow_control_plane.connections.registry import LiveConnection, LiveInstanceRegistry
@@ -148,6 +148,9 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await active_database.initialize()
         app.state.repositories = RepositoryBundle(active_database.session_factory)
+        purged = await app.state.repositories.purge_expired(now=datetime.now(UTC))
+        if any(purged.values()):
+            logger.info("Purged expired persistence rows: %s", purged)
         auth_state = await app.state.repositories.auth_state.get()
         app.state.browser_sessions.synchronize_epoch(auth_state.epoch)
         await app.state.terminal_hub.synchronize_epoch(auth_state.epoch)
@@ -222,7 +225,11 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         title="TermFlow Control Plane",
         version=__version__,
         lifespan=lifespan,
+        docs_url="/docs" if settings.enable_docs else None,
+        redoc_url="/redoc" if settings.enable_docs else None,
+        openapi_url="/openapi.json" if settings.enable_docs else None,
     )
+    browser_cookie_policy(settings)
     app.state.settings = settings
     app.state.registry = LiveInstanceRegistry(
         queue_size=settings.connection_queue_size,
@@ -241,6 +248,7 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
     app.state.auth_rate_limiter = AuthRateLimiter(
         capacity=getattr(settings, "auth_attempt_budget_capacity", 5),
         refill_seconds=float(getattr(settings, "auth_attempt_refill_seconds", 60)),
+        global_capacity=getattr(settings, "auth_global_verification_capacity", 32),
         max_backoff_seconds=getattr(settings, "auth_max_backoff_seconds", 300),
         purpose_budgets={
             "oauth_device_token": (

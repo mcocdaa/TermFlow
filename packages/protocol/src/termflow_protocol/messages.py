@@ -93,10 +93,7 @@ class PaneOutputPayload(PayloadModel):
     @field_validator("data_base64")
     @classmethod
     def valid_base64(cls, value: str) -> str:
-        try:
-            base64.b64decode(value, validate=True)
-        except (binascii.Error, ValueError) as exc:
-            raise ValueError("data_base64 must be strict Base64") from exc
+        _decode_terminal_base64(value)
         return value
 
     @classmethod

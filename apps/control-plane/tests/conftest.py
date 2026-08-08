@@ -28,6 +28,7 @@ def settings(tmp_path) -> Settings:
         admin_token="admin-token-that-is-long-enough-for-tests",
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'control-plane.db'}",
         allow_insecure_loopback=True,
+        enable_docs=True,
     )
 
 

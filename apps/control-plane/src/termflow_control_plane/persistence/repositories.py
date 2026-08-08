@@ -622,6 +622,57 @@ class AuthStateRepository:
             await session.commit()
             return accepted
 
+    async def rotate_credentials(
+        self,
+        *,
+        audit_source_digest: str | None = None,
+    ) -> int:
+        """Revoke every Web, native, and CLI credential without clearing TOTP.
+
+        Bumps the persisted epoch exactly like `reset_and_increment_epoch` but
+        leaves the TOTP seed intact so rotation does not force re-enrollment.
+        """
+
+        observed_at = datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AuthenticationState)
+                .where(AuthenticationState.id == 1)
+                .values(
+                    epoch=AuthenticationState.epoch + 1,
+                    updated_at=observed_at,
+                )
+                .returning(AuthenticationState.epoch)
+            )
+            epoch = result.scalar_one_or_none()
+            if epoch is None:
+                raise RuntimeError("authentication state singleton is missing")
+            await session.execute(
+                update(AuthChallenge)
+                .where(AuthChallenge.completed_at.is_(None))
+                .values(completed_at=observed_at)
+            )
+            await session.execute(
+                update(AuthToken)
+                .where(AuthToken.revoked_at.is_(None))
+                .values(revoked_at=observed_at)
+            )
+            await session.execute(
+                update(OAuthAuthorization)
+                .where(OAuthAuthorization.consumed_at.is_(None))
+                .values(consumed_at=observed_at)
+            )
+            session.add(
+                AuthAuditEvent(
+                    operation="auth.rotate",
+                    result="rotated",
+                    source_digest=audit_source_digest or digest_secret("local-control-plane"),
+                    created_at=observed_at,
+                )
+            )
+            await session.commit()
+            return int(epoch)
+
     async def reset_and_increment_epoch(
         self,
         *,
@@ -2243,6 +2294,7 @@ class AuthAuditRepository:
 
 class RepositoryBundle:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
         self.enrollments = EnrollmentRepository(sessions)
         self.installations = InstallationRepository(sessions)
         self.instances = InstanceRepository(sessions)
@@ -2254,3 +2306,22 @@ class RepositoryBundle:
         self.oauth_authorizations = OAuthAuthorizationRepository(sessions)
         self.auth_tokens = AuthTokenRepository(sessions)
         self.auth_audit = AuthAuditRepository(sessions)
+
+    async def purge_expired(self, *, now: datetime) -> dict[str, int]:
+        """Delete rows past their expiry; native clients are retained forever."""
+
+        counts: dict[str, int] = {}
+        async with self._sessions() as session:
+            for name, model in (
+                ("enrollment_tokens", EnrollmentToken),
+                ("auth_tokens", AuthToken),
+                ("totp_setups", TotpSetup),
+                ("auth_challenges", AuthChallenge),
+                ("oauth_authorizations", OAuthAuthorization),
+            ):
+                result = await session.execute(
+                    delete(model).where(model.expires_at < now)
+                )
+                counts[name] = int(result.rowcount or 0)
+            await session.commit()
+        return counts

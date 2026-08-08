@@ -38,6 +38,8 @@ def test_control_plane_defaults_are_single_process_friendly() -> None:
     assert settings.auth_attempt_budget_capacity == 5
     assert settings.auth_max_challenge_attempts == 5
     assert settings.totp_master_key_bytes is None
+    assert settings.enable_docs is False
+    assert settings.trust_proxy is False
 
 
 def test_admin_token_requires_at_least_32_utf8_bytes_without_echoing_value() -> None:

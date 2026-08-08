@@ -53,6 +53,16 @@ async def _reset_authentication(settings: Settings) -> int:
         await database.dispose()
 
 
+async def _rotate_authentication(settings: Settings) -> int:
+    database = Database(settings.database_url)
+    await database.initialize()
+    try:
+        repositories = RepositoryBundle(database.session_factory)
+        return await repositories.auth_state.rotate_credentials()
+    finally:
+        await database.dispose()
+
+
 @enrollment_app.command("create")
 def create_enrollment() -> None:
     """Create a short-lived, single-use Installation enrollment token."""
@@ -70,6 +80,19 @@ def reset_totp() -> None:
     typer.confirm("Continue with the authentication reset?", abort=True)
     epoch = asyncio.run(_reset_authentication(_settings()))
     typer.echo(f"Authentication reset complete; epoch {epoch} is now active.")
+
+
+@auth_app.command("rotate")
+def rotate_credentials() -> None:
+    """Revoke all Web, native, and CLI credentials while keeping TOTP."""
+
+    typer.echo(
+        "This revokes all active Web, native, and CLI credentials. "
+        "TOTP two-factor configuration is preserved."
+    )
+    typer.confirm("Continue with the credential rotation?", abort=True)
+    epoch = asyncio.run(_rotate_authentication(_settings()))
+    typer.echo(f"Credential rotation complete; epoch {epoch} is now active.")
 
 
 @app.command()
@@ -91,4 +114,5 @@ def serve(
         host=host,
         port=port,
         workers=1,
+        ws_max_size=settings.terminal_max_frame_bytes * 8,
     )

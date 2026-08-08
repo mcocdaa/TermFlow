@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     admin_token: SecretStr
     database_url: str = "sqlite+aiosqlite:///./data/termflow.db"
     allow_insecure_loopback: bool = False
+    enable_docs: bool = False
+    trust_proxy: bool = False
     static_dir: Path = Path("/app/frontend-dist")
     public_base_url: AnyHttpUrl = AnyHttpUrl("http://127.0.0.1:8000")
     trusted_web_origins: Annotated[tuple[str, ...], NoDecode] = ()
