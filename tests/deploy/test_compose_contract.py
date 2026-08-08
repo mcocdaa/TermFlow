@@ -48,11 +48,17 @@ def test_compose_is_single_worker_and_persists_only_metadata() -> None:
     compose = yaml.safe_load(Path("deploy/compose.yaml").read_text())
     service = compose["services"]["control-plane"]
     assert "--workers" not in " ".join(service["command"])
-    assert service["volumes"] == ["termflow-data:/app/data"]
+    assert service["volumes"] == [
+        "termflow-data:/app/data",
+        "termflow-totp-key:/app/totp-secrets",
+    ]
     assert service["healthcheck"]["test"][-1].endswith("/healthz")
     assert list(compose["services"]) == ["control-plane"]
     assert compose["volumes"]["termflow-data"] == {
         "name": "${TERMFLOW_DATA_VOLUME:-termflow-data}"
+    }
+    assert compose["volumes"]["termflow-totp-key"] == {
+        "name": "${TERMFLOW_TOTP_KEY_VOLUME:-termflow-totp-key}"
     }
 
 
@@ -68,7 +74,7 @@ def test_compose_configures_same_origin_web_control_limits() -> None:
     assert "TERMFLOW_BROWSER_SESSION_TTL_SECONDS" in environment
     assert environment["TERMFLOW_TOTP_MASTER_KEY"] is None
     assert environment["TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE"] == (
-        "/app/data/totp-master-key"
+        "/app/totp-secrets/totp-master-key"
     )
     assert environment["TERMFLOW_ENROLLMENT_TOKEN_TTL_SECONDS"] == (
         "${TERMFLOW_ENROLLMENT_TOKEN_TTL_SECONDS:-60}"
@@ -122,9 +128,10 @@ def test_docker_context_excludes_local_state_and_frontend_build_output() -> None
     assert ".worktrees" in ignored
     assert "**/node_modules" in ignored
     assert "**/dist" in ignored
-    assert "apps/node/src" in ignored
+    assert "apps/node/tests" in ignored
     assert "apps/clients/tauri" in ignored
     assert "**/target" in ignored
+    assert "apps/node/src" not in ignored
 
 
 def test_delivery_scripts_verify_image_contents_and_tauri_compile_gates() -> None:
@@ -169,7 +176,7 @@ def test_delivery_scripts_verify_image_contents_and_tauri_compile_gates() -> Non
         assert command in tauri_check
     assert "project is not present" not in tauri_check
     assert 'node-version: "22.23.2"' in workflow
-    assert "dtolnay/rust-toolchain@stable" in workflow
+    assert "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c" in workflow
     assert "tauri-desktop-unsigned" in workflow
     assert "tauri-android-unsigned" in workflow
     assert "tauri-ios-unsigned" in workflow

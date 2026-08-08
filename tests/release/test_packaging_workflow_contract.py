@@ -51,7 +51,7 @@ def test_node_workflow_owns_names_retention_and_build_commands() -> None:
         "scripts/release/render_node_installer.py",
         "scripts/release/verify_node_bundle.sh",
         '--repository "$GITHUB_REPOSITORY"',
-        "actions/upload-artifact@v4",
+        "actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4",
         "release-assets/SHA256SUMS",
     ):
         assert required in text
@@ -59,6 +59,65 @@ def test_node_workflow_owns_names_retention_and_build_commands() -> None:
     assert text.index("scripts/release/prepare_version.py") < text.index(
         "uv sync --frozen --all-packages"
     )
+
+
+def test_node_workflow_has_docker_packaging_and_tag_publication() -> None:
+    workflow = _workflow(NODE_WORKFLOW)
+
+    assert set(workflow["jobs"]) == {"prepare", "package", "package-docker", "publish"}
+    assert workflow["jobs"]["package-docker"]["needs"] == "prepare"
+    assert workflow["jobs"]["publish"]["needs"] == ["prepare", "package", "package-docker"]
+    assert workflow["jobs"]["publish"]["permissions"] == {
+        "contents": "read",
+        "packages": "write",
+        "id-token": "write",
+    }
+
+
+def test_node_docker_artifact_and_tag_publication_are_separated() -> None:
+    text = NODE_WORKFLOW.read_text()
+
+    for required in (
+        "termflow-node-docker",
+        "termflow-${release_tag}-node-docker",
+        "termflow-node.tar",
+        "scripts/build-node-image.sh",
+        "scripts/verify-node-image.sh",
+        "scripts/release/archive_node_image.sh",
+        "linux/amd64,linux/arm64",
+        "ghcr.io/${owner}/termflow-node",
+        'image_tag="${RELEASE_TAG//+/_}"',
+        "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",
+        "docker buildx build",
+        "cosign sign",
+    ):
+        assert required in text
+    assert "if: ${{ needs.prepare.outputs.is_release == 'true' }}" in text
+    assert "is_prerelease: ${{ steps.context.outputs.is_prerelease }}" in text
+    assert 'IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}' in text
+    assert '[[ "$IS_PRERELEASE" == "false" ]]' in text
+    assert "TERMFLOW_BUILD_VERSION" in text
+
+
+def test_node_materializes_version_before_docker_builds() -> None:
+    workflow = _workflow(NODE_WORKFLOW)
+
+    for job_name, build_marker in (
+        ("package-docker", "scripts/build-node-image.sh"),
+        ("publish", "docker buildx build"),
+    ):
+        steps = workflow["jobs"][job_name]["steps"]
+        materialize = next(
+            index
+            for index, step in enumerate(steps)
+            if "scripts/release/prepare_version.py" in str(step.get("run", ""))
+        )
+        build = next(
+            index
+            for index, step in enumerate(steps)
+            if build_marker in str(step.get("run", ""))
+        )
+        assert materialize < build
 
 
 def test_control_plane_workflow_is_manual_and_reusable() -> None:
@@ -74,6 +133,7 @@ def test_control_plane_workflow_is_manual_and_reusable() -> None:
     assert workflow["jobs"]["publish"]["permissions"] == {
         "contents": "read",
         "packages": "write",
+        "id-token": "write",
     }
     assert workflow["jobs"]["publish"]["needs"] == ["prepare", "package"]
 
@@ -93,7 +153,7 @@ def test_control_plane_manual_artifact_and_tag_publication_are_separated() -> No
         "linux/amd64,linux/arm64",
         "ghcr.io/${owner}/termflow-control-plane",
         'image_tag="${RELEASE_TAG//+/_}"',
-        "docker/login-action@v3",
+        "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",
         "docker buildx build",
     ):
         assert required in text
@@ -186,9 +246,9 @@ def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() ->
         "--bundles app,dmg",
         "android build --debug --ci --target aarch64 --apk",
         "ios build --debug --ci --target aarch64-sim --no-sign",
-        "gen/apple/build/arm64-sim/*.app",
-        "actions/upload-artifact@v4",
-    ):
+            "gen/apple/build/arm64-sim/*.app",
+            "actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4",
+        ):
         assert required in text
     for forbidden in ("contents: write", "gh release", "softprops/action-gh-release"):
         assert forbidden not in text
@@ -202,7 +262,7 @@ def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() ->
     for job_name, paths in expected_paths.items():
         upload = next(
             step for step in jobs[job_name]["steps"]
-            if step.get("uses") == "actions/upload-artifact@v4"
+            if step.get("uses") == "actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4"
         )["with"]
         assert upload["if-no-files-found"] == "error"
         assert upload["retention-days"] == (
@@ -230,7 +290,7 @@ def test_every_native_runner_materializes_before_reading_package_manifests() -> 
         rust_cache = next(
             index
             for index, step in enumerate(steps)
-            if step.get("uses") == "Swatinem/rust-cache@v2"
+            if step.get("uses") == "Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c"
         )
         npm_install = next(
             index

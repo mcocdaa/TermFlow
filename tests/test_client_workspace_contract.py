@@ -30,6 +30,15 @@ def test_python_lock_uses_portable_public_pypi_sources() -> None:
     assert all(url.startswith("https://files.pythonhosted.org/") for url in artifact_urls)
 
 
+def test_python_dependency_configuration_pins_the_official_pypi_index() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    uv = pyproject.get("tool", {}).get("uv", {})
+
+    assert uv.get("default-index") or uv.get("index-url") == "https://pypi.org/simple"
+    for index in uv.get("index", []):
+        assert index.get("url") == "https://pypi.org/simple"
+
+
 def test_client_workspace_has_one_lock_and_fixed_dependency_direction() -> None:
     root = _manifest("package.json")
     workspace_version = root["version"]

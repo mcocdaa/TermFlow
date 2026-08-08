@@ -89,11 +89,28 @@ def test_renderer_rejects_an_invalid_repository_slug(tmp_path: Path) -> None:
     assert not installer.exists()
 
 
-def _run_installer(release: Path, home: Path, installer: Path) -> subprocess.CompletedProcess[str]:
+def _fake_gh_directory(tmp_path: Path) -> Path:
+    fake = tmp_path / "fake-bin"
+    fake.mkdir()
+    shim = fake / "gh"
+    shim.write_text("#!/usr/bin/env bash\nexit 0\n")
+    shim.chmod(0o755)
+    return fake
+
+
+def _run_installer(
+    release: Path,
+    home: Path,
+    installer: Path,
+    *,
+    extra_path: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
     environment = os.environ | {
         "HOME": str(home),
         "TERMFLOW_RELEASE_BASE_URL": release.as_uri(),
     }
+    if extra_path is not None:
+        environment["PATH"] = f"{extra_path}:{environment['PATH']}"
     return subprocess.run(
         ["bash", str(installer)],
         cwd=REPOSITORY_ROOT,
@@ -107,7 +124,12 @@ def _run_installer(release: Path, home: Path, installer: Path) -> subprocess.Com
 def test_installer_checks_checksum_and_updates_only_user_prefix(tmp_path: Path) -> None:
     release = _make_release_directory(tmp_path)
     home = tmp_path / "home"
-    result = _run_installer(release, home, _render_installer(tmp_path))
+    result = _run_installer(
+        release,
+        home,
+        _render_installer(tmp_path),
+        extra_path=_fake_gh_directory(tmp_path),
+    )
 
     assert result.returncode == 0, result.stderr
     installed = home / ".local/bin/termflow"
@@ -127,7 +149,13 @@ def test_bad_checksum_preserves_existing_termflow(tmp_path: Path) -> None:
     (bin_directory / "termflow").symlink_to(old)
     release = _make_release_directory(tmp_path / "bad", checksum="0" * 64)
 
-    result = _run_installer(release, home, _render_installer(tmp_path))
+    result = _run_installer(
+        release,
+        home,
+        _render_installer(tmp_path),
+        extra_path=_fake_gh_directory(tmp_path),
+    )
 
     assert result.returncode != 0
+    assert "checksum verification failed" in result.stderr
     assert (bin_directory / "termflow").resolve() == old

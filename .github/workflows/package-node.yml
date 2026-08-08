@@ -39,6 +39,8 @@ jobs:
       is_prerelease: ${{ steps.context.outputs.is_prerelease }}
       artifact_name: ${{ steps.context.outputs.artifact_name }}
       retention_days: ${{ steps.context.outputs.retention_days }}
+      docker_artifact_name: ${{ steps.context.outputs.docker_artifact_name }}
+      docker_retention_days: ${{ steps.context.outputs.docker_retention_days }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
@@ -58,12 +60,18 @@ jobs:
           if [[ -n "$release_tag" ]]; then
             artifact_name="termflow-${release_tag}-node-linux-x86_64"
             retention_days=1
+            docker_artifact_name="termflow-${release_tag}-node-docker"
+            docker_retention_days=1
           else
             artifact_name="termflow-node-linux-x86_64"
             retention_days=14
+            docker_artifact_name="termflow-node-docker"
+            docker_retention_days=14
           fi
           echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
           echo "retention_days=$retention_days" >> "$GITHUB_OUTPUT"
+          echo "docker_artifact_name=$docker_artifact_name" >> "$GITHUB_OUTPUT"
+          echo "docker_retention_days=$docker_retention_days" >> "$GITHUB_OUTPUT"
 
   package:
     needs: prepare
@@ -108,3 +116,102 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ fromJSON(needs.prepare.outputs.retention_days) }}
           compression-level: 0
+
+  package-docker:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: "3.12"
+      - name: Materialize build version
+        env:
+          TERMFLOW_BUILD_VERSION: ${{ needs.prepare.outputs.version }}
+        run: python scripts/release/prepare_version.py
+      - name: Build, verify, archive, and reload the node image
+        env:
+          LOCAL_IMAGE: termflow-node:package-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          scripts/build-node-image.sh "$LOCAL_IMAGE"
+          scripts/verify-node-image.sh "$LOCAL_IMAGE"
+          scripts/release/archive_node_image.sh \
+            "$LOCAL_IMAGE" release-assets/termflow-node.tar
+          scripts/verify-node-image.sh "$LOCAL_IMAGE"
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
+        with:
+          name: ${{ needs.prepare.outputs.docker_artifact_name }}
+          path: release-assets/termflow-node.tar
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.prepare.outputs.docker_retention_days) }}
+          compression-level: 0
+
+  publish:
+    needs: [prepare, package, package-docker]
+    if: ${{ needs.prepare.outputs.is_release == 'true' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: "3.12"
+      - name: Materialize build version
+        env:
+          TERMFLOW_BUILD_VERSION: ${{ needs.prepare.outputs.version }}
+        run: python scripts/release/prepare_version.py
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130  # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push the validated multi-architecture node image
+        id: push
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/${owner}/termflow-node"
+          image_tag="${RELEASE_TAG//+/_}"
+          tags=(
+            --tag "${image}:${image_tag}"
+            --tag "${image}:sha-${GITHUB_SHA}"
+          )
+          if [[ "$IS_PRERELEASE" == "false" ]]; then
+            tags+=(--tag "${image}:latest")
+          fi
+          docker buildx build --platform linux/amd64,linux/arm64 --push \
+            --provenance mode=max \
+            --attest type=sbom \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.version=${VERSION}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            "${tags[@]}" \
+            -f deploy/Dockerfile.node .
+          digest="$(docker buildx imagetools inspect \
+            "ghcr.io/${owner}/termflow-node:${image_tag}" \
+            --format '{{.Manifest.Digest}}')"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+      - uses: sigstore/cosign-installer@f713795cb21599bc4e5c4b58cbad1da852d7eeb9  # v3
+      - name: Sign the published image keylessly
+        if: ${{ steps.push.outputs.digest != '' }}
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          cosign sign --yes "ghcr.io/${owner}/termflow-node@${DIGEST}"

@@ -52,7 +52,11 @@ def test_release_publishes_only_after_all_reusable_workflows() -> None:
         "package-clients",
         "package-control-plane",
     }
-    assert publish["permissions"] == {"contents": "write"}
+    assert publish["permissions"] == {
+        "contents": "write",
+        "attestations": "write",
+        "id-token": "write",
+    }
 
 
 def test_release_uses_resolved_prerelease_state_not_raw_tag_punctuation() -> None:
@@ -91,7 +95,7 @@ def test_release_contains_no_product_packaging_implementation() -> None:
     ):
         assert forbidden not in text
     for required in (
-        "actions/download-artifact@v4",
+        "actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0",
         "merge-multiple: true",
         "SHA256SUMS",
         "gh release create",

@@ -40,11 +40,12 @@ docker compose --env-file .env -f deploy/compose.yaml up -d --build
 Windows、Linux、macOS、Android 与 iOS Simulator 客户端均作为同一 GitHub Release 的 assets 发布。
 当前 Windows 包未签名；iOS asset 仅能用于 Simulator，不能安装到实体 iPhone。
 
-Actions 页面还提供三套独立的手动测试包：A 的
-`termflow-node-linux-x86_64.tar.gz` 和安装器、B + Web C 的
-`termflow-control-plane.tar`，以及原生 C 的 Windows NSIS、Linux deb/AppImage、macOS、
-Android 和 iOS Simulator 包。手动 Artifact 使用稳定名称并保留 14 天；只有 Tag Release 才会推送 GHCR
-和创建永久 GitHub Release。下载 B 的手动 tar 后可执行
+Actions 页面还提供四套独立的手动测试包：A 的
+`termflow-node-linux-x86_64.tar.gz` + 安装器和容器化 A 的 `termflow-node-docker` 镜像 tar、
+B + Web C 的 `termflow-control-plane.tar`，以及原生 C 的 Windows NSIS、Linux deb/AppImage、macOS、
+Android 和 iOS Simulator 包。手动 Artifact 使用稳定名称并保留 14 天；只有 Tag Release 才会推送
+`ghcr.io/<owner>/termflow-node` 与 `ghcr.io/<owner>/termflow-control-plane` 镜像（cosign 签名，
+附带 SBOM 与 build provenance）和创建永久 GitHub Release。下载 B 的手动 tar 后可执行
 `docker load -i termflow-control-plane.tar`，但它不会自动修改现有 Compose 部署。
 
 从 Actions 下载的 artifact 可按下面方式做离线安装验收。A 的安装器通过
@@ -73,10 +74,11 @@ docker run -d --name termflow-control-plane --restart unless-stopped \
   --env-file .env \
   --publish "127.0.0.1:${TERMFLOW_HOST_PORT:-8765}:8000" \
   --volume "${TERMFLOW_DATA_VOLUME:-termflow-data}:/app/data" \
+  --volume "${TERMFLOW_TOTP_KEY_VOLUME:-termflow-totp-key}:/app/totp-secrets" \
   --env TERMFLOW_DATABASE_URL=sqlite+aiosqlite:////app/data/termflow.db \
   --env TERMFLOW_STATIC_DIR=/app/frontend-dist \
   --env TERMFLOW_ALLOW_INSECURE_LOOPBACK="${TERMFLOW_ALLOW_INSECURE_LOOPBACK:-true}" \
-  --env TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE=/app/data/totp-master-key \
+  --env TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE=/app/totp-secrets/totp-master-key \
   "$IMAGE_NAME"
 curl -fsS http://127.0.0.1:8765/healthz
 ```
@@ -123,7 +125,7 @@ uv run --package termflow-control-plane termflow-control serve --host 127.0.0.1 
 uv run --package termflow-control-plane termflow-control enrollment create
 ```
 
-在电脑 A 登录，然后创建并附着一个 Term：
+在电脑 A 登录，然后创建并附着一个 Term（loopback 明文会打印 insecure 传输警告，属预期）：
 
 ```bash
 uv run --package termflow-node termflow login \
@@ -144,6 +146,36 @@ uv run --package termflow-node termflow kill '<instance-uuid>'
 B+Web C 的容器化启动参见 [deploy/compose.yaml](deploy/compose.yaml) 与
 [.env.example](.env.example)。默认只映射 `127.0.0.1:8765`；公网部署应在 B
 前放置 HTTPS/WSS 反向代理。
+
+## 容器化 Computer A（Docker）
+
+Computer A 也可以整体运行在独立容器中，适合演示与隔离环境。镜像只包含
+termflow-node 与 tmux，不包含 B/Web C 源码；容器为临时对象，登录态与 tmux
+运行态随容器消亡，用户数据通过 `/work` 数据卷持久化：
+
+```bash
+docker build -f deploy/Dockerfile.node -t termflow-node .
+
+# B 上生成一次性注册码
+docker compose --env-file .env -f deploy/compose.yaml exec control-plane \
+  termflow-control enrollment create
+
+# 落地即进入 tmux（TERMFLOW_NEW）；Ctrl+B D 退出后执行 termflow activate <name> 即可被 Web C 远程控制
+docker run --rm -it --cap-drop ALL --read-only \
+  --tmpfs /tmp --tmpfs /home/termflow \
+  -v termflow-user-data:/work \
+  --network host \
+  -e TERMFLOW_SERVER=http://127.0.0.1:8765 \
+  -e TERMFLOW_CODE='<一次性注册码>' \
+  -e TERMFLOW_ALLOW_INSECURE_HTTP=true \
+  -e TERMFLOW_NEW=demo \
+  termflow-node
+```
+
+不设置 `TERMFLOW_NEW` 时进入普通 shell 手动执行 `termflow` 命令。环境变量
+`TERMFLOW_SERVER`、`TERMFLOW_CODE`（一次性注册码）与 `TERMFLOW_ALLOW_INSECURE_HTTP`
+仅在未登录时触发自动 `termflow login`。容器按最小权限运行：非 root 用户、
+`--cap-drop ALL`、只读 rootfs，tmux/PTY 不需要额外 capability。
 
 ## 日志位置
 

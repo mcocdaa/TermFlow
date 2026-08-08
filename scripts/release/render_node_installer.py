@@ -25,9 +25,9 @@ def render_installer(
     if not REPOSITORY_SLUG.fullmatch(repository):
         raise ValueError(f"Repository must be an owner/repository slug: {repository}")
     source = template.read_text()
-    if source.count("@TAG@") != 1 or source.count("@REPOSITORY@") != 1:
+    if source.count("@TAG@") != 1 or source.count("@REPOSITORY@") < 1:
         raise ValueError(
-            f"{template}: expected exactly one @TAG@ and one @REPOSITORY@ placeholder"
+            f"{template}: expected exactly one @TAG@ and at least one @REPOSITORY@ placeholder"
         )
     return source.replace("@TAG@", tag).replace("@REPOSITORY@", repository)
 

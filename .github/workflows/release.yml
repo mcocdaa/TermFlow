@@ -106,3 +106,14 @@ jobs:
             --certificate-identity-regexp "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/package-control-plane.yml" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             >/dev/null
+      - name: Verify the signed node image
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image_tag="${GITHUB_REF_NAME//+/_}"
+          cosign verify \
+            "ghcr.io/${owner}/termflow-node:${image_tag}" \
+            --certificate-identity-regexp "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/package-node.yml" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            >/dev/null

@@ -1,0 +1,49 @@
+FROM ghcr.io/astral-sh/uv:0.11.19 AS uv
+
+FROM python:3.12.11-slim-bookworm AS python-wheels
+
+COPY --from=uv /uv /bin/uv
+WORKDIR /build
+
+# Only workspace manifests and the two deliverable Python source trees enter this builder.
+# apps/control-plane's manifest is needed for frozen uv workspace discovery; its source is not copied.
+COPY pyproject.toml uv.lock ./
+COPY packages/protocol/pyproject.toml ./packages/protocol/pyproject.toml
+COPY apps/control-plane/pyproject.toml ./apps/control-plane/pyproject.toml
+COPY apps/node/pyproject.toml ./apps/node/pyproject.toml
+COPY packages/protocol/src ./packages/protocol/src
+COPY apps/node/src ./apps/node/src
+
+RUN uv build --wheel --package termflow-protocol --out-dir /wheels \
+    && uv build --wheel --package termflow-node --out-dir /wheels \
+    && uv export --quiet --frozen --no-dev --package termflow-node \
+        --no-emit-workspace --output-file /runtime-requirements.txt \
+    && uv venv /opt/termflow \
+    && uv pip install --python /opt/termflow/bin/python \
+        --require-hashes --requirements /runtime-requirements.txt \
+    && uv pip install --python /opt/termflow/bin/python --no-deps /wheels/*.whl
+
+FROM python:3.12.11-slim-bookworm AS runtime
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends tmux curl procps \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system termflow \
+    && useradd --system --gid termflow --home-dir /home/termflow termflow \
+    && mkdir -p /work \
+    && chown termflow:termflow /work
+
+ENV PATH="/opt/termflow/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HOME=/home/termflow
+
+COPY --from=python-wheels /opt/termflow /opt/termflow
+COPY --chmod=0755 deploy/entrypoint.node.sh /usr/local/bin/termflow-entrypoint
+
+USER termflow
+
+WORKDIR /work
+
+ENTRYPOINT ["/usr/local/bin/termflow-entrypoint"]
+CMD ["bash", "-l"]
