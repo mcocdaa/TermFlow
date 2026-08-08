@@ -89,11 +89,11 @@ def test_renderer_rejects_an_invalid_repository_slug(tmp_path: Path) -> None:
     assert not installer.exists()
 
 
-def _fake_gh_directory(tmp_path: Path) -> Path:
+def _fake_gh_directory(tmp_path: Path, *, exit_code: int = 0) -> Path:
     fake = tmp_path / "fake-bin"
     fake.mkdir()
     shim = fake / "gh"
-    shim.write_text("#!/usr/bin/env bash\nexit 0\n")
+    shim.write_text(f"#!/usr/bin/env bash\nexit {exit_code}\n")
     shim.chmod(0o755)
     return fake
 
@@ -104,17 +104,20 @@ def _run_installer(
     installer: Path,
     *,
     extra_path: Path | None = None,
+    environment: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    environment = os.environ | {
+    merged = os.environ | {
         "HOME": str(home),
         "TERMFLOW_RELEASE_BASE_URL": release.as_uri(),
     }
     if extra_path is not None:
-        environment["PATH"] = f"{extra_path}:{environment['PATH']}"
+        merged["PATH"] = f"{extra_path}:{merged['PATH']}"
+    if environment is not None:
+        merged.update(environment)
     return subprocess.run(
         ["bash", str(installer)],
         cwd=REPOSITORY_ROOT,
-        env=environment,
+        env=merged,
         capture_output=True,
         text=True,
         check=False,
@@ -159,3 +162,37 @@ def test_bad_checksum_preserves_existing_termflow(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "checksum verification failed" in result.stderr
     assert (bin_directory / "termflow").resolve() == old
+
+
+def test_failing_attestation_refuses_to_install(tmp_path: Path) -> None:
+    release = _make_release_directory(tmp_path)
+    home = tmp_path / "home"
+
+    result = _run_installer(
+        release,
+        home,
+        _render_installer(tmp_path),
+        extra_path=_fake_gh_directory(tmp_path, exit_code=1),
+    )
+
+    assert result.returncode != 0
+    assert "provenance attestation verification failed" in result.stderr
+    assert not (home / ".local/bin/termflow").exists()
+
+
+def test_skip_attestation_allows_local_install_without_gh_provenance(
+    tmp_path: Path,
+) -> None:
+    release = _make_release_directory(tmp_path)
+    home = tmp_path / "home"
+
+    result = _run_installer(
+        release,
+        home,
+        _render_installer(tmp_path),
+        extra_path=_fake_gh_directory(tmp_path, exit_code=1),
+        environment={"TERMFLOW_SKIP_ATTESTATION": "1"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (home / ".local/bin/termflow").resolve().is_file()

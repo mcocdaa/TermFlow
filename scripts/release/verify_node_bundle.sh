@@ -28,8 +28,11 @@ REPOSITORY="${GITHUB_REPOSITORY:-mcocdaa/TermFlow}"
 uv run --frozen python "${SCRIPT_DIRECTORY}/render_node_installer.py" \
   "${TAG}" "${installer}" --repository "${REPOSITORY}"
 install_home="${temporary}/home"
+# The locally built bundle has no GitHub provenance, so attestation cannot
+# pass; skip it explicitly instead of depending on gh being absent.
 HOME="${install_home}" \
   TERMFLOW_RELEASE_BASE_URL="file://${release_directory}" \
+  TERMFLOW_SKIP_ATTESTATION=1 \
   bash "${installer}"
 
 installed_node="${install_home}/.local/bin/termflow"

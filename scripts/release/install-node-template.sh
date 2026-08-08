@@ -40,12 +40,12 @@ curl --fail --location --silent --show-error "${RELEASE_BASE%/}/SHA256SUMS" --ou
 (cd "${temporary}" && grep -F "  ${ARCHIVE}" SHA256SUMS | sha256sum --check --status) \
   || fail "checksum verification failed"
 
-if command -v gh >/dev/null 2>&1; then
+if command -v gh >/dev/null 2>&1 && [[ "${TERMFLOW_SKIP_ATTESTATION:-0}" != "1" ]]; then
   if ! gh attestation verify "${temporary}/${ARCHIVE}" --repo "@REPOSITORY@" >/dev/null 2>&1; then
     fail "GitHub provenance attestation verification failed; refusing to install"
   fi
 else
-  echo "TermFlow note: GitHub CLI is not installed; provenance attestation was not verified." >&2
+  echo "TermFlow note: GitHub provenance attestation was not verified." >&2
 fi
 
 mkdir -p "${temporary}/extract"

@@ -14,7 +14,7 @@ import typer
 
 from termflow_node import __version__
 from termflow_node.config.models import InstallationConfig
-from termflow_node.config.store import ConfigStore
+from termflow_node.config.store import ConfigNotFound, ConfigStore
 from termflow_node.control_plane_client import ControlPlaneClient, validate_server_url
 from termflow_node.diagnostics import probe_instance_health, run_diagnostics
 from termflow_node.instances.activation import ActivationError, default_instance_activator
@@ -124,6 +124,15 @@ def login(
         status="ok",
     )
     typer.echo(f"Installation {config.installation_id} enrolled at {config.server_url.host}")
+
+
+def _transport_insecure() -> bool:
+    """Whether the Control Plane transport is plaintext; false before login."""
+
+    try:
+        return ConfigStore.default().load().allow_insecure_http
+    except ConfigNotFound:
+        return False
 
 
 def _status_payload(record: LocalInstance, *, insecure: bool) -> dict[str, object]:
@@ -250,7 +259,7 @@ def list_instances(
     """List local Instances without contacting the Control Plane."""
 
     store = InstanceStore.default()
-    insecure = ConfigStore.default().load().allow_insecure_http
+    insecure = _transport_insecure()
     payloads = [
         _status_payload(record, insecure=insecure)
         for record in InstanceManager(store).list_current().instances
@@ -270,8 +279,7 @@ def status(
     """Show one local Instance status."""
 
     record = InstanceManager(InstanceStore.default()).resolve(identifier)
-    insecure = ConfigStore.default().load().allow_insecure_http
-    payload = _status_payload(record, insecure=insecure)
+    payload = _status_payload(record, insecure=_transport_insecure())
     typer.echo(json.dumps(payload, separators=(",", ":")) if json_output else _status_line(payload))
 
 

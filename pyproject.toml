@@ -2,7 +2,7 @@
 members = ["packages/protocol", "apps/control-plane", "apps/node"]
 
 [tool.uv]
-default-index = "https://pypi.org/simple"
+index-url = "https://pypi.org/simple"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
