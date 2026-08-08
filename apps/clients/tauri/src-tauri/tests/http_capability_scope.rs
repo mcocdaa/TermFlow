@@ -92,13 +92,14 @@ fn native_opener_capabilities_allow_the_authorization_browser_urls() {
         let document: Value =
             serde_json::from_str(&fs::read_to_string(path).expect("read capability JSON"))
                 .expect("parse capability JSON");
+        let permissions = document["permissions"]
+            .as_array()
+            .expect("permissions array");
         assert!(
-            document["permissions"]
-                .as_array()
-                .expect("permissions array")
+            permissions
                 .iter()
-                .any(|permission| permission == "opener:allow-default-urls"),
-            "{capability} must allow the opener default URL scope",
+                .any(|permission| permission == "opener:default"),
+            "{capability} must enable the opener command permission set",
         );
     }
 }
