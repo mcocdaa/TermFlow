@@ -36,6 +36,10 @@ tmux -V
 校验：它会在更新 `~/.local/bin/termflow` 前失败，因此原有可用版本仍会保留。检查 Release 的
 `SHA256SUMS`、网络代理和 tag 后重试；需要回退时运行旧 Release tag 的安装器。
 
+装有 GitHub CLI 时，安装器还会用 `gh attestation verify` 校验 archive 的 build provenance，
+校验失败会直接拒绝安装：先确认 `gh` 已安装、已登录且能访问 GitHub，再重试。没有 `gh` 时
+回退为纯 checksum 校验（仍可安装，但只能防传输损坏）。
+
 手动 A 的离线安装失败时，确认已把 Artifact 完整解压到同一目录，并从该目录执行：
 
 ```bash
@@ -78,9 +82,10 @@ Token。浏览器完成授权并回到 `termflow://auth/callback` 后，原生�
 确认 Web C 已使用同一服务网址、浏览器没有拦截回调，并检查 B 日志中的授权失败原因。
 
 旧的 Windows 安装包不会自动包含新代码；如果本地包在 IPv4 可用时仍报告网络离线，重新从
-Tag Release 或 `Package C · Native Clients` workflow 下载新的 Windows NSIS 包。当前版本对
-`127.0.0.1`、`localhost` 和 `[::1]` 的 HTTP capability 均有解析/匹配契约；“服务器不可用”
-与“客户端网络权限配置无效”是两种不同错误。
+Tag Release 或 `Package C · Native Clients` workflow 下载新的 Windows NSIS 包。App/EXE 的
+服务器地址必须与 B 的 `TERMFLOW_PUBLIC_BASE_URL` 完全一致（协议、主机和端口均不能混用）；
+原生端只接受配置 issuer 同源的 `/api/` 请求，其他地址会被 Rust 侧直接拒绝。“服务器不可用”
+与“服务器地址不符/网络权限不足”是两种不同错误。
 
 ## GitHub Actions 失败或找不到包
 

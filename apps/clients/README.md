@@ -45,7 +45,8 @@ the real target toolchain:
   `src-tauri/gen/apple` project. Linux and Windows cannot compile iOS.
 
 `scripts/verify-tauri.sh` runs Rust fmt/clippy/test/check and an unsigned desktop
-`--no-bundle` compile on the current host. A successful host build不能证明跨平台安装包已经构建；
+`--no-bundle` compile on the current host. A successful host build does not prove that
+cross-platform installers were produced;
 CI keeps Linux, Windows, macOS, Android and iOS compile evidence separate, and
 code signing/publication remains a protected release concern.
 

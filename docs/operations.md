@@ -27,7 +27,8 @@ Admin Token 仍只用于 Web C 登录。
 ## 永久发布、安装与回退
 
 一个通过全部介质 gate 的 `vX.Y.Z` 或 prerelease tag 会创建 GitHub Release，并推送同 tag 的 GHCR
-`ghcr.io/<repository-owner>/termflow-control-plane:<tag>` 多架构镜像（linux/amd64、linux/arm64）。稳定 tag
+`ghcr.io/<repository-owner>/termflow-control-plane:<tag>` 多架构镜像（linux/amd64、linux/arm64），
+以 cosign keyless 签名并附带 SBOM。稳定 tag
 还会更新 `latest`，但生产部署应始终写精确 tag，不应依赖 `latest`。GitHub Release 中包含 A 的
 `install-termflow-node.sh` 与 Linux Node bundle，以及 Windows、Linux、macOS、Android 和 iOS
 Simulator 客户端；发布前必须确认 GHCR 包已对目标部署者可拉取。
@@ -83,11 +84,12 @@ set -a; source .env; set +a
 docker run -d --name termflow-control-plane --restart unless-stopped \
   --publish "127.0.0.1:${TERMFLOW_HOST_PORT:-8765}:8000" \
   --volume "${TERMFLOW_DATA_VOLUME:-termflow-data}:/app/data" \
+  --volume "${TERMFLOW_TOTP_KEY_VOLUME:-termflow-totp-key}:/app/totp-secrets" \
   --env TERMFLOW_ADMIN_TOKEN="$TERMFLOW_ADMIN_TOKEN" \
   --env TERMFLOW_DATABASE_URL=sqlite+aiosqlite:////app/data/termflow.db \
   --env TERMFLOW_PUBLIC_BASE_URL="$TERMFLOW_PUBLIC_BASE_URL" \
   --env TERMFLOW_ALLOW_INSECURE_LOOPBACK="${TERMFLOW_ALLOW_INSECURE_LOOPBACK:-true}" \
-  --env TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE=/app/data/totp-master-key \
+  --env TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE=/app/totp-secrets/totp-master-key \
   ghcr.io/<repository-owner>/termflow-control-plane:vX.Y.Z
 ```
 
@@ -104,10 +106,10 @@ iPhone。签名、notarization、TestFlight 与应用商店上传仍是后续独
 
 ## 管理凭据与 TOTP 密钥
 
-`TERMFLOW_ADMIN_TOKEN` 必须由部署者生成。默认单实例 Compose 会在持久化的
-`termflow-data` 数据卷中自动创建权限为 `0600` 的 TOTP 主密钥文件，并在后续启动中复用；
-密钥不会进入镜像、日志或仓库。显式设置的 `TERMFLOW_TOTP_MASTER_KEY` 或
-`TERMFLOW_TOTP_MASTER_KEY_FILE` 始终优先于这个自动文件。
+`TERMFLOW_ADMIN_TOKEN` 必须由部署者生成。默认单实例 Compose 会在独立的
+`termflow-totp-key` 数据卷中自动创建权限为 `0600` 的 TOTP 主密钥文件，并在后续启动中复用；
+密钥不会进入镜像、日志或仓库，且与数据库卷分离，卷快照不会同时泄露密文与密钥。显式设置的
+`TERMFLOW_TOTP_MASTER_KEY` 或 `TERMFLOW_TOTP_MASTER_KEY_FILE` 始终优先于这个自动文件。
 
 从仓库根目录运行 Compose 时请显式指定根目录的 env 文件；因为 Compose 文件位于
 `deploy/`，不指定时 Compose 可能把 `deploy/` 作为 project directory，进而找不到根目录

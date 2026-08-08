@@ -8,7 +8,7 @@
 | 工作流 | 手动运行 | Tag 运行 | 输出 |
 | --- | --- | --- | --- |
 | [`ci.yml`](../.github/workflows/ci.yml) | 否 | 否 | 测试、类型检查、Web 构建、Docker 镜像检查、各平台无签名编译 |
-| [`package-node.yml`](../.github/workflows/package-node.yml) | 是 | 由 Release 复用 | A：Linux x86_64 bundle、安装器、`SHA256SUMS` |
+| [`package-node.yml`](../.github/workflows/package-node.yml) | 是 | 由 Release 复用 | A：Linux x86_64 bundle、安装器、`SHA256SUMS`；Tag 运行还推送 GHCR 多架构 A 镜像 |
 | [`package-control-plane.yml`](../.github/workflows/package-control-plane.yml) | 是 | 由 Release 复用 | B + Web C Docker tar；Tag 运行还推送 GHCR 多架构镜像 |
 | [`tauri-packages.yml`](../.github/workflows/tauri-packages.yml) | 是 | 由 Release 复用 | C：Windows、Linux、macOS、Android、iOS Simulator |
 | [`release.yml`](../.github/workflows/release.yml) | 否 | `v*` Tag | GitHub Release，包含 A/C/B 产物和总 `SHA256SUMS` |
@@ -100,12 +100,25 @@ tar round-trip、Artifact 上传或多架构推送失败，都不会创建 GitHu
 ghcr.io/<仓库所有者>/termflow-control-plane:v1.2.3
 ghcr.io/<仓库所有者>/termflow-control-plane:sha-<commit>
 ghcr.io/<仓库所有者>/termflow-control-plane:latest
+ghcr.io/<仓库所有者>/termflow-node:v1.2.3
+ghcr.io/<仓库所有者>/termflow-node:sha-<commit>
+ghcr.io/<仓库所有者>/termflow-node:latest
 ```
 
 prerelease Tag 只推送版本 Tag 和 commit Tag，不更新 `latest`，并以 GitHub prerelease 发布。
 若 Tag 含 `+build-metadata`，B workflow 会把 GHCR 标签中的 `+` 替换为 `_`（例如
 `v1.2.3+build.5` → `v1.2.3_build.5`）；GitHub Release 仍使用原始 Tag 名称。
 生产 Compose 应固定到精确版本或 commit，不依赖 `latest`。
+
+## 供应链签名与校验
+
+- A 与 B 的 GHCR 镜像均以 `--provenance mode=max` 构建并附带 SBOM attestation，发布后由
+  `sigstore/cosign-installer` 做 cosign keyless 签名；拉取方可用 `cosign verify` 校验签名。
+- `release.yml` 的 publish job 对全部 Release 资产运行 `actions/attest-build-provenance`，
+  生成 GitHub Artifact Attestations（build provenance），并在发布前 `cosign verify` 校验
+  已推送镜像的签名。
+- A 的安装器在装有 GitHub CLI 时用 `gh attestation verify` 校验 archive 的 provenance，
+  校验失败拒绝安装；没有 `gh` 时回退为纯 checksum 校验。
 
 ## 产物边界
 
