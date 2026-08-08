@@ -11,3 +11,4 @@ class InstallationConfig(BaseModel):
     server_url: AnyHttpUrl
     installation_id: UUID
     installation_token: SecretStr
+    allow_insecure_http: bool = False

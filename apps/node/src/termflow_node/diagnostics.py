@@ -43,7 +43,12 @@ def _mode(path: Path) -> int:
 
 
 def probe_control_plane_health(config: InstallationConfig) -> tuple[bool, str]:
-    return asyncio.run(ControlPlaneClient().probe_health(str(config.server_url)))
+    return asyncio.run(
+        ControlPlaneClient().probe_health(
+            str(config.server_url),
+            allow_insecure_http=config.allow_insecure_http,
+        )
+    )
 
 
 def run_diagnostics(
@@ -86,7 +91,10 @@ def run_diagnostics(
         )
         try:
             config = config_store.load()
-            validate_server_url(str(config.server_url))
+            validate_server_url(
+                str(config.server_url),
+                allow_insecure_http=config.allow_insecure_http,
+            )
             checks.append(DiagnosticCheck("server_url", True, "TLS policy accepted"))
             if check_control_plane:
                 reachable, detail = probe_control_plane_health(config)

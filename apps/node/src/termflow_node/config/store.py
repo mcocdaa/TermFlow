@@ -40,6 +40,7 @@ class ConfigStore:
                 "server_url": str(config.server_url),
                 "installation_id": str(config.installation_id),
                 "installation_token": config.installation_token.get_secret_value(),
+                "allow_insecure_http": config.allow_insecure_http,
             },
             separators=(",", ":"),
         ).encode("utf-8")

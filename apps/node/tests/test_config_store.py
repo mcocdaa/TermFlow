@@ -1,3 +1,4 @@
+import json
 import stat
 from uuid import uuid4
 
@@ -34,3 +35,30 @@ def test_load_rejects_group_or_other_permissions(tmp_path) -> None:
     store.path.chmod(0o640)
     with pytest.raises(InsecureConfigError):
         store.load()
+
+
+def test_config_round_trips_allow_insecure_http(tmp_path) -> None:
+    store = ConfigStore(tmp_path / "config.json")
+    expected = InstallationConfig(
+        server_url="http://192.168.0.53:8765",
+        installation_id=uuid4(),
+        installation_token="secret-token",
+        allow_insecure_http=True,
+    )
+    store.save(expected)
+    assert store.load() == expected
+
+
+def test_config_without_flag_field_defaults_to_false(tmp_path) -> None:
+    store = ConfigStore(tmp_path / "config.json")
+    store.path.write_text(
+        json.dumps(
+            {
+                "server_url": "http://192.168.0.53:8765",
+                "installation_id": str(uuid4()),
+                "installation_token": "secret-token",
+            }
+        )
+    )
+    store.path.chmod(0o600)
+    assert store.load().allow_insecure_http is False

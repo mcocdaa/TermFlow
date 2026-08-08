@@ -62,8 +62,13 @@ def test_websocket_url_policy() -> None:
     assert bridge_websocket_url("http://127.0.0.1:8000") == (
         "ws://127.0.0.1:8000/api/v1/bridge/connect"
     )
+    assert bridge_websocket_url("http://192.168.0.53:8765", allow_insecure_http=True) == (
+        "ws://192.168.0.53:8765/api/v1/bridge/connect"
+    )
     with pytest.raises(ValueError):
         bridge_websocket_url("http://example.com")
+    with pytest.raises(ValueError):
+        bridge_websocket_url("http://192.168.0.53:8765")
 
 
 @pytest.mark.asyncio
@@ -250,16 +255,16 @@ async def test_terminal_teardown_has_reserved_transport_capacity(tmp_path) -> No
     output = WireMessage(
         type=MessageType.TERMINAL_OUTPUT,
         instance_id=instance.instance_id,
-        payload=TerminalOutputPayload.from_bytes(
-            terminal_id, stream_id, 1, b"full"
-        ).model_dump(mode="json"),
+        payload=TerminalOutputPayload.from_bytes(terminal_id, stream_id, 1, b"full").model_dump(
+            mode="json"
+        ),
     )
     closed = WireMessage(
         type=MessageType.TERMINAL_CLOSED,
         instance_id=instance.instance_id,
-        payload=TerminalClosedPayload(
-            terminal_id=terminal_id, reason="internal_error"
-        ).model_dump(mode="json"),
+        payload=TerminalClosedPayload(terminal_id=terminal_id, reason="internal_error").model_dump(
+            mode="json"
+        ),
     )
 
     assert transport.enqueue_nowait(output)

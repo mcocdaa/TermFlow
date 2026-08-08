@@ -62,8 +62,8 @@ def _connect_websocket(
     )
 
 
-def bridge_websocket_url(server_url: str) -> str:
-    base_url = validate_server_url(server_url)
+def bridge_websocket_url(server_url: str, *, allow_insecure_http: bool = False) -> str:
+    base_url = validate_server_url(server_url, allow_insecure_http=allow_insecure_http)
     if base_url.startswith("https://"):
         return f"wss://{base_url.removeprefix('https://')}/api/v1/bridge/connect"
     if base_url.startswith("http://"):
@@ -215,7 +215,10 @@ class BridgeTransport:
         if token is None:
             raise RuntimeError("Instance registration did not produce a credential")
         async with self._connect(
-            bridge_websocket_url(str(self._installation.server_url)),
+            bridge_websocket_url(
+                str(self._installation.server_url),
+                allow_insecure_http=self._installation.allow_insecure_http,
+            ),
             additional_headers={
                 "Authorization": f"Bearer {token.get_secret_value()}",
             },
@@ -238,9 +241,7 @@ class BridgeTransport:
                     WireMessage(
                         type=MessageType.TOPOLOGY_SNAPSHOT,
                         instance_id=self._instance.instance_id,
-                        payload=TopologySnapshotPayload(topology=topology).model_dump(
-                            mode="json"
-                        ),
+                        payload=TopologySnapshotPayload(topology=topology).model_dump(mode="json"),
                     ).model_dump_json()
                 )
                 self._backoff.reset()

@@ -24,13 +24,20 @@ class InsecureServerUrl(ValueError):
     pass
 
 
-def validate_server_url(server_url: str) -> str:
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def validate_server_url(server_url: str, *, allow_insecure_http: bool = False) -> str:
     parsed = urlsplit(server_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise InsecureServerUrl("Server URL must be an absolute HTTP(S) URL")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise InsecureServerUrl("Server URL cannot contain credentials, query, or fragment")
-    if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+    if (
+        parsed.scheme == "http"
+        and parsed.hostname not in _LOOPBACK_HOSTS
+        and not allow_insecure_http
+    ):
         raise InsecureServerUrl("Public TermFlow servers require HTTPS")
     return server_url.rstrip("/")
 
@@ -43,8 +50,10 @@ class ControlPlaneClient:
         self,
         server_url: str,
         enrollment_token: str,
+        *,
+        allow_insecure_http: bool = False,
     ) -> InstallationEnrollResponse:
-        base_url = validate_server_url(server_url)
+        base_url = validate_server_url(server_url, allow_insecure_http=allow_insecure_http)
         async with httpx.AsyncClient(transport=self._transport, timeout=10.0) as client:
             response = await client.post(
                 f"{base_url}/api/v1/installations/enroll",
@@ -64,7 +73,10 @@ class ControlPlaneClient:
         instance: LocalInstance,
         store: InstanceStore,
     ) -> LocalInstance:
-        base_url = validate_server_url(str(installation.server_url))
+        base_url = validate_server_url(
+            str(installation.server_url),
+            allow_insecure_http=installation.allow_insecure_http,
+        )
         async with httpx.AsyncClient(transport=self._transport, timeout=10.0) as client:
             response = await client.post(
                 f"{base_url}/api/v1/instances/register",
@@ -89,7 +101,10 @@ class ControlPlaneClient:
         self,
         installation: InstallationConfig,
     ) -> InstanceListResponse:
-        base_url = validate_server_url(str(installation.server_url))
+        base_url = validate_server_url(
+            str(installation.server_url),
+            allow_insecure_http=installation.allow_insecure_http,
+        )
         async with httpx.AsyncClient(transport=self._transport, timeout=10.0) as client:
             response = await client.get(
                 f"{base_url}/api/v1/instances/mine",
@@ -103,7 +118,10 @@ class ControlPlaneClient:
             return InstanceListResponse.model_validate(response.json())
 
     async def installation_revoked(self, installation: InstallationConfig) -> bool:
-        base_url = validate_server_url(str(installation.server_url))
+        base_url = validate_server_url(
+            str(installation.server_url),
+            allow_insecure_http=installation.allow_insecure_http,
+        )
         async with httpx.AsyncClient(transport=self._transport, timeout=3.0) as client:
             response = await client.get(
                 f"{base_url}/api/v1/instances/mine",
@@ -118,8 +136,10 @@ class ControlPlaneClient:
         response.raise_for_status()
         return False
 
-    async def probe_health(self, server_url: str) -> tuple[bool, str]:
-        base_url = validate_server_url(server_url)
+    async def probe_health(
+        self, server_url: str, *, allow_insecure_http: bool = False
+    ) -> tuple[bool, str]:
+        base_url = validate_server_url(server_url, allow_insecure_http=allow_insecure_http)
         try:
             async with httpx.AsyncClient(transport=self._transport, timeout=3.0) as client:
                 response = await client.get(f"{base_url}/healthz")
