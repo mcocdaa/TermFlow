@@ -177,6 +177,27 @@ docker run --rm -it --cap-drop ALL --read-only \
 仅在未登录时触发自动 `termflow login`。容器按最小权限运行：非 root 用户、
 `--cap-drop ALL`、只读 rootfs，tmux/PTY 不需要额外 capability。
 
+### 自定义 tmux 配置（可选）
+
+容器内 tmux server 由 `termflow new` 启动，并自动加载系统级配置
+`/etc/tmux.conf`。如需自定义键位、状态栏等，在 `docker run` 命令中追加只读挂载：
+
+```bash
+  -v ~/.tmux.conf:/etc/tmux.conf:ro \
+```
+
+容器启动即生效。例如本地的 `~/.tmux.conf` 内容：
+
+```tmux
+set -g prefix C-a
+set -g status-bg red
+set -g history-limit 10000
+```
+
+注意：容器的 `HOME`（`/home/termflow`）是 tmpfs，登录态随容器消亡，
+**不要**把配置挂载到 `~/.tmux.conf`——tmpfs 会遮蔽挂载点；挂到
+`/etc/tmux.conf` 是与 tmpfs HOME 兼容的注入方式。
+
 ## 日志位置
 
 Computer A 的 CLI 与 Bridge 写入结构化 JSONL 日志，默认 10 MiB 轮转并保留 5 份：Linux 为
