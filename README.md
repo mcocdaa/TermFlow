@@ -49,11 +49,14 @@ Android 和 iOS Simulator 包。手动 Artifact 使用稳定名称并保留 14 �
 `docker load -i termflow-control-plane.tar`，但它不会自动修改现有 Compose 部署。
 
 从 Actions 下载的 artifact 可按下面方式做离线安装验收。A 的安装器通过
-`Path.cwd().as_uri()` 把本地目录转换为 `file://` URL，因此下载目录包含空格或括号时也能工作：
+`Path.cwd().as_uri()` 把本地目录转换为 `file://` URL，因此下载目录包含空格或括号时也能工作；
+手动打包的 artifact 没有 GitHub provenance attestation，安装器检测到 `gh` 时会尝试校验并拒绝
+安装，离线验收需要显式设置 `TERMFLOW_SKIP_ATTESTATION=1`：
 
 ```bash
 cd "/path/to/termflow-node-linux-x86_64"
 TERMFLOW_RELEASE_BASE_URL="$(python3 -c 'from pathlib import Path; print(Path.cwd().as_uri())')" \
+TERMFLOW_SKIP_ATTESTATION=1 \
   ./install-termflow-node.sh
 ~/.local/bin/termflow --version
 ~/.local/bin/termflow doctor
