@@ -162,7 +162,7 @@ docker compose --env-file .env -f deploy/compose.yaml exec control-plane \
 
 # 落地即进入 tmux（TERMFLOW_NEW）；Ctrl+B D 退出后执行 termflow activate <name> 即可被 Web C 远程控制
 docker run --rm -it --cap-drop ALL --read-only \
-  --tmpfs /tmp --tmpfs /home/termflow \
+  --tmpfs /tmp --tmpfs /home/termflow:uid=1000,gid=1000,mode=0750 \
   -v termflow-user-data:/work \
   --network host \
   -e TERMFLOW_SERVER=http://127.0.0.1:8765 \

@@ -29,10 +29,10 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends tmux curl procps \
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /usr/local/lib/python3.12/ensurepip \
-    && groupadd --system termflow \
-    && useradd --system --gid termflow --home-dir /home/termflow termflow \
-    && mkdir -p /work \
-    && chown termflow:termflow /work
+    && groupadd --system --gid 1000 termflow \
+    && useradd --system --uid 1000 --gid 1000 --home-dir /home/termflow termflow \
+    && mkdir -p /home/termflow /work \
+    && chown termflow:termflow /home/termflow /work
 
 ENV PATH="/opt/termflow/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \

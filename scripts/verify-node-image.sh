@@ -31,12 +31,24 @@ docker run --rm --user 0:0 --entrypoint /bin/sh "${NODE_IMAGE}" -euxc '
   done
 '
 
-# Minimal-permission runtime smoke: PTY and a live tmux session under
-# cap-drop ALL + read-only rootfs, exactly as production recommends.
-docker run --rm --cap-drop ALL --read-only --tmpfs /tmp --tmpfs /home/termflow \
+# Minimal-permission runtime smoke: PTY, HOME writes, and a live tmux
+# session under cap-drop ALL + read-only rootfs, exactly as production
+# recommends (the /home tmpfs must be mounted for uid/gid 1000 or the
+# unprivileged termflow user cannot write its login state).
+docker run --rm --cap-drop ALL --read-only \
+  --tmpfs /tmp --tmpfs /home/termflow:uid=1000,gid=1000,mode=0750 \
   --entrypoint /bin/sh "${NODE_IMAGE}" -euxc '
   python -c "import pty; pty.openpty()"
+  python -c "from pathlib import Path; p = Path.home()/\".config\"/\"termflow\"; p.mkdir(parents=True, exist_ok=True); (p/\"write-check\").write_text(\"ok\")"
   tmux new-session -d -s verify "sleep 30"
   tmux capture-pane -p -t verify >/dev/null
   tmux kill-session -t verify
+'
+
+# Default run smoke: without the recommended /home tmpfs, the image must
+# still provide a writable HOME for the unprivileged termflow user.
+docker run --rm --cap-drop ALL \
+  --entrypoint /bin/sh "${NODE_IMAGE}" -euxc '
+  test -w /home/termflow
+  python -c "from pathlib import Path; p = Path.home()/\"write-check\"; p.write_text(\"ok\"); p.unlink()"
 '
