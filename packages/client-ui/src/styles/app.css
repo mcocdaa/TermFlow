@@ -244,6 +244,7 @@
   .device-authorize-qr .themed-qr-code { width: min(100%, 18rem); }
   .device-authorize-status { min-width: 0; display: grid; gap: var(--space-4); }
   .device-authorize-status .security-form { width: 100%; }
+  .native-authorize-form { width: 100%; }
   .consent-details { display: grid; gap: var(--space-2); }
   .consent-details div { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: var(--space-3); padding-block: var(--space-2); border-block-end: 1px solid var(--color-border); }
   .consent-details dt { color: var(--color-text-muted); }

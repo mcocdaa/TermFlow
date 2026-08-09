@@ -1,8 +1,9 @@
 <template>
   <section class="authorize-view">
     <div class="auth-card consent-card">
-      <p class="eyebrow">Native client authorization</p>
-      <h1>授权 TermFlow 客户端</h1>
+      <header class="authorize-card-heading">
+        <div><p class="eyebrow">Native client authorization</p><h1>授权 TermFlow 客户端</h1></div>
+      </header>
       <p v-if="loading">正在读取授权请求…</p>
       <template v-else-if="preview">
         <dl class="consent-details">
@@ -12,7 +13,7 @@
           <div><dt>公钥指纹</dt><dd><code>{{ preview.key_fingerprint }}</code></dd></div>
           <div><dt>权限</dt><dd>{{ preview.scopes.join(' · ') }}</dd></div>
         </dl>
-        <form class="security-form" @submit.prevent="decide('allow')">
+        <form class="security-form native-authorize-form" @submit.prevent="decide('allow')">
           <label for="authorize-admin-token">管理员令牌</label>
           <input id="authorize-admin-token" v-model="adminToken" type="password" autocomplete="off" required />
           <template v-if="preview.totp_required">

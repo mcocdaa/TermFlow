@@ -13,7 +13,7 @@
           <input id="totp-code" ref="totpInput" v-model="totpCode" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required />
         </template>
         <p v-if="message" role="alert" class="form-error">{{ message }}</p>
-        <button class="primary-button" type="submit" :disabled="busy">{{ busy ? '正在验证…' : challengeId === null ? '登录' : '验证并登录' }}</button>
+        <div class="dialog-actions"><button class="primary-button" type="submit" :disabled="busy">{{ busy ? '正在验证…' : challengeId === null ? '登录' : '验证并登录' }}</button></div>
       </form>
     </div>
   </section>
