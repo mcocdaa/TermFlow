@@ -28,6 +28,7 @@ FROM python:3.12.11-slim-bookworm AS runtime
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends tmux curl procps \
     && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /usr/local/lib/python3.12/ensurepip \
     && groupadd --system termflow \
     && useradd --system --gid termflow --home-dir /home/termflow termflow \
     && mkdir -p /work \

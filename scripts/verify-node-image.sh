@@ -3,7 +3,7 @@ set -euo pipefail
 
 NODE_IMAGE="${1:-termflow-node:verify}"
 
-docker run --rm --user 0:0 --entrypoint /bin/sh "${NODE_IMAGE}" -eu -c '
+docker run --rm --user 0:0 --entrypoint /bin/sh "${NODE_IMAGE}" -euxc '
   test -x /opt/termflow/bin/termflow
   /opt/termflow/bin/termflow --version
   command -v tmux >/dev/null 2>&1
@@ -34,7 +34,7 @@ docker run --rm --user 0:0 --entrypoint /bin/sh "${NODE_IMAGE}" -eu -c '
 # Minimal-permission runtime smoke: PTY and a live tmux session under
 # cap-drop ALL + read-only rootfs, exactly as production recommends.
 docker run --rm --cap-drop ALL --read-only --tmpfs /tmp --tmpfs /home/termflow \
-  --entrypoint /bin/sh "${NODE_IMAGE}" -eu -c '
+  --entrypoint /bin/sh "${NODE_IMAGE}" -euxc '
   python -c "import pty; pty.openpty()"
   tmux new-session -d -s verify "sleep 30"
   tmux capture-pane -p -t verify >/dev/null
