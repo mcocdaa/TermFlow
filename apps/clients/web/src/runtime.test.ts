@@ -32,7 +32,7 @@ describe('browser runtime composition', () => {
     expect(browserRuntime.platform).toBeTypeOf('string')
   })
 
-  it('sends HTTP(S) authorization callbacks to the callback URL and custom schemes home', () => {
+  it('sends HTTP(S) and the strict termflow callback to the callback URL and other custom schemes home', () => {
     const assign = vi.fn()
     const original = globalThis.location
     Object.defineProperty(globalThis, 'location', {
@@ -45,7 +45,19 @@ describe('browser runtime composition', () => {
       )
       expect(assign).toHaveBeenCalledWith('https://example.com/auth/callback?state=abc')
 
-      browserRuntime.authorizationCompletion.navigate('termflow://auth/callback?state=abc')
+      browserRuntime.authorizationCompletion.navigate(
+        'termflow://auth/callback?state=abc&transaction_id=11111111-1111-4111-8111-111111111111'
+      )
+      expect(assign).toHaveBeenLastCalledWith(
+        'termflow://auth/callback?state=abc&transaction_id=11111111-1111-4111-8111-111111111111'
+      )
+
+      browserRuntime.authorizationCompletion.navigate('termflow://evil/callback?state=abc')
+      expect(assign).toHaveBeenLastCalledWith(
+        new URL('/', 'http://localhost:3000').toString()
+      )
+
+      browserRuntime.authorizationCompletion.navigate('file:///etc/passwd')
       expect(assign).toHaveBeenLastCalledWith(
         new URL('/', 'http://localhost:3000').toString()
       )

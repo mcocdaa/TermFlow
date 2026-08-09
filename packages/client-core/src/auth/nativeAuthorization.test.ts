@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { NativeAuthorizationSession } from './nativeAuthorization'
+import { isValidNativeAuthorizationCallback, NativeAuthorizationSession, parseNativeAuthorizationCallback } from './nativeAuthorization'
 import type { AuthorizationBrowserPort, CredentialVaultPort, NativeAccessCredential } from './ports'
 import type { AuthorizationState } from './authorizationState'
 
@@ -138,4 +138,38 @@ describe('NativeAuthorizationSession', () => {
     expect(callbackSignal?.aborted).toBe(true)
   })
 
+})
+
+describe('parseNativeAuthorizationCallback', () => {
+  it('parses a structurally valid app-scheme callback without an expected state', () => {
+    expect(parseNativeAuthorizationCallback(
+      'termflow://auth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111',
+    )).toEqual({ state: 'state-1', transaction: '11111111-1111-4111-8111-111111111111' })
+  })
+
+  it('rejects anything that is not the strict two-parameter callback shape', () => {
+    const malformed = [
+      'https://attacker.example/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111',
+      'termflow://auth:444/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111',
+      'termflow://user@auth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111',
+      'termflow://auth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111#fragment',
+      'termflow://auth/callback?state=state-1&transaction_id=not-a-uuid',
+      'termflow://auth/callback?state=state-1',
+      'termflow://auth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111&code=extra',
+      'termflow://auth/callback?state=state-1&state=state-2&transaction_id=11111111-1111-4111-8111-111111111111',
+      'not a url',
+    ]
+    for (const value of malformed) expect(parseNativeAuthorizationCallback(value)).toBeNull()
+  })
+
+  it('isValidNativeAuthorizationCallback still requires the expected state', () => {
+    expect(isValidNativeAuthorizationCallback(
+      'termflow://auth/callback?state=expected&transaction_id=11111111-1111-4111-8111-111111111111',
+      'expected',
+    )).toBe(true)
+    expect(isValidNativeAuthorizationCallback(
+      'termflow://auth/callback?state=expected&transaction_id=11111111-1111-4111-8111-111111111111',
+      'attacker',
+    )).toBe(false)
+  })
 })

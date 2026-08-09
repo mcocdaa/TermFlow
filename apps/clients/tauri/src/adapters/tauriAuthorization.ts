@@ -15,6 +15,9 @@ export function createTauriKey(issuer: string): NativeKeyPort {
 
 let pendingCallback: { ready: Promise<void> } | undefined
 
+/** Aligned with the server transaction TTL so a dead approval never hangs forever. */
+const CALLBACK_TIMEOUT_MILLIS = 5 * 60 * 1000
+
 function carriesState(value: string, state: string): boolean {
   try { return new URL(value).searchParams.getAll('state').includes(state) } catch { return false }
 }
@@ -35,11 +38,13 @@ export const tauriAuthorizationBrowser: AuthorizationBrowserPort = {
     return new Promise((resolve, reject) => {
     let disposed = false
     let unlisten: (() => void) | undefined
+    let timer: ReturnType<typeof globalThis.setTimeout> | undefined
     const current = { ready: Promise.resolve() }
     const dispose = () => {
       disposed = true
       unlisten?.()
       if (pendingCallback === current) pendingCallback = undefined
+      if (timer !== undefined) { globalThis.clearTimeout(timer); timer = undefined }
     }
     signal?.addEventListener('abort', () => { dispose(); reject(new Error('authorization_cancelled')) }, { once: true })
     current.ready = onOpenUrl((urls) => {
@@ -54,6 +59,11 @@ export const tauriAuthorizationBrowser: AuthorizationBrowserPort = {
       }
     }).then((listener) => { if (disposed) listener(); else unlisten = listener })
     pendingCallback = current
+    timer = globalThis.setTimeout(() => {
+      dispose()
+      void logNativeEvent({ event: 'authorization_callback_timeout', level: 'warn', errorCode: 'authorization_callback_timeout' })
+      reject(new Error('authorization_callback_timeout'))
+    }, CALLBACK_TIMEOUT_MILLIS)
     void current.ready.catch((error: unknown) => {
       dispose()
       void logNativeEvent({ event: 'authorization_callback_listener_failed', level: 'error', errorCode: 'authorization_listener_failed', errorDetail: sanitizeNativeDetail(error) })

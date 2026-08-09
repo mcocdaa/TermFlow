@@ -4,28 +4,39 @@ import type { AuthorizationBrowserPort, AuthorizationStateListener, CredentialVa
 
 const transactionIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-export function isValidNativeAuthorizationCallback(value: string, state: string): boolean {
+/** Structurally validate an app-scheme callback without knowing the expected state. */
+export function parseNativeAuthorizationCallback(value: string): { state: string; transaction: string } | null {
   try {
     const callback = new URL(value)
     const keys = [...callback.searchParams.keys()]
     const transaction = callback.searchParams.get('transaction_id')
-    return callback.protocol === 'termflow:'
-      && callback.username === ''
-      && callback.password === ''
-      && callback.hostname === 'auth'
-      && callback.port === ''
-      && callback.pathname === '/callback'
-      && callback.hash === ''
-      && callback.searchParams.get('state') === state
-      && callback.searchParams.getAll('state').length === 1
-      && callback.searchParams.getAll('transaction_id').length === 1
-      && transaction !== null
-      && transactionIdPattern.test(transaction)
-      && keys.length === 2
-      && keys.every(key => key === 'state' || key === 'transaction_id')
+    const state = callback.searchParams.get('state')
+    if (
+      callback.protocol !== 'termflow:'
+      || callback.username !== ''
+      || callback.password !== ''
+      || callback.hostname !== 'auth'
+      || callback.port !== ''
+      || callback.pathname !== '/callback'
+      || callback.hash !== ''
+      || state === null
+      || callback.searchParams.getAll('state').length !== 1
+      || callback.searchParams.getAll('transaction_id').length !== 1
+      || transaction === null
+      || !transactionIdPattern.test(transaction)
+      || keys.length !== 2
+      || keys.some(key => key !== 'state' && key !== 'transaction_id')
+    ) {
+      return null
+    }
+    return { state, transaction }
   } catch {
-    return false
+    return null
   }
+}
+
+export function isValidNativeAuthorizationCallback(value: string, state: string): boolean {
+  return parseNativeAuthorizationCallback(value)?.state === state
 }
 
 export interface AuthorizationExchangeRequest {

@@ -94,6 +94,31 @@ describe('tauriAuthorizationBrowser', () => {
       .rejects.toThrow('authorization_cancelled')
     expect(mocks.onOpenUrl).not.toHaveBeenCalled()
   })
+
+  it('rejects with an actionable timeout when no callback arrives', async () => {
+    vi.useFakeTimers()
+    try {
+      mocks.onOpenUrl.mockClear()
+      mocks.invoke.mockClear()
+      mocks.onOpenUrl.mockImplementation(() => new Promise(() => undefined))
+
+      const callback = tauriAuthorizationBrowser.waitForCallback('state-timeout')
+      const settled = vi.fn()
+      void callback.then(() => settled('resolved'), (error: Error) => settled(error.message))
+      await Promise.resolve()
+      expect(settled).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+      expect(settled).toHaveBeenCalledWith('authorization_callback_timeout')
+      expect(mocks.invoke).toHaveBeenCalledWith('native_log', expect.objectContaining({
+        event: 'authorization_callback_timeout',
+        errorCode: 'authorization_callback_timeout',
+      }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('pollDeviceAuthorization', () => {

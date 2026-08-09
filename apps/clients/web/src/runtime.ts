@@ -1,4 +1,4 @@
-import { createApiClient, TerminalSession, type TerminalScheduler } from '@termflow/client-core'
+import { createApiClient, parseNativeAuthorizationCallback, TerminalSession, type TerminalScheduler } from '@termflow/client-core'
 import type { ClientRuntime } from '@termflow/client-ui'
 import { createBrowserClipboard } from './adapters/browserClipboard'
 import { createBrowserClock } from './adapters/browserClock'
@@ -31,6 +31,13 @@ function browserDependencies(): ClientRuntime {
         try {
           const parsed = new URL(callbackUri)
           if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+            globalThis.location.assign(callbackUri)
+            return
+          }
+          // The app's own strict termflow:// callback hands the browser back
+          // to the native client after approval; any other custom scheme is
+          // deliberately ignored to avoid navigating away to arbitrary apps.
+          if (parseNativeAuthorizationCallback(callbackUri) !== null) {
             globalThis.location.assign(callbackUri)
             return
           }

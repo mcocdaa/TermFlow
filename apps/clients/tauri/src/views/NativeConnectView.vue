@@ -54,7 +54,7 @@ function registrationErrorMessage(error: unknown): string {
   if (code === 'authorization_cancelled' || code === 'aborted') {
     return '注册申请已取消。请重新申请，并在系统浏览器中完成审批。'
   }
-  if (code === 'authorization_callback_invalid' || code === 'authorization_listener_missing') {
+  if (code === 'authorization_callback_timeout' || code === 'authorization_callback_invalid' || code === 'authorization_listener_missing') {
     return '未收到有效的 TermFlow 回调。请确认系统允许 termflow:// 链接打开本应用，然后重新申请。'
   }
   if (code === 'https_required') {

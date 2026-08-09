@@ -136,6 +136,11 @@ describe('NativeConnectView', () => {
       failure: () => new Error('authorization_callback_invalid'),
       expected: '未收到有效的 TermFlow 回调。请确认系统允许 termflow:// 链接打开本应用，然后重新申请。',
     },
+    {
+      name: 'timed-out deep-link callback',
+      failure: () => new Error('authorization_callback_timeout'),
+      expected: '未收到有效的 TermFlow 回调。请确认系统允许 termflow:// 链接打开本应用，然后重新申请。',
+    },
   ])('shows an actionable safe message for $name', async ({ failure, expected }) => {
     mocks.authorizeNativeClient.mockRejectedValue(failure())
     const { wrapper } = await render()
