@@ -177,7 +177,7 @@ jobs:
       - name: Push the validated multi-architecture node image
         id: push
         env:
-          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           VERSION: ${{ needs.prepare.outputs.version }}
           IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}
         shell: bash
