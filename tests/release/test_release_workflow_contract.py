@@ -23,6 +23,11 @@ def test_release_calls_the_three_base_packaging_workflows() -> None:
     assert jobs["package-node"] == {
         "name": "Package A",
         "needs": "validate-version",
+        "permissions": {
+            "contents": "read",
+            "packages": "write",
+            "id-token": "write",
+        },
         "uses": "./.github/workflows/package-node.yml",
         "with": {"release_tag": "${{ github.ref_name }}"},
     }
@@ -39,7 +44,11 @@ def test_release_calls_the_three_base_packaging_workflows() -> None:
     assert set(control["needs"]) == {"package-node", "package-clients"}
     assert control["uses"] == "./.github/workflows/package-control-plane.yml"
     assert control["with"] == {"release_tag": "${{ github.ref_name }}"}
-    assert control["permissions"] == {"contents": "read", "packages": "write"}
+    assert control["permissions"] == {
+        "contents": "read",
+        "packages": "write",
+        "id-token": "write",
+    }
 
 
 def test_release_publishes_only_after_all_reusable_workflows() -> None:
