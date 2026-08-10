@@ -33,6 +33,10 @@ jobs:
   package-node:
     name: Package A
     needs: validate-version
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     uses: ./.github/workflows/package-node.yml
     with:
       release_tag: ${{ github.ref_name }}
@@ -51,6 +55,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     uses: ./.github/workflows/package-control-plane.yml
     with:
       release_tag: ${{ github.ref_name }}
