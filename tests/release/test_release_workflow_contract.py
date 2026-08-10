@@ -106,6 +106,7 @@ def test_release_contains_no_product_packaging_implementation() -> None:
     for required in (
         "actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0",
         "merge-multiple: true",
+        "find release-assets -mindepth 1 -maxdepth 1 -type d",
         "SHA256SUMS",
         "gh release create",
         "--prerelease",
