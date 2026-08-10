@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tauri::State;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use url::Url;
 
 #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -25,6 +26,14 @@ use std::sync::OnceLock;
 
 const KEYRING_SERVICE: &str = "io.termflow.client";
 const ACCESS_EARLY_SECONDS: i64 = 60;
+
+/// The protocol only accepts loopback HTTP callbacks on explicit ephemeral
+/// ports, so the listener must bind inside that range for the browser handoff
+/// to stay within the server-approved surface.
+const LOOPBACK_PORT_MIN: u16 = 49_152;
+const LOOPBACK_PORT_MAX: u16 = 65_535;
+const CALLBACK_ACCEPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+const CALLBACK_HEAD_MAX_BYTES: usize = 8192;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublicJwk {
@@ -53,8 +62,17 @@ struct AccessState {
 pub struct NativeAuthState {
     access: Mutex<HashMap<String, AccessState>>,
     nonces: Mutex<HashMap<String, String>>,
+    callback_listeners: Mutex<HashMap<String, PendingCallbackListener>>,
     refresh_gate: tokio::sync::Mutex<()>,
     http: Client,
+}
+
+/// A bound loopback callback listener waiting for the browser handoff. The
+/// receiver is awaited by the JS session; the task handle lets a cancelled
+/// session release the port immediately.
+struct PendingCallbackListener {
+    receiver: tokio::sync::oneshot::Receiver<String>,
+    task: tauri::async_runtime::JoinHandle<()>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -527,6 +545,212 @@ pub async fn native_exchange_device_code(
     .await?;
     store_token_response(&state, &issuer, response).await
 }
+
+/// Bind a one-shot loopback HTTP listener for the same-device browser
+/// handoff and return the ephemeral port to use as the redirect URI. The
+/// server only approves loopback ports in the 49152-65535 range, so binding
+/// port zero may be retried when the OS hands out a port below that range.
+#[tauri::command]
+pub async fn native_bind_authorization_listener(
+    state: State<'_, NativeAuthState>,
+    expected_state: String,
+    issuer: String,
+) -> Result<u16, String> {
+    let issuer = canonical_issuer(&issuer)?;
+    if expected_state.is_empty() {
+        return Err(safe_error("listener_state_invalid"));
+    }
+    if state
+        .callback_listeners
+        .lock()
+        .unwrap()
+        .contains_key(&expected_state)
+    {
+        return Err(safe_error("listener_already_bound"));
+    }
+    for _ in 0..32 {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .map_err(|_| safe_error("listener_bind_failed"))?;
+        let port = listener
+            .local_addr()
+            .map_err(|_| safe_error("listener_bind_failed"))?
+            .port();
+        if !(LOOPBACK_PORT_MIN..=LOOPBACK_PORT_MAX).contains(&port) {
+            continue;
+        }
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let task = tauri::async_runtime::spawn(run_callback_listener(
+            listener,
+            expected_state.clone(),
+            issuer,
+            port,
+            sender,
+        ));
+        state
+            .callback_listeners
+            .lock()
+            .unwrap()
+            .insert(expected_state, PendingCallbackListener { receiver, task });
+        return Ok(port);
+    }
+    Err(safe_error("listener_bind_failed"))
+}
+
+/// Wait for the browser to hit the bound loopback callback and return the
+/// strict callback URL (state + transaction_id only) for the JS session.
+#[tauri::command]
+pub async fn native_wait_authorization_callback(
+    state: State<'_, NativeAuthState>,
+    expected_state: String,
+) -> Result<String, String> {
+    let listener = state
+        .callback_listeners
+        .lock()
+        .unwrap()
+        .remove(&expected_state)
+        .ok_or_else(|| safe_error("authorization_listener_missing"))?;
+    listener.task.abort();
+    listener
+        .receiver
+        .await
+        .map_err(|_| safe_error("authorization_callback_timeout"))
+}
+
+/// Release a bound listener early when the authorization is cancelled, so
+/// the loopback port is not held until the accept timeout expires.
+#[tauri::command]
+pub fn native_cancel_authorization_listener(
+    state: State<'_, NativeAuthState>,
+    expected_state: String,
+) {
+    if let Some(listener) = state
+        .callback_listeners
+        .lock()
+        .unwrap()
+        .remove(&expected_state)
+    {
+        listener.task.abort();
+    }
+}
+
+async fn run_callback_listener(
+    listener: tokio::net::TcpListener,
+    expected_state: String,
+    issuer: String,
+    port: u16,
+    sender: tokio::sync::oneshot::Sender<String>,
+) {
+    let deadline = tokio::time::Instant::now() + CALLBACK_ACCEPT_TIMEOUT;
+    loop {
+        let accepted = tokio::time::timeout_at(deadline, listener.accept()).await;
+        let Ok(Ok((mut stream, _peer))) = accepted else {
+            return;
+        };
+        let Some(request_head) = read_request_head(&mut stream).await else {
+            let _ = respond_http(&mut stream, "400 Bad Request", b"Bad Request").await;
+            continue;
+        };
+        let Some(callback) = callback_request_url(&request_head, &expected_state, port) else {
+            let _ = respond_http(&mut stream, "404 Not Found", b"Not Found").await;
+            continue;
+        };
+        let body = redirect_home_page(&issuer);
+        let _ = respond_http(&mut stream, "200 OK", body.as_bytes()).await;
+        let _ = sender.send(callback);
+        return;
+    }
+}
+
+/// Read the request head up to the blank line, capped to the head size limit.
+async fn read_request_head(stream: &mut tokio::net::TcpStream) -> Option<String> {
+    let mut buffer = Vec::with_capacity(512);
+    let mut chunk = [0_u8; 256];
+    loop {
+        let read = stream.read(&mut chunk).await.ok()?;
+        if read == 0 {
+            break;
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+        if buffer.len() >= CALLBACK_HEAD_MAX_BYTES
+            || buffer.windows(4).any(|window| window == b"\r\n\r\n")
+        {
+            break;
+        }
+    }
+    Some(String::from_utf8_lossy(&buffer).into_owned())
+}
+
+/// Rebuild the strict callback URL from the raw request head. Returns None
+/// for any method, path, or state mismatch so only the exact approved handoff
+/// is ever forwarded to the waiting session. Mirrors the server-side
+/// ``validate_callback_uri`` contract: state and transaction_id only.
+fn callback_request_url(request_head: &str, expected_state: &str, port: u16) -> Option<String> {
+    let request_line = request_head.lines().next()?;
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next()?;
+    if !matches!(method, "GET" | "HEAD") {
+        return None;
+    }
+    let target = parts.next()?;
+    let url = Url::parse(&format!("http://127.0.0.1:{port}{target}")).ok()?;
+    if url.path() != "/oauth/callback" || !url.username().is_empty() {
+        return None;
+    }
+    let pairs: Vec<(String, String)> = url
+        .query_pairs()
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect();
+    if pairs.len() != 2
+        || pairs
+            .iter()
+            .any(|(key, _value)| key != "state" && key != "transaction_id")
+        || pairs
+            .iter()
+            .any(|(key, value)| key == "transaction_id" && uuid::Uuid::parse_str(value).is_err())
+    {
+        return None;
+    }
+    let states: Vec<&String> = pairs
+        .iter()
+        .filter(|(key, _)| key == "state")
+        .map(|(_, value)| value)
+        .collect();
+    if states.len() != 1 || states[0] != expected_state {
+        return None;
+    }
+    Some(url.into())
+}
+
+/// A tiny self-closing page that returns the browser to the web home page
+/// after the callback has been delivered to the native client.
+fn redirect_home_page(issuer: &str) -> String {
+    let mut page = String::with_capacity(256);
+    page.push_str("<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">");
+    page.push_str("<meta http-equiv=\"refresh\" content=\"0;url=");
+    page.push_str(issuer);
+    page.push_str("/\"><title>TermFlow</title></head><body>");
+    page.push_str("<script>location.replace(\"");
+    page.push_str(issuer);
+    page.push_str("/\");</script>");
+    page.push_str("<p>已授权，正在返回 TermFlow…</p></body></html>");
+    page
+}
+
+async fn respond_http(
+    stream: &mut tokio::net::TcpStream,
+    status: &str,
+    body: &[u8],
+) -> std::io::Result<()> {
+    let headers = format!(
+        "HTTP/1.1 {status}\r\ncontent-type: text/html; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\ncache-control: no-store\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(headers.as_bytes()).await?;
+    stream.write_all(body).await?;
+    stream.flush().await
+}
+
 #[tauri::command]
 pub async fn native_refresh_access(
     state: State<'_, NativeAuthState>,
@@ -921,5 +1145,76 @@ mod tests {
             remembered_dpop_nonce(&state, "https://two.example").unwrap(),
             Some("nonce-two".to_owned())
         );
+    }
+
+    #[test]
+    fn callback_request_url_accepts_only_the_exact_browser_handoff() {
+        let port = 51_234;
+        let expected = "state-1";
+        let valid = format!(
+            "GET /oauth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111 HTTP/1.1\r\nhost: 127.0.0.1:{port}\r\n\r\n"
+        );
+        assert_eq!(
+            callback_request_url(&valid, expected, port).as_deref(),
+            Some(
+                "http://127.0.0.1:51234/oauth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111"
+            )
+        );
+        assert_eq!(callback_request_url(&valid, "state-2", port), None);
+        for (head, label) in [
+            (format!("POST {valid}"), "POST method"),
+            ("GET /other?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111 HTTP/1.1\r\n\r\n".to_owned(), "wrong path"),
+            ("GET /oauth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111&code=extra HTTP/1.1\r\n\r\n".to_owned(), "extra query"),
+            ("GET /oauth/callback?state=state-1&state=state-1 HTTP/1.1\r\n\r\n".to_owned(), "duplicate state"),
+            ("GET /oauth/callback?state=state-1 HTTP/1.1\r\n\r\n".to_owned(), "missing transaction"),
+            ("GET /oauth/callback?state=state-1&transaction_id=not-a-uuid HTTP/1.1\r\n\r\n".to_owned(), "bad transaction"),
+            ("not an http request".to_owned(), "garbage"),
+        ] {
+            assert_eq!(callback_request_url(&head, expected, port), None, "{label}");
+        }
+    }
+
+    #[test]
+    fn redirect_home_page_returns_to_the_issuer_root() {
+        let page = redirect_home_page("https://termflow.example");
+        assert!(page.contains("content=\"0;url=https://termflow.example/\""));
+        assert!(page.contains("location.replace(\"https://termflow.example/\");"));
+    }
+
+    #[test]
+    fn loopback_listener_round_trip() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            let task = tokio::task::spawn(run_callback_listener(
+                listener,
+                "state-1".to_owned(),
+                "https://termflow.example".to_owned(),
+                port,
+                sender,
+            ));
+            let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .unwrap();
+            stream
+                .write_all(
+                    b"GET /oauth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111 HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            let callback = tokio::time::timeout(std::time::Duration::from_secs(5), receiver)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(callback.contains("transaction_id=11111111-1111-4111-8111-111111111111"));
+            task.abort();
+        });
     }
 }

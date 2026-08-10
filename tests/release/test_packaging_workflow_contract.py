@@ -95,6 +95,7 @@ def test_node_docker_artifact_and_tag_publication_are_separated() -> None:
     assert "if: ${{ needs.prepare.outputs.is_release == 'true' }}" in text
     assert "is_prerelease: ${{ steps.context.outputs.is_prerelease }}" in text
     assert 'IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}' in text
+    assert 'RELEASE_TAG: ${{ needs.prepare.outputs.tag }}' in text
     assert '[[ "$IS_PRERELEASE" == "false" ]]' in text
     assert "TERMFLOW_BUILD_VERSION" in text
 
@@ -160,6 +161,7 @@ def test_control_plane_manual_artifact_and_tag_publication_are_separated() -> No
     assert "if: ${{ needs.prepare.outputs.is_release == 'true' }}" in text
     assert "is_prerelease: ${{ steps.context.outputs.is_prerelease }}" in text
     assert 'IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}' in text
+    assert 'RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}' in text
     assert '[[ "$IS_PRERELEASE" == "false" ]]' in text
     assert '[[ "$RELEASE_TAG" != *-* ]]' not in text
     assert "TERMFLOW_BUILD_VERSION" in text

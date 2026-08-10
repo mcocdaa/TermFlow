@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { isValidNativeAuthorizationCallback, NativeAuthorizationSession, parseNativeAuthorizationCallback } from './nativeAuthorization'
+import { isValidNativeAuthorizationCallback, NativeAuthorizationSession, parseLoopbackNativeAuthorizationCallback, parseNativeAuthorizationCallback } from './nativeAuthorization'
 import type { AuthorizationBrowserPort, CredentialVaultPort, NativeAccessCredential } from './ports'
 import type { AuthorizationState } from './authorizationState'
 
@@ -43,6 +43,38 @@ describe('NativeAuthorizationSession', () => {
     expect(exchange).toHaveBeenCalledWith(expect.objectContaining({ transaction: '11111111-1111-4111-8111-111111111111', verifier: 'v'.repeat(43) }))
     expect(store.replace).toHaveBeenCalledWith('https://b.example', expect.objectContaining({ accessToken: 'access' }))
     expect(states).toEqual(['requesting', 'pending', 'approved', 'connected'])
+  })
+
+  it('uses the prepared loopback callback and accepts the loopback handoff', async () => {
+    const callback = 'http://127.0.0.1:51234/oauth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111'
+    const port: AuthorizationBrowserPort = {
+      prepareCallback: vi.fn().mockResolvedValue('http://127.0.0.1:51234/oauth/callback'),
+      open: vi.fn(),
+      waitForCallback: vi.fn().mockResolvedValue(callback),
+    }
+    const store = vault()
+    const exchange = vi.fn().mockResolvedValue({
+      accessToken: 'access', expiresAt: '2026-08-02T12:00:00Z', tokenType: 'DPoP',
+    } satisfies NativeAccessCredential)
+    const session = new NativeAuthorizationSession({
+      issuer: 'https://b.example',
+      authorizeEndpoint: 'https://b.example/api/v1/oauth/authorize',
+      client: { name: 'TermFlow Desktop', platform: 'windows', version: '0.1.0' },
+      scopes: ['terminal.read'],
+      browser: port,
+      vault: store,
+      key: { publicJwk: async () => ({ kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' }), thumbprint: async () => 'jkt', signJwt: async () => new Uint8Array() },
+      createPkce: async () => ({ verifier: 'v'.repeat(43), challenge: 'c'.repeat(43), method: 'S256' }),
+      createId: () => 'state-1',
+      exchange,
+    })
+
+    await expect(session.authorize()).resolves.toMatchObject({ accessToken: 'access' })
+    expect(vi.mocked(port.prepareCallback)).toHaveBeenCalledWith('state-1')
+    const opened = vi.mocked(port.open).mock.calls[0]?.[0] ?? ''
+    expect(new URL(opened).searchParams.get('redirect_uri')).toBe('http://127.0.0.1:51234/oauth/callback')
+    expect(exchange).toHaveBeenCalledWith(expect.objectContaining({ redirectUri: 'http://127.0.0.1:51234/oauth/callback' }))
+    expect(store.replace).toHaveBeenCalledWith('https://b.example', expect.objectContaining({ accessToken: 'access' }))
   })
 
   it('rejects callbacks with the wrong state before token exchange', async () => {
@@ -169,6 +201,45 @@ describe('parseNativeAuthorizationCallback', () => {
     )).toBe(true)
     expect(isValidNativeAuthorizationCallback(
       'termflow://auth/callback?state=expected&transaction_id=11111111-1111-4111-8111-111111111111',
+      'attacker',
+    )).toBe(false)
+  })
+})
+
+describe('parseLoopbackNativeAuthorizationCallback', () => {
+  it('parses a structurally valid loopback callback without an expected state', () => {
+    expect(parseLoopbackNativeAuthorizationCallback(
+      'http://127.0.0.1:51234/oauth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111',
+    )).toEqual({ state: 'state-1', transaction: '11111111-1111-4111-8111-111111111111' })
+    expect(parseLoopbackNativeAuthorizationCallback(
+      'http://[::1]:51234/oauth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111',
+    )).toEqual({ state: 'state-1', transaction: '11111111-1111-4111-8111-111111111111' })
+  })
+
+  it('rejects anything outside the strict loopback callback shape', () => {
+    const malformed = [
+      'http://127.0.0.1:8765/oauth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111',
+      'http://127.0.0.1:70000/oauth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111',
+      'http://127.0.0.1:51234/other?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111',
+      'http://127.0.0.1:51234/oauth/callback',
+      'http://localhost:51234/oauth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111',
+      'http://192.168.1.2:51234/oauth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111',
+      'http://127.0.0.1:51234/oauth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111&code=extra',
+      'http://127.0.0.1:51234/oauth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111#fragment',
+      'http://user@127.0.0.1:51234/oauth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111',
+      'https://127.0.0.1:51234/oauth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111',
+      'termflow://auth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111',
+    ]
+    for (const value of malformed) expect(parseLoopbackNativeAuthorizationCallback(value)).toBeNull()
+  })
+
+  it('isValidNativeAuthorizationCallback accepts the matching loopback handoff', () => {
+    expect(isValidNativeAuthorizationCallback(
+      'http://127.0.0.1:51234/oauth/callback?state=expected&transaction_id=11111111-1111-4111-8111-111111111111',
+      'expected',
+    )).toBe(true)
+    expect(isValidNativeAuthorizationCallback(
+      'http://127.0.0.1:51234/oauth/callback?state=expected&transaction_id=11111111-1111-4111-8111-111111111111',
       'attacker',
     )).toBe(false)
   })

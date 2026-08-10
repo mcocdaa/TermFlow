@@ -11,7 +11,7 @@
       <form class="security-form" @submit.prevent="submit">
         <label for="protection-admin-token">管理员令牌</label>
         <input id="protection-admin-token" ref="adminInput" v-model="adminToken" name="admin-token" type="password" autocomplete="off" required />
-        <label for="protection-totp-code">当前验证码</label>
+        <label for="protection-totp-code">双重验证码</label>
         <input id="protection-totp-code" v-model="code" name="totp-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required />
         <p v-if="message" class="form-error" role="alert">{{ message }}</p>
         <div class="dialog-actions">

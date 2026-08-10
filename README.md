@@ -89,6 +89,37 @@ curl -fsS http://127.0.0.1:8765/healthz
 上面第二段中的 `/path/to/TermFlow` 替换为本仓库路径；如果没有旧的 Compose 服务，
 `docker compose ... down` 也可以直接执行。这个流程不会删除或重建数据卷。
 
+### 生产服务器部署 B + Web C（GHCR 镜像）
+
+发布 Tag 后，B + Web C 会以多架构镜像推送到
+`ghcr.io/<owner>/termflow-control-plane:<tag>`（linux/amd64 与 linux/arm64，cosign
+签名并附带 SBOM），生产服务器无需源码 checkout，直接拉取运行即可。先确认 GHCR 包可被
+部署机拉取（包为 public，或部署机已 `docker login ghcr.io`）：
+
+```bash
+docker pull ghcr.io/<owner>/termflow-control-plane:vX.Y.Z
+
+cp .env.example .env
+# 编辑 TERMFLOW_ADMIN_TOKEN 和实际的 TERMFLOW_PUBLIC_BASE_URL，首次部署需要 TOTP 主密钥卷。
+set -a; source .env; set +a
+docker run -d --name termflow-control-plane --restart unless-stopped \
+  --publish "127.0.0.1:${TERMFLOW_HOST_PORT:-8765}:8000" \
+  --volume "${TERMFLOW_DATA_VOLUME:-termflow-data}:/app/data" \
+  --volume "${TERMFLOW_TOTP_KEY_VOLUME:-termflow-totp-key}:/app/totp-secrets" \
+  --env TERMFLOW_ADMIN_TOKEN="$TERMFLOW_ADMIN_TOKEN" \
+  --env TERMFLOW_DATABASE_URL=sqlite+aiosqlite:////app/data/termflow.db \
+  --env TERMFLOW_PUBLIC_BASE_URL="$TERMFLOW_PUBLIC_BASE_URL" \
+  --env TERMFLOW_ALLOW_INSECURE_LOOPBACK="${TERMFLOW_ALLOW_INSECURE_LOOPBACK:-true}" \
+  --env TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE=/app/totp-secrets/totp-master-key \
+  ghcr.io/<owner>/termflow-control-plane:vX.Y.Z
+curl -fsS http://127.0.0.1:8765/healthz
+```
+
+`<owner>` 替换为仓库所有者，`vX.Y.Z` 替换为精确 Tag；生产部署应始终写精确 tag，不要依赖
+`latest`。公网部署时由反向代理提供 HTTPS/WSS 入口，并把用户实际访问的地址写入
+`TERMFLOW_PUBLIC_BASE_URL`；升级时停止旧容器并保留同名卷后再用新 tag 启动。回退、TOTP
+主密钥迁移与多实例密钥约束见 [部署与恢复](docs/operations.md)。
+
 如何从 Actions 页面或 `gh workflow run` 手动构建、如何按平台选择 C、Tag 触发顺序、产物保留期
 和签名限制，见 [GitHub Actions 构建与发布](docs/github-actions.md)。
 

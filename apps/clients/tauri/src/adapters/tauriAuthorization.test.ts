@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -12,6 +12,15 @@ vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: mocks.openUrl }))
 
 import { exchangeAuthorization, pollDeviceAuthorization, tauriAuthorizationBrowser } from './tauriAuthorization'
 
+const deepLinkBrowser = () => tauriAuthorizationBrowser({ issuer: 'https://b.example', loopback: false })
+const loopbackBrowser = () => tauriAuthorizationBrowser({ issuer: 'https://b.example', loopback: true })
+
+beforeEach(() => {
+  mocks.invoke.mockReset().mockResolvedValue(undefined)
+  mocks.openUrl.mockReset().mockResolvedValue(undefined)
+  mocks.onOpenUrl.mockReset().mockImplementation(() => Promise.resolve(vi.fn()))
+})
+
 describe('tauriAuthorizationBrowser', () => {
   it('registers the deep-link listener before opening the system browser', async () => {
     let receive: ((urls: string[]) => void) | undefined
@@ -22,8 +31,9 @@ describe('tauriAuthorizationBrowser', () => {
     })
     mocks.openUrl.mockResolvedValue(undefined)
 
-    const callback = tauriAuthorizationBrowser.waitForCallback('state-1')
-    const opened = tauriAuthorizationBrowser.open('https://b.example/api/v1/oauth/authorize')
+    const browser = deepLinkBrowser()
+    const callback = browser.waitForCallback('state-1')
+    const opened = browser.open('https://b.example/api/v1/oauth/authorize')
     await Promise.resolve()
     expect(mocks.openUrl).not.toHaveBeenCalled()
 
@@ -40,8 +50,9 @@ describe('tauriAuthorizationBrowser', () => {
     mocks.onOpenUrl.mockImplementation(() => new Promise(resolve => { registrationReady = resolve }))
     mocks.openUrl.mockRejectedValueOnce(new Error('ShellExecute failed for https://relay.example/auth?code=secret'))
 
-    const callback = tauriAuthorizationBrowser.waitForCallback('state-2')
-    const opened = tauriAuthorizationBrowser.open('https://relay.example/api/v1/oauth/authorize?state=state-2')
+    const browser = deepLinkBrowser()
+    const callback = browser.waitForCallback('state-2')
+    const opened = browser.open('https://relay.example/api/v1/oauth/authorize?state=state-2')
     await Promise.resolve()
     registrationReady?.(vi.fn())
     await expect(opened).rejects.toThrow('ShellExecute failed')
@@ -62,7 +73,8 @@ describe('tauriAuthorizationBrowser', () => {
       receive = callback
       return Promise.resolve(vi.fn())
     })
-    const callback = tauriAuthorizationBrowser.waitForCallback('state-3')
+    const browser = deepLinkBrowser()
+    const callback = browser.waitForCallback('state-3')
     let settled = false
     void callback.then(() => { settled = true })
     await Promise.resolve()
@@ -90,7 +102,7 @@ describe('tauriAuthorizationBrowser', () => {
     const controller = new AbortController()
     controller.abort()
 
-    await expect(tauriAuthorizationBrowser.waitForCallback('state-aborted', controller.signal))
+    await expect(deepLinkBrowser().waitForCallback('state-aborted', controller.signal))
       .rejects.toThrow('authorization_cancelled')
     expect(mocks.onOpenUrl).not.toHaveBeenCalled()
   })
@@ -102,7 +114,7 @@ describe('tauriAuthorizationBrowser', () => {
       mocks.invoke.mockClear()
       mocks.onOpenUrl.mockImplementation(() => new Promise(() => undefined))
 
-      const callback = tauriAuthorizationBrowser.waitForCallback('state-timeout')
+      const callback = deepLinkBrowser().waitForCallback('state-timeout')
       const settled = vi.fn()
       void callback.then(() => settled('resolved'), (error: Error) => settled(error.message))
       await Promise.resolve()
@@ -119,7 +131,75 @@ describe('tauriAuthorizationBrowser', () => {
       vi.useRealTimers()
     }
   })
+
+  it('binds the loopback listener and returns the redirect URI for desktop', async () => {
+    mocks.invoke.mockResolvedValueOnce(51234)
+    await expect(loopbackBrowser().prepareCallback?.('state-1')).resolves.toBe('http://127.0.0.1:51234/oauth/callback')
+    expect(mocks.invoke).toHaveBeenCalledWith('native_bind_authorization_listener', { expectedState: 'state-1', issuer: 'https://b.example' })
+  })
+
+  it('keeps the app-scheme redirect when loopback is disabled', async () => {
+    mocks.invoke.mockClear()
+    await expect(deepLinkBrowser().prepareCallback?.('state-1')).resolves.toBeUndefined()
+    expect(mocks.invoke).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the deep link when the loopback bind fails', async () => {
+    mocks.invoke.mockReset()
+    mocks.invoke.mockRejectedValueOnce(new Error('listener_bind_failed'))
+    mocks.onOpenUrl.mockImplementation(() => Promise.resolve(vi.fn()))
+    mocks.openUrl.mockResolvedValue(undefined)
+
+    const browser = loopbackBrowser()
+    await expect(browser.prepareCallback?.('state-fallback')).resolves.toBeUndefined()
+    expect(mocks.invoke).toHaveBeenCalledWith('native_log', expect.objectContaining({ event: 'loopback_listener_bind_failed' }))
+
+    const callback = browser.waitForCallback('state-fallback')
+    await browser.open('https://b.example/api/v1/oauth/authorize?state=state-fallback')
+    await Promise.resolve()
+    expect(mocks.openUrl).toHaveBeenCalledOnce()
+    mocks.openUrl.mockClear()
+    receiveDeepLink('state-fallback')
+    await expect(callback).resolves.toContain('transaction_id=')
+  })
+
+  it('waits on the loopback callback and cancels the listener on abort', async () => {
+    mocks.invoke.mockResolvedValueOnce(51234)
+    const browser = loopbackBrowser()
+    await browser.prepareCallback?.('state-loopback')
+
+    mocks.invoke.mockResolvedValueOnce('http://127.0.0.1:51234/oauth/callback?state=state-loopback&transaction_id=11111111-1111-4111-8111-111111111111')
+    await expect(browser.waitForCallback('state-loopback')).resolves.toContain('transaction_id=')
+    expect(mocks.invoke).toHaveBeenCalledWith('native_wait_authorization_callback', { expectedState: 'state-loopback' })
+
+    mocks.invoke.mockResolvedValueOnce(51235)
+    await browser.prepareCallback?.('state-cancel')
+    mocks.invoke.mockImplementationOnce(() => new Promise<never>(() => undefined))
+    const controller = new AbortController()
+    const cancelled = browser.waitForCallback('state-cancel', controller.signal)
+    await Promise.resolve()
+    controller.abort()
+    await expect(cancelled).rejects.toThrow('authorization_cancelled')
+    expect(mocks.invoke).toHaveBeenCalledWith('native_cancel_authorization_listener', { expectedState: 'state-cancel' })
+  })
+
+  it('does not require the deep-link listener when the loopback callback is prepared', async () => {
+    mocks.invoke.mockReset()
+    mocks.invoke.mockResolvedValueOnce(51236)
+    mocks.openUrl.mockResolvedValue(undefined)
+
+    const browser = loopbackBrowser()
+    await browser.prepareCallback?.('state-nolisten')
+    await expect(browser.open('https://b.example/api/v1/oauth/authorize?state=state-nolisten')).resolves.toBeUndefined()
+    expect(mocks.openUrl).toHaveBeenCalledOnce()
+    expect(mocks.onOpenUrl).not.toHaveBeenCalled()
+  })
 })
+
+function receiveDeepLink(state: string) {
+  const handler = mocks.onOpenUrl.mock.calls.at(-1)?.[0] as (urls: string[]) => void
+  handler(['termflow://auth/callback?state=' + state + '&transaction_id=11111111-1111-4111-8111-111111111111'])
+}
 
 describe('pollDeviceAuthorization', () => {
   it('uses the native device exchange command without opening a browser', async () => {
