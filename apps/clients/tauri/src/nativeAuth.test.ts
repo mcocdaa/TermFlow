@@ -11,7 +11,7 @@ vi.mock('./adapters/tauriCredentialVault', () => ({ createTauriCredentialVault: 
 vi.mock('./adapters/tauriAuthorization', () => ({
   createTauriKey: vi.fn(),
   exchangeAuthorization: vi.fn(),
-  tauriAuthorizationBrowser: {},
+  tauriAuthorizationBrowser: vi.fn(),
   pollDeviceAuthorization: vi.fn(),
 }))
 vi.mock('./buildVersion', () => ({ buildVersion: '0.0.1-test' }))

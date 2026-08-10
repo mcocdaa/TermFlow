@@ -30,6 +30,8 @@ export interface CredentialVaultPort {
 export interface AuthorizationBrowserPort {
   open(url: string): Promise<void>
   waitForCallback(state: string, signal?: AbortSignal): Promise<string>
+  /** Prepare the loopback callback target for the state when supported; returns undefined to keep the app-scheme default. */
+  prepareCallback?(state: string): Promise<string | undefined>
 }
 
 export interface NativeClientDescriptor {

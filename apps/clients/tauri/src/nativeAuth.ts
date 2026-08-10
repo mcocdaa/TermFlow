@@ -48,7 +48,10 @@ export async function authorizeNativeClient(issuer: string, authorizeEndpoint: s
     authorizeEndpoint,
     client: { name: 'TermFlow', platform: `${platform()} ${arch()}`, version: buildVersion },
     scopes,
-    browser: tauriAuthorizationBrowser,
+    browser: tauriAuthorizationBrowser({
+      issuer: serverConfig.current,
+      loopback: platform() !== 'ios' && platform() !== 'android',
+    }),
     vault,
     key,
     createPkce: () => createPkce(cryptoPort),

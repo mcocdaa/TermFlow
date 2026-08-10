@@ -4,32 +4,68 @@ import type { AuthorizationBrowserPort, AuthorizationStateListener, CredentialVa
 
 const transactionIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+const loopbackHosts = ['127.0.0.1', '[::1]']
+
+function isLoopbackCallbackPort(port: string): boolean {
+  if (!/^[0-9]+$/.test(port)) return false
+  const value = Number(port)
+  return value >= 49152 && value <= 65535
+}
+
+/** Shared strict check: only state + transaction_id, both single and well-formed. */
+function parseStrictCallback(callback: URL): { state: string; transaction: string } | null {
+  const keys = [...callback.searchParams.keys()]
+  const transaction = callback.searchParams.get('transaction_id')
+  const state = callback.searchParams.get('state')
+  if (
+    callback.username !== ''
+    || callback.password !== ''
+    || callback.hash !== ''
+    || state === null
+    || callback.searchParams.getAll('state').length !== 1
+    || callback.searchParams.getAll('transaction_id').length !== 1
+    || transaction === null
+    || !transactionIdPattern.test(transaction)
+    || keys.length !== 2
+    || keys.some(key => key !== 'state' && key !== 'transaction_id')
+  ) {
+    return null
+  }
+  return { state, transaction }
+}
+
 /** Structurally validate an app-scheme callback without knowing the expected state. */
 export function parseNativeAuthorizationCallback(value: string): { state: string; transaction: string } | null {
   try {
     const callback = new URL(value)
-    const keys = [...callback.searchParams.keys()]
-    const transaction = callback.searchParams.get('transaction_id')
-    const state = callback.searchParams.get('state')
     if (
       callback.protocol !== 'termflow:'
-      || callback.username !== ''
-      || callback.password !== ''
       || callback.hostname !== 'auth'
       || callback.port !== ''
       || callback.pathname !== '/callback'
-      || callback.hash !== ''
-      || state === null
-      || callback.searchParams.getAll('state').length !== 1
-      || callback.searchParams.getAll('transaction_id').length !== 1
-      || transaction === null
-      || !transactionIdPattern.test(transaction)
-      || keys.length !== 2
-      || keys.some(key => key !== 'state' && key !== 'transaction_id')
     ) {
       return null
     }
-    return { state, transaction }
+    return parseStrictCallback(callback)
+  } catch {
+    return null
+  }
+}
+
+/** Structurally validate a loopback HTTP callback without knowing the expected state. */
+export function parseLoopbackNativeAuthorizationCallback(value: string): { state: string; transaction: string } | null {
+  try {
+    const callback = new URL(value)
+    if (
+      callback.protocol !== 'http:'
+      || callback.port === ''
+      || !isLoopbackCallbackPort(callback.port)
+      || !loopbackHosts.includes(callback.hostname)
+      || callback.pathname !== '/oauth/callback'
+    ) {
+      return null
+    }
+    return parseStrictCallback(callback)
   } catch {
     return null
   }
@@ -37,6 +73,7 @@ export function parseNativeAuthorizationCallback(value: string): { state: string
 
 export function isValidNativeAuthorizationCallback(value: string, state: string): boolean {
   return parseNativeAuthorizationCallback(value)?.state === state
+    || parseLoopbackNativeAuthorizationCallback(value)?.state === state
 }
 
 export interface AuthorizationExchangeRequest {
@@ -74,7 +111,8 @@ export class NativeAuthorizationSession {
     try {
       const state = this.options.createId()
       const pkce = await this.options.createPkce()
-      const redirectUri = this.options.redirectUri ?? 'termflow://auth/callback'
+      const prepared = await this.options.browser.prepareCallback?.(state)
+      const redirectUri = prepared ?? this.options.redirectUri ?? 'termflow://auth/callback'
       const url = new URL(this.options.authorizeEndpoint)
       url.searchParams.set('response_type', 'code')
       url.searchParams.set('redirect_uri', redirectUri)

@@ -14,7 +14,7 @@
         <p>将注销 <strong>{{ selected.display_name }}</strong>，不会影响其他设备，也不会中断正在运行的会话。</p>
         <form class="security-form" @submit.prevent="removeSelected">
           <label for="revoke-admin-token">管理员令牌</label><input id="revoke-admin-token" ref="revokeInput" v-model="adminToken" type="password" autocomplete="off" required />
-          <label v-if="totpEnabled" for="revoke-totp">当前验证码</label><input v-if="totpEnabled" id="revoke-totp" v-model="totpCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required />
+          <label v-if="totpEnabled" for="revoke-totp">双重验证码</label><input v-if="totpEnabled" id="revoke-totp" v-model="totpCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required />
           <p v-if="error" class="form-error" role="alert">{{ error }}</p>
           <div class="dialog-actions"><button type="button" class="secondary-button" @click="cancel">取消</button><button type="submit" class="danger-button">确认撤销</button></div>
         </form>

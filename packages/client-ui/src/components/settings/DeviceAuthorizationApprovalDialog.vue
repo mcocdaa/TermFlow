@@ -16,7 +16,7 @@
           <div><dt>有效期至</dt><dd>{{ formatExpiry(preview.expires_at) }}</dd></div>
         </dl>
         <form class="security-form" @submit.prevent="approve('allow')">
-          <template v-if="preview.totp_required"><label for="device-approval-totp">当前验证码</label><input id="device-approval-totp" v-model="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required /></template>
+          <template v-if="preview.totp_required"><label for="device-approval-totp">双重验证码</label><input id="device-approval-totp" v-model="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required /></template>
           <p v-if="error" role="alert" class="form-error">{{ error }}</p>
           <div class="dialog-actions"><button class="secondary-button" type="button" :disabled="busy" @click="approve('deny')">拒绝</button><button data-action="approve-device" class="primary-button" type="submit" :disabled="busy">允许此设备</button></div>
         </form>
