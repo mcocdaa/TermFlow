@@ -60,6 +60,9 @@ function registrationErrorMessage(error: unknown): string {
   if (code === 'https_required') {
     return '远程服务器必须使用 HTTPS；只有本机服务器可以使用 HTTP。'
   }
+  if (code === 'authorization_verify_timeout') {
+    return '连接确认超时。请检查服务器是否在线后重试。'
+  }
   return '无法完成远程控制注册。请检查服务器地址和系统浏览器中的审批状态后重试。'
 }
 

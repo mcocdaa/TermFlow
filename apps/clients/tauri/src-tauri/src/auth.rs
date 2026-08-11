@@ -588,17 +588,13 @@ pub async fn native_bind_authorization_listener(
             port,
             sender,
         ));
-        state
-            .callback_listeners
-            .lock()
-            .unwrap()
-            .insert(
-                expected_state,
-                PendingCallbackListener {
-                    receiver: Some(receiver),
-                    task,
-                },
-            );
+        state.callback_listeners.lock().unwrap().insert(
+            expected_state,
+            PendingCallbackListener {
+                receiver: Some(receiver),
+                task,
+            },
+        );
         return Ok(port);
     }
     Err(safe_error("listener_bind_failed"))

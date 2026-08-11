@@ -70,6 +70,7 @@ function actionableMessage(error: unknown): string {
   if (code === 'access_denied') return '浏览器拒绝了这次授权。请重新生成设备码。'
   if (code === 'expired_token') return '设备码已过期，请重新生成。'
   if (code === 'offline' || code === 'network_error') return '无法连接服务器。请检查网络后重试。'
+  if (code === 'authorization_verify_timeout') return '连接确认超时。请检查服务器是否在线后重试。'
   return '设备授权未完成。请重新生成设备码后重试。'
 }
 

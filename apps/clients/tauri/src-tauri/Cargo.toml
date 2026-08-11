@@ -47,6 +47,8 @@ apple-native-keyring-store = { version = "=1.0.1", features = ["protected"] }
 [target.'cfg(target_os = "android")'.dependencies]
 keyring-core = { version = "=1.0.0" }
 android-native-keyring-store = { version = "=1.0.0" }
+log = "0.4"
+ndk-context = "0.1.1"
 
 [target."cfg(any(target_os = \"macos\", windows, target_os = \"linux\"))".dependencies]
 tauri-plugin-single-instance = { version = "=2.4.3", features = ["deep-link"] }

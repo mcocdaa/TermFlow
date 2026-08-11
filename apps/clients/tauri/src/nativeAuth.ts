@@ -11,8 +11,20 @@ import { logNativeEvent, sanitizeNativeDetail } from './diagnostics'
 
 const vault = createTauriCredentialVault()
 
+const VERIFY_TIMEOUT_MS = 8_000
+
+function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = globalThis.setTimeout(() => reject(new Error('authorization_verify_timeout')), milliseconds)
+    promise.then(
+      (value) => { globalThis.clearTimeout(timer); resolve(value) },
+      (error) => { globalThis.clearTimeout(timer); reject(error) },
+    )
+  })
+}
+
 export async function verifyNativeConnection(runtime: Pick<ClientRuntime, 'api'>): Promise<void> {
-  await runtime.api.sessions.status()
+  await withTimeout(runtime.api.sessions.status(), VERIFY_TIMEOUT_MS)
 }
 
 function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
