@@ -3270,11 +3270,38 @@ class AgentMessageRepository:
         assembly_revision: int | None = None,
     ) -> AgentMessage:
         observed_at = datetime.now(UTC)
-        revision = (
-            literal(assembly_revision)
-            if assembly_revision is not None
-            else func.coalesce(func.max(AgentMessage.assembly_revision), 0) + 1
-        )
+        if assembly_revision is None:
+            # Auto-assign the next revision atomically: the aggregate subquery
+            # reads the conversation's current maximum inside the same statement
+            # that inserts, so the revision is DB-assigned and monotonic per
+            # conversation.
+            source = (
+                select(
+                    literal(conversation_id),
+                    literal(run_id),
+                    literal(role),
+                    literal(kind),
+                    func.coalesce(func.max(AgentMessage.assembly_revision), 0) + 1,
+                    literal(is_final),
+                    literal(body_digest),
+                    literal(observed_at),
+                )
+                .where(AgentMessage.conversation_id == conversation_id)
+                .limit(1)
+            )
+        else:
+            # Caller-supplied revision: a literal SELECT without a FROM clause
+            # always yields exactly one row, including for an empty conversation.
+            source = select(
+                literal(conversation_id),
+                literal(run_id),
+                literal(role),
+                literal(kind),
+                literal(assembly_revision),
+                literal(is_final),
+                literal(body_digest),
+                literal(observed_at),
+            )
         async with self._sessions() as session:
             result = await session.execute(
                 insert(AgentMessage)
@@ -3289,18 +3316,7 @@ class AgentMessageRepository:
                         AgentMessage.body_digest,
                         AgentMessage.created_at,
                     ],
-                    select(
-                        literal(conversation_id),
-                        literal(run_id),
-                        literal(role),
-                        literal(kind),
-                        revision,
-                        literal(is_final),
-                        literal(body_digest),
-                        literal(observed_at),
-                    )
-                    .where(AgentMessage.conversation_id == conversation_id)
-                    .limit(1),
+                    source,
                 )
                 .returning(AgentMessage)
             )
@@ -3339,12 +3355,19 @@ class AgentEventRepository:
     """Canonical product events with a B-assigned monotonic conversation cursor
     (plan §4.4).
 
-    ``database_seq`` is assigned by the same atomic ``INSERT ... SELECT``
-    pattern as inbox ``admission_seq``: the sequence is computed inside the
-    insert statement against the conversation's existing maximum, so it is
-    database-assigned, monotonic per conversation, and safe under concurrent
-    appends.  Re-appending the same ``dedup_key`` for a conversation returns
-    the original event instead of inserting a second row.
+    ``database_seq`` is assigned by an atomic ``INSERT ... SELECT`` statement:
+    the next sequence is computed inside the insert against the conversation's
+    existing maximum, so it is database-assigned, monotonic per conversation,
+    and safe under concurrent appends.
+
+    Deduplication is part of the same single statement: the insert is guarded
+    by ``WHERE NOT EXISTS`` on ``(conversation_id, dedup_key)``.  Because the
+    statement reads and writes in one atomic step and SQLite serializes
+    writers on the database write lock, concurrent appends of the same
+    ``dedup_key`` for a conversation insert exactly one row and every caller
+    receives the original event.  (There is no unique constraint on
+    ``(conversation_id, dedup_key)`` in the schema; the atomic insert is the
+    DB backstop.)
     """
 
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -3361,15 +3384,12 @@ class AgentEventRepository:
         ephemeral: bool = False,
     ) -> AgentEvent:
         observed_at = datetime.now(UTC)
+        next_seq = (
+            select(func.coalesce(func.max(AgentEvent.database_seq), 0) + 1)
+            .where(AgentEvent.conversation_id == conversation_id)
+            .scalar_subquery()
+        )
         async with self._sessions() as session:
-            existing: AgentEvent | None = await session.scalar(
-                select(AgentEvent).where(
-                    AgentEvent.conversation_id == conversation_id,
-                    AgentEvent.dedup_key == dedup_key,
-                )
-            )
-            if existing is not None:
-                return existing
             result = await session.execute(
                 insert(AgentEvent)
                 .from_select(
@@ -3388,15 +3408,35 @@ class AgentEventRepository:
                         literal(run_id),
                         literal(event_kind),
                         literal(dedup_key),
-                        func.coalesce(func.max(AgentEvent.database_seq), 0) + 1,
+                        next_seq,
                         literal(payload_digest),
                         literal(ephemeral),
                         literal(observed_at),
-                    ).where(AgentEvent.conversation_id == conversation_id),
+                    ).where(
+                        ~exists(
+                            select(AgentEvent.id).where(
+                                AgentEvent.conversation_id == conversation_id,
+                                AgentEvent.dedup_key == dedup_key,
+                            )
+                        )
+                    ),
                 )
                 .returning(AgentEvent)
             )
-            event = result.scalar_one()
+            event = result.scalar_one_or_none()
+            if event is None:
+                # Dedup hit: the same (conversation, dedup_key) was already
+                # persisted, so return the original event.
+                existing = await session.scalar(
+                    select(AgentEvent).where(
+                        AgentEvent.conversation_id == conversation_id,
+                        AgentEvent.dedup_key == dedup_key,
+                    )
+                )
+                # The atomic insert observed the row it skipped, so it must
+                # still be visible in this transaction.
+                assert existing is not None
+                return existing
             await session.commit()
             return event
 
