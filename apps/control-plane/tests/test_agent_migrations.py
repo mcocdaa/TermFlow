@@ -70,14 +70,22 @@ def _table_names(connection) -> set[str]:
 
 def _foreign_key_signatures(
     inspector, table_name: str
-) -> set[tuple[tuple[str, ...], str, tuple[str, ...]]]:
+) -> set[tuple[tuple[str, ...], str, tuple[str, ...], tuple[tuple[str, str], ...]]]:
     return {
         (
             tuple(foreign_key["constrained_columns"] or ()),
             str(foreign_key["referred_table"]),
             tuple(foreign_key["referred_columns"] or ()),
+            tuple(sorted((foreign_key.get("options") or {}).items())),
         )
         for foreign_key in inspector.get_foreign_keys(table_name)
+    }
+
+
+def _unique_signatures(inspector, table_name: str) -> set[frozenset[str]]:
+    return {
+        frozenset(constraint["column_names"] or ())
+        for constraint in inspector.get_unique_constraints(table_name)
     }
 
 
@@ -176,7 +184,10 @@ def test_migrated_schema_matches_orm_metadata_exactly(tmp_path) -> None:
                 orm_inspector, table_name
             ) == _foreign_key_signatures(
                 migrated_inspector, table_name
-            ), f"{table_name}: foreign keys differ"
+            ), f"{table_name}: foreign keys (incl. ondelete) differ"
+            assert _unique_signatures(orm_inspector, table_name) == _unique_signatures(
+                migrated_inspector, table_name
+            ), f"{table_name}: unique constraints differ"
             assert _index_signatures(
                 orm_inspector, table_name
             ) == _index_signatures(
