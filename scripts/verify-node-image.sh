@@ -52,3 +52,63 @@ docker run --rm --cap-drop ALL \
   test -w /home/termflow
   python -c "from pathlib import Path; p = Path.home()/\"write-check\"; p.write_text(\"ok\"); p.unlink()"
 '
+
+# termflow serve: a persistent compute node must run without a TTY, keep
+# the same Term identity across container restarts, and stop cleanly on
+# SIGTERM (docker stop) with no leftover Bridge.
+NODE_CONTAINER="termflow-verify-node-$$"
+NODE_VOLUME="${NODE_CONTAINER}-home"
+cleanup() {
+  docker rm --force "${NODE_CONTAINER}" >/dev/null 2>&1 || true
+  docker volume rm "${NODE_VOLUME}" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+# Seed a valid Installation login into the identity volume (0600, as
+# termflow login would write it) before the service starts.
+docker run --rm --user 0:0 \
+  --volume "${NODE_VOLUME}:/home/termflow" \
+  --entrypoint /bin/sh "${NODE_IMAGE}" -ec '
+  mkdir -p /home/termflow/.config/termflow
+  printf "%s\n" "{\"server_url\":\"http://127.0.0.1:1\",\"installation_id\":\"00000000-0000-0000-0000-000000000001\",\"installation_token\":\"dummy-token\",\"allow_insecure_http\":true}" > /home/termflow/.config/termflow/config.json
+  chmod 600 /home/termflow/.config/termflow/config.json
+  chown -R 1000:1000 /home/termflow
+'
+
+docker run --detach \
+  --name "${NODE_CONTAINER}" \
+  --cap-drop ALL \
+  --volume "${NODE_VOLUME}:/home/termflow" \
+  "${NODE_IMAGE}" \
+  termflow serve --name demo >/dev/null
+
+for attempt in $(seq 1 30); do
+  if docker exec "${NODE_CONTAINER}" termflow status demo --json 2>/dev/null | grep -q '"bridge_alive":true'; then
+    break
+  fi
+  sleep 1
+done
+first_status="$(docker exec "${NODE_CONTAINER}" termflow status demo --json)"
+echo "${first_status}" | grep -q '"tmux_alive":true'
+echo "${first_status}" | grep -q '"bridge_alive":true'
+echo "${first_status}" | grep -q '"lifecycle":"running"'
+
+# docker stop sends SIGTERM; the exit code must be 0 (clean), not 137.
+docker stop --time 15 "${NODE_CONTAINER}" >/dev/null
+test "$(docker inspect --format '{{.State.ExitCode}}' "${NODE_CONTAINER}")" = "0"
+
+# Restart must preserve the same Installation/Term identity and never
+# produce a duplicate Instance.
+first_id="$(echo "${first_status}" | python3 -c 'import json, sys; print(json.load(sys.stdin)["instance_id"])')"
+docker start "${NODE_CONTAINER}" >/dev/null
+for attempt in $(seq 1 30); do
+  second_status="$(docker exec "${NODE_CONTAINER}" termflow status demo --json 2>/dev/null)" || { sleep 1; continue; }
+  echo "${second_status}" | grep -q '"bridge_alive":true' && break
+  sleep 1
+done
+second_id="$(echo "${second_status}" | python3 -c 'import json, sys; print(json.load(sys.stdin)["instance_id"])')"
+test "${second_id}" = "${first_id}"
+
+single_instance="$(docker exec "${NODE_CONTAINER}" termflow list --json \
+  | python3 -c 'import json, sys; print(len(json.load(sys.stdin)))')"
+test "${single_instance}" = "1"

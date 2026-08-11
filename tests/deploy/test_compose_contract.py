@@ -40,7 +40,7 @@ def test_full_verification_checks_source_build_compose_configuration() -> None:
     for destructive in ("rm -", "docker stop", "kill-server"):
         assert destructive not in verify
     assert "TERMFLOW_IMAGE" not in verify
-    assert "TERMFLOW_ADMIN_TOKEN=\"verify-admin-token-that-is-long-enough\"" in verify
+    assert 'TERMFLOW_ADMIN_TOKEN="verify-admin-token-that-is-long-enough"' in verify
     assert "docker compose -f deploy/compose.yaml config --quiet" in verify
 
 
@@ -54,9 +54,7 @@ def test_compose_is_single_worker_and_persists_only_metadata() -> None:
     ]
     assert service["healthcheck"]["test"][-1].endswith("/healthz")
     assert list(compose["services"]) == ["control-plane"]
-    assert compose["volumes"]["termflow-data"] == {
-        "name": "${TERMFLOW_DATA_VOLUME:-termflow-data}"
-    }
+    assert compose["volumes"]["termflow-data"] == {"name": "${TERMFLOW_DATA_VOLUME:-termflow-data}"}
     assert compose["volumes"]["termflow-totp-key"] == {
         "name": "${TERMFLOW_TOTP_KEY_VOLUME:-termflow-totp-key}"
     }
@@ -100,7 +98,15 @@ def test_control_plane_image_uses_builders_and_a_source_free_runtime() -> None:
     assert "uv build --wheel --package termflow-control-plane" in dockerfile
     assert "FROM python:3.12-slim AS runtime" in dockerfile
     assert "EXPOSE 8000" in dockerfile
-    assert "USER termflow" in dockerfile
+    assert "mkdir -p /app/data /app/totp-secrets" in dockerfile
+    assert "termflow-control-entrypoint" in dockerfile
+
+    entrypoint = Path("deploy/entrypoint.control-plane.sh").read_text()
+    assert "data_dir=/app/data" in entrypoint
+    assert "totp_dir=/app/totp-secrets" in entrypoint
+    assert "-L" in entrypoint  # refuse symlinked mount points
+    assert "-xdev" in entrypoint  # never recurse across filesystems
+    assert "setpriv" in entrypoint  # exec drop keeps PID 1 non-root
 
     runtime = dockerfile.split("FROM python:3.12-slim AS runtime", maxsplit=1)[1]
     assert "COPY --from=python-wheels /opt/termflow /opt/termflow" in runtime
@@ -157,6 +163,9 @@ def test_delivery_scripts_verify_image_contents_and_tauri_compile_gates() -> Non
         "/opt/termflow/bin/termflow-control",
         "auth totp reset --help",
         "find /",
+        "termflow-control-entrypoint",
+        "/app/totp-secrets",
+        "stat -c %u /proc/1",
     ):
         assert expected in image_check
     for forbidden in (
@@ -171,6 +180,15 @@ def test_delivery_scripts_verify_image_contents_and_tauri_compile_gates() -> Non
         "rustc",
     ):
         assert forbidden in image_check
+
+    node_check = Path("scripts/verify-node-image.sh").read_text()
+    for expected in (
+        "termflow serve --name demo",
+        '"bridge_alive":true',
+        "ExitCode",
+        "single_instance",
+    ):
+        assert expected in node_check
 
     for command in ("cargo fmt", "cargo clippy", "cargo test", "cargo check", "--no-bundle"):
         assert command in tauri_check
