@@ -10,6 +10,9 @@ from uuid import UUID, uuid4
 from termflow_protocol import (
     CommandResultPayload,
     MessageType,
+    PaneCaptureErrorPayload,
+    PaneCaptureRequestPayload,
+    PaneCaptureResultPayload,
     TerminalInputPayload,
     TermRenameResultPayload,
     TopologySnapshot,
@@ -31,6 +34,9 @@ class InstanceRetired(LookupError):
 
 class ConnectionBackpressure(RuntimeError):
     pass
+
+
+_CAPTURE_TIMEOUT_SECONDS = 5.0
 
 
 def _queued_terminal_bytes(message: WireMessage) -> int:
@@ -83,7 +89,75 @@ class LiveConnection:
     pending_renames: dict[UUID, asyncio.Future[TermRenameResultPayload]] = field(
         default_factory=dict
     )
+    pending_captures: dict[
+        UUID, asyncio.Future[PaneCaptureResultPayload | PaneCaptureErrorPayload]
+    ] = field(default_factory=dict)
     replaced: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def submit_capture(
+        self,
+        request: PaneCaptureRequestPayload,
+        *,
+        timeout_seconds: float = _CAPTURE_TIMEOUT_SECONDS,
+    ) -> PaneCaptureResultPayload | PaneCaptureErrorPayload:
+        """Correlate and forward one bounded pane capture request to A.
+
+        The request is enqueued on the outbound wire queue and awaited until A
+        answers with the matching :class:`PaneCaptureResultPayload` or
+        :class:`PaneCaptureErrorPayload` for the same ``request_id``. If A does
+        not answer within ``timeout_seconds`` the awaitable resolves with a
+        synthetic :class:`PaneCaptureErrorPayload` (``capture_timeout``).
+        Connection loss while waiting raises :class:`InstanceOffline`.
+        """
+        if request.instance_id != self.instance_id:
+            raise ValueError(
+                f"capture request for instance {request.instance_id} submitted "
+                f"to connection {self.instance_id}"
+            )
+        future: asyncio.Future[
+            PaneCaptureResultPayload | PaneCaptureErrorPayload
+        ] = asyncio.get_running_loop().create_future()
+        self.pending_captures[request.request_id] = future
+        message = WireMessage(
+            type=MessageType.PANE_CAPTURE_REQUEST,
+            instance_id=self.instance_id,
+            payload=request.model_dump(mode="json"),
+        )
+        try:
+            try:
+                self.outbound.put_nowait(message)
+            except asyncio.QueueFull as exc:
+                raise ConnectionBackpressure(str(self.instance_id)) from exc
+            try:
+                async with asyncio.timeout(timeout_seconds):
+                    return await future
+            except TimeoutError:
+                return PaneCaptureErrorPayload(
+                    request_id=request.request_id,
+                    instance_id=self.instance_id,
+                    pane_id=request.pane_id,
+                    error_code="capture_timeout",
+                    message="The Instance did not answer the capture request in time.",
+                )
+        finally:
+            self.pending_captures.pop(request.request_id, None)
+
+    def resolve_capture(
+        self,
+        request_id: UUID,
+        outcome: PaneCaptureResultPayload | PaneCaptureErrorPayload,
+    ) -> bool:
+        """Complete the pending capture future addressed by ``request_id``.
+
+        Unknown or already-completed request ids are ignored and ``False`` is
+        returned, so stale or duplicated replies never overwrite a resolved
+        future.
+        """
+        future = self.pending_captures.pop(request_id, None)
+        if future is None or future.done():
+            return False
+        future.set_result(outcome)
+        return True
 
 
 class LiveInstanceRegistry:
@@ -204,3 +278,7 @@ class LiveInstanceRegistry:
             if not rename_future.done():
                 rename_future.set_exception(exc)
         connection.pending_renames.clear()
+        for capture_future in tuple(connection.pending_captures.values()):
+            if not capture_future.done():
+                capture_future.set_exception(exc)
+        connection.pending_captures.clear()
