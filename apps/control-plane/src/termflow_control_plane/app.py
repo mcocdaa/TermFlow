@@ -58,6 +58,8 @@ from termflow_control_plane.plugins.protocol import (
     LifecyclePort,
     TerminalCommandPort,
     TerminalObservationPort,
+    TermPort,
+    UnitOfWorkFactory,
 )
 from termflow_control_plane.plugins.registry import FeatureRegistry
 from termflow_control_plane.routing.router import CommandRouter
@@ -153,13 +155,15 @@ async def _verify_oauth_totp(service: AuthenticationService, code: str) -> bool:
         return False
 
 
-def _unimplemented_port(port: object) -> Any:
+def _unimplemented_port(_port: object) -> Any:
     """Return a placeholder object for a BFeatureContext port not yet implemented.
 
-    The composition root must not invent fake implementations for ports whose
-    milestones have not landed; an explicitly labeled placeholder keeps the
-    wiring honest.  ``Any`` is required because Protocol classes cannot be used
-    as ``type[...]`` arguments under mypy strict.
+    The ``_port`` argument is documentation-only: it names the port this
+    placeholder stands in for.  The composition root must not invent fake
+    implementations for ports whose milestones have not landed; an explicitly
+    labeled placeholder keeps the wiring honest.  ``Any`` is required because
+    Protocol classes cannot be used as ``type[...]`` arguments under mypy
+    strict.
     """
     return object()
 
@@ -211,13 +215,14 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
             resume_grace_seconds=settings.terminal_resume_grace_seconds,
         )
         feature_context = build_feature_context(
-            # Only real services are wired now; every remaining port is an
-            # explicitly labeled placeholder until its milestone lands.
+            # No real port implementations exist yet, so every port is an
+            # explicitly labeled placeholder until its milestone lands; real
+            # terms/persistence adapters arrive with the M1.3+ services.
             auth=_unimplemented_port(AuthPort),  # AuthenticationService lacks AuthPort
-            terms=app.state.registry,  # LiveInstanceRegistry is the live Term/instance authority
+            terms=_unimplemented_port(TermPort),  # real TermPort adapter lands with M1.3+
             observation=_unimplemented_port(TerminalObservationPort),  # lands with M2
             commands=_unimplemented_port(TerminalCommandPort),  # lands with M5
-            persistence=app.state.repositories,  # real persistence layer (RepositoryBundle)
+            persistence=_unimplemented_port(UnitOfWorkFactory),  # real adapter lands with M1.3+
             lifecycle=_unimplemented_port(LifecyclePort),  # lands with plugin background tasks
             runtime=_unimplemented_port(AgentRuntimeSupervisor),  # lands with M4
         )

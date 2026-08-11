@@ -44,6 +44,22 @@ class TestCapabilityDiscovery:
             assert response.status_code == 200
             assert response.json() == {"agent_broker_enabled": False}
 
+    def test_reports_disabled_via_environment_override(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("TERMFLOW_AGENT_BROKER_ENABLED", "false")
+        settings = Settings(
+            admin_token=ADMIN_TOKEN,
+            database_url=f"sqlite+aiosqlite:///{tmp_path / 'env-disabled.db'}",
+            allow_insecure_loopback=True,
+        )
+        database = Database(settings.database_url)
+        app = create_app(settings=settings, database=database)
+
+        with TestClient(app) as client:
+            response = client.get("/api/v1/agent/capabilities")
+
+            assert response.status_code == 200
+            assert response.json() == {"agent_broker_enabled": False}
+
     def test_setting_defaults_to_enabled(self) -> None:
         settings = Settings(admin_token=ADMIN_TOKEN)
 
