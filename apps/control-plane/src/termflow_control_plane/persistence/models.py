@@ -715,6 +715,12 @@ class Watch(Base):
     watch_generation: Mapped[int] = mapped_column(Integer)
     rearm_cursor: Mapped[str | None] = mapped_column(Text, default=None)
     intent_summary: Mapped[str] = mapped_column(Text)
+    # Persisted matcher suffix/cursor for crash-safe partial matches: when an
+    # ``output_contains`` literal is split across chunks, the engine stores its
+    # incremental matcher state here so a restart can resume the partial match
+    # (plan §11.2: "persist each active watcher's matcher suffix/cursor
+    # transactionally for every consumed live event").
+    matcher_state: Mapped[str | None] = mapped_column(Text, default=None)
     expiry_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), index=True, default=None
     )
@@ -724,6 +730,32 @@ class Watch(Base):
 
     __table_args__ = (
         Index("ix_watches_binding_state", "binding_id", "state"),
+    )
+
+
+class PaneObservationCursor(Base):
+    """Per-pane accepted live observation cursor (plan §11.2).
+
+    For every consumed live pane-output event B transactionally persists the
+    accepted cursor so restart recovery can resume from the exact position the
+    stream continuity guarantees.  The pane-scoped key is ``(instance_id,
+    pane_id)`` because tmux pane IDs can repeat across Term instances.
+    """
+
+    __tablename__ = "pane_observation_cursors"
+
+    instance_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("instances.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    pane_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    pane_incarnation: Mapped[str] = mapped_column(Text)
+    stream_id: Mapped[str] = mapped_column(Text)
+    seq: Mapped[int] = mapped_column(Integer)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
 
 

@@ -19,9 +19,9 @@ from termflow_control_plane.persistence.models import Base
 
 # The migration head after this task.  Only tests asserting the GLOBAL head use
 # this constant; upgrade-path fixtures still pin "0005" explicitly.
-HEAD = "0006"
+HEAD = "0007"
 
-# Every Agent Broker table created by migration 0006 (plan §15).
+# Every Agent Broker table created by migrations 0006 and 0007 (plan §15).
 AGENT_TABLES = (
     "agent_profiles",
     "agent_bindings",
@@ -43,6 +43,7 @@ AGENT_TABLES = (
     "transcript_drafts",
     "agent_cleanup_jobs",
     "agent_diagnostics",
+    "pane_observation_cursors",
 )
 
 AGENT_TABLE_SET = set(AGENT_TABLES)
@@ -130,6 +131,69 @@ def test_upgrade_from_0005_to_head_creates_agent_tables(tmp_path) -> None:
         engine.dispose()
 
 
+def test_upgrade_from_0006_to_head_adds_watch_engine_schema(tmp_path) -> None:
+    """The 0007 delta is additive on an 0006 database (plan §11.2)."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'upgrade-0006.db'}")
+    try:
+        with engine.begin() as connection:
+            config = _migration_config(connection)
+            command.upgrade(config, "0006")
+            assert "pane_observation_cursors" not in _table_names(connection)
+            watch_columns = {
+                column["name"] for column in inspect(connection).get_columns("watches")
+            }
+            assert "matcher_state" not in watch_columns
+
+            command.upgrade(config, "head")
+            table_names = _table_names(connection)
+            revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
+            watch_columns = {
+                column["name"] for column in inspect(connection).get_columns("watches")
+            }
+        assert revision == HEAD
+        assert "pane_observation_cursors" in table_names
+        assert "matcher_state" in watch_columns
+    finally:
+        engine.dispose()
+
+
+def test_watch_engine_schema_delta_columns_and_constraints(tmp_path) -> None:
+    """The per-pane cursor ledger has its exact columns and unique pane key."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'watch-schema.db'}")
+    try:
+        with engine.begin() as connection:
+            command.upgrade(_migration_config(connection), "head")
+        inspector = inspect(engine)
+
+        columns = {
+            column["name"]: column for column in inspector.get_columns(
+                "pane_observation_cursors"
+            )
+        }
+        assert set(columns) == {
+            "instance_id",
+            "pane_id",
+            "pane_incarnation",
+            "stream_id",
+            "seq",
+            "observed_at",
+            "updated_at",
+        }
+        assert not columns["pane_incarnation"]["nullable"]
+        assert not columns["seq"]["nullable"]
+
+        primary_key = inspector.get_pk_constraint("pane_observation_cursors")
+        assert primary_key["constrained_columns"] == ["instance_id", "pane_id"]
+
+        matcher_state = {
+            column["name"]: column
+            for column in inspector.get_columns("watches")
+        }["matcher_state"]
+        assert matcher_state["nullable"] is True
+    finally:
+        engine.dispose()
+
+
 def test_downgrade_from_head_to_0005_drops_agent_tables(tmp_path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'downgrade-agent.db'}")
     try:
@@ -144,6 +208,28 @@ def test_downgrade_from_head_to_0005_drops_agent_tables(tmp_path) -> None:
         assert AGENT_TABLE_SET.isdisjoint(table_names)
         assert PRE_AGENT_TABLES <= table_names
         assert revision == "0005"
+    finally:
+        engine.dispose()
+
+
+def test_downgrade_from_head_to_0006_drops_watch_engine_schema(tmp_path) -> None:
+    """The 0007 delta downgrades cleanly back to the M1 schema."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'downgrade-0006.db'}")
+    try:
+        with engine.begin() as connection:
+            config = _migration_config(connection)
+            command.upgrade(config, "head")
+            assert "pane_observation_cursors" in _table_names(connection)
+
+            command.downgrade(config, "0006")
+            table_names = _table_names(connection)
+            revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
+            watch_columns = {
+                column["name"] for column in inspect(connection).get_columns("watches")
+            }
+        assert revision == "0006"
+        assert "pane_observation_cursors" not in table_names
+        assert "matcher_state" not in watch_columns
     finally:
         engine.dispose()
 

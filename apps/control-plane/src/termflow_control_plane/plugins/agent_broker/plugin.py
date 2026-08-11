@@ -203,6 +203,9 @@ class AgentBrokerPlugin:
         manifest.add_revision(
             MigrationRevision(id="0006", owner="agent_broker", dependencies=())
         )
+        manifest.add_revision(
+            MigrationRevision(id="0007", owner="agent_broker", dependencies=("0006",))
+        )
 
     async def startup(self, context: BFeatureContext) -> None:
         """No startup work yet; repositories and lifecycle tasks land with M1.4+."""
