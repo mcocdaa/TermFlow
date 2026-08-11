@@ -5,6 +5,7 @@ from typing import Annotated, cast
 
 from fastapi import Depends, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from termflow_control_plane.auth.dpop import DpopInvalid, DpopNonceRequired, DpopVerifier
 from termflow_control_plane.auth.service import AuthenticationService
@@ -30,6 +31,10 @@ def get_settings(request: Request) -> Settings:
 
 def get_repositories(request: Request) -> RepositoryBundle:
     return cast(RepositoryBundle, request.app.state.repositories)
+
+
+def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
+    return cast(async_sessionmaker[AsyncSession], request.app.state.session_factory)
 
 
 def get_browser_sessions(request: Request) -> BrowserSessionStore:
@@ -79,6 +84,10 @@ def _required_scope(request: Request) -> str | None:
         return "computers.write" if mutating else "computers.read"
     if path.startswith("/api/v1/terms"):
         return "terminal.write" if mutating else "terminal.read"
+    if path.startswith("/api/v1/agent/admin"):
+        return "agent.admin"
+    if path.startswith("/api/v1/agent/conversations"):
+        return "agent.conversations.write" if mutating else "agent.conversations.read"
     if path == "/api/v1/dashboard":
         return "computers.read"
     return None

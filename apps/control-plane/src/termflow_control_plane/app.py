@@ -22,7 +22,9 @@ from termflow_protocol import (
 )
 
 from termflow_control_plane import __version__
+from termflow_control_plane.api.agent_admin import router as agent_admin_router
 from termflow_control_plane.api.agent_capabilities import router as agent_capabilities_router
+from termflow_control_plane.api.agent_conversations import router as agent_conversations_router
 from termflow_control_plane.api.bridge import router as bridge_router
 from termflow_control_plane.api.clients import router as clients_router
 from termflow_control_plane.api.computers import router as computers_router
@@ -275,6 +277,7 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
     )
     browser_cookie_policy(settings)
     app.state.settings = settings
+    app.state.session_factory = active_database.session_factory
     app.state.registry = LiveInstanceRegistry(
         queue_size=settings.connection_queue_size,
         queue_max_bytes=settings.terminal_queue_max_bytes,
@@ -375,5 +378,11 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
     app.include_router(bridge_router)
     app.include_router(events_router)
     app.include_router(agent_capabilities_router)
+    # Agent Broker functional routers are owned by the plugin and are only
+    # mounted while the plugin is enabled; the capability-discovery endpoint
+    # stays mounted unconditionally so C can observe the disabled state.
+    if settings.agent_broker_enabled:
+        app.include_router(agent_admin_router)
+        app.include_router(agent_conversations_router)
     install_web_hosting(app, settings.static_dir)
     return app
