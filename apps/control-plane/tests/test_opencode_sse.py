@@ -362,8 +362,30 @@ class TestEventMapping:
         assert notification.payload.text is None
 
     async def test_backend_state_changed_from_session_status(self) -> None:
+        # Spec-shaped SessionStatus: an object discriminated by ``type``.
+        event = _event("session.status", {"sessionID": SESSION_ID, "status": {"type": "busy"}})
+        adapter, _ = _adapter_for_event(event)
+        (notification,) = await _collect(adapter, _scope())
+        assert notification.kind is AgentEventKind.BACKEND_STATE_CHANGED
+        assert notification.payload.summary == "busy"
+
+    async def test_backend_state_changed_from_retry_status(self) -> None:
+        event = _event(
+            "session.status",
+            {
+                "sessionID": SESSION_ID,
+                "status": {"type": "retry", "attempt": 2, "message": "x", "next": 5},
+            },
+        )
+        adapter, _ = _adapter_for_event(event)
+        (notification,) = await _collect(adapter, _scope())
+        assert notification.kind is AgentEventKind.BACKEND_STATE_CHANGED
+        assert notification.payload.summary == "retry attempt 2"
+
+    async def test_backend_state_changed_from_string_status(self) -> None:
+        # Backward compatibility: string statuses seen in the wild.
         event = _event("session.status", {"sessionID": SESSION_ID, "status": "busy"})
-        adapter, _ = _adapter(_stream_handler(_sse(_envelope(event))))
+        adapter, _ = _adapter_for_event(event)
         (notification,) = await _collect(adapter, _scope())
         assert notification.kind is AgentEventKind.BACKEND_STATE_CHANGED
         assert notification.payload.summary == "busy"
@@ -527,6 +549,11 @@ class TestScopeFiltering:
         notifications = await _collect(adapter, _scope())
         assert notifications == []
         assert adapter.stats.scope_mismatch_events == 1
+        # The bounded diagnostic never embeds the mismatched provider path
+        # (plan §4.3): only identifiers and an adapter-generated reason.
+        (record,) = adapter.diagnostics
+        assert record.event_type == "<scope>"
+        assert "/srv/other-workspace" not in record.note
 
     async def test_matching_directory_emitted(self) -> None:
         event = _event("session.idle", {"sessionID": SESSION_ID})

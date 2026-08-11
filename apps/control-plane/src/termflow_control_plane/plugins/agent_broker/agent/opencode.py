@@ -503,7 +503,9 @@ class OpenCodeAdapter:
                 payload.get("id") if isinstance(payload, dict) else "",
                 "<scope>",
                 None,
-                f"envelope directory {directory!r} is not the binding directory",
+                # The mismatched value is a provider filesystem path and is
+                # never embedded in the bounded diagnostic record (§4.3).
+                "envelope directory <other> does not match the binding directory",
             )
             return None
         payload = envelope.get("payload")
@@ -855,10 +857,25 @@ class OpenCodeAdapter:
         fallback: str | None,
     ) -> BackendNotification:
         status = properties.get("status")
-        if isinstance(status, str):
+        if isinstance(status, dict):
+            # Spec-shaped SessionStatus: an object discriminated by ``type``
+            # ({"type": "busy"} / {"type": "idle"} / {"type": "retry",
+            # "attempt", "message", "next", ...}).
+            status_type = status.get("type")
+            if isinstance(status_type, str) and status_type:
+                if status_type == "retry":
+                    attempt = status.get("attempt")
+                    if isinstance(attempt, int) and attempt >= 0:
+                        summary = f"retry attempt {attempt}"
+                    else:
+                        summary = "retry"
+                else:
+                    summary = status_type
+            else:
+                summary = fallback
+        elif isinstance(status, str):
+            # Backward compatibility with string statuses seen in the wild.
             summary = status
-        elif isinstance(status, dict) and "retry" in status:
-            summary = "retry"
         else:
             summary = fallback
         return self._notification(
