@@ -68,10 +68,11 @@ pub struct NativeAuthState {
 }
 
 /// A bound loopback callback listener waiting for the browser handoff. The
-/// receiver is awaited by the JS session; the task handle lets a cancelled
-/// session release the port immediately.
+/// receiver is taken by the waiting JS session; the task handle stays in the
+/// map until the wait resolves so a cancelled session can still release the
+/// port immediately.
 struct PendingCallbackListener {
-    receiver: tokio::sync::oneshot::Receiver<String>,
+    receiver: Option<tokio::sync::oneshot::Receiver<String>>,
     task: tauri::async_runtime::JoinHandle<()>,
 }
 
@@ -591,7 +592,13 @@ pub async fn native_bind_authorization_listener(
             .callback_listeners
             .lock()
             .unwrap()
-            .insert(expected_state, PendingCallbackListener { receiver, task });
+            .insert(
+                expected_state,
+                PendingCallbackListener {
+                    receiver: Some(receiver),
+                    task,
+                },
+            );
         return Ok(port);
     }
     Err(safe_error("listener_bind_failed"))
@@ -604,17 +611,30 @@ pub async fn native_wait_authorization_callback(
     state: State<'_, NativeAuthState>,
     expected_state: String,
 ) -> Result<String, String> {
-    let listener = state
+    await_callback(&state, &expected_state).await
+}
+
+/// Take the listener's receiver and wait for the browser handoff. The
+/// listener task itself keeps accepting until it delivers the callback (or
+/// the accept timeout expires), so the port stays reachable while the JS
+/// session waits; the map entry is only dropped once the wait settles.
+async fn await_callback(state: &NativeAuthState, expected_state: &str) -> Result<String, String> {
+    let receiver = state
         .callback_listeners
         .lock()
         .unwrap()
-        .remove(&expected_state)
+        .get_mut(expected_state)
+        .and_then(|entry| entry.receiver.take())
         .ok_or_else(|| safe_error("authorization_listener_missing"))?;
-    listener.task.abort();
-    listener
-        .receiver
+    let result = receiver
         .await
-        .map_err(|_| safe_error("authorization_callback_timeout"))
+        .map_err(|_| safe_error("authorization_callback_timeout"));
+    state
+        .callback_listeners
+        .lock()
+        .unwrap()
+        .remove(expected_state);
+    result
 }
 
 /// Release a bound listener early when the authorization is cancelled, so
@@ -1215,6 +1235,55 @@ mod tests {
                 .unwrap();
             assert!(callback.contains("transaction_id=11111111-1111-4111-8111-111111111111"));
             task.abort();
+        });
+    }
+
+    #[test]
+    fn wait_keeps_the_listener_accepting_until_the_browser_handoff() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let state = NativeAuthState::default();
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            let task = tokio::task::spawn(run_callback_listener(
+                listener,
+                "state-wait".to_owned(),
+                "https://termflow.example".to_owned(),
+                port,
+                sender,
+            ));
+            state.callback_listeners.lock().unwrap().insert(
+                "state-wait".to_owned(),
+                PendingCallbackListener {
+                    receiver: Some(receiver),
+                    task: tauri::async_runtime::JoinHandle::Tokio(task),
+                },
+            );
+            let awaited = await_callback(&state, "state-wait");
+            let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .unwrap();
+            stream
+                .write_all(
+                    b"GET /oauth/callback?state=state-wait&transaction_id=11111111-1111-4111-8111-111111111111 HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            let callback = tokio::time::timeout(std::time::Duration::from_secs(5), awaited)
+                .await
+                .expect("callback wait resolved")
+                .expect("callback wait succeeded");
+            assert_eq!(
+                callback,
+                format!("http://127.0.0.1:{port}/oauth/callback?state=state-wait&transaction_id=11111111-1111-4111-8111-111111111111")
+            );
+            assert!(state.callback_listeners.lock().unwrap().is_empty());
         });
     }
 }
