@@ -52,7 +52,10 @@ from termflow_control_plane.connections.terminal_hub import TerminalHub
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.database import Database
 from termflow_control_plane.persistence.repositories import RepositoryBundle
-from termflow_control_plane.plugins.agent_broker.plugin import AgentBrokerPlugin
+from termflow_control_plane.plugins.agent_broker.plugin import (
+    AgentBrokerPlugin,
+    run_agent_recovery,
+)
 from termflow_control_plane.plugins.context import build_feature_context
 from termflow_control_plane.plugins.protocol import (
     AgentRuntimeSupervisor,
@@ -230,6 +233,24 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         )
         app.state.feature_context = feature_context
         await app.state.feature_registry.startup(feature_context)
+        # Deterministic restart recovery (plan §17: B restarts): fence stale
+        # inbox claims, mark stuck runs unknown, then retry pending cleanup
+        # tombstones.  Fail-safe by design: errors are logged, never fatal.
+        try:
+            recovered = await run_agent_recovery(app.state.repositories)
+            if any(
+                (
+                    recovered.inbox_recovered,
+                    recovered.inbox_delivery_unknown,
+                    recovered.inbox_reconciled,
+                    recovered.runs_marked_unknown,
+                    recovered.cleanup_jobs_retried,
+                    recovered.cleanup_jobs_completed,
+                )
+            ):
+                logger.info("Agent restart recovery: %s", recovered)
+        except Exception:
+            logger.exception("Agent restart recovery failed")
         expiry_task = asyncio.create_task(
             _heartbeat_expiry_loop(app.state.registry, app.state.event_hub, settings)
         )

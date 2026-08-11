@@ -25,6 +25,23 @@ from termflow_control_plane.routing.router import CommandRouter
 router = APIRouter(prefix="/api/v1/terms", tags=["terms"])
 
 
+async def cancel_agent_watches_for_term(
+    repositories: RepositoryBundle,
+    term_id: UUID,
+) -> int:
+    """Cancel active Agent watches for every binding of a Term (plan §17).
+
+    Runs BEFORE the Term row is deleted so cancellation is visible in the
+    database even if the deletion path later fails.
+    """
+    cancelled = 0
+    for binding in await repositories.agent_bindings.list_for_term(term_id):
+        for watch in await repositories.watches.list_for_binding(binding.id):
+            if await repositories.watches.cancel(watch.id) is not None:
+                cancelled += 1
+    return cancelled
+
+
 @router.delete(
     "/{instance_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -45,6 +62,15 @@ async def delete_term(
         raise TermFlowError("instance_not_found", 404, "The Term does not exist.") from exc
 
     try:
+        # Plan §15/§17: cancel Agent watches and write the durable cleanup
+        # tombstone BEFORE deleting the parent, so the job survives the
+        # deletion (SET NULL) and cleanup is retried until confirmed.
+        await cancel_agent_watches_for_term(repositories, instance_id)
+        await repositories.cleanup_jobs.create(
+            target_kind="term",
+            target_ref=str(instance_id),
+            term_id=instance_id,
+        )
         deleted = await repositories.instances.delete(instance_id)
     except BaseException:
         await registry.cancel_retirement(instance_id)

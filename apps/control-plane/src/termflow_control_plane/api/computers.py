@@ -12,6 +12,7 @@ from termflow_control_plane.api.dependencies import (
     get_repositories,
     require_admin,
 )
+from termflow_control_plane.api.terms import cancel_agent_watches_for_term
 from termflow_control_plane.connections.registry import (
     InstanceOnline,
     InstanceRetired,
@@ -113,6 +114,17 @@ async def delete_computer(
                 ) from exc
             retired.append(instance.id)
 
+        # Plan §15/§17: cancel Agent watches for every Term on this Computer
+        # and write the durable installation cleanup tombstone BEFORE the
+        # parent is deleted, so the job survives (SET NULL) and cleanup is
+        # retried until confirmed.
+        for instance in instances:
+            await cancel_agent_watches_for_term(repositories, instance.id)
+        await repositories.cleanup_jobs.create(
+            target_kind="installation",
+            target_ref=str(installation_id),
+            installation_id=installation_id,
+        )
         deleted = await repositories.installations.delete(installation_id)
         if not deleted:
             raise TermFlowError("computer_not_found", 404, "The Computer does not exist.")

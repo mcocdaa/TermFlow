@@ -1047,9 +1047,12 @@ async def test_token_stores_hash_only_and_revokes(repositories: RepositoryBundle
     assert await repositories.agent_tokens.get_by_hash(_hash("other")) is None
 
     assert await repositories.agent_tokens.revoke(token_hash) is True
-    revoked = await repositories.agent_tokens.get_by_hash(token_hash)
-    assert revoked is not None and revoked.revoked_at is not None
+    # Fail closed: a revoked token is excluded from lookups...
+    assert await repositories.agent_tokens.get_by_hash(token_hash) is None
     assert await repositories.agent_tokens.revoke(token_hash) is False
+    # ...while the revocation stays visible in the binding's token history.
+    revoked = (await repositories.agent_tokens.list_for_binding(binding.id))[0]
+    assert revoked.revoked_at is not None
 
 
 @pytest.mark.asyncio

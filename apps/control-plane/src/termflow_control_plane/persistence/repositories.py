@@ -59,6 +59,12 @@ def digest_secret(value: str | bytes) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+#: Retention window for Agent inbox/run rows in terminal recovery states and
+#: for confirmed cleanup tombstones (plan §16.1: the durable timeline and
+#: confirmed tombstones are retained 30 days).
+AGENT_TERMINAL_RETENTION = timedelta(days=30)
+
+
 def _encode_scopes(scopes: tuple[str, ...]) -> str:
     return json.dumps(sorted(set(scopes)), separators=(",", ":"))
 
@@ -3100,6 +3106,34 @@ class AgentInboxRepository:
             )
             return list(rows)
 
+    async def purge_terminal(
+        self,
+        *,
+        now: datetime | None = None,
+        older_than: timedelta = AGENT_TERMINAL_RETENTION,
+    ) -> int:
+        """Delete terminal-state rows after the retention window (plan §15).
+
+        ``dead_letter`` and ``cancelled`` deliveries are terminal recovery
+        states; their admission rows are retained for the configured window
+        and then removed by the startup purge sweep.
+        """
+        observed_at = now or datetime.now(UTC)
+        cutoff = observed_at - older_than
+        async with self._sessions() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    delete(AgentInboxItem).where(
+                        AgentInboxItem.delivery_state.in_(("dead_letter", "cancelled")),
+                        AgentInboxItem.created_at <= cutoff,
+                    )
+                ),
+            )
+            count = int(result.rowcount or 0)
+            await session.commit()
+            return count
+
 
 class AgentToolRequestRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -3212,6 +3246,50 @@ class AgentRunRepository:
                 .offset(offset)
             )
             return list(rows)
+
+    async def list_by_state(self, run_state: str) -> list[AgentRun]:
+        """Return every run currently in one state, oldest first.
+
+        Used by restart recovery to fence runs that were mid-flight when the
+        process stopped (plan §17: B restarts).
+        """
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentRun)
+                .where(AgentRun.run_state == run_state)
+                .order_by(AgentRun.started_at)
+            )
+            return list(rows)
+
+    async def purge_terminal(
+        self,
+        *,
+        now: datetime | None = None,
+        older_than: timedelta = AGENT_TERMINAL_RETENTION,
+    ) -> int:
+        """Delete terminal-state runs after the retention window (plan §15).
+
+        ``completed``/``failed``/``cancelled``/``unknown`` runs are terminal;
+        their rows are retained for the configured window and then removed by
+        the startup purge sweep.
+        """
+        observed_at = now or datetime.now(UTC)
+        cutoff = observed_at - older_than
+        async with self._sessions() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    delete(AgentRun).where(
+                        AgentRun.run_state.in_(
+                            ("completed", "failed", "cancelled", "unknown")
+                        ),
+                        AgentRun.completed_at <= cutoff,
+                    )
+                ),
+            )
+            count = int(result.rowcount or 0)
+            await session.commit()
+            return count
 
     async def set_state(
         self,
@@ -3505,9 +3583,17 @@ class AgentTokenRepository:
             return token
 
     async def get_by_hash(self, token_hash: str) -> AgentToken | None:
+        """Look up a token that is neither revoked nor expired.
+
+        Fail closed: a revoked token must never authenticate again, so the
+        lookup excludes rows that carry a ``revoked_at`` stamp.
+        """
         async with self._sessions() as session:
             token: AgentToken | None = await session.scalar(
-                select(AgentToken).where(AgentToken.token_hash == token_hash)
+                select(AgentToken).where(
+                    AgentToken.token_hash == token_hash,
+                    AgentToken.revoked_at.is_(None),
+                )
             )
             return token
 
@@ -3519,6 +3605,23 @@ class AgentTokenRepository:
                 .order_by(AgentToken.created_at)
             )
             return list(rows)
+
+    async def purge_expired(self, *, now: datetime | None = None) -> int:
+        """Delete tokens whose expiry epoch has passed (plan §15 purge sweep)."""
+        observed_at = now or datetime.now(UTC)
+        cutoff_epoch = int(observed_at.timestamp())
+        async with self._sessions() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    delete(AgentToken).where(
+                        AgentToken.expiry_epoch <= cutoff_epoch
+                    )
+                ),
+            )
+            count = int(result.rowcount or 0)
+            await session.commit()
+            return count
 
     async def revoke(
         self,
@@ -3822,6 +3925,26 @@ class WatchRepository:
             await session.commit()
             return watch
 
+    async def purge_expired(self, *, now: datetime | None = None) -> int:
+        """Delete watches whose deadline has passed (plan §15 purge sweep).
+
+        Delivery receipts cascade away with their watch.
+        """
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    delete(Watch).where(
+                        Watch.expiry_at.is_not(None),
+                        Watch.expiry_at <= observed_at,
+                    )
+                ),
+            )
+            count = int(result.rowcount or 0)
+            await session.commit()
+            return count
+
 
 class WatchDeliveryRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -4100,6 +4223,34 @@ class CleanupJobRepository:
             await session.commit()
             return job
 
+    async def purge_completed(
+        self,
+        *,
+        now: datetime | None = None,
+        older_than: timedelta = AGENT_TERMINAL_RETENTION,
+    ) -> int:
+        """Delete confirmed tombstones after the retention window (plan §15,
+        §16.1: confirmed cleanup tombstones are retained 30 days).
+
+        Only resolved jobs (``completed`` or ``dead_letter``) are removed;
+        pending tombstones stay pending until cleanup is confirmed.
+        """
+        observed_at = now or datetime.now(UTC)
+        cutoff = observed_at - older_than
+        async with self._sessions() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    delete(AgentCleanupJob).where(
+                        AgentCleanupJob.state.in_(("completed", "dead_letter")),
+                        AgentCleanupJob.updated_at <= cutoff,
+                    )
+                ),
+            )
+            count = int(result.rowcount or 0)
+            await session.commit()
+            return count
+
 
 class DiagnosticsRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -4186,7 +4337,14 @@ class RepositoryBundle:
         self.diagnostics = DiagnosticsRepository(sessions)
 
     async def purge_expired(self, *, now: datetime) -> dict[str, int]:
-        """Delete rows past their expiry; native clients are retained forever."""
+        """Delete rows past their expiry; native clients are retained forever.
+
+        The same startup sweep covers the Agent Broker classes (plan §15):
+        expired tokens are deleted, expired approvals and transcript drafts
+        are expired in place, diagnostics are pruned, expired watches are
+        deleted, and inbox/run rows and cleanup tombstones in terminal states
+        older than the retention window are removed.
+        """
 
         counts: dict[str, int] = {}
         async with self._sessions() as session:
@@ -4205,4 +4363,14 @@ class RepositoryBundle:
                 )
                 counts[name] = int(result.rowcount or 0)
             await session.commit()
+        counts["agent_tokens"] = await self.agent_tokens.purge_expired(now=now)
+        counts["approvals"] = await self.approvals.expire_pending(now=now)
+        counts["transcript_drafts"] = await self.transcript_drafts.expire_pending(
+            now=now
+        )
+        counts["diagnostics"] = await self.diagnostics.prune_expired(now=now)
+        counts["watches"] = await self.watches.purge_expired(now=now)
+        counts["agent_inbox"] = await self.agent_inbox.purge_terminal(now=now)
+        counts["agent_runs"] = await self.agent_runs.purge_terminal(now=now)
+        counts["cleanup_jobs"] = await self.cleanup_jobs.purge_completed(now=now)
         return counts
