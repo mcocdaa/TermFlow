@@ -16,6 +16,9 @@ from termflow_protocol import (
     CommandResultPayload,
     InstancePresencePayload,
     MessageType,
+    PaneCaptureErrorPayload,
+    PaneCaptureRequestPayload,
+    PaneCaptureResultPayload,
     TerminalActionResultPayload,
     TerminalBindingsPayload,
     TerminalClosedPayload,
@@ -111,6 +114,31 @@ async def _receive_messages(
             rename_future = connection.pending_renames.pop(rename_result.command_id, None)
             if rename_future is not None and not rename_future.done():
                 rename_future.set_result(rename_result)
+        elif message.type in {MessageType.PANE_CAPTURE_RESULT, MessageType.PANE_CAPTURE_ERROR}:
+            capture_outcome = cast(
+                PaneCaptureResultPayload | PaneCaptureErrorPayload,
+                payload,
+            )
+            connection.resolve_capture(capture_outcome.request_id, capture_outcome)
+        elif message.type is MessageType.PANE_CAPTURE_REQUEST:
+            capture_request = cast(PaneCaptureRequestPayload, payload)
+            rejection = PaneCaptureErrorPayload(
+                request_id=capture_request.request_id,
+                instance_id=connection.instance_id,
+                pane_id=capture_request.pane_id,
+                error_code="invalid_request",
+                message="Pane capture requests are only accepted from the control plane.",
+            )
+            # A must not initiate captures; answer with a bounded rejection
+            # rather than dropping the out-of-contract request silently.
+            with suppress(asyncio.QueueFull):
+                connection.outbound.put_nowait(
+                    WireMessage(
+                        type=MessageType.PANE_CAPTURE_ERROR,
+                        instance_id=connection.instance_id,
+                        payload=rejection.model_dump(mode="json"),
+                    )
+                )
         elif message.type in {
             MessageType.TERMINAL_OPENED,
             MessageType.TERMINAL_OUTPUT,
