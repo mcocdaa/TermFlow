@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+from .capture import RenderedCapture, capture_pane_bounded
 from .control_parser import ControlNotification, parse_control_line
 from .runner import tmux_subprocess_environment
 
@@ -79,6 +80,30 @@ class TmuxControlClient:
         if process.returncode != 0:
             raise RuntimeError(f"tmux capture-pane failed with exit code {process.returncode}")
         return stdout
+
+    async def capture_pane_bounded(
+        self,
+        pane_id: str,
+        *,
+        start_line: int | None = None,
+        end_line: int | None = None,
+        tail_lines: int | None = None,
+        join_wrapped: bool = False,
+        full_history: bool = False,
+        max_bytes: int,
+    ) -> RenderedCapture:
+        """Rendered (no ``-e``) bounded capture, off the event loop."""
+        return await asyncio.to_thread(
+            capture_pane_bounded,
+            self._socket_path,
+            pane_id,
+            start_line=start_line,
+            end_line=end_line,
+            tail_lines=tail_lines,
+            join_wrapped=join_wrapped,
+            full_history=full_history,
+            max_bytes=max_bytes,
+        )
 
     async def close(self) -> None:
         process = self._process

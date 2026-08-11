@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 import pytest
 from termflow_node.bridge.buffer import OutputBuffers
 from termflow_node.bridge.runtime import BridgeRuntime
+from termflow_node.tmux.capture import RenderedCapture, capture_pane_bounded
 from termflow_node.tmux.control_parser import OutputNotification
 from termflow_node.tmux.runner import TmuxRunner
 from termflow_node.tmux.topology import TopologyReader
@@ -25,8 +26,28 @@ class CaptureControl:
     def __init__(self, runner: TmuxRunner) -> None:
         self.runner = runner
 
-    async def capture_pane(self, pane_id: str) -> bytes:
-        return self.runner.capture_pane(pane_id)
+    async def capture_pane_bounded(
+        self,
+        pane_id: str,
+        *,
+        start_line: int | None = None,
+        end_line: int | None = None,
+        tail_lines: int | None = None,
+        join_wrapped: bool = False,
+        full_history: bool = False,
+        max_bytes: int,
+    ) -> RenderedCapture:
+        return await asyncio.to_thread(
+            capture_pane_bounded,
+            self.runner.socket_path,
+            pane_id,
+            start_line=start_line,
+            end_line=end_line,
+            tail_lines=tail_lines,
+            join_wrapped=join_wrapped,
+            full_history=full_history,
+            max_bytes=max_bytes,
+        )
 
 
 class NoopInput:

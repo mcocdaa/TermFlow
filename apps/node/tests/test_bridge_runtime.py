@@ -3,10 +3,10 @@ from uuid import uuid4
 import pytest
 from termflow_node.bridge.buffer import OutputBuffers
 from termflow_node.bridge.runtime import BridgeRuntime
-from termflow_node.tmux.control_parser import OutputNotification
+from termflow_node.tmux.capture import RenderedCapture
+from termflow_node.tmux.control_parser import OutputNotification, PauseNotification
 from termflow_protocol import (
     MessageType,
-    PaneOutputPayload,
     PaneReplayRequestPayload,
     PaneSnapshot,
     TopologySnapshot,
@@ -56,9 +56,19 @@ class FakeTransport:
 
 
 class FakeControl:
-    async def capture_pane(self, pane_id: str) -> bytes:
+    async def capture_pane_bounded(
+        self,
+        pane_id: str,
+        *,
+        start_line: int | None = None,
+        end_line: int | None = None,
+        tail_lines: int | None = None,
+        join_wrapped: bool = False,
+        full_history: bool = False,
+        max_bytes: int,
+    ) -> RenderedCapture:
         assert pane_id == "%1"
-        return b"screen snapshot"
+        return RenderedCapture(content=b"screen snapshot", truncated=False)
 
 
 class FakeInput:
@@ -97,7 +107,7 @@ async def test_tmux_output_is_buffered_before_network_publish() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unavailable_replay_sends_gap_then_capture_snapshot() -> None:
+async def test_unavailable_replay_publishes_gap_and_resets_stream_without_snapshot() -> None:
     buffers = OutputBuffers(max_bytes_per_pane=1024)
     transport = FakeTransport(buffers)
     instance_id = uuid4()
@@ -109,6 +119,7 @@ async def test_unavailable_replay_sends_gap_then_capture_snapshot() -> None:
         buffers=buffers,
         input_handler=FakeInput(),
     )
+    buffers.append("%1", b"live output")
     request = PaneReplayRequestPayload(
         pane_id="%1",
         stream_id=uuid4(),
@@ -121,12 +132,36 @@ async def test_unavailable_replay_sends_gap_then_capture_snapshot() -> None:
             payload=request.model_dump(mode="json"),
         )
     )
+    # A rendered snapshot must not be appended into the live output ring as
+    # though it were new terminal output (§9.2): only the gap is published and
+    # the ring is reset to a fresh stream.
+    assert [message.type for message in transport.messages] == [MessageType.STREAM_GAP]
+    buffer = buffers.for_pane("%1")
+    assert buffer.total_bytes == 0
+    assert buffer.last_seq == 0
+
+
+@pytest.mark.asyncio
+async def test_pause_publishes_gap_without_appending_snapshot_to_ring() -> None:
+    buffers = OutputBuffers(max_bytes_per_pane=1024)
+    transport = FakeTransport(buffers)
+    instance_id = uuid4()
+    runtime = BridgeRuntime(
+        instance_id=instance_id,
+        control=FakeControl(),
+        topology_provider=topology,
+        transport=transport,
+        buffers=buffers,
+        input_handler=FakeInput(),
+    )
+    await runtime.process_notification(OutputNotification("%1", b"live"))
+    await runtime.process_notification(PauseNotification("%1", True))
     assert [message.type for message in transport.messages] == [
-        MessageType.STREAM_GAP,
         MessageType.PANE_OUTPUT,
+        MessageType.STREAM_GAP,
     ]
-    output = PaneOutputPayload.model_validate(transport.messages[-1].payload)
-    assert output.to_bytes() == b"screen snapshot"
+    assert buffers.for_pane("%1").total_bytes == 0
+    assert buffers.for_pane("%1").last_seq == 0
 
 
 @pytest.mark.asyncio

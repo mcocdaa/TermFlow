@@ -37,6 +37,16 @@ class PaneOutputBuffer:
     def total_bytes(self) -> int:
         return self._total_bytes
 
+    @property
+    def first_seq(self) -> int | None:
+        """Oldest retained sequence number, or None for an empty buffer."""
+        return self._chunks[0].seq if self._chunks else None
+
+    @property
+    def last_seq(self) -> int:
+        """Sequence number of the most recently appended chunk (0 when empty)."""
+        return self._next_seq - 1
+
     def append(self, data: bytes) -> OutputChunk:
         seq = self._next_seq
         self._next_seq += 1
@@ -74,6 +84,7 @@ class OutputBuffers:
             raise ValueError("max_bytes_per_pane must be positive")
         self._max_bytes = max_bytes_per_pane
         self._buffers: dict[str, PaneOutputBuffer] = {}
+        self._incarnations: dict[str, int] = {}
 
     @property
     def total_bytes(self) -> int:
@@ -89,6 +100,19 @@ class OutputBuffers:
             buffer = PaneOutputBuffer(max_bytes=self._max_bytes)
             self._buffers[pane_id] = buffer
         return buffer
+
+    def peek(self, pane_id: str) -> PaneOutputBuffer | None:
+        """Read-only access to a pane's buffer; never creates one."""
+        return self._buffers.get(pane_id)
+
+    def pane_incarnation(self, pane_id: str) -> int:
+        """Current content incarnation of a pane (1 for a fresh pane).
+
+        The incarnation bumps whenever the pane's stream epoch changes (ring
+        reset) or the pane leaves the topology, so cursors captured against
+        older content are always rejected.
+        """
+        return self._incarnations.get(pane_id, 1)
 
     def for_pane(self, pane_id: str) -> PaneOutputBuffer:
         return self._get_or_create(pane_id)
@@ -109,8 +133,12 @@ class OutputBuffers:
 
     def remove(self, pane_id: str) -> None:
         self._buffers.pop(pane_id, None)
+        # tmux never reuses a pane id, so keeping the bumped incarnation only
+        # ever invalidates stale cursors; it cannot shadow a fresh pane.
+        self._incarnations[pane_id] = self.pane_incarnation(pane_id) + 1
 
     def reset_stream(self, pane_id: str) -> UUID:
         buffer = PaneOutputBuffer(max_bytes=self._max_bytes)
         self._buffers[pane_id] = buffer
+        self._incarnations[pane_id] = self.pane_incarnation(pane_id) + 1
         return buffer.stream_id
