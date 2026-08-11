@@ -12,7 +12,7 @@ if [ ! -f "${HOME}/.config/termflow/config.json" ] && [ -n "${TERMFLOW_SERVER}" 
 fi
 
 if [ -n "${TERMFLOW_NEW}" ]; then
-    exec termflow new --name "${TERMFLOW_NEW}"
+    exec termflow serve --name "${TERMFLOW_NEW}"
 fi
 
 exec "$@"

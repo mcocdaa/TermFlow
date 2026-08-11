@@ -138,6 +138,59 @@ class InstanceManager:
             self._store.remove_new(instance_id)
             raise
 
+    def ensure(self, name: str) -> LocalInstance:
+        """Idempotent creation or recovery of the named Instance.
+
+        Reuses an existing Instance so the persistent Installation/Term
+        identity survives container restarts; only the tmux session is
+        rebuilt (never instance_id/instance_token).
+        """
+
+        for record in self._store.list().instances:
+            if record.name == name:
+                return self.recover(record.instance_id)
+        created, _ = self.create(name)
+        return created
+
+    def recover(self, instance_id: UUID) -> LocalInstance:
+        """Reuse the stored identity, rebuilding only the tmux session.
+
+        Returns the current record when the tmux server still answers;
+        otherwise rebuilds the session on the same socket path and keeps
+        instance_id/instance_token intact so no duplicate Term appears.
+        """
+
+        record = self._store.load(instance_id)
+        socket_path = self._prepare_socket_path(instance_id)
+        if socket_path != record.socket_path:
+            record = record.model_copy(update={"socket_path": socket_path})
+        runner = self._runner_factory(record.socket_path)
+        try:
+            if runner.is_alive(record.session_id or record.session_name):
+                return self.current(instance_id)
+        except (OSError, RuntimeError, ValueError):
+            pass
+        if record.socket_path.exists():
+            record.socket_path.unlink()
+        try:
+            runner.create_session(record.session_name, record.session_name)
+            identity = runner.session_identity(record.session_name)
+            restored = record.model_copy(
+                update={
+                    "session_id": identity.session_id,
+                    "session_name": identity.session_name,
+                    "name": identity.session_name,
+                    "lifecycle": InstanceLifecycle.RUNNING,
+                }
+            )
+            self._store.save(restored)
+            return restored
+        except BaseException:
+            runner.kill_server()
+            if record.socket_path.exists():
+                record.socket_path.unlink()
+            raise
+
     def current(self, instance_id: UUID) -> LocalInstance:
         record = self._store.load(instance_id)
         runner = self._runner_factory(record.socket_path)
@@ -224,9 +277,7 @@ class InstanceManager:
         if pid is not None and self._is_expected_bridge(pid, record.instance_id):
             os.kill(pid, signal.SIGTERM)
             deadline = time.monotonic() + 5
-            while time.monotonic() < deadline and self._is_expected_bridge(
-                pid, record.instance_id
-            ):
+            while time.monotonic() < deadline and self._is_expected_bridge(pid, record.instance_id):
                 time.sleep(0.05)
             if self._is_expected_bridge(pid, record.instance_id):
                 raise BridgeStartError(
@@ -259,6 +310,14 @@ class InstanceManager:
 
     @staticmethod
     def _is_expected_bridge(pid: int, instance_id: UUID) -> bool:
+        if sys.platform == "linux":
+            try:
+                command = (
+                    Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8", errors="replace")
+                )
+            except OSError:
+                return False
+            return "termflow" in command and str(instance_id) in command
         result = subprocess.run(
             ["ps", "-p", str(pid), "-o", "command="],
             capture_output=True,

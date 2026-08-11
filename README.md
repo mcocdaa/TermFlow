@@ -115,6 +115,10 @@ docker run -d --name termflow-control-plane --restart unless-stopped \
 curl -fsS http://127.0.0.1:8765/healthz
 ```
 
+镜像入口在启动阶段只修正 `/app/data` 与 `/app/totp-secrets` 两个固定挂载点的
+属主（拒绝符号链接、不跨文件系统递归），随后降权为 termflow 运行——应用进程
+始终非 root，bind mount 无需任何宿主侧 `chown` 即可直接使用。
+
 `<owner>` 替换为仓库所有者，`vX.Y.Z` 替换为精确 Tag；生产部署应始终写精确 tag，不要依赖
 `latest`。公网部署时由反向代理提供 HTTPS/WSS 入口，并把用户实际访问的地址写入
 `TERMFLOW_PUBLIC_BASE_URL`；升级时停止旧容器并保留同名卷后再用新 tag 启动。回退、TOTP
@@ -183,9 +187,22 @@ B+Web C 的容器化启动参见 [deploy/compose.yaml](deploy/compose.yaml) 与
 
 ## 容器化 Computer A（Docker）
 
-Computer A 也可以整体运行在独立容器中，适合演示与隔离环境。镜像只包含
-termflow-node 与 tmux，不包含 B/Web C 源码；容器为临时对象，登录态与 tmux
-运行态随容器消亡，用户数据通过 `/work` 数据卷持久化：
+容器化 A 是一台**持久化计算节点**（轻量云电脑）：`/home/termflow` 是系统
+身份盘（登录凭据与 Term 元数据），`/work` 是用户数据盘，`/tmp` 是内存盘。
+三者都必须符合下表语义，`/home/termflow` 与 `/work` 只能持久化，不能用
+tmpfs，否则容器重建后身份丢失且一次性注册码无法复用：
+
+| 事件 | 行为 |
+|---|---|
+| Web C 断开 | 命令继续运行 |
+| B 暂时断开 | A 与 tmux 继续工作，网络恢复自动重连 |
+| A 容器重启 | 相当于云电脑重启：运行中的进程停止，但身份、文件、Term 记录保留，tmux 与 Bridge 自动重建并重连 B，不产生重复 Term；tmux 内旧进程不存活、不从断点恢复 |
+| 宿主机重启 | `--restart unless-stopped` 自动拉起，恢复同一身份 |
+| 删除持久化卷 | 相当于格式化云电脑，身份与数据全部消失 |
+
+`termflow serve` 是这台云电脑的后台服务：无 TTY、前台常驻、监督 tmux 与
+Bridge、不 attach，也不需要开放端口，只主动连接 B。`docker run -d` 后即可
+像其他 Docker 服务一样使用：
 
 ```bash
 docker build -f deploy/Dockerfile.node -t termflow-node .
@@ -194,9 +211,9 @@ docker build -f deploy/Dockerfile.node -t termflow-node .
 docker compose --env-file .env -f deploy/compose.yaml exec control-plane \
   termflow-control enrollment create
 
-# 落地即进入 tmux（TERMFLOW_NEW）；Ctrl+B D 退出后执行 termflow activate <name> 即可被 Web C 远程控制
-docker run --rm -it --cap-drop ALL --read-only \
-  --tmpfs /tmp --tmpfs /home/termflow:uid=1000,gid=1000,mode=0750 \
+docker run -d --name termflow-node --restart unless-stopped \
+  --cap-drop ALL --read-only --tmpfs /tmp \
+  -v termflow-node-identity:/home/termflow \
   -v termflow-user-data:/work \
   --network host \
   -e TERMFLOW_SERVER=http://127.0.0.1:8765 \
@@ -206,14 +223,23 @@ docker run --rm -it --cap-drop ALL --read-only \
   termflow-node
 ```
 
-不设置 `TERMFLOW_NEW` 时进入普通 shell 手动执行 `termflow` 命令。环境变量
-`TERMFLOW_SERVER`、`TERMFLOW_CODE`（一次性注册码）与 `TERMFLOW_ALLOW_INSECURE_HTTP`
-仅在未登录时触发自动 `termflow login`。容器按最小权限运行：非 root 用户、
-`--cap-drop ALL`、只读 rootfs，tmux/PTY 不需要额外 capability。
+首次启动时环境变量 `TERMFLOW_SERVER`、`TERMFLOW_CODE`（一次性注册码）与
+`TERMFLOW_ALLOW_INSECURE_HTTP` 触发自动 `termflow login`；登录态写入
+`/home/termflow` 身份卷，此后重启不再需要注册码。需要手动操作 Term 时：
+
+```bash
+docker exec -it termflow-node termflow attach demo
+```
+
+命令职责：`termflow new` = 创建并交互 attach（本地开发）；`termflow attach`
+= attach 已存在 Term；`termflow serve` = 无 TTY 前台常驻、监督 Bridge、不
+attach（容器后台服务）。日志通过 `docker logs termflow-node` 查看。容器按
+最小权限运行：非 root 用户、`--cap-drop ALL`、只读 rootfs，tmux/PTY 不需要
+额外 capability。
 
 ### 自定义 tmux 配置（可选）
 
-容器内 tmux server 由 `termflow new` 启动，并自动加载系统级配置
+容器内 tmux server 由 `termflow serve` 启动，并自动加载系统级配置
 `/etc/tmux.conf`。如需自定义键位、状态栏等，在 `docker run` 命令中追加只读挂载：
 
 ```bash
@@ -228,9 +254,10 @@ set -g status-bg red
 set -g history-limit 10000
 ```
 
-注意：容器的 `HOME`（`/home/termflow`）是 tmpfs，登录态随容器消亡，
-**不要**把配置挂载到 `~/.tmux.conf`——tmpfs 会遮蔽挂载点；挂到
-`/etc/tmux.conf` 是与 tmpfs HOME 兼容的注入方式。
+注意：登录态目录 `/home/termflow/.config` 与运行态目录
+`/home/termflow/.local/state` 已由身份卷承载，**不要**再把配置挂载到
+`~/.tmux.conf`——卷会遮蔽挂载点；挂到 `/etc/tmux.conf` 是与持久化 HOME
+兼容的注入方式。
 
 ## 日志位置
 
