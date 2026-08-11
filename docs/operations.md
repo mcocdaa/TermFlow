@@ -170,9 +170,9 @@ branch/tag ref，后者只供 Tag Release 复用同一套命令。若要固定�
 branch/tag。手动运行不接受 `release_tag`，不会创建 GitHub
 Release，也不会推送 GHCR；Actions artifact 使用不含版本的稳定名称并保留 14 天。三个手动
 表单都可以填写可选 `version`；留空时读取仓库 Actions 变量 `TERMFLOW_BUILD_VERSION`，仍未设置
-则使用 `0.0.1-dev.0`。
+则使用 `0.2.0-dev.0`。
 
-统一版本优先级为 `Git Tag > TERMFLOW_BUILD_VERSION > 0.0.1-dev.0`。本地非 Tag 构建可显式运行：
+统一版本优先级为 `Git Tag > TERMFLOW_BUILD_VERSION > 0.2.0-dev.0`。本地非 Tag 构建可显式运行：
 
 ```bash
 TERMFLOW_BUILD_VERSION=1.2.3 \

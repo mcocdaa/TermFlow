@@ -8,7 +8,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-DEFAULT_BUILD_VERSION = "0.0.1-dev.0"
+DEFAULT_BUILD_VERSION = "0.2.0-dev.0"
 BUILD_VERSION_ENV = "TERMFLOW_BUILD_VERSION"
 
 _CORE = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"

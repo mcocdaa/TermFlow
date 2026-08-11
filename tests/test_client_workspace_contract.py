@@ -42,7 +42,7 @@ def test_python_dependency_configuration_pins_the_official_pypi_index() -> None:
 def test_client_workspace_has_one_lock_and_fixed_dependency_direction() -> None:
     root = _manifest("package.json")
     workspace_version = root["version"]
-    assert workspace_version == "0.0.1-dev.0"
+    assert workspace_version == "0.2.0-dev.0"
     assert root["engines"] == {"node": ">=22 <23"}
     assert root["packageManager"] == "npm@10.9.8"
     assert set(root["workspaces"]) == {

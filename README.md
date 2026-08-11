@@ -124,10 +124,10 @@ curl -fsS http://127.0.0.1:8765/healthz
 和签名限制，见 [GitHub Actions 构建与发布](docs/github-actions.md)。
 
 正式构建版本的解析顺序固定为
-`Git Tag > TERMFLOW_BUILD_VERSION > 0.0.1-dev.0`。Tag Release 直接使用 `vX.Y.Z`
+`Git Tag > TERMFLOW_BUILD_VERSION > 0.2.0-dev.0`。Tag Release 直接使用 `vX.Y.Z`
 （以及受支持的 prerelease/build metadata）中的版本；手动 workflow 可填写可选版本，本地构建可设置
 `TERMFLOW_BUILD_VERSION=1.2.3`。两者都没有时使用明确的开发版本
-`0.0.1-dev.0`，不会被误认为正式 Release。
+`0.2.0-dev.0`，不会被误认为正式 Release。
 
 ## 源码开发环境要求
 
