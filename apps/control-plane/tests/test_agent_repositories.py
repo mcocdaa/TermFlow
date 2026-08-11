@@ -21,6 +21,7 @@ from termflow_control_plane.persistence.models import (
     AgentBinding,
     AgentConversation,
     AgentDiagnostic,
+    AgentEvent,
     AgentProfile,
     AgentRun,
     Base,
@@ -907,6 +908,30 @@ async def test_message_revisions_and_pagination(repositories: RepositoryBundle) 
 
 
 @pytest.mark.asyncio
+async def test_message_explicit_revision_on_empty_conversation(
+    repositories: RepositoryBundle,
+) -> None:
+    """A caller-supplied assembly_revision inserts on a fresh conversation.
+
+    Regression: the explicit-revision branch previously kept the conversation
+    ``WHERE`` clause, which made the subquery return zero rows for an empty
+    conversation and crash with ``NoResultFound``.
+    """
+    conversation = await _seed_conversation(repositories)
+    message = await repositories.agent_messages.create(
+        conversation_id=conversation.id,
+        role="user",
+        kind="text",
+        body_digest=_hash("explicit-first"),
+        assembly_revision=7,
+    )
+    assert message.assembly_revision == 7
+    assert await repositories.agent_messages.latest_revision(conversation.id) == 7
+    listed = await repositories.agent_messages.list_for_conversation(conversation.id)
+    assert [item.assembly_revision for item in listed] == [7]
+
+
+@pytest.mark.asyncio
 async def test_event_append_is_monotonic_and_dedupes(repositories: RepositoryBundle) -> None:
     conversation = await _seed_conversation(repositories)
     other = await _seed_conversation(repositories)
@@ -958,6 +983,41 @@ async def test_event_append_is_monotonic_and_dedupes(repositories: RepositoryBun
 
     full = await repositories.agent_events.list_for_conversation(conversation.id)
     assert [event.database_seq for event in full] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_event_concurrent_append_same_dedup_key_inserts_once(
+    repositories: RepositoryBundle,
+) -> None:
+    """Concurrent appends of the same dedup_key produce exactly one event.
+
+    Regression: dedup used to be check-then-act with no DB backstop, so racing
+    appends of one dedup_key could insert duplicate rows.  The atomic
+    ``INSERT ... SELECT ... WHERE NOT EXISTS`` guard makes the dedup part of
+    the same single statement that assigns the sequence.
+    """
+    conversation = await _seed_conversation(repositories)
+
+    async def append() -> AgentEvent:
+        return await repositories.agent_events.append(
+            conversation_id=conversation.id,
+            event_kind="run_started",
+            dedup_key="concurrent-dup",
+            payload_digest=_hash("start"),
+        )
+
+    events = await asyncio.gather(*(append() for _ in range(4)))
+    assert len({event.id for event in events}) == 1
+    assert len(await repositories.agent_events.list_for_conversation(conversation.id)) == 1
+
+    # A distinct dedup_key still advances the sequence monotonically.
+    later = await repositories.agent_events.append(
+        conversation_id=conversation.id,
+        event_kind="run_completed",
+        dedup_key="after-race",
+        payload_digest=_hash("done"),
+    )
+    assert later.database_seq == 2
 
 
 # ---------------------------------------------------------------------------
