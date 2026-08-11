@@ -127,6 +127,59 @@ def test_control_plane_image_uses_builders_and_a_source_free_runtime() -> None:
         assert forbidden not in runtime.lower()
 
 
+def test_node_image_initializes_managed_mounts_then_drops_privileges() -> None:
+    dockerfile = Path("deploy/Dockerfile.node").read_text()
+    runtime = dockerfile.split("FROM python:3.12.11-slim-bookworm AS runtime", maxsplit=1)[1]
+    entrypoint = Path("deploy/entrypoint.node.sh").read_text()
+    verifier = Path("scripts/verify-node-image.sh").read_text()
+
+    assert "USER termflow" not in runtime
+    assert "home_dir=/home/termflow" in entrypoint
+    assert "work_dir=/work" in entrypoint
+    assert "-L" in entrypoint  # refuse symlinked mount points
+    assert "-xdev" in entrypoint  # never recurse across filesystems
+    assert "setpriv" in entrypoint  # re-exec before login/tmux/Bridge startup
+    for optional_environment in (
+        "TERMFLOW_SERVER",
+        "TERMFLOW_CODE",
+        "TERMFLOW_ALLOW_INSECURE_HTTP",
+        "TERMFLOW_NEW",
+    ):
+        assert f"${{{optional_environment}:-}}" in entrypoint
+
+    for expected in (
+        "root-owned bind mounts",
+        "stat -c %u /proc/1",
+        "CapEff",
+        "--cap-add CHOWN",
+        "--cap-add DAC_OVERRIDE",
+        "--cap-add SETUID",
+        "--cap-add SETGID",
+        "docker exec --user termflow",
+    ):
+        assert expected in verifier
+
+
+def test_readme_docker_node_uses_local_managed_directories() -> None:
+    readme = Path("README.md").read_text()
+
+    assert "mkdir -p termflow-node-identity termflow-node-work" in readme
+    assert '--volume "$PWD/termflow-node-identity:/home/termflow"' in readme
+    assert '--volume "$PWD/termflow-node-work:/work"' in readme
+    assert "docker volume create termflow-node-identity" not in readme
+    assert "docker volume create termflow-node-work" not in readme
+    for capability in ("CHOWN", "DAC_OVERRIDE", "SETUID", "SETGID"):
+        assert f"--cap-add {capability}" in readme
+    docker_run = readme.split("docker run -d \\\n", maxsplit=1)[1].split(
+        "ghcr.io/mcocdaa/termflow-node:v0.1.0", maxsplit=1
+    )[0]
+    assert "--user" not in docker_run
+    assert (
+        "docker exec --user termflow -it termflow-node termflow attach demo"
+        in readme
+    )
+
+
 def test_docker_context_excludes_local_state_and_frontend_build_output() -> None:
     ignored = Path(".dockerignore").read_text().splitlines()
     assert ".env" in ignored

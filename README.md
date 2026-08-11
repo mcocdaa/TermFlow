@@ -73,23 +73,26 @@ termflow attach project-a
 
 ### Docker
 
-Docker A 是一个后台常驻的计算节点。身份和工作目录使用独立数据卷，A 不开放端口，只通过
+Docker A 是一个后台常驻的计算节点。身份和工作目录保存在本地目录，A 不开放端口，只通过
 `termflow-net` 连接 B：
 
 ```bash
-docker volume create termflow-node-identity
-docker volume create termflow-node-work
+mkdir -p termflow-node-identity termflow-node-work
 
 docker run -d \
   --name termflow-node \
   --restart unless-stopped \
   --network termflow-net \
   --cap-drop ALL \
+  --cap-add CHOWN \
+  --cap-add DAC_OVERRIDE \
+  --cap-add SETUID \
+  --cap-add SETGID \
   --security-opt no-new-privileges:true \
   --read-only \
   --tmpfs /tmp \
-  --volume termflow-node-identity:/home/termflow \
-  --volume termflow-node-work:/work \
+  --volume "$PWD/termflow-node-identity:/home/termflow" \
+  --volume "$PWD/termflow-node-work:/work" \
   --env TERMFLOW_SERVER=http://termflow-control-plane:8000 \
   --env TERMFLOW_CODE='<Web C 生成的一次性注册码>' \
   --env TERMFLOW_ALLOW_INSECURE_HTTP=true \
@@ -100,7 +103,7 @@ docker run -d \
 进入 Docker A 的 Term：
 
 ```bash
-docker exec -it termflow-node termflow attach demo
+docker exec --user termflow -it termflow-node termflow attach demo
 ```
 
 查看服务状态：
@@ -109,7 +112,8 @@ docker exec -it termflow-node termflow attach demo
 docker logs termflow-node
 ```
 
-`/home/termflow` 保存 A 的身份，`/work` 保存用户文件。删除对应 volume 会删除这些数据。
+`termflow-node-identity/` 保存 A 的身份，`termflow-node-work/` 保存用户文件。这两个目录由 A
+管理；删除目录会删除对应数据。
 
 ## 客户端
 
