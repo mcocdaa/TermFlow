@@ -5,6 +5,8 @@ export type OAuthScope = "terminal.read" | "terminal.write" | "computers.read" |
 export type OAuthDeviceTokenErrorCode = "authorization_pending" | "slow_down" | "access_denied" | "expired_token"
 export type TerminalAction = "split_left_right" | "split_top_bottom" | "new_window" | "select_left" | "select_right" | "select_up" | "select_down" | "toggle_zoom" | "copy_mode" | "close_pane"
 export type TerminalCloseReason = "client_closed" | "replaced" | "grace_expired" | "stream_gap" | "instance_offline" | "internal_error"
+export type AgentInput = UserMessageInput | WatchTriggeredInput | TimerTriggeredInput | PermissionResolvedInput | SystemNotificationInput
+export type AgentEvent = RunStartedEvent | MessageDeltaEvent | MessageCompletedEvent | ToolStartedEvent | ToolCompletedEvent | PermissionRequestedEvent | RunCompletedEvent | RunFailedEvent | BackendStateChangedEvent
 export const PROTOCOL_VERSION = 1 as const
 
 export interface ErrorDetail {
@@ -295,4 +297,433 @@ export interface TerminalActionResultFrame {
   action_id: string
   ok: boolean
   error_code: string | null
+}
+
+export interface AgentCapabilitiesResponse {
+  agent_broker_enabled: boolean
+}
+
+export interface AgentConversationCreateRequest {
+  binding_id: string
+  title: string | null
+}
+
+export interface AgentConversationResponse {
+  conversation_id: string
+  binding_id: string
+  title: string | null
+  status: string
+  created_at: string
+  updated_at: string
+}
+
+export interface AgentConversationListResponse {
+  conversations: AgentConversationResponse[]
+}
+
+export interface AgentConversationBindingInfo {
+  binding_id: string
+  profile_id: string
+  term_id: string
+  status: string
+}
+
+export interface AgentConversationDetailResponse {
+  conversation_id: string
+  binding_id: string
+  title: string | null
+  status: string
+  created_at: string
+  updated_at: string
+  binding: AgentConversationBindingInfo
+}
+
+export interface AgentMessageResponse {
+  message_id: string
+  conversation_id: string
+  run_id: string | null
+  role: string
+  kind: string
+  assembly_revision: number
+  is_final: boolean
+  body_digest: string
+  created_at: string
+}
+
+export interface AgentMessageListResponse {
+  messages: AgentMessageResponse[]
+}
+
+export interface AgentEventResponse {
+  event_id: string
+  conversation_id: string
+  run_id: string | null
+  event_kind: string
+  database_seq: number
+  payload_digest: string
+  ephemeral: boolean
+  created_at: string
+}
+
+export interface AgentEventListResponse {
+  events: AgentEventResponse[]
+  next_cursor: number | null
+}
+
+export interface AgentProfileCreateRequest {
+  display_name: string
+  backend_kind: string
+  config: string
+}
+
+export interface AgentProfileUpdateRequest {
+  display_name: string | null
+  config: string | null
+}
+
+export interface AgentProfileResponse {
+  profile_id: string
+  display_name: string
+  backend_kind: string
+  config: string
+  created_at: string
+  updated_at: string
+}
+
+export interface AgentProfileListResponse {
+  profiles: AgentProfileResponse[]
+}
+
+export interface AgentBindingCreateRequest {
+  profile_id: string
+  term_id: string
+}
+
+export interface AgentBindingUpdateRequest {
+  status: string | null
+  runtime_ref: string | null
+  runtime_epoch: number | null
+  capability_ref: string | null
+}
+
+export interface AgentBindingResponse {
+  binding_id: string
+  profile_id: string
+  term_id: string
+  status: string
+  runtime_ref: string | null
+  runtime_epoch: number | null
+  capability_ref: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AgentBindingListResponse {
+  bindings: AgentBindingResponse[]
+}
+
+export interface AgentTokenCreateRequest {
+  binding_id: string
+  scopes: string[]
+  expires_at: string
+}
+
+export interface AgentTokenCreatedResponse {
+  token_id: string
+  binding_id: string
+  scopes: string[]
+  expires_at: string
+  raw_token: string
+  created_at: string
+}
+
+export interface AgentTokenResponse {
+  token_id: string
+  binding_id: string
+  scopes: string[]
+  expires_at: string
+  revoked_at: string | null
+  created_at: string
+}
+
+export interface AgentTokenListResponse {
+  tokens: AgentTokenResponse[]
+}
+
+export interface UserMessagePayload {
+  text: string
+  draft_ref: string | null
+}
+
+export interface WatchTriggeredPayload {
+  watch_id: string
+  watch_generation: number
+  trigger_event_id: string
+  continuation: string | null
+  observation_ref: string | null
+}
+
+export interface TimerTriggeredPayload {
+  timer_id: string
+  scheduled_for: string
+}
+
+export interface PermissionResolvedPayload {
+  approval_request_id: string
+  decision: "approved" | "denied" | "expired" | "revoked" | "unknown"
+  resolved_by_actor_id: string | null
+  resolved_at: string
+}
+
+export interface SystemNotificationPayload {
+  notification_type: string
+  text: string
+  event_ref: string | null
+}
+
+export interface UserMessageInput {
+  input_id: string
+  conversation_id: string
+  actor_id: string
+  actor_kind: "user_session" | "client" | "watch_engine" | "timer" | "backend" | "system"
+  auth_epoch: number | null
+  admission_seq: number
+  idempotency_key: string
+  source: "user" | "system" | "backend"
+  causation_id: string
+  correlation_id: string
+  created_at: string
+  delivery_state: "pending" | "delivered" | "failed" | "dead_lettered"
+  attempt_count: number
+  kind: "user_message"
+  payload: UserMessagePayload
+}
+
+export interface WatchTriggeredInput {
+  input_id: string
+  conversation_id: string
+  actor_id: string
+  actor_kind: "user_session" | "client" | "watch_engine" | "timer" | "backend" | "system"
+  auth_epoch: number | null
+  admission_seq: number
+  idempotency_key: string
+  source: "user" | "system" | "backend"
+  causation_id: string
+  correlation_id: string
+  created_at: string
+  delivery_state: "pending" | "delivered" | "failed" | "dead_lettered"
+  attempt_count: number
+  kind: "watch_triggered"
+  payload: WatchTriggeredPayload
+}
+
+export interface TimerTriggeredInput {
+  input_id: string
+  conversation_id: string
+  actor_id: string
+  actor_kind: "user_session" | "client" | "watch_engine" | "timer" | "backend" | "system"
+  auth_epoch: number | null
+  admission_seq: number
+  idempotency_key: string
+  source: "user" | "system" | "backend"
+  causation_id: string
+  correlation_id: string
+  created_at: string
+  delivery_state: "pending" | "delivered" | "failed" | "dead_lettered"
+  attempt_count: number
+  kind: "timer_triggered"
+  payload: TimerTriggeredPayload
+}
+
+export interface PermissionResolvedInput {
+  input_id: string
+  conversation_id: string
+  actor_id: string
+  actor_kind: "user_session" | "client" | "watch_engine" | "timer" | "backend" | "system"
+  auth_epoch: number | null
+  admission_seq: number
+  idempotency_key: string
+  source: "user" | "system" | "backend"
+  causation_id: string
+  correlation_id: string
+  created_at: string
+  delivery_state: "pending" | "delivered" | "failed" | "dead_lettered"
+  attempt_count: number
+  kind: "permission_resolved"
+  payload: PermissionResolvedPayload
+}
+
+export interface SystemNotificationInput {
+  input_id: string
+  conversation_id: string
+  actor_id: string
+  actor_kind: "user_session" | "client" | "watch_engine" | "timer" | "backend" | "system"
+  auth_epoch: number | null
+  admission_seq: number
+  idempotency_key: string
+  source: "user" | "system" | "backend"
+  causation_id: string
+  correlation_id: string
+  created_at: string
+  delivery_state: "pending" | "delivered" | "failed" | "dead_lettered"
+  attempt_count: number
+  kind: "system_notification"
+  payload: SystemNotificationPayload
+}
+
+export interface RunStartedPayload {
+  input_id: string | null
+}
+
+export interface MessageDeltaPayload {
+  message_id: string
+  part_id: string | null
+  assembly_revision: number
+  text: string | null
+  ephemeral: boolean
+}
+
+export interface MessageCompletedPayload {
+  message_id: string
+  assembly_revision: number
+  final: boolean
+}
+
+export interface ToolStartedPayload {
+  tool_name: string
+  tool_call_id: string
+}
+
+export interface ToolCompletedPayload {
+  tool_name: string
+  tool_call_id: string
+  status: "success" | "error" | "cancelled" | "unknown"
+  input_bytes: number
+  output_bytes: number
+  input_hash: string | null
+  output_hash: string | null
+  truncated: boolean
+  error_code: string | null
+  error_message: string | null
+}
+
+export interface PermissionRequestedPayload {
+  approval_request_id: string
+  tool_name: string | null
+  evidence: string | null
+  expires_at: string | null
+}
+
+export interface RunCompletedPayload {
+  input_id: string | null
+}
+
+export interface RunFailedPayload {
+  error_code: string
+  error_message: string | null
+  retryable: boolean
+}
+
+export interface BackendStateChangedPayload {
+  state: "connecting" | "ready" | "unavailable" | "context_lost" | "reconciling" | "closed"
+  epoch: number
+}
+
+export interface RunStartedEvent {
+  event_id: string
+  conversation_id: string
+  run_id: string | null
+  dedup_key: string
+  database_seq: number
+  created_at: string
+  kind: "run_started"
+  payload: RunStartedPayload
+}
+
+export interface MessageDeltaEvent {
+  event_id: string
+  conversation_id: string
+  run_id: string | null
+  dedup_key: string
+  database_seq: number
+  created_at: string
+  kind: "message_delta"
+  payload: MessageDeltaPayload
+}
+
+export interface MessageCompletedEvent {
+  event_id: string
+  conversation_id: string
+  run_id: string | null
+  dedup_key: string
+  database_seq: number
+  created_at: string
+  kind: "message_completed"
+  payload: MessageCompletedPayload
+}
+
+export interface ToolStartedEvent {
+  event_id: string
+  conversation_id: string
+  run_id: string | null
+  dedup_key: string
+  database_seq: number
+  created_at: string
+  kind: "tool_started"
+  payload: ToolStartedPayload
+}
+
+export interface ToolCompletedEvent {
+  event_id: string
+  conversation_id: string
+  run_id: string | null
+  dedup_key: string
+  database_seq: number
+  created_at: string
+  kind: "tool_completed"
+  payload: ToolCompletedPayload
+}
+
+export interface PermissionRequestedEvent {
+  event_id: string
+  conversation_id: string
+  run_id: string | null
+  dedup_key: string
+  database_seq: number
+  created_at: string
+  kind: "permission_requested"
+  payload: PermissionRequestedPayload
+}
+
+export interface RunCompletedEvent {
+  event_id: string
+  conversation_id: string
+  run_id: string | null
+  dedup_key: string
+  database_seq: number
+  created_at: string
+  kind: "run_completed"
+  payload: RunCompletedPayload
+}
+
+export interface RunFailedEvent {
+  event_id: string
+  conversation_id: string
+  run_id: string | null
+  dedup_key: string
+  database_seq: number
+  created_at: string
+  kind: "run_failed"
+  payload: RunFailedPayload
+}
+
+export interface BackendStateChangedEvent {
+  event_id: string
+  conversation_id: string
+  run_id: string | null
+  dedup_key: string
+  database_seq: number
+  created_at: string
+  kind: "backend_state_changed"
+  payload: BackendStateChangedPayload
 }
