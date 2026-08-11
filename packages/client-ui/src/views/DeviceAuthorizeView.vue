@@ -29,8 +29,7 @@
             </dl>
             <form class="security-form" @submit.prevent="decide('allow')">
               <template v-if="preview.totp_required">
-                <p class="form-hint">请输入验证器应用当前显示的 6 位双重验证码。</p>
-                <label for="device-authorize-totp">双重验证码</label>
+                <label for="device-authorize-totp">双重验证码<span class="totp-hint">（请输入验证器应用当前显示的 6 位双重验证码。）</span></label>
                 <input id="device-authorize-totp" v-model="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required />
               </template>
               <p v-if="message" role="alert" class="form-error">{{ message }}</p>
@@ -84,3 +83,7 @@ onMounted(() => {
 })
 
 </script>
+
+<style scoped>
+.totp-hint { color: var(--color-text-muted); font-weight: 400; font-size: 0.85em; }
+</style>
