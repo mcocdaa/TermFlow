@@ -443,14 +443,14 @@ class AgentInboxItem(Base):
     idempotency_key: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     payload_digest: Mapped[str] = mapped_column(String(64))
     source: Mapped[str] = mapped_column(String(32))
-    delivery_state: Mapped[str] = mapped_column(String(32), index=True)
+    delivery_state: Mapped[str] = mapped_column(String(32))
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     claim_owner: Mapped[str | None] = mapped_column(String(128), default=None)
     claim_expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), index=True, default=None
+        DateTime(timezone=True), default=None
     )
     next_attempt_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), index=True, default=None
+        DateTime(timezone=True), default=None
     )
     # causation_id is the input that caused this one; the root input in a
     # chain has none, so the column is nullable.
@@ -459,6 +459,14 @@ class AgentInboxItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     __table_args__ = (
+        # Composite "pending claims" index: the delivery worker scans by
+        # delivery_state, then orders by the next retry and claim deadlines.
+        Index(
+            "ix_agent_inbox_items_claims",
+            "delivery_state",
+            "next_attempt_at",
+            "claim_expires_at",
+        ),
         UniqueConstraint(
             "conversation_id",
             "admission_seq",
@@ -746,7 +754,7 @@ class WatchDelivery(Base):
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[str | None] = mapped_column(Text, default=None)
     next_attempt_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None
+        DateTime(timezone=True), index=True, default=None
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 

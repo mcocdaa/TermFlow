@@ -5,6 +5,7 @@ database created from ``Base.metadata``; the Alembic migration is a separate
 task and is intentionally not involved.
 """
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -261,6 +262,7 @@ def test_required_unique_indexes_exist(engine: Engine) -> None:
         "agent_bindings": {"profile_id", "term_id", "status"},
         "agent_runtime_bindings": {"runtime_ref", "runtime_epoch"},
         "pane_policies": {"binding_id", "pane_id"},
+        "approval_requests": {"conversation_id", "tool_call_id"},
         "agent_memory_scopes": {"binding_id"},
     }
     for table_name, columns in expected_unique.items():
@@ -274,13 +276,12 @@ def test_required_indexes_exist(engine: Engine) -> None:
     expected_indexes = [
         ("agent_runs", ("conversation_id", "run_state")),
         ("agent_messages", ("conversation_id", "created_at")),
-        ("agent_inbox_items", ("delivery_state",)),
-        ("agent_inbox_items", ("next_attempt_at",)),
-        ("agent_inbox_items", ("claim_expires_at",)),
+        ("agent_inbox_items", ("delivery_state", "next_attempt_at", "claim_expires_at")),
         ("agent_tool_requests", ("tool_call_id",)),
         ("approval_requests", ("state", "expires_at")),
         ("watches", ("binding_id", "state")),
         ("watches", ("expiry_at",)),
+        ("watch_deliveries", ("next_attempt_at",)),
         ("transcript_drafts", ("state", "expires_at")),
         ("agent_cleanup_jobs", ("state", "next_attempt_at")),
         ("agent_diagnostics", ("ttl_expires_at",)),
@@ -473,6 +474,30 @@ def test_duplicate_agent_token_hash_raises(engine: Engine) -> None:
                 AgentToken(token_hash="h" * 64, **token_kwargs),
             ]
         )
+        with pytest.raises(IntegrityError):
+            session.commit()
+    finally:
+        session.close()
+
+
+def test_duplicate_approval_tool_call_id_raises(engine: Engine) -> None:
+    session = Session(engine)
+    try:
+        chain = _seed_binding_chain(session)
+
+        def approval(tool_call_id: str) -> ApprovalRequest:
+            return ApprovalRequest(
+                binding_id=chain["binding"].id,
+                conversation_id=chain["conversation"].id,
+                tool_call_id=tool_call_id,
+                canonical_hash="c" * 64,
+                state="pending",
+                expires_at=datetime.now(UTC),
+                auth_epoch=1,
+            )
+
+        session.add(approval("tool-call-1"))
+        session.add(approval("tool-call-1"))
         with pytest.raises(IntegrityError):
             session.commit()
     finally:
