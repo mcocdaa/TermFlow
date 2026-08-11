@@ -1,0 +1,294 @@
+"""Exact-schema and lifecycle tests for the Agent Broker migration (plan §15; task M1.1).
+
+These tests exercise the packaged Alembic chain: a fresh database migrates to
+the new head, an existing ``0005`` database upgrades, the head downgrades back
+to ``0005``, the migrated schema exactly matches the ORM metadata, the head
+schema validation passes on an already-migrated database, and Term deletion
+cascades to Agent rows through real foreign keys.
+"""
+
+import sqlite3
+from datetime import UTC, datetime
+from uuid import uuid4
+
+import pytest
+from alembic import command
+from sqlalchemy import create_engine, inspect, text
+from termflow_control_plane.persistence.database import Database, _migration_config
+from termflow_control_plane.persistence.models import Base
+
+# The migration head after this task.  Only tests asserting the GLOBAL head use
+# this constant; upgrade-path fixtures still pin "0005" explicitly.
+HEAD = "0006"
+
+# Every Agent Broker table created by migration 0006 (plan §15).
+AGENT_TABLES = (
+    "agent_profiles",
+    "agent_bindings",
+    "agent_memory_scopes",
+    "agent_conversations",
+    "agent_backend_conversations",
+    "agent_runtime_bindings",
+    "agent_inbox_items",
+    "agent_tool_requests",
+    "agent_runs",
+    "agent_messages",
+    "agent_events",
+    "agent_tokens",
+    "pane_policies",
+    "approval_requests",
+    "write_grants",
+    "watches",
+    "watch_deliveries",
+    "transcript_drafts",
+    "agent_cleanup_jobs",
+    "agent_diagnostics",
+)
+
+AGENT_TABLE_SET = set(AGENT_TABLES)
+
+# Tables that must still exist after a downgrade to "0005".
+PRE_AGENT_TABLES = {
+    "alembic_version",
+    "enrollment_tokens",
+    "installations",
+    "instances",
+    "audit_events",
+    "authentication_state",
+    "totp_setups",
+    "auth_challenges",
+    "native_clients",
+    "oauth_authorizations",
+    "auth_tokens",
+    "auth_audit_events",
+}
+
+
+def _table_names(connection) -> set[str]:
+    return set(inspect(connection).get_table_names())
+
+
+def _foreign_key_signatures(
+    inspector, table_name: str
+) -> set[tuple[tuple[str, ...], str, tuple[str, ...]]]:
+    return {
+        (
+            tuple(foreign_key["constrained_columns"] or ()),
+            str(foreign_key["referred_table"]),
+            tuple(foreign_key["referred_columns"] or ()),
+        )
+        for foreign_key in inspector.get_foreign_keys(table_name)
+    }
+
+
+def _index_signatures(
+    inspector, table_name: str
+) -> dict[str, tuple[tuple[str, ...], bool]]:
+    return {
+        index["name"]: (tuple(index["column_names"] or ()), bool(index["unique"]))
+        for index in inspector.get_indexes(table_name)
+        if not str(index["name"]).startswith("sqlite_autoindex")
+    }
+
+
+def test_fresh_database_migrates_to_agent_broker_head(tmp_path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'fresh-agent.db'}")
+    try:
+        with engine.begin() as connection:
+            config = _migration_config(connection)
+            command.upgrade(config, "head")
+            table_names = _table_names(connection)
+            revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
+        assert revision == HEAD
+        assert AGENT_TABLE_SET <= table_names
+    finally:
+        engine.dispose()
+
+
+def test_upgrade_from_0005_to_head_creates_agent_tables(tmp_path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'upgrade-agent.db'}")
+    try:
+        with engine.begin() as connection:
+            config = _migration_config(connection)
+            command.upgrade(config, "0005")
+            assert AGENT_TABLE_SET.isdisjoint(_table_names(connection))
+
+            command.upgrade(config, "head")
+            table_names = _table_names(connection)
+            revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
+        assert AGENT_TABLE_SET <= table_names
+        assert revision == HEAD
+    finally:
+        engine.dispose()
+
+
+def test_downgrade_from_head_to_0005_drops_agent_tables(tmp_path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'downgrade-agent.db'}")
+    try:
+        with engine.begin() as connection:
+            config = _migration_config(connection)
+            command.upgrade(config, "head")
+            assert AGENT_TABLE_SET <= _table_names(connection)
+
+            command.downgrade(config, "0005")
+            table_names = _table_names(connection)
+            revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
+        assert AGENT_TABLE_SET.isdisjoint(table_names)
+        assert PRE_AGENT_TABLES <= table_names
+        assert revision == "0005"
+    finally:
+        engine.dispose()
+
+
+def test_migrated_schema_matches_orm_metadata_exactly(tmp_path) -> None:
+    orm_engine = create_engine(f"sqlite:///{tmp_path / 'orm-agent.db'}")
+    migrated_engine = create_engine(f"sqlite:///{tmp_path / 'migrated-agent.db'}")
+    try:
+        Base.metadata.create_all(orm_engine)
+        with migrated_engine.begin() as connection:
+            command.upgrade(_migration_config(connection), "head")
+
+        orm_inspector = inspect(orm_engine)
+        migrated_inspector = inspect(migrated_engine)
+        for table_name in AGENT_TABLES:
+            orm_columns = {
+                column["name"]: column for column in orm_inspector.get_columns(table_name)
+            }
+            migrated_columns = {
+                column["name"]: column
+                for column in migrated_inspector.get_columns(table_name)
+            }
+            assert set(orm_columns) == set(migrated_columns), (
+                f"{table_name}: column sets differ"
+            )
+            for name in orm_columns:
+                assert str(orm_columns[name]["type"]).upper() == str(
+                    migrated_columns[name]["type"]
+                ).upper(), f"{table_name}.{name}: type differs"
+                assert orm_columns[name]["nullable"] == migrated_columns[name]["nullable"], (
+                    f"{table_name}.{name}: nullability differs"
+                )
+            assert (
+                orm_inspector.get_pk_constraint(table_name)["constrained_columns"]
+                == migrated_inspector.get_pk_constraint(table_name)["constrained_columns"]
+            ), f"{table_name}: primary key differs"
+            assert _foreign_key_signatures(
+                orm_inspector, table_name
+            ) == _foreign_key_signatures(
+                migrated_inspector, table_name
+            ), f"{table_name}: foreign keys differ"
+            assert _index_signatures(
+                orm_inspector, table_name
+            ) == _index_signatures(
+                migrated_inspector, table_name
+            ), f"{table_name}: indexes differ"
+    finally:
+        orm_engine.dispose()
+        migrated_engine.dispose()
+
+
+def test_key_agent_indexes_and_unique_constraints_are_created(tmp_path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'key-indexes-agent.db'}")
+    try:
+        with engine.begin() as connection:
+            command.upgrade(_migration_config(connection), "head")
+        inspector = inspect(engine)
+
+        inbox_claims = {
+            tuple(index["column_names"] or ())
+            for index in inspector.get_indexes("agent_inbox_items")
+            if index["name"] == "ix_agent_inbox_items_claims"
+        }
+        assert inbox_claims == {("delivery_state", "next_attempt_at", "claim_expires_at")}
+
+        watch_delivery_indexes = {
+            index["name"] for index in inspector.get_indexes("watch_deliveries")
+        }
+        assert "ix_watch_deliveries_next_attempt_at" in watch_delivery_indexes
+
+        inbox_uniques = {
+            tuple(constraint["column_names"] or ())
+            for constraint in inspector.get_unique_constraints("agent_inbox_items")
+        }
+        assert ("conversation_id", "admission_seq") in inbox_uniques
+
+        approval_uniques = {
+            tuple(constraint["column_names"] or ())
+            for constraint in inspector.get_unique_constraints("approval_requests")
+        }
+        assert ("conversation_id", "tool_call_id") in approval_uniques
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_initialize_on_migrated_database_passes_head_schema_validation(
+    tmp_path,
+) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'head-valid-agent.db'}")
+    await database.initialize()
+    try:
+        # A second initialize must not raise UnrecognizedDatabaseSchema: the
+        # live table set exactly matches Base.metadata at the new head.
+        await database.initialize()
+    finally:
+        await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_fresh_database_initialize_reports_agent_broker_head(tmp_path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'fresh-head-agent.db'}")
+    await database.initialize()
+    try:
+        async with database.engine.connect() as connection:
+            table_names = set(
+                await connection.run_sync(lambda sync: inspect(sync).get_table_names())
+            )
+            revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
+        assert revision == HEAD
+        assert AGENT_TABLE_SET <= table_names
+    finally:
+        await database.dispose()
+
+
+def test_deleting_term_cascades_to_agent_bindings(tmp_path) -> None:
+    path = tmp_path / "cascade-agent.db"
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            command.upgrade(_migration_config(connection), "head")
+    finally:
+        engine.dispose()
+
+    installation_id = uuid4()
+    instance_id = uuid4()
+    profile_id = uuid4()
+    binding_id = uuid4()
+    now = datetime.now(UTC).isoformat()
+    with sqlite3.connect(path) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute(
+            "INSERT INTO installations (id, token_hash, created_at) VALUES (?, ?, ?)",
+            (str(installation_id), uuid4().hex, now),
+        )
+        connection.execute(
+            "INSERT INTO instances (id, installation_id, name, token_hash, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (str(instance_id), str(installation_id), "term", uuid4().hex, now),
+        )
+        connection.execute(
+            "INSERT INTO agent_profiles (id, display_name, backend_kind, config, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (str(profile_id), "Assistant", "opencode", "{}", now, now),
+        )
+        connection.execute(
+            "INSERT INTO agent_bindings (id, profile_id, term_id, status, created_at, "
+            "updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (str(binding_id), str(profile_id), str(instance_id), "active", now, now),
+        )
+        assert connection.execute("SELECT COUNT(*) FROM agent_bindings").fetchone()[0] == 1
+
+        connection.execute("DELETE FROM instances WHERE id = ?", (str(instance_id),))
+        remaining = connection.execute("SELECT COUNT(*) FROM agent_bindings").fetchone()[0]
+        connection.commit()
+    assert remaining == 0
