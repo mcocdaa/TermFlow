@@ -3,6 +3,6 @@ import { buildVersion } from './buildVersion'
 
 describe('buildVersion', () => {
   it('comes from the materialized native package manifest', () => {
-    expect(buildVersion).toBe('0.0.1-dev.0')
+    expect(buildVersion).toBe('0.2.0-dev.0')
   })
 })

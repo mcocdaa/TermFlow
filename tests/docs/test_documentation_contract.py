@@ -83,7 +83,7 @@ def test_operator_docs_keep_current_install_release_and_native_contracts() -> No
         "termflow-node-linux-x86_64",
         "tmux 3.2",
         "Node 22.23.2",
-        "Git Tag > TERMFLOW_BUILD_VERSION > 0.0.1-dev.0",
+        "Git Tag > TERMFLOW_BUILD_VERSION > 0.2.0-dev.0",
     ):
         assert contract in current_docs
 

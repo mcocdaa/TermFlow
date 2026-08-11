@@ -24,7 +24,7 @@
 有可选的 `version` 输入：
 
 - 留空时先读取仓库 Actions variable `TERMFLOW_BUILD_VERSION`，没有该变量则使用
-  `0.0.1-dev.0`；
+  `0.2.0-dev.0`；
 - 填写时必须是受支持的逻辑 SemVer，例如 `1.2.3` 或 `1.2.3-rc.1`，不能带 `v`；
 - 手动运行永远只上传短期 Artifact，不创建 GitHub Release，也不推送 GHCR。
 

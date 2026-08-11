@@ -18,7 +18,7 @@ def test_node_workflow_is_manual_and_reusable() -> None:
     assert workflow["name"] == "Package A · Linux Node"
     assert set(triggers) == {"workflow_dispatch", "workflow_call"}
     assert triggers["workflow_dispatch"]["inputs"]["version"] == {
-        "description": "Build version override; defaults to 0.0.1-dev.0",
+        "description": "Build version override; defaults to 0.2.0-dev.0",
         "required": False,
         "default": "",
         "type": "string",
