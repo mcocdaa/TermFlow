@@ -1291,6 +1291,38 @@ async def test_transcript_draft_expire_pending(repositories: RepositoryBundle) -
 
 
 @pytest.mark.asyncio
+async def test_transcript_draft_expire_pending_sweeps_draft_state(
+    repositories: RepositoryBundle,
+) -> None:
+    binding = await _seed_binding(repositories)
+    observed = datetime.now(UTC)
+    conversation = await _seed_conversation(repositories)
+    expired = await repositories.transcript_drafts.create(
+        binding_id=binding.id,
+        target_conversation_id=conversation.id,
+        owner_actor_id="actor-1",
+        transcript_hash=_hash("expired-draft"),
+        provider="whisper",
+        region="us-east-1",
+        expires_at=observed - timedelta(seconds=1),
+        state="draft",
+    )
+    live = await repositories.transcript_drafts.create(
+        binding_id=binding.id,
+        target_conversation_id=conversation.id,
+        owner_actor_id="actor-1",
+        transcript_hash=_hash("live-draft"),
+        provider="whisper",
+        region="us-east-1",
+        expires_at=observed + timedelta(minutes=5),
+        state="draft",
+    )
+    assert await repositories.transcript_drafts.expire_pending(now=observed) == 1
+    assert (await repositories.transcript_drafts.get_by_id(expired.id)).state == "expired"
+    assert (await repositories.transcript_drafts.get_by_id(live.id)).state == "draft"
+
+
+@pytest.mark.asyncio
 async def test_cleanup_job_lifecycle(repositories: RepositoryBundle) -> None:
     observed = datetime.now(UTC)
     term_id = await _seed_term(repositories, name="cleanup-term")

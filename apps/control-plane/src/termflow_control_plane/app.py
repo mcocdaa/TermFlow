@@ -38,6 +38,13 @@ from termflow_control_plane.api.security import router as security_router
 from termflow_control_plane.api.sessions import router as sessions_router
 from termflow_control_plane.api.terminal import router as terminal_router_api
 from termflow_control_plane.api.terms import router as terms_router
+from termflow_control_plane.api.transcription import (
+    MAX_CONCURRENT_TRANSCRIPTIONS,
+    TRANSCRIPTION_TIMEOUT_SECONDS,
+)
+from termflow_control_plane.api.transcription import (
+    router as transcription_router,
+)
 from termflow_control_plane.auth.audit import AuthenticationAudit
 from termflow_control_plane.auth.dpop import DpopVerifier
 from termflow_control_plane.auth.master_key import resolve_totp_master_key
@@ -52,6 +59,9 @@ from termflow_control_plane.connections.terminal_hub import TerminalHub
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.database import Database
 from termflow_control_plane.persistence.repositories import RepositoryBundle
+from termflow_control_plane.plugins.agent_broker.agent.transcription import (
+    NullTranscriptionProvider,
+)
 from termflow_control_plane.plugins.agent_broker.plugin import (
     AgentBrokerPlugin,
     run_agent_recovery,
@@ -326,6 +336,14 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         },
     )
     app.state.dpop_verifier = DpopVerifier()
+    # Voice/STT plumbing (plan §14, task M7.1): the Null provider keeps text
+    # chat fully functional until an optional STT container implements the
+    # TranscriptionProvider port; the remaining bounds mirror the documented
+    # constants in api.transcription and stay overridable per-app for tests.
+    app.state.transcription_provider = NullTranscriptionProvider()
+    app.state.transcription_semaphore = asyncio.Semaphore(MAX_CONCURRENT_TRANSCRIPTIONS)
+    app.state.transcription_timeout_seconds = TRANSCRIPTION_TIMEOUT_SECONDS
+    app.state.transcription_staging_dir = None
     app.state.feature_registry = FeatureRegistry()
     app.state.feature_registry.register(
         AgentBrokerPlugin(),
@@ -405,5 +423,6 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
     if settings.agent_broker_enabled:
         app.include_router(agent_admin_router)
         app.include_router(agent_conversations_router)
+        app.include_router(transcription_router)
     install_web_hosting(app, settings.static_dir)
     return app

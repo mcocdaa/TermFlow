@@ -4063,6 +4063,11 @@ class TranscriptDraftRepository:
             return draft
 
     async def expire_pending(self, *, now: datetime | None = None) -> int:
+        """Expire overdue transcripts in the awaiting-confirmation states.
+
+        Both ``"pending"`` (repository default) and ``"draft"`` (upload API)
+        rows are swept to ``"expired"``; terminal states are untouched.
+        """
         observed_at = now or datetime.now(UTC)
         async with self._sessions() as session:
             result = cast(
@@ -4070,7 +4075,7 @@ class TranscriptDraftRepository:
                 await session.execute(
                     update(TranscriptDraft)
                     .where(
-                        TranscriptDraft.state == "pending",
+                        TranscriptDraft.state.in_(["pending", "draft"]),
                         TranscriptDraft.expires_at <= observed_at,
                     )
                     .values(state="expired")
