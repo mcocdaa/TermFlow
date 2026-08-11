@@ -3,7 +3,18 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, LargeBinary, String, Text, Uuid
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from termflow_protocol.common import utc_now
 
@@ -230,4 +241,611 @@ class AuthAuditEvent(Base):
     source_digest: Mapped[str | None] = mapped_column(String(64), index=True, default=None)
     client_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), index=True, default=None)
     error_code: Mapped[str | None] = mapped_column(String(64), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+# ---------------------------------------------------------------------------
+# Agent Broker persistence models (plan §15; task M1.1 models — the Alembic
+# migration is a separate task).  Invariants:
+#   - No raw tokens at rest; only hashes/digests.  No provider credentials.
+#   - UTC timestamps everywhere.
+#   - Explicit string states, enforced by repositories/state machines later,
+#     not by these columns.
+#   - Explicit ON DELETE behavior so deleting a Term (`instances`) or an
+#     Installation can never be blocked by orphaned Agent rows.  Cleanup jobs
+#     are durable tombstones that must outlive their parent, so their links use
+#     SET NULL instead of CASCADE.
+# ---------------------------------------------------------------------------
+
+
+class AgentProfile(Base):
+    """A named backend configuration a Term can bind to."""
+
+    __tablename__ = "agent_profiles"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    display_name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    backend_kind: Mapped[str] = mapped_column(String(32))
+    config: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class AgentBinding(Base):
+    """A profile attached to one Term (plan §3.2)."""
+
+    __tablename__ = "agent_bindings"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    profile_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_profiles.id", ondelete="CASCADE"),
+        index=True,
+    )
+    term_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("instances.id", ondelete="CASCADE"),
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(32))
+    # Runtime fields are opaque references to the externally deployed runtime
+    # and its epoch-bound MCP capability.  A binding may be created before a
+    # runtime is provisioned and stays fail-closed while the runtime is not
+    # ready, so they are nullable until the supervisor registers one.
+    runtime_ref: Mapped[str | None] = mapped_column(String(128), default=None)
+    runtime_epoch: Mapped[int | None] = mapped_column(Integer, default=None)
+    capability_ref: Mapped[str | None] = mapped_column(String(128), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    __table_args__ = (
+        # One active binding per (profile, Term).  Uniqueness is expressed over
+        # the explicit status column rather than a partial index on active
+        # rows: because status is non-null and part of the key, at most one
+        # binding can occupy any given state for the same profile/Term pair,
+        # so "active" is unique while terminal-state rows may coexist.
+        UniqueConstraint(
+            "profile_id",
+            "term_id",
+            "status",
+            name="uq_agent_bindings_profile_term_status",
+        ),
+    )
+
+
+class AgentMemoryScope(Base):
+    """Curated B-owned memory for one binding (plan §8, §21 gate 3)."""
+
+    __tablename__ = "agent_memory_scopes"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    binding_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_bindings.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+    )
+    # Denormalized Term/Profile references so scope queries never join through
+    # the binding; cascaded so Term/Profile deletion can never be blocked.
+    term_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("instances.id", ondelete="CASCADE"),
+        index=True,
+    )
+    profile_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_profiles.id", ondelete="CASCADE"),
+        index=True,
+    )
+    byte_quota: Mapped[int] = mapped_column(Integer)
+    count_quota: Mapped[int] = mapped_column(Integer)
+    current_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    current_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class AgentConversation(Base):
+    """A durable product conversation owned by a binding (plan §3.2)."""
+
+    __tablename__ = "agent_conversations"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    binding_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_bindings.id", ondelete="CASCADE"),
+        index=True,
+    )
+    # Title is a product-facing convenience the backend may propose later.
+    title: Mapped[str | None] = mapped_column(String(255), default=None)
+    status: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class BackendConversationRef(Base):
+    """Opaque backend session identity for reconciliation (plan §5)."""
+
+    __tablename__ = "agent_backend_conversations"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_conversations.id", ondelete="CASCADE"),
+        index=True,
+    )
+    backend_kind: Mapped[str] = mapped_column(String(32))
+    # Backend version may be unknown until the backend reports it.
+    backend_version: Mapped[str | None] = mapped_column(String(64), default=None)
+    runtime_id: Mapped[str] = mapped_column(String(128))
+    binding_capability_epoch: Mapped[int] = mapped_column(Integer)
+    provider_ref: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class AgentRuntimeBinding(Base):
+    """Persistent runtime registration, epoch, and readiness (plan §6.2.1)."""
+
+    __tablename__ = "agent_runtime_bindings"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    binding_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_bindings.id", ondelete="CASCADE"),
+        index=True,
+    )
+    runtime_ref: Mapped[str] = mapped_column(String(128))
+    runtime_epoch: Mapped[int] = mapped_column(Integer)
+    readiness: Mapped[str] = mapped_column(String(32))
+    last_health_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "runtime_ref",
+            "runtime_epoch",
+            name="uq_agent_runtime_bindings_runtime_ref_epoch",
+        ),
+    )
+
+
+class AgentInboxItem(Base):
+    """Durable typed Agent input waiting for delivery (plan §4.2, §7)."""
+
+    __tablename__ = "agent_inbox_items"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_conversations.id", ondelete="CASCADE"),
+    )
+    kind: Mapped[str] = mapped_column(String(32))
+    actor_id: Mapped[str] = mapped_column(String(128))
+    actor_kind: Mapped[str] = mapped_column(String(32))
+    auth_epoch: Mapped[int | None] = mapped_column(Integer, default=None)
+    # admission_seq is assigned by the B database transaction (plan §4.2); the
+    # unique (conversation_id, admission_seq) pair makes insertion/delivery
+    # order deterministic and idempotent.
+    admission_seq: Mapped[int] = mapped_column(Integer)
+    idempotency_key: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    payload_digest: Mapped[str] = mapped_column(String(64))
+    source: Mapped[str] = mapped_column(String(32))
+    delivery_state: Mapped[str] = mapped_column(String(32))
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    claim_owner: Mapped[str | None] = mapped_column(String(128), default=None)
+    claim_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    # causation_id is the input that caused this one; the root input in a
+    # chain has none, so the column is nullable.
+    causation_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), default=None)
+    correlation_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    __table_args__ = (
+        # Composite "pending claims" index: the delivery worker scans by
+        # delivery_state, then orders by the next retry and claim deadlines.
+        Index(
+            "ix_agent_inbox_items_claims",
+            "delivery_state",
+            "next_attempt_at",
+            "claim_expires_at",
+        ),
+        UniqueConstraint(
+            "conversation_id",
+            "admission_seq",
+            name="uq_agent_inbox_items_conversation_admission_seq",
+        ),
+    )
+
+
+class AgentToolRequest(Base):
+    """Side-effect request key, canonical arguments hash, and result (plan §10)."""
+
+    __tablename__ = "agent_tool_requests"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    binding_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_bindings.id", ondelete="CASCADE"),
+        index=True,
+    )
+    run_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_runs.id", ondelete="CASCADE"),
+        index=True,
+        default=None,
+    )
+    tool_call_id: Mapped[str] = mapped_column(String(128), index=True)
+    request_key: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    arguments_digest: Mapped[str] = mapped_column(String(64))
+    recorded_result_digest: Mapped[str | None] = mapped_column(String(64), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class AgentRun(Base):
+    """A single backend turn bound to one conversation (plan §7)."""
+
+    __tablename__ = "agent_runs"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_conversations.id", ondelete="CASCADE"),
+    )
+    run_state: Mapped[str] = mapped_column(String(32))
+    backend_run_id: Mapped[str | None] = mapped_column(String(128), default=None)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    error_code: Mapped[str | None] = mapped_column(String(64), default=None)
+
+    __table_args__ = (
+        Index("ix_agent_runs_conversation_state", "conversation_id", "run_state"),
+    )
+
+
+class AgentMessage(Base):
+    """A committed message assembly checkpoint on the product timeline (plan §7)."""
+
+    __tablename__ = "agent_messages"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_conversations.id", ondelete="CASCADE"),
+    )
+    run_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_runs.id", ondelete="CASCADE"),
+        index=True,
+        default=None,
+    )
+    role: Mapped[str] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(32))
+    # Non-null assembly revision makes the unique (conversation_id,
+    # assembly_revision) index "nullable-aware": it is actually enforced,
+    # unlike a nullable column where SQLite would admit multiple NULLs.
+    assembly_revision: Mapped[int] = mapped_column(Integer)
+    is_final: Mapped[bool] = mapped_column(Boolean, default=False)
+    body_digest: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    __table_args__ = (
+        Index("ix_agent_messages_conversation_created_at", "conversation_id", "created_at"),
+        UniqueConstraint(
+            "conversation_id",
+            "assembly_revision",
+            name="uq_agent_messages_conversation_assembly_revision",
+        ),
+    )
+
+
+class AgentEvent(Base):
+    """Canonical product event with a B-assigned database cursor (plan §4.4)."""
+
+    __tablename__ = "agent_events"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_conversations.id", ondelete="CASCADE"),
+    )
+    run_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_runs.id", ondelete="CASCADE"),
+        index=True,
+        default=None,
+    )
+    event_kind: Mapped[str] = mapped_column(String(64))
+    dedup_key: Mapped[str] = mapped_column(String(128))
+    # B-assigned monotonic database sequence: the unique conversation cursor.
+    database_seq: Mapped[int] = mapped_column(Integer)
+    payload_digest: Mapped[str] = mapped_column(String(64))
+    ephemeral: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "conversation_id",
+            "database_seq",
+            name="uq_agent_events_conversation_database_seq",
+        ),
+    )
+
+
+class AgentToken(Base):
+    """Binding-scoped MCP capability token; only the hash is stored at rest."""
+
+    __tablename__ = "agent_tokens"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    binding_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_bindings.id", ondelete="CASCADE"),
+        index=True,
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    scopes: Mapped[str] = mapped_column(Text)
+    expiry_epoch: Mapped[int] = mapped_column(Integer)
+    binding_epoch: Mapped[int] = mapped_column(Integer)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class PanePolicy(Base):
+    """Exact per-pane observe/write allowlist contract (plan §10)."""
+
+    __tablename__ = "pane_policies"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    binding_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_bindings.id", ondelete="CASCADE"),
+    )
+    pane_id: Mapped[str] = mapped_column(String(32))
+    allowed: Mapped[bool] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    __table_args__ = (
+        UniqueConstraint("binding_id", "pane_id", name="uq_pane_policies_binding_pane"),
+    )
+
+
+class ApprovalRequest(Base):
+    """Single-use assisted write approval (plan §12.1)."""
+
+    __tablename__ = "approval_requests"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    binding_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_bindings.id", ondelete="CASCADE"),
+        index=True,
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_conversations.id", ondelete="CASCADE"),
+    )
+    run_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_runs.id", ondelete="CASCADE"),
+        index=True,
+        default=None,
+    )
+    tool_call_id: Mapped[str] = mapped_column(String(128))
+    canonical_hash: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(32))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    decision: Mapped[str | None] = mapped_column(String(32), default=None)
+    auth_epoch: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    __table_args__ = (
+        Index("ix_approval_requests_state_expires_at", "state", "expires_at"),
+        # A backend tool_call_id is opaque and only meaningful inside its
+        # conversation; uniqueness is scoped to the conversation and enforced
+        # because tool_call_id is non-null.
+        UniqueConstraint(
+            "conversation_id",
+            "tool_call_id",
+            name="uq_approval_requests_conversation_tool_call_id",
+        ),
+    )
+
+
+class WriteGrant(Base):
+    """Delegated write authorization (plan §12.1). Design-only; disabled by
+    default in 0.2.0. The table exists so the schema is stable."""
+
+    __tablename__ = "write_grants"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    binding_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_bindings.id", ondelete="CASCADE"),
+        index=True,
+    )
+    grant_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    operation_allowlist: Mapped[str] = mapped_column(Text)
+    byte_quota: Mapped[int] = mapped_column(Integer)
+    invocation_quota: Mapped[int] = mapped_column(Integer)
+    time_window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    state: Mapped[str] = mapped_column(String(32))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class Watch(Base):
+    """A durable continuation condition on one Term pane (plan §11)."""
+
+    __tablename__ = "watches"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    binding_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_bindings.id", ondelete="CASCADE"),
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_conversations.id", ondelete="CASCADE"),
+        index=True,
+    )
+    pane_id: Mapped[str] = mapped_column(String(32))
+    condition_kind: Mapped[str] = mapped_column(String(32))
+    start_cursor: Mapped[str] = mapped_column(Text)
+    watch_generation: Mapped[int] = mapped_column(Integer)
+    rearm_cursor: Mapped[str | None] = mapped_column(Text, default=None)
+    intent_summary: Mapped[str] = mapped_column(Text)
+    expiry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True, default=None
+    )
+    one_shot: Mapped[bool] = mapped_column(Boolean)
+    state: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    __table_args__ = (
+        Index("ix_watches_binding_state", "binding_id", "state"),
+    )
+
+
+class WatchDelivery(Base):
+    """One durable, idempotent watch trigger receipt (plan §11.2)."""
+
+    __tablename__ = "watch_deliveries"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    watch_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("watches.id", ondelete="CASCADE"),
+        index=True,
+    )
+    # Idempotency anchor: the delivery key encodes (watch, generation, cursor,
+    # trigger) identity so the same trigger can never be delivered twice.
+    delivery_key: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    # Causal links.  trigger_event_id is informational only (no FK).  The
+    # inbox item may be purged independently, so its link is SET NULL rather
+    # than CASCADE to preserve the delivery receipt.
+    trigger_event_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), default=None)
+    inbox_item_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_inbox_items.id", ondelete="SET NULL"),
+        index=True,
+        default=None,
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, default=None)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True, default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class TranscriptDraft(Base):
+    """Short-lived STT transcript awaiting user confirmation (plan §14)."""
+
+    __tablename__ = "transcript_drafts"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    binding_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_bindings.id", ondelete="CASCADE"),
+        index=True,
+    )
+    target_conversation_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_conversations.id", ondelete="CASCADE"),
+        index=True,
+    )
+    owner_actor_id: Mapped[str] = mapped_column(String(128))
+    transcript_hash: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(32))
+    provider: Mapped[str] = mapped_column(String(64))
+    region: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    __table_args__ = (
+        Index("ix_transcript_drafts_state_expires_at", "state", "expires_at"),
+    )
+
+
+class AgentCleanupJob(Base):
+    """Durable deletion tombstone that retries backend/volume cleanup (plan §17)."""
+
+    __tablename__ = "agent_cleanup_jobs"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    # These jobs are created BEFORE the parent is deleted and must outlive it,
+    # so the term/installation links are SET NULL (not CASCADE) and the opaque
+    # target_ref keeps the deletion target.
+    term_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("instances.id", ondelete="SET NULL"),
+        index=True,
+        default=None,
+    )
+    installation_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("installations.id", ondelete="SET NULL"),
+        index=True,
+        default=None,
+    )
+    target_kind: Mapped[str] = mapped_column(String(32))
+    target_ref: Mapped[str] = mapped_column(String(128))
+    state: Mapped[str] = mapped_column(String(32))
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, default=None)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    __table_args__ = (
+        Index("ix_agent_cleanup_jobs_state_next_attempt_at", "state", "next_attempt_at"),
+    )
+
+
+class AgentDiagnostic(Base):
+    """Bounded, short-TTL, metadata-only diagnostics (plan §4.3, §16.1). Never
+    raw provider payloads, terminal excerpts, reasoning, or credentials."""
+
+    __tablename__ = "agent_diagnostics"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_conversations.id", ondelete="CASCADE"),
+        index=True,
+        default=None,
+    )
+    event_kind: Mapped[str] = mapped_column(String(64))
+    provider_type: Mapped[str | None] = mapped_column(String(64), default=None)
+    provider_session_id: Mapped[str | None] = mapped_column(String(128), default=None)
+    provider_run_id: Mapped[str | None] = mapped_column(String(128), default=None)
+    error_code: Mapped[str | None] = mapped_column(String(64), default=None)
+    correlation_hash: Mapped[str] = mapped_column(String(64))
+    payload_metadata: Mapped[str | None] = mapped_column(Text, default=None)
+    ttl_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
