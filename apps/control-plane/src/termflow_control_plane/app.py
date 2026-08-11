@@ -5,6 +5,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Request
@@ -21,6 +22,7 @@ from termflow_protocol import (
 )
 
 from termflow_control_plane import __version__
+from termflow_control_plane.api.agent_capabilities import router as agent_capabilities_router
 from termflow_control_plane.api.bridge import router as bridge_router
 from termflow_control_plane.api.clients import router as clients_router
 from termflow_control_plane.api.computers import router as computers_router
@@ -48,6 +50,16 @@ from termflow_control_plane.connections.terminal_hub import TerminalHub
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.database import Database
 from termflow_control_plane.persistence.repositories import RepositoryBundle
+from termflow_control_plane.plugins.agent_broker.plugin import AgentBrokerPlugin
+from termflow_control_plane.plugins.context import build_feature_context
+from termflow_control_plane.plugins.protocol import (
+    AgentRuntimeSupervisor,
+    AuthPort,
+    LifecyclePort,
+    TerminalCommandPort,
+    TerminalObservationPort,
+)
+from termflow_control_plane.plugins.registry import FeatureRegistry
 from termflow_control_plane.routing.router import CommandRouter
 from termflow_control_plane.routing.terminal_audit import TerminalAuditWriter
 from termflow_control_plane.routing.terminal_router import TerminalRouter
@@ -141,6 +153,17 @@ async def _verify_oauth_totp(service: AuthenticationService, code: str) -> bool:
         return False
 
 
+def _unimplemented_port(port: object) -> Any:
+    """Return a placeholder object for a BFeatureContext port not yet implemented.
+
+    The composition root must not invent fake implementations for ports whose
+    milestones have not landed; an explicitly labeled placeholder keeps the
+    wiring honest.  ``Any`` is required because Protocol classes cannot be used
+    as ``type[...]`` arguments under mypy strict.
+    """
+    return object()
+
+
 def create_app(*, settings: Settings, database: Database | None = None) -> FastAPI:
     active_database = database or Database(settings.database_url)
 
@@ -187,6 +210,19 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
             capability_wait_seconds=settings.command_timeout_seconds,
             resume_grace_seconds=settings.terminal_resume_grace_seconds,
         )
+        feature_context = build_feature_context(
+            # Only real services are wired now; every remaining port is an
+            # explicitly labeled placeholder until its milestone lands.
+            auth=_unimplemented_port(AuthPort),  # AuthenticationService lacks AuthPort
+            terms=app.state.registry,  # LiveInstanceRegistry is the live Term/instance authority
+            observation=_unimplemented_port(TerminalObservationPort),  # lands with M2
+            commands=_unimplemented_port(TerminalCommandPort),  # lands with M5
+            persistence=app.state.repositories,  # real persistence layer (RepositoryBundle)
+            lifecycle=_unimplemented_port(LifecyclePort),  # lands with plugin background tasks
+            runtime=_unimplemented_port(AgentRuntimeSupervisor),  # lands with M4
+        )
+        app.state.feature_context = feature_context
+        await app.state.feature_registry.startup(feature_context)
         expiry_task = asyncio.create_task(
             _heartbeat_expiry_loop(app.state.registry, app.state.event_hub, settings)
         )
@@ -219,7 +255,10 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
                 try:
                     await app.state.terminal_audit.close()
                 finally:
-                    await active_database.dispose()
+                    try:
+                        await app.state.feature_registry.shutdown()
+                    finally:
+                        await active_database.dispose()
 
     app = FastAPI(
         title="TermFlow Control Plane",
@@ -258,6 +297,11 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         },
     )
     app.state.dpop_verifier = DpopVerifier()
+    app.state.feature_registry = FeatureRegistry()
+    app.state.feature_registry.register(
+        AgentBrokerPlugin(),
+        enabled=settings.agent_broker_enabled,
+    )
 
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
@@ -325,5 +369,6 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
     app.include_router(instances_router)
     app.include_router(bridge_router)
     app.include_router(events_router)
+    app.include_router(agent_capabilities_router)
     install_web_hosting(app, settings.static_dir)
     return app
