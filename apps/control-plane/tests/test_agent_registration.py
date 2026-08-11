@@ -93,12 +93,46 @@ class TestFeatureRegistryWiring:
         registry = client.app.state.feature_registry
 
         assert isinstance(registry, FeatureRegistry)
-        assert [(route.path, route.owner) for route in registry.routes] == [
-            ("/api/v1/agent/capabilities", "agent_broker")
-        ]
+        routes = registry.routes
+        paths = [route.path for route in routes]
+        assert all(route.owner == "agent_broker" for route in routes)
+        assert all(path.startswith("/api/v1/agent") for path in paths)
+        # Capability discovery stays registered...
+        assert "/api/v1/agent/capabilities" in paths
+        # ...alongside the functional administration and conversation routes.
+        assert "/api/v1/agent/admin/profiles" in paths
+        assert "/api/v1/agent/admin/bindings" in paths
+        assert "/api/v1/agent/admin/tokens" in paths
+        assert "/api/v1/agent/conversations" in paths
+        assert "/api/v1/agent/conversations/{conversation_id}/messages" in paths
+        assert "/api/v1/agent/conversations/{conversation_id}/events" in paths
         assert [(revision.id, revision.owner) for revision in registry.migrations] == [
             ("0006", "agent_broker")
         ]
+
+    def test_disabled_plugin_removes_functional_agent_routes(
+        self,
+        tmp_path,
+        admin_headers: dict[str, str],
+    ) -> None:
+        with _make_client(tmp_path, agent_broker_enabled=False) as client:
+            # The capability-discovery endpoint stays reachable when disabled.
+            assert client.get("/api/v1/agent/capabilities").status_code == 200
+            # Functional Agent routes are removed with the plugin.
+            assert (
+                client.get(
+                    "/api/v1/agent/admin/profiles",
+                    headers=admin_headers,
+                ).status_code
+                == 404
+            )
+            assert (
+                client.get(
+                    "/api/v1/agent/conversations",
+                    headers=admin_headers,
+                ).status_code
+                == 404
+            )
 
     def test_disabled_plugin_contributes_nothing(self, tmp_path) -> None:
         with _make_client(tmp_path, agent_broker_enabled=False) as client:
