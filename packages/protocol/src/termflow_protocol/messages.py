@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 from datetime import datetime
+from enum import StrEnum
 from typing import Literal
 from uuid import UUID
 
@@ -144,6 +145,91 @@ class StreamGapPayload(PayloadModel):
     pane_id: PaneId
     previous_stream_id: UUID
     reason: Literal["stream_changed", "overwritten", "backpressure", "control_paused"]
+
+
+class CaptureKind(StrEnum):
+    """Which portion of a pane's output a capture request asks for."""
+
+    VIEWPORT = "viewport"
+    HISTORY = "history"
+    SNAPSHOT = "snapshot"
+    GAP_SNAPSHOT = "gap_snapshot"
+
+
+class CaptureRange(PayloadModel):
+    """Inclusive line range captured from the pane, when line addressing applies."""
+
+    start: int
+    end: int
+
+
+class ViewportGeometry(PayloadModel):
+    """Rows and columns of the pane viewport at capture time."""
+
+    rows: int
+    cols: int
+
+
+class PaneCaptureRequestPayload(PayloadModel):
+    """Ask an instance to capture bounded output from one pane.
+
+    ``max_bytes`` is the hard bound on the capture; every other selector is
+    optional. ``request_id`` correlates the matching
+    :class:`PaneCaptureResultPayload` or :class:`PaneCaptureErrorPayload`.
+    """
+
+    instance_id: UUID
+    pane_id: str
+    capture_kind: CaptureKind
+    request_id: UUID
+    start_line: int | None = Field(default=None, ge=1)
+    end_line: int | None = Field(default=None, ge=1)
+    tail_lines: int | None = Field(default=None, ge=1)
+    max_bytes: int = Field(ge=1)
+    join_wrapped: bool = False
+    stream_id: str | None = None
+    seq: int | None = None
+    pane_incarnation: int
+
+
+class PaneCaptureResultPayload(PayloadModel):
+    """Bounded capture of one pane, addressed by the matching request_id.
+
+    ``result_code`` is ``"ok"`` or a stable error code such as
+    ``stream_gap`` or ``quota_exceeded``.
+    """
+
+    request_id: UUID
+    instance_id: UUID
+    pane_id: str
+    pane_incarnation: int
+    content: str
+    encoding: str = "utf-8"
+    stream_id: str
+    from_seq: int
+    to_seq: int
+    capture_kind: CaptureKind
+    capture_range: CaptureRange | None = None
+    viewport_geometry: ViewportGeometry | None = None
+    truncated: bool
+    stream_gap: bool = False
+    gap_reason: str | None
+    result_code: str
+
+
+class PaneCaptureErrorPayload(PayloadModel):
+    """Rejection of a pane capture request, addressed by the same request_id.
+
+    ``error_code`` is a stable code such as ``pane_not_found``,
+    ``incarnation_changed``, ``quota_exceeded``, ``invalid_request``, or
+    ``stream_gap``.
+    """
+
+    request_id: UUID
+    instance_id: UUID
+    pane_id: str
+    error_code: str
+    message: str = Field(max_length=512)
 
 
 class CommandResultPayload(PayloadModel):
@@ -328,6 +414,9 @@ PAYLOAD_MODELS: dict[str, type[PayloadModel]] = {
     "pane.output": PaneOutputPayload,
     "pane.input": PaneInputPayload,
     "pane.replay_request": PaneReplayRequestPayload,
+    "pane.capture_request": PaneCaptureRequestPayload,
+    "pane.capture_result": PaneCaptureResultPayload,
+    "pane.capture_error": PaneCaptureErrorPayload,
     "stream.gap": StreamGapPayload,
     "command.result": CommandResultPayload,
     "instance.online": InstancePresencePayload,
