@@ -21,17 +21,36 @@ from termflow_control_plane.auth.pkce import create_s256_challenge
 from termflow_control_plane.auth.secret_box import EncryptedSecret
 
 from .models import (
+    AgentBinding,
+    AgentCleanupJob,
+    AgentConversation,
+    AgentDiagnostic,
+    AgentEvent,
+    AgentInboxItem,
+    AgentMemoryScope,
+    AgentMessage,
+    AgentProfile,
+    AgentRun,
+    AgentRuntimeBinding,
+    AgentToken,
+    AgentToolRequest,
+    ApprovalRequest,
     AuditEvent,
     AuthAuditEvent,
     AuthChallenge,
     AuthenticationState,
     AuthToken,
+    BackendConversationRef,
     EnrollmentToken,
     Installation,
     Instance,
     NativeClient,
     OAuthAuthorization,
+    PanePolicy,
     TotpSetup,
+    TranscriptDraft,
+    Watch,
+    WatchDelivery,
 )
 
 
@@ -2293,6 +2312,1804 @@ class AuthAuditRepository:
             return list(rows)
 
 
+class AgentToolRequestKeyConflict(RuntimeError):
+    """The same side-effect request key was replayed with different arguments."""
+
+
+# Active binding states: a binding is "active" while it can be admitted to a
+# runtime.  Terminal states (revoked/disabled/failed/removed) retire it.
+_ACTIVE_BINDING_STATES = ("pending", "ready")
+
+
+class AgentProfileRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def create(
+        self,
+        *,
+        display_name: str,
+        backend_kind: str,
+        config: str,
+    ) -> AgentProfile:
+        async with self._sessions() as session:
+            profile = AgentProfile(
+                display_name=display_name,
+                backend_kind=backend_kind,
+                config=config,
+            )
+            session.add(profile)
+            await session.commit()
+            return profile
+
+    async def get_by_id(self, profile_id: UUID) -> AgentProfile | None:
+        async with self._sessions() as session:
+            return await session.get(AgentProfile, profile_id)
+
+    async def list(self) -> list[AgentProfile]:
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentProfile).order_by(AgentProfile.created_at)
+            )
+            return list(rows)
+
+    async def rename(self, profile_id: UUID, display_name: str) -> AgentProfile | None:
+        observed_at = datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentProfile)
+                .where(AgentProfile.id == profile_id)
+                .values(display_name=display_name, updated_at=observed_at)
+                .returning(AgentProfile)
+            )
+            profile = result.scalar_one_or_none()
+            await session.commit()
+            return profile
+
+    async def delete(self, profile_id: UUID) -> bool:
+        async with self._sessions() as session:
+            result = await session.execute(
+                delete(AgentProfile)
+                .where(AgentProfile.id == profile_id)
+                .returning(AgentProfile.id)
+            )
+            deleted = result.scalar_one_or_none() is not None
+            await session.commit()
+            return deleted
+
+
+class AgentBindingRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def create(
+        self,
+        *,
+        profile_id: UUID,
+        term_id: UUID,
+        status: str = "pending",
+        runtime_ref: str | None = None,
+        runtime_epoch: int | None = None,
+        capability_ref: str | None = None,
+    ) -> AgentBinding:
+        async with self._sessions() as session:
+            binding = AgentBinding(
+                profile_id=profile_id,
+                term_id=term_id,
+                status=status,
+                runtime_ref=runtime_ref,
+                runtime_epoch=runtime_epoch,
+                capability_ref=capability_ref,
+            )
+            session.add(binding)
+            await session.commit()
+            return binding
+
+    async def get_by_id(self, binding_id: UUID) -> AgentBinding | None:
+        async with self._sessions() as session:
+            return await session.get(AgentBinding, binding_id)
+
+    async def list_for_term(self, term_id: UUID) -> list[AgentBinding]:
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentBinding)
+                .where(AgentBinding.term_id == term_id)
+                .order_by(AgentBinding.created_at)
+            )
+            return list(rows)
+
+    async def list_for_profile(self, profile_id: UUID) -> list[AgentBinding]:
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentBinding)
+                .where(AgentBinding.profile_id == profile_id)
+                .order_by(AgentBinding.created_at)
+            )
+            return list(rows)
+
+    async def active_binding_for(
+        self, profile_id: UUID, term_id: UUID
+    ) -> AgentBinding | None:
+        async with self._sessions() as session:
+            binding: AgentBinding | None = await session.scalar(
+                select(AgentBinding)
+                .where(
+                    AgentBinding.profile_id == profile_id,
+                    AgentBinding.term_id == term_id,
+                    AgentBinding.status.in_(_ACTIVE_BINDING_STATES),
+                )
+                .order_by(AgentBinding.created_at.desc())
+                .limit(1)
+            )
+            return binding
+
+    async def set_status(
+        self,
+        binding_id: UUID,
+        status: str,
+        *,
+        expected_status: str | None = None,
+    ) -> AgentBinding | None:
+        observed_at = datetime.now(UTC)
+        conditions = [AgentBinding.id == binding_id]
+        if expected_status is not None:
+            conditions.append(AgentBinding.status == expected_status)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentBinding)
+                .where(*conditions)
+                .values(status=status, updated_at=observed_at)
+                .returning(AgentBinding)
+            )
+            binding = result.scalar_one_or_none()
+            await session.commit()
+            return binding
+
+    async def update_runtime(
+        self,
+        binding_id: UUID,
+        *,
+        runtime_ref: str,
+        runtime_epoch: int,
+        capability_ref: str,
+    ) -> AgentBinding | None:
+        observed_at = datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentBinding)
+                .where(AgentBinding.id == binding_id)
+                .values(
+                    runtime_ref=runtime_ref,
+                    runtime_epoch=runtime_epoch,
+                    capability_ref=capability_ref,
+                    updated_at=observed_at,
+                )
+                .returning(AgentBinding)
+            )
+            binding = result.scalar_one_or_none()
+            await session.commit()
+            return binding
+
+    async def delete(self, binding_id: UUID) -> bool:
+        async with self._sessions() as session:
+            result = await session.execute(
+                delete(AgentBinding)
+                .where(AgentBinding.id == binding_id)
+                .returning(AgentBinding.id)
+            )
+            deleted = result.scalar_one_or_none() is not None
+            await session.commit()
+            return deleted
+
+
+class AgentMemoryScopeRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def get_for_binding(self, binding_id: UUID) -> AgentMemoryScope | None:
+        async with self._sessions() as session:
+            scope: AgentMemoryScope | None = await session.scalar(
+                select(AgentMemoryScope).where(
+                    AgentMemoryScope.binding_id == binding_id
+                )
+            )
+            return scope
+
+    async def create(
+        self,
+        *,
+        binding_id: UUID,
+        term_id: UUID,
+        profile_id: UUID,
+        byte_quota: int,
+        count_quota: int,
+    ) -> AgentMemoryScope:
+        async with self._sessions() as session:
+            scope = AgentMemoryScope(
+                binding_id=binding_id,
+                term_id=term_id,
+                profile_id=profile_id,
+                byte_quota=byte_quota,
+                count_quota=count_quota,
+            )
+            session.add(scope)
+            await session.commit()
+            return scope
+
+    async def update_quota(
+        self,
+        scope_id: UUID,
+        *,
+        byte_quota: int,
+        count_quota: int,
+    ) -> AgentMemoryScope | None:
+        observed_at = datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentMemoryScope)
+                .where(AgentMemoryScope.id == scope_id)
+                .values(
+                    byte_quota=byte_quota,
+                    count_quota=count_quota,
+                    updated_at=observed_at,
+                )
+                .returning(AgentMemoryScope)
+            )
+            scope = result.scalar_one_or_none()
+            await session.commit()
+            return scope
+
+    async def record_usage(
+        self,
+        scope_id: UUID,
+        *,
+        delta_bytes: int = 0,
+        delta_count: int = 0,
+    ) -> AgentMemoryScope | None:
+        """Atomically adjust the live byte/count usage counters."""
+        observed_at = datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentMemoryScope)
+                .where(AgentMemoryScope.id == scope_id)
+                .values(
+                    current_bytes=AgentMemoryScope.current_bytes + delta_bytes,
+                    current_count=AgentMemoryScope.current_count + delta_count,
+                    updated_at=observed_at,
+                )
+                .returning(AgentMemoryScope)
+            )
+            scope = result.scalar_one_or_none()
+            await session.commit()
+            return scope
+
+    async def increment_usage(
+        self,
+        scope_id: UUID,
+        *,
+        delta_bytes: int = 0,
+        delta_count: int = 0,
+    ) -> AgentMemoryScope | None:
+        """Alias for :meth:`record_usage`."""
+        return await self.record_usage(
+            scope_id, delta_bytes=delta_bytes, delta_count=delta_count
+        )
+
+
+class AgentConversationRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def create(
+        self,
+        *,
+        binding_id: UUID,
+        title: str | None = None,
+        status: str = "active",
+    ) -> AgentConversation:
+        async with self._sessions() as session:
+            conversation = AgentConversation(
+                binding_id=binding_id,
+                title=title,
+                status=status,
+            )
+            session.add(conversation)
+            await session.commit()
+            return conversation
+
+    async def get_by_id(self, conversation_id: UUID) -> AgentConversation | None:
+        async with self._sessions() as session:
+            return await session.get(AgentConversation, conversation_id)
+
+    async def list_for_binding(
+        self,
+        binding_id: UUID,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[AgentConversation]:
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentConversation)
+                .where(AgentConversation.binding_id == binding_id)
+                .order_by(AgentConversation.created_at)
+                .limit(limit)
+                .offset(offset)
+            )
+            return list(rows)
+
+    async def rename(
+        self, conversation_id: UUID, title: str
+    ) -> AgentConversation | None:
+        observed_at = datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentConversation)
+                .where(AgentConversation.id == conversation_id)
+                .values(title=title, updated_at=observed_at)
+                .returning(AgentConversation)
+            )
+            conversation = result.scalar_one_or_none()
+            await session.commit()
+            return conversation
+
+    async def delete(self, conversation_id: UUID) -> bool:
+        async with self._sessions() as session:
+            result = await session.execute(
+                delete(AgentConversation)
+                .where(AgentConversation.id == conversation_id)
+                .returning(AgentConversation.id)
+            )
+            deleted = result.scalar_one_or_none() is not None
+            await session.commit()
+            return deleted
+
+
+class AgentBackendConversationRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def create(
+        self,
+        *,
+        conversation_id: UUID,
+        backend_kind: str,
+        runtime_id: str,
+        binding_capability_epoch: int,
+        provider_ref: str,
+        backend_version: str | None = None,
+    ) -> BackendConversationRef:
+        async with self._sessions() as session:
+            ref = BackendConversationRef(
+                conversation_id=conversation_id,
+                backend_kind=backend_kind,
+                backend_version=backend_version,
+                runtime_id=runtime_id,
+                binding_capability_epoch=binding_capability_epoch,
+                provider_ref=provider_ref,
+            )
+            session.add(ref)
+            await session.commit()
+            return ref
+
+    async def get_by_conversation(
+        self, conversation_id: UUID
+    ) -> BackendConversationRef | None:
+        async with self._sessions() as session:
+            ref: BackendConversationRef | None = await session.scalar(
+                select(BackendConversationRef).where(
+                    BackendConversationRef.conversation_id == conversation_id
+                )
+            )
+            return ref
+
+    async def get_by_provider_ref(
+        self, provider_ref: str
+    ) -> BackendConversationRef | None:
+        async with self._sessions() as session:
+            ref: BackendConversationRef | None = await session.scalar(
+                select(BackendConversationRef).where(
+                    BackendConversationRef.provider_ref == provider_ref
+                )
+            )
+            return ref
+
+    async def delete(self, conversation_id: UUID) -> bool:
+        async with self._sessions() as session:
+            result = await session.execute(
+                delete(BackendConversationRef)
+                .where(BackendConversationRef.conversation_id == conversation_id)
+                .returning(BackendConversationRef.id)
+            )
+            deleted = result.scalar_one_or_none() is not None
+            await session.commit()
+            return deleted
+
+
+class AgentRuntimeBindingRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def upsert(
+        self,
+        *,
+        binding_id: UUID,
+        runtime_ref: str,
+        runtime_epoch: int,
+        readiness: str = "not_ready",
+    ) -> AgentRuntimeBinding:
+        observed_at = datetime.now(UTC)
+        async with self._sessions() as session:
+            runtime = await session.scalar(
+                select(AgentRuntimeBinding).where(
+                    AgentRuntimeBinding.runtime_ref == runtime_ref,
+                    AgentRuntimeBinding.runtime_epoch == runtime_epoch,
+                )
+            )
+            if runtime is None:
+                runtime = AgentRuntimeBinding(
+                    binding_id=binding_id,
+                    runtime_ref=runtime_ref,
+                    runtime_epoch=runtime_epoch,
+                    readiness=readiness,
+                )
+                session.add(runtime)
+            else:
+                runtime.binding_id = binding_id
+                runtime.readiness = readiness
+                runtime.updated_at = observed_at
+            await session.commit()
+            return runtime
+
+    async def get_by_binding(self, binding_id: UUID) -> AgentRuntimeBinding | None:
+        async with self._sessions() as session:
+            runtime: AgentRuntimeBinding | None = await session.scalar(
+                select(AgentRuntimeBinding).where(
+                    AgentRuntimeBinding.binding_id == binding_id
+                )
+            )
+            return runtime
+
+    async def set_readiness(
+        self, runtime_binding_id: UUID, readiness: str
+    ) -> AgentRuntimeBinding | None:
+        observed_at = datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentRuntimeBinding)
+                .where(AgentRuntimeBinding.id == runtime_binding_id)
+                .values(readiness=readiness, updated_at=observed_at)
+                .returning(AgentRuntimeBinding)
+            )
+            runtime = result.scalar_one_or_none()
+            await session.commit()
+            return runtime
+
+    async def record_health(
+        self,
+        runtime_binding_id: UUID,
+        *,
+        now: datetime | None = None,
+    ) -> AgentRuntimeBinding | None:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentRuntimeBinding)
+                .where(AgentRuntimeBinding.id == runtime_binding_id)
+                .values(last_health_at=observed_at, updated_at=observed_at)
+                .returning(AgentRuntimeBinding)
+            )
+            runtime = result.scalar_one_or_none()
+            await session.commit()
+            return runtime
+
+
+class AgentInboxRepository:
+    """Durable typed Agent input queue (plan §4.2, §7).
+
+    ``admission_seq`` is assigned by the database transaction, never by a
+    client clock.  The assignment uses a single atomic ``INSERT ... SELECT``
+    statement that computes ``COALESCE(MAX(admission_seq), 0) + 1`` for the
+    conversation inside the insert itself.  Because the statement reads and
+    writes in one atomic step and SQLite serializes writers on the database
+    write lock, concurrent enqueues for the same conversation can never
+    produce a duplicate or a gap in ``admission_seq``; the unique
+    ``(conversation_id, admission_seq)`` constraint is the last line of
+    defense.
+    """
+
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def enqueue(
+        self,
+        *,
+        conversation_id: UUID,
+        kind: str,
+        actor_id: str,
+        actor_kind: str,
+        idempotency_key: str,
+        payload_digest: str,
+        source: str,
+        auth_epoch: int | None = None,
+        causation_id: UUID | None = None,
+        correlation_id: UUID | None = None,
+        now: datetime | None = None,
+    ) -> AgentInboxItem:
+        observed_at = now or datetime.now(UTC)
+        effective_correlation_id = correlation_id or uuid4()
+        async with self._sessions() as session:
+            result = await session.execute(
+                insert(AgentInboxItem)
+                .from_select(
+                    [
+                        AgentInboxItem.conversation_id,
+                        AgentInboxItem.kind,
+                        AgentInboxItem.actor_id,
+                        AgentInboxItem.actor_kind,
+                        AgentInboxItem.auth_epoch,
+                        AgentInboxItem.admission_seq,
+                        AgentInboxItem.idempotency_key,
+                        AgentInboxItem.payload_digest,
+                        AgentInboxItem.source,
+                        AgentInboxItem.delivery_state,
+                        AgentInboxItem.attempt_count,
+                        AgentInboxItem.claim_owner,
+                        AgentInboxItem.claim_expires_at,
+                        AgentInboxItem.next_attempt_at,
+                        AgentInboxItem.causation_id,
+                        AgentInboxItem.correlation_id,
+                        AgentInboxItem.created_at,
+                    ],
+                    select(
+                        literal(conversation_id),
+                        literal(kind),
+                        literal(actor_id),
+                        literal(actor_kind),
+                        literal(auth_epoch),
+                        func.coalesce(func.max(AgentInboxItem.admission_seq), 0) + 1,
+                        literal(idempotency_key),
+                        literal(payload_digest),
+                        literal(source),
+                        literal("pending"),
+                        literal(0),
+                        literal(None),
+                        literal(None),
+                        literal(observed_at),
+                        literal(causation_id),
+                        literal(effective_correlation_id),
+                        literal(observed_at),
+                    ).where(AgentInboxItem.conversation_id == conversation_id),
+                )
+                .returning(AgentInboxItem)
+            )
+            item = result.scalar_one()
+            await session.commit()
+            return item
+
+    async def next_pending(
+        self,
+        *,
+        conversation_id: UUID | None = None,
+        limit: int = 10,
+        now: datetime | None = None,
+    ) -> list[AgentInboxItem]:
+        """Return claimable items using the composite claims index.
+
+        An item is claimable when it is pending/retry-waiting/claimed, its
+        retry deadline has passed, and either it has no claim lease or the
+        lease has expired.  An expired ``claimed`` item is intentionally
+        returned so a crashed worker's work can be reclaimed.
+        """
+        observed_at = now or datetime.now(UTC)
+        conditions = [
+            AgentInboxItem.delivery_state.in_(("pending", "retry_wait", "claimed")),
+            AgentInboxItem.next_attempt_at <= observed_at,
+            or_(
+                AgentInboxItem.claim_expires_at.is_(None),
+                AgentInboxItem.claim_expires_at <= observed_at,
+            ),
+        ]
+        if conversation_id is not None:
+            conditions.append(AgentInboxItem.conversation_id == conversation_id)
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentInboxItem)
+                .where(*conditions)
+                .order_by(
+                    AgentInboxItem.conversation_id,
+                    AgentInboxItem.admission_seq,
+                )
+                .limit(limit)
+            )
+            return list(rows)
+
+    async def claim(
+        self,
+        item_id: UUID,
+        owner: str,
+        *,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> AgentInboxItem | None:
+        """CAS-claim an item under an owner lease (fencing token).
+
+        ``owner`` is the unique fencing token for this claim attempt; only
+        that owner may later dispatch the item while the lease is live.
+        """
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentInboxItem)
+                .where(
+                    AgentInboxItem.id == item_id,
+                    AgentInboxItem.delivery_state.in_(
+                        ("pending", "retry_wait", "claimed")
+                    ),
+                    AgentInboxItem.next_attempt_at <= observed_at,
+                    or_(
+                        AgentInboxItem.claim_expires_at.is_(None),
+                        AgentInboxItem.claim_expires_at <= observed_at,
+                    ),
+                )
+                .values(
+                    delivery_state="claimed",
+                    claim_owner=owner,
+                    claim_expires_at=observed_at + timedelta(seconds=lease_seconds),
+                )
+                .returning(AgentInboxItem)
+            )
+            item = result.scalar_one_or_none()
+            await session.commit()
+            return item
+
+    async def mark_dispatched(
+        self,
+        item_id: UUID,
+        owner: str,
+        *,
+        now: datetime | None = None,
+    ) -> AgentInboxItem | None:
+        """Fence the dispatch on the live claim: only the lease holder can mark
+        the item dispatched before the lease expires."""
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentInboxItem)
+                .where(
+                    AgentInboxItem.id == item_id,
+                    AgentInboxItem.delivery_state == "claimed",
+                    AgentInboxItem.claim_owner == owner,
+                    AgentInboxItem.claim_expires_at > observed_at,
+                )
+                .values(
+                    delivery_state="dispatched",
+                    claim_owner=None,
+                    claim_expires_at=None,
+                    next_attempt_at=None,
+                )
+                .returning(AgentInboxItem)
+            )
+            item = result.scalar_one_or_none()
+            await session.commit()
+            return item
+
+    async def mark_retry(
+        self,
+        item_id: UUID,
+        *,
+        next_attempt_at: datetime,
+    ) -> AgentInboxItem | None:
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentInboxItem)
+                .where(
+                    AgentInboxItem.id == item_id,
+                    AgentInboxItem.delivery_state.in_(
+                        ("pending", "claimed", "retry_wait")
+                    ),
+                )
+                .values(
+                    delivery_state="retry_wait",
+                    attempt_count=AgentInboxItem.attempt_count + 1,
+                    next_attempt_at=next_attempt_at,
+                    claim_owner=None,
+                    claim_expires_at=None,
+                )
+                .returning(AgentInboxItem)
+            )
+            item = result.scalar_one_or_none()
+            await session.commit()
+            return item
+
+    async def dead_letter(
+        self,
+        item_id: UUID,
+    ) -> AgentInboxItem | None:
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentInboxItem)
+                .where(
+                    AgentInboxItem.id == item_id,
+                    AgentInboxItem.delivery_state.in_(
+                        ("pending", "claimed", "retry_wait")
+                    ),
+                )
+                .values(
+                    delivery_state="dead_letter",
+                    claim_owner=None,
+                    claim_expires_at=None,
+                    next_attempt_at=None,
+                )
+                .returning(AgentInboxItem)
+            )
+            item = result.scalar_one_or_none()
+            await session.commit()
+            return item
+
+    async def mark_cancelled(
+        self,
+        item_id: UUID,
+    ) -> AgentInboxItem | None:
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentInboxItem)
+                .where(
+                    AgentInboxItem.id == item_id,
+                    AgentInboxItem.delivery_state.in_(
+                        ("pending", "claimed", "retry_wait")
+                    ),
+                )
+                .values(
+                    delivery_state="cancelled",
+                    claim_owner=None,
+                    claim_expires_at=None,
+                    next_attempt_at=None,
+                )
+                .returning(AgentInboxItem)
+            )
+            item = result.scalar_one_or_none()
+            await session.commit()
+            return item
+
+    async def get_by_idempotency_key(
+        self, idempotency_key: str
+    ) -> AgentInboxItem | None:
+        async with self._sessions() as session:
+            item: AgentInboxItem | None = await session.scalar(
+                select(AgentInboxItem).where(
+                    AgentInboxItem.idempotency_key == idempotency_key
+                )
+            )
+            return item
+
+    async def list_for_conversation(
+        self,
+        conversation_id: UUID,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[AgentInboxItem]:
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentInboxItem)
+                .where(AgentInboxItem.conversation_id == conversation_id)
+                .order_by(AgentInboxItem.admission_seq)
+                .limit(limit)
+                .offset(offset)
+            )
+            return list(rows)
+
+
+class AgentToolRequestRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def create(
+        self,
+        *,
+        binding_id: UUID,
+        tool_call_id: str,
+        request_key: str,
+        arguments_digest: str,
+        run_id: UUID | None = None,
+    ) -> AgentToolRequest:
+        async with self._sessions() as session:
+            request = AgentToolRequest(
+                binding_id=binding_id,
+                run_id=run_id,
+                tool_call_id=tool_call_id,
+                request_key=request_key,
+                arguments_digest=arguments_digest,
+            )
+            session.add(request)
+            await session.commit()
+            return request
+
+    async def get_by_key(self, request_key: str) -> AgentToolRequest | None:
+        async with self._sessions() as session:
+            request: AgentToolRequest | None = await session.scalar(
+                select(AgentToolRequest).where(
+                    AgentToolRequest.request_key == request_key
+                )
+            )
+            return request
+
+    async def record_result(
+        self, request_key: str, result_digest: str
+    ) -> AgentToolRequest | None:
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentToolRequest)
+                .where(AgentToolRequest.request_key == request_key)
+                .values(recorded_result_digest=result_digest)
+                .returning(AgentToolRequest)
+            )
+            request = result.scalar_one_or_none()
+            await session.commit()
+            return request
+
+    async def reject_duplicate_key_different_args(
+        self, request_key: str, arguments_digest: str
+    ) -> AgentToolRequest | None:
+        """Guard a side-effect replay: the request key is single-use for its
+        canonical arguments hash.  Same key + same digest returns the recorded
+        row; same key + a different digest is rejected."""
+        async with self._sessions() as session:
+            request: AgentToolRequest | None = await session.scalar(
+                select(AgentToolRequest).where(
+                    AgentToolRequest.request_key == request_key
+                )
+            )
+            if request is None:
+                return None
+            if request.arguments_digest != arguments_digest:
+                raise AgentToolRequestKeyConflict(request_key)
+            return request
+
+
+class AgentRunRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def create(
+        self,
+        *,
+        conversation_id: UUID,
+        run_state: str = "queued",
+        started_at: datetime | None = None,
+        backend_run_id: str | None = None,
+    ) -> AgentRun:
+        observed_at = started_at or datetime.now(UTC)
+        async with self._sessions() as session:
+            run = AgentRun(
+                conversation_id=conversation_id,
+                run_state=run_state,
+                started_at=observed_at,
+                backend_run_id=backend_run_id,
+            )
+            session.add(run)
+            await session.commit()
+            return run
+
+    async def get_by_id(self, run_id: UUID) -> AgentRun | None:
+        async with self._sessions() as session:
+            return await session.get(AgentRun, run_id)
+
+    async def list_for_conversation(
+        self,
+        conversation_id: UUID,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[AgentRun]:
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentRun)
+                .where(AgentRun.conversation_id == conversation_id)
+                .order_by(AgentRun.started_at.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+            return list(rows)
+
+    async def set_state(
+        self,
+        run_id: UUID,
+        new_state: str,
+        *,
+        expected_state: str | None = None,
+        error_code: str | None = None,
+        now: datetime | None = None,
+    ) -> AgentRun | None:
+        observed_at = now or datetime.now(UTC)
+        conditions = [AgentRun.id == run_id]
+        if expected_state is not None:
+            conditions.append(AgentRun.run_state == expected_state)
+        values: dict[str, object] = {"run_state": new_state}
+        if new_state in ("completed", "failed", "cancelled", "unknown"):
+            values["completed_at"] = observed_at
+        if error_code is not None:
+            values["error_code"] = error_code
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentRun).where(*conditions).values(**values).returning(AgentRun)
+            )
+            run = result.scalar_one_or_none()
+            await session.commit()
+            return run
+
+    async def set_backend_run_id(
+        self, run_id: UUID, backend_run_id: str
+    ) -> AgentRun | None:
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentRun)
+                .where(AgentRun.id == run_id)
+                .values(backend_run_id=backend_run_id)
+                .returning(AgentRun)
+            )
+            run = result.scalar_one_or_none()
+            await session.commit()
+            return run
+
+
+class AgentMessageRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def create(
+        self,
+        *,
+        conversation_id: UUID,
+        role: str,
+        kind: str,
+        body_digest: str,
+        run_id: UUID | None = None,
+        is_final: bool = False,
+        assembly_revision: int | None = None,
+    ) -> AgentMessage:
+        observed_at = datetime.now(UTC)
+        revision = (
+            literal(assembly_revision)
+            if assembly_revision is not None
+            else func.coalesce(func.max(AgentMessage.assembly_revision), 0) + 1
+        )
+        async with self._sessions() as session:
+            result = await session.execute(
+                insert(AgentMessage)
+                .from_select(
+                    [
+                        AgentMessage.conversation_id,
+                        AgentMessage.run_id,
+                        AgentMessage.role,
+                        AgentMessage.kind,
+                        AgentMessage.assembly_revision,
+                        AgentMessage.is_final,
+                        AgentMessage.body_digest,
+                        AgentMessage.created_at,
+                    ],
+                    select(
+                        literal(conversation_id),
+                        literal(run_id),
+                        literal(role),
+                        literal(kind),
+                        revision,
+                        literal(is_final),
+                        literal(body_digest),
+                        literal(observed_at),
+                    )
+                    .where(AgentMessage.conversation_id == conversation_id)
+                    .limit(1),
+                )
+                .returning(AgentMessage)
+            )
+            message = result.scalar_one()
+            await session.commit()
+            return message
+
+    async def list_for_conversation(
+        self,
+        conversation_id: UUID,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[AgentMessage]:
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentMessage)
+                .where(AgentMessage.conversation_id == conversation_id)
+                .order_by(AgentMessage.assembly_revision)
+                .limit(limit)
+                .offset(offset)
+            )
+            return list(rows)
+
+    async def latest_revision(self, conversation_id: UUID) -> int | None:
+        async with self._sessions() as session:
+            revision = await session.scalar(
+                select(func.max(AgentMessage.assembly_revision)).where(
+                    AgentMessage.conversation_id == conversation_id
+                )
+            )
+            return int(revision) if revision is not None else None
+
+
+class AgentEventRepository:
+    """Canonical product events with a B-assigned monotonic conversation cursor
+    (plan §4.4).
+
+    ``database_seq`` is assigned by the same atomic ``INSERT ... SELECT``
+    pattern as inbox ``admission_seq``: the sequence is computed inside the
+    insert statement against the conversation's existing maximum, so it is
+    database-assigned, monotonic per conversation, and safe under concurrent
+    appends.  Re-appending the same ``dedup_key`` for a conversation returns
+    the original event instead of inserting a second row.
+    """
+
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def append(
+        self,
+        *,
+        conversation_id: UUID,
+        event_kind: str,
+        dedup_key: str,
+        payload_digest: str,
+        run_id: UUID | None = None,
+        ephemeral: bool = False,
+    ) -> AgentEvent:
+        observed_at = datetime.now(UTC)
+        async with self._sessions() as session:
+            existing: AgentEvent | None = await session.scalar(
+                select(AgentEvent).where(
+                    AgentEvent.conversation_id == conversation_id,
+                    AgentEvent.dedup_key == dedup_key,
+                )
+            )
+            if existing is not None:
+                return existing
+            result = await session.execute(
+                insert(AgentEvent)
+                .from_select(
+                    [
+                        AgentEvent.conversation_id,
+                        AgentEvent.run_id,
+                        AgentEvent.event_kind,
+                        AgentEvent.dedup_key,
+                        AgentEvent.database_seq,
+                        AgentEvent.payload_digest,
+                        AgentEvent.ephemeral,
+                        AgentEvent.created_at,
+                    ],
+                    select(
+                        literal(conversation_id),
+                        literal(run_id),
+                        literal(event_kind),
+                        literal(dedup_key),
+                        func.coalesce(func.max(AgentEvent.database_seq), 0) + 1,
+                        literal(payload_digest),
+                        literal(ephemeral),
+                        literal(observed_at),
+                    ).where(AgentEvent.conversation_id == conversation_id),
+                )
+                .returning(AgentEvent)
+            )
+            event = result.scalar_one()
+            await session.commit()
+            return event
+
+    async def list_since_cursor(
+        self,
+        conversation_id: UUID,
+        cursor: int,
+        *,
+        limit: int | None = None,
+    ) -> list[AgentEvent]:
+        stmt = (
+            select(AgentEvent)
+            .where(
+                AgentEvent.conversation_id == conversation_id,
+                AgentEvent.database_seq > cursor,
+            )
+            .order_by(AgentEvent.database_seq)
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        async with self._sessions() as session:
+            rows = await session.scalars(stmt)
+            return list(rows)
+
+    async def list_for_conversation(
+        self,
+        conversation_id: UUID,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[AgentEvent]:
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentEvent)
+                .where(AgentEvent.conversation_id == conversation_id)
+                .order_by(AgentEvent.database_seq)
+                .limit(limit)
+                .offset(offset)
+            )
+            return list(rows)
+
+
+class AgentTokenRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def create(
+        self,
+        *,
+        binding_id: UUID,
+        token_hash: str,
+        scopes: tuple[str, ...],
+        expiry_epoch: int,
+        binding_epoch: int,
+    ) -> AgentToken:
+        async with self._sessions() as session:
+            token = AgentToken(
+                binding_id=binding_id,
+                token_hash=token_hash,
+                scopes=_encode_scopes(scopes),
+                expiry_epoch=expiry_epoch,
+                binding_epoch=binding_epoch,
+            )
+            session.add(token)
+            await session.commit()
+            return token
+
+    async def get_by_hash(self, token_hash: str) -> AgentToken | None:
+        async with self._sessions() as session:
+            token: AgentToken | None = await session.scalar(
+                select(AgentToken).where(AgentToken.token_hash == token_hash)
+            )
+            return token
+
+    async def list_for_binding(self, binding_id: UUID) -> list[AgentToken]:
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentToken)
+                .where(AgentToken.binding_id == binding_id)
+                .order_by(AgentToken.created_at)
+            )
+            return list(rows)
+
+    async def revoke(
+        self,
+        token_hash: str,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentToken)
+                .where(
+                    AgentToken.token_hash == token_hash,
+                    AgentToken.revoked_at.is_(None),
+                )
+                .values(revoked_at=observed_at)
+                .returning(AgentToken.id)
+            )
+            revoked = result.scalar_one_or_none() is not None
+            await session.commit()
+            return revoked
+
+    async def expire_all_for_binding(
+        self,
+        binding_id: UUID,
+        *,
+        now: datetime | None = None,
+    ) -> int:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    update(AgentToken)
+                    .where(
+                        AgentToken.binding_id == binding_id,
+                        AgentToken.revoked_at.is_(None),
+                    )
+                    .values(revoked_at=observed_at)
+                ),
+            )
+            count = int(result.rowcount or 0)
+            await session.commit()
+            return count
+
+
+class PanePolicyRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def set_policy(
+        self,
+        *,
+        binding_id: UUID,
+        pane_id: str,
+        allowed: bool,
+    ) -> PanePolicy:
+        async with self._sessions() as session:
+            policy = await session.scalar(
+                select(PanePolicy).where(
+                    PanePolicy.binding_id == binding_id,
+                    PanePolicy.pane_id == pane_id,
+                )
+            )
+            if policy is None:
+                policy = PanePolicy(
+                    binding_id=binding_id,
+                    pane_id=pane_id,
+                    allowed=allowed,
+                )
+                session.add(policy)
+            else:
+                policy.allowed = allowed
+            await session.commit()
+            return policy
+
+    async def get_for_binding(self, binding_id: UUID) -> list[PanePolicy]:
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(PanePolicy)
+                .where(PanePolicy.binding_id == binding_id)
+                .order_by(PanePolicy.pane_id)
+            )
+            return list(rows)
+
+    async def pane_allowed(self, binding_id: UUID, pane_id: str) -> bool | None:
+        async with self._sessions() as session:
+            allowed = await session.scalar(
+                select(PanePolicy.allowed).where(
+                    PanePolicy.binding_id == binding_id,
+                    PanePolicy.pane_id == pane_id,
+                )
+            )
+            return allowed
+
+
+class ApprovalRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def create(
+        self,
+        *,
+        binding_id: UUID,
+        conversation_id: UUID,
+        tool_call_id: str,
+        canonical_hash: str,
+        auth_epoch: int,
+        expires_at: datetime,
+        run_id: UUID | None = None,
+        state: str = "pending",
+    ) -> ApprovalRequest:
+        async with self._sessions() as session:
+            approval = ApprovalRequest(
+                binding_id=binding_id,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                tool_call_id=tool_call_id,
+                canonical_hash=canonical_hash,
+                state=state,
+                expires_at=expires_at,
+                auth_epoch=auth_epoch,
+            )
+            session.add(approval)
+            await session.commit()
+            return approval
+
+    async def get_by_id(self, approval_id: UUID) -> ApprovalRequest | None:
+        async with self._sessions() as session:
+            return await session.get(ApprovalRequest, approval_id)
+
+    async def get_by_tool_call(
+        self, conversation_id: UUID, tool_call_id: str
+    ) -> ApprovalRequest | None:
+        async with self._sessions() as session:
+            approval: ApprovalRequest | None = await session.scalar(
+                select(ApprovalRequest).where(
+                    ApprovalRequest.conversation_id == conversation_id,
+                    ApprovalRequest.tool_call_id == tool_call_id,
+                )
+            )
+            return approval
+
+    async def set_state(
+        self,
+        approval_id: UUID,
+        new_state: str,
+        *,
+        expected_state: str = "pending",
+        decision: str | None = None,
+        now: datetime | None = None,
+    ) -> ApprovalRequest | None:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            if new_state == expected_state:
+                # A no-op transition must not stamp decided_at on a decision.
+                return await session.get(ApprovalRequest, approval_id)
+            result = await session.execute(
+                update(ApprovalRequest)
+                .where(
+                    ApprovalRequest.id == approval_id,
+                    ApprovalRequest.state == expected_state,
+                )
+                .values(
+                    state=new_state,
+                    decided_at=observed_at,
+                    decision=decision,
+                )
+                .returning(ApprovalRequest)
+            )
+            approval = result.scalar_one_or_none()
+            await session.commit()
+            return approval
+
+    async def expire_pending(self, *, now: datetime | None = None) -> int:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    update(ApprovalRequest)
+                    .where(
+                        ApprovalRequest.state == "pending",
+                        ApprovalRequest.expires_at <= observed_at,
+                    )
+                    .values(state="expired", decided_at=observed_at, decision="expired")
+                ),
+            )
+            count = int(result.rowcount or 0)
+            await session.commit()
+            return count
+
+
+class WatchRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def create(
+        self,
+        *,
+        binding_id: UUID,
+        conversation_id: UUID,
+        pane_id: str,
+        condition_kind: str,
+        start_cursor: str,
+        intent_summary: str,
+        watch_generation: int = 0,
+        rearm_cursor: str | None = None,
+        expiry_at: datetime | None = None,
+        one_shot: bool = False,
+        state: str = "active",
+    ) -> Watch:
+        async with self._sessions() as session:
+            watch = Watch(
+                binding_id=binding_id,
+                conversation_id=conversation_id,
+                pane_id=pane_id,
+                condition_kind=condition_kind,
+                start_cursor=start_cursor,
+                watch_generation=watch_generation,
+                rearm_cursor=rearm_cursor,
+                intent_summary=intent_summary,
+                expiry_at=expiry_at,
+                one_shot=one_shot,
+                state=state,
+            )
+            session.add(watch)
+            await session.commit()
+            return watch
+
+    async def get_by_id(self, watch_id: UUID) -> Watch | None:
+        async with self._sessions() as session:
+            return await session.get(Watch, watch_id)
+
+    async def list_for_binding(self, binding_id: UUID) -> list[Watch]:
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(Watch)
+                .where(Watch.binding_id == binding_id)
+                .order_by(Watch.created_at)
+            )
+            return list(rows)
+
+    async def list_active(self, *, now: datetime | None = None) -> list[Watch]:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(Watch)
+                .where(
+                    Watch.state == "active",
+                    or_(
+                        Watch.expiry_at.is_(None),
+                        Watch.expiry_at > observed_at,
+                    ),
+                )
+                .order_by(Watch.created_at)
+            )
+            return list(rows)
+
+    async def advance_generation(
+        self,
+        watch_id: UUID,
+        *,
+        rearm_cursor: str | None = None,
+    ) -> Watch | None:
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(Watch)
+                .where(Watch.id == watch_id)
+                .values(
+                    watch_generation=Watch.watch_generation + 1,
+                    rearm_cursor=rearm_cursor,
+                )
+                .returning(Watch)
+            )
+            watch = result.scalar_one_or_none()
+            await session.commit()
+            return watch
+
+    async def cancel(self, watch_id: UUID) -> Watch | None:
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(Watch)
+                .where(Watch.id == watch_id, Watch.state == "active")
+                .values(state="cancelled")
+                .returning(Watch)
+            )
+            watch = result.scalar_one_or_none()
+            await session.commit()
+            return watch
+
+    async def set_expiry(self, watch_id: UUID, expiry_at: datetime) -> Watch | None:
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(Watch)
+                .where(Watch.id == watch_id)
+                .values(expiry_at=expiry_at)
+                .returning(Watch)
+            )
+            watch = result.scalar_one_or_none()
+            await session.commit()
+            return watch
+
+
+class WatchDeliveryRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def create_unique(
+        self,
+        *,
+        watch_id: UUID,
+        delivery_key: str,
+        trigger_event_id: UUID | None = None,
+        inbox_item_id: UUID | None = None,
+    ) -> WatchDelivery:
+        """Create a delivery receipt exactly once per delivery key; a duplicate
+        key returns the already-persisted receipt."""
+        try:
+            async with self._sessions() as session:
+                delivery = WatchDelivery(
+                    watch_id=watch_id,
+                    delivery_key=delivery_key,
+                    trigger_event_id=trigger_event_id,
+                    inbox_item_id=inbox_item_id,
+                )
+                session.add(delivery)
+                await session.commit()
+                return delivery
+        except IntegrityError:
+            return await self.get_by_key(delivery_key)
+
+    async def get_by_key(self, delivery_key: str) -> WatchDelivery | None:
+        async with self._sessions() as session:
+            delivery: WatchDelivery | None = await session.scalar(
+                select(WatchDelivery).where(
+                    WatchDelivery.delivery_key == delivery_key
+                )
+            )
+            return delivery
+
+    async def record_attempt(
+        self,
+        delivery_id: UUID,
+        *,
+        last_error: str | None = None,
+        next_attempt_at: datetime | None = None,
+    ) -> WatchDelivery | None:
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(WatchDelivery)
+                .where(WatchDelivery.id == delivery_id)
+                .values(
+                    attempt_count=WatchDelivery.attempt_count + 1,
+                    last_error=last_error,
+                    next_attempt_at=next_attempt_at,
+                )
+                .returning(WatchDelivery)
+            )
+            delivery = result.scalar_one_or_none()
+            await session.commit()
+            return delivery
+
+
+class TranscriptDraftRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def create(
+        self,
+        *,
+        binding_id: UUID,
+        target_conversation_id: UUID,
+        owner_actor_id: str,
+        transcript_hash: str,
+        provider: str,
+        region: str,
+        expires_at: datetime,
+        state: str = "pending",
+    ) -> TranscriptDraft:
+        async with self._sessions() as session:
+            draft = TranscriptDraft(
+                binding_id=binding_id,
+                target_conversation_id=target_conversation_id,
+                owner_actor_id=owner_actor_id,
+                transcript_hash=transcript_hash,
+                state=state,
+                provider=provider,
+                region=region,
+                expires_at=expires_at,
+            )
+            session.add(draft)
+            await session.commit()
+            return draft
+
+    async def get_by_id(self, draft_id: UUID) -> TranscriptDraft | None:
+        async with self._sessions() as session:
+            return await session.get(TranscriptDraft, draft_id)
+
+    async def set_state(
+        self,
+        draft_id: UUID,
+        new_state: str,
+        *,
+        expected_state: str = "pending",
+    ) -> TranscriptDraft | None:
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(TranscriptDraft)
+                .where(
+                    TranscriptDraft.id == draft_id,
+                    TranscriptDraft.state == expected_state,
+                )
+                .values(state=new_state)
+                .returning(TranscriptDraft)
+            )
+            draft = result.scalar_one_or_none()
+            await session.commit()
+            return draft
+
+    async def expire_pending(self, *, now: datetime | None = None) -> int:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    update(TranscriptDraft)
+                    .where(
+                        TranscriptDraft.state == "pending",
+                        TranscriptDraft.expires_at <= observed_at,
+                    )
+                    .values(state="expired")
+                ),
+            )
+            count = int(result.rowcount or 0)
+            await session.commit()
+            return count
+
+    async def delete(
+        self,
+        draft_id: UUID,
+        *,
+        raw_audio_cleanup: bool = True,
+    ) -> bool:
+        """Delete the draft row and commit to out-of-band raw-audio cleanup.
+
+        The database row holds only a transcript hash, never raw audio; the
+        caller uses ``raw_audio_cleanup`` to signal that the associated
+        short-lived audio blob (stored outside the database) must be deleted.
+        """
+        async with self._sessions() as session:
+            result = await session.execute(
+                delete(TranscriptDraft)
+                .where(TranscriptDraft.id == draft_id)
+                .returning(TranscriptDraft.id)
+            )
+            deleted = result.scalar_one_or_none() is not None
+            await session.commit()
+            return deleted
+
+
+class CleanupJobRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def create(
+        self,
+        *,
+        target_kind: str,
+        target_ref: str,
+        term_id: UUID | None = None,
+        installation_id: UUID | None = None,
+        state: str = "pending",
+        next_attempt_at: datetime | None = None,
+    ) -> AgentCleanupJob:
+        async with self._sessions() as session:
+            job = AgentCleanupJob(
+                term_id=term_id,
+                installation_id=installation_id,
+                target_kind=target_kind,
+                target_ref=target_ref,
+                state=state,
+                next_attempt_at=next_attempt_at,
+            )
+            session.add(job)
+            await session.commit()
+            return job
+
+    async def list_pending(
+        self,
+        *,
+        now: datetime | None = None,
+        limit: int = 50,
+    ) -> list[AgentCleanupJob]:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentCleanupJob)
+                .where(
+                    AgentCleanupJob.state == "pending",
+                    or_(
+                        AgentCleanupJob.next_attempt_at.is_(None),
+                        AgentCleanupJob.next_attempt_at <= observed_at,
+                    ),
+                )
+                .order_by(AgentCleanupJob.created_at)
+                .limit(limit)
+            )
+            return list(rows)
+
+    async def record_attempt(
+        self,
+        job_id: UUID,
+        *,
+        next_attempt_at: datetime,
+        last_error: str | None = None,
+    ) -> AgentCleanupJob | None:
+        observed_at = datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentCleanupJob)
+                .where(AgentCleanupJob.id == job_id)
+                .values(
+                    attempt_count=AgentCleanupJob.attempt_count + 1,
+                    next_attempt_at=next_attempt_at,
+                    last_error=last_error,
+                    updated_at=observed_at,
+                )
+                .returning(AgentCleanupJob)
+            )
+            job = result.scalar_one_or_none()
+            await session.commit()
+            return job
+
+    async def complete(
+        self,
+        job_id: UUID,
+        *,
+        now: datetime | None = None,
+    ) -> AgentCleanupJob | None:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentCleanupJob)
+                .where(
+                    AgentCleanupJob.id == job_id,
+                    AgentCleanupJob.state == "pending",
+                )
+                .values(state="completed", updated_at=observed_at)
+                .returning(AgentCleanupJob)
+            )
+            job = result.scalar_one_or_none()
+            await session.commit()
+            return job
+
+    async def dead_letter(
+        self,
+        job_id: UUID,
+        *,
+        last_error: str | None = None,
+        now: datetime | None = None,
+    ) -> AgentCleanupJob | None:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentCleanupJob)
+                .where(
+                    AgentCleanupJob.id == job_id,
+                    AgentCleanupJob.state == "pending",
+                )
+                .values(
+                    state="dead_letter",
+                    last_error=last_error,
+                    updated_at=observed_at,
+                )
+                .returning(AgentCleanupJob)
+            )
+            job = result.scalar_one_or_none()
+            await session.commit()
+            return job
+
+
+class DiagnosticsRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def append(
+        self,
+        *,
+        conversation_id: UUID | None,
+        event_kind: str,
+        correlation_hash: str,
+        ttl_expires_at: datetime,
+        provider_type: str | None = None,
+        provider_session_id: str | None = None,
+        provider_run_id: str | None = None,
+        error_code: str | None = None,
+        payload_metadata: str | None = None,
+    ) -> AgentDiagnostic:
+        async with self._sessions() as session:
+            diagnostic = AgentDiagnostic(
+                conversation_id=conversation_id,
+                event_kind=event_kind,
+                provider_type=provider_type,
+                provider_session_id=provider_session_id,
+                provider_run_id=provider_run_id,
+                error_code=error_code,
+                correlation_hash=correlation_hash,
+                payload_metadata=payload_metadata,
+                ttl_expires_at=ttl_expires_at,
+            )
+            session.add(diagnostic)
+            await session.commit()
+            return diagnostic
+
+    async def prune_expired(self, *, now: datetime | None = None) -> int:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    delete(AgentDiagnostic).where(
+                        AgentDiagnostic.ttl_expires_at <= observed_at
+                    )
+                ),
+            )
+            count = int(result.rowcount or 0)
+            await session.commit()
+            return count
+
+
 class RepositoryBundle:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
@@ -2307,6 +4124,26 @@ class RepositoryBundle:
         self.oauth_authorizations = OAuthAuthorizationRepository(sessions)
         self.auth_tokens = AuthTokenRepository(sessions)
         self.auth_audit = AuthAuditRepository(sessions)
+        # Agent Broker domain repositories (plan §15).
+        self.agent_profiles = AgentProfileRepository(sessions)
+        self.agent_bindings = AgentBindingRepository(sessions)
+        self.agent_memory_scopes = AgentMemoryScopeRepository(sessions)
+        self.agent_conversations = AgentConversationRepository(sessions)
+        self.agent_backend_conversations = AgentBackendConversationRepository(sessions)
+        self.agent_runtime_bindings = AgentRuntimeBindingRepository(sessions)
+        self.agent_inbox = AgentInboxRepository(sessions)
+        self.agent_tool_requests = AgentToolRequestRepository(sessions)
+        self.agent_runs = AgentRunRepository(sessions)
+        self.agent_messages = AgentMessageRepository(sessions)
+        self.agent_events = AgentEventRepository(sessions)
+        self.agent_tokens = AgentTokenRepository(sessions)
+        self.pane_policies = PanePolicyRepository(sessions)
+        self.approvals = ApprovalRepository(sessions)
+        self.watches = WatchRepository(sessions)
+        self.agent_watch_deliveries = WatchDeliveryRepository(sessions)
+        self.transcript_drafts = TranscriptDraftRepository(sessions)
+        self.cleanup_jobs = CleanupJobRepository(sessions)
+        self.diagnostics = DiagnosticsRepository(sessions)
 
     async def purge_expired(self, *, now: datetime) -> dict[str, int]:
         """Delete rows past their expiry; native clients are retained forever."""
