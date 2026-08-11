@@ -1,0 +1,155 @@
+# OpenCode Reference Backend — Capability Matrix (M0 pin)
+
+This fixture records the **documented** capability matrix for the OpenCode
+reference backend adapter (plan §6, §6.1, §6.2.1, §10). Every dimension below
+is a documented contract expectation. Nothing here is verified against a live
+OpenCode container yet: live-container contract tests happen at M4, and until
+they pass every dimension carries `verification_status: "unknown"` (or
+`"unsupported"`). Unverified behavior is never silently marked "yes".
+
+The machine-readable matrix is the embedded `termflow-capability-matrix`
+JSON block; the tables below are the human-readable form.
+
+## 1. Accepted AgentInput kinds (plan §6 mapping)
+
+| AgentInput kind | Mapping | Verification |
+| --- | --- | --- |
+| `user_message` | `supported` — normal user text part | `unknown` (M4) |
+| `watch_triggered` | `supported` — user-visible input part carrying a structured TermFlow event; terminal observation explicitly untrusted, never a developer/system instruction | `unknown` (M4) |
+| `permission_resolved` | `supported` via the optional `BackendInteraction` facet — resolved through `POST /session/:id/permissions/:permissionID`; provider permission state is never promoted into B terminal authority | `unknown` (M4) |
+| `timer_triggered` | `supported` — bounded, user-visible typed text/event part | `unknown` (M4) |
+| `system_notification` | `supported` — bounded, user-visible typed text/event part | `unknown` (M4) |
+| any other kind | `unsupported` — remains queued and fails closed, emitting a canonical `RunFailed` or diagnostic event; never silently coerced | `unknown` (M4) |
+
+## 2. Event dedup identity (plan §6.1 step 7)
+
+Deduplication uses backend event/message/part IDs plus B's run mapping. The
+captured OpenAPI spec confirms the identity components available on the wire.
+
+| Component | Source | Verification |
+| --- | --- | --- |
+| `directory` | `GlobalEvent.directory` (every `/global/event` envelope) | `unknown` (M4) |
+| event `id` | SSE event payload `id` (pattern `^evt_`) | `unknown` (M4) |
+| message `id` | `Message.id` (pattern `^msg`) | `unknown` (M4) |
+| part `id` | `Part.id` (pattern `^prt`) | `unknown` (M4) |
+| permission `id` | `PermissionRequest.id` / permission events (pattern `^per`) | `unknown` (M4) |
+| session `id` | `Session.id` (pattern `^ses`) | `unknown` (M4) |
+| B run mapping | B-side mapping from canonical run to backend conversation/message IDs | `unknown` (M4) |
+
+## 3. Submit idempotency (plan §6.1)
+
+| Property | Value | Verification |
+| --- | --- | --- |
+| `mode` | `non_idempotent` | `unknown` (M4) |
+| `prompt_async` response | `204 No Content` | `unknown` (M4) |
+| transport idempotency key | `none` | `unknown` (M4) |
+| client-supplied `messageID` body field | available for reconciliation, not an idempotency guarantee | `unknown` (M4) |
+| exactly-once claim | never made — "no silent duplicate action"; uncertain delivery is `delivery_unknown`, a visible recoverable state | `unknown` (M4) |
+
+## 4. Run-boundary inference
+
+| Property | Value | Verification |
+| --- | --- | --- |
+| `mode` | `inferred` — boundaries inferred from `SessionStatus` (`idle`/`busy`/`retry`) transitions and message/step events (`session.status`, `session.idle`, `message.updated`, `step-start`, `step-finish`) | `unknown` (M4) |
+| explicit backend run id | `none` — B tracks runs via its own canonical run mapping | `unknown` (M4) |
+
+## 5. Cancel semantics
+
+| Property | Value | Verification |
+| --- | --- | --- |
+| `scope` | `conversation` — `POST /session/:id/abort` aborts the running session (the in-flight message); there is no finer per-run cancel endpoint | `unknown` (M4) |
+| `endpoint` | `POST /session/:id/abort` (returns `boolean`) | `unknown` (M4) |
+| fail-closed | cancel during drain/epoch rotation leaves the old run `unknown` and blocks activation of the new conversation (§6.2.1) | `unknown` (M4) |
+
+## 6. Resume / delete
+
+| Property | Value | Verification |
+| --- | --- | --- |
+| `context_mode` | `resume_requires_volume_proof` — resume only when the runtime persistence volume and health contract prove backend context survived restart; otherwise B marks the context lost and offers a new conversation fork from its curated transcript (plan §6) | `unknown` (M4) |
+| `context_lost_fallback` | `fork_from_curated_transcript` | `unknown` (M4) |
+| `delete_endpoint` | `DELETE /session/:id` — idempotent backend cleanup | `unknown` (M4) |
+
+## 7. Runtime / conversation isolation (plan §6.2.1)
+
+| Property | Value | Verification |
+| --- | --- | --- |
+| `runtime_isolation` | `binding` — one runtime/container is never shared across bindings unless an adapter capability explicitly proves per-binding tool isolation | `unknown` (M4) |
+| `concurrency_mode` | `serialized` — one active Agent Run per binding; a second conversation waits in the Inbox | `unknown` (M4) |
+| `tool_call_identity` | `run` — the active-run lease is the v0.2 tool-call attribution mechanism | `unknown` (M4) |
+| `one_active_run_per_binding` | `contractual` — required by the v0.2 safety default | `unknown` (M4) |
+| `epoch_bound_mcp_capability` | `contractual` — freshly provisioned epoch-bound binding token; late old-epoch calls are rejected and recorded, never reassigned | `unknown` (M4) |
+
+---
+
+```json termflow-capability-matrix
+{
+  "backend": "opencode",
+  "matrix_version": "0.2.0-m0",
+  "verification_note": "Documented contract only; live-container verification is M4. Every dimension carries verification_status unknown/unsupported until then; unverified items are never silently marked yes.",
+  "dimensions": {
+    "accepted_input_kinds": {
+      "user_message": "supported",
+      "watch_triggered": "supported",
+      "permission_resolved": "supported_via_optional_backendinteraction",
+      "timer_triggered": "supported",
+      "system_notification": "supported",
+      "unsupported_kind_behavior": "fail_closed",
+      "verification_status": "unknown"
+    },
+    "event_dedup_identity": {
+      "identity_components": [
+        "directory",
+        "event_id",
+        "message_id",
+        "part_id",
+        "permission_id",
+        "session_id",
+        "run_mapping"
+      ],
+      "dedup_rule": "backend event/message/part IDs plus B run mapping (plan §6.1)",
+      "verification_status": "unknown"
+    },
+    "submit_idempotency": {
+      "mode": "non_idempotent",
+      "prompt_async_status": "204",
+      "transport_idempotency_key": "none",
+      "message_id_reconciliation": "documented",
+      "exactly_once_claim": "none",
+      "verification_status": "unknown"
+    },
+    "run_boundary_inference": {
+      "mode": "inferred_from_session_status_and_events",
+      "explicit_run_id": "none",
+      "evidence_sources": [
+        "session.status",
+        "session.idle",
+        "message.updated",
+        "step-start",
+        "step-finish"
+      ],
+      "verification_status": "unknown"
+    },
+    "cancel": {
+      "scope": "conversation",
+      "endpoint": "POST /session/:id/abort",
+      "finer_run_cancel": "unsupported",
+      "verification_status": "unknown"
+    },
+    "resume_delete": {
+      "context_mode": "resume_requires_volume_proof",
+      "context_lost_fallback": "fork_from_curated_transcript",
+      "delete_endpoint": "DELETE /session/:id",
+      "verification_status": "unknown"
+    },
+    "isolation": {
+      "runtime_isolation": "binding",
+      "concurrency_mode": "serialized",
+      "tool_call_identity": "run",
+      "one_active_run_per_binding": "contractual",
+      "epoch_bound_mcp_capability": "contractual",
+      "late_old_epoch_call": "rejected_and_recorded",
+      "verification_status": "unknown"
+    }
+  }
+}
+```
