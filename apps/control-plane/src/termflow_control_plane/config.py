@@ -57,6 +57,18 @@ class Settings(BaseSettings):
     static_dir: Path = Path("/app/frontend-dist")
     public_base_url: AnyHttpUrl = AnyHttpUrl("http://127.0.0.1:8000")
     trusted_web_origins: Annotated[tuple[str, ...], NoDecode] = ()
+    # Agent Broker MCP server (plan §10): the deployment-owned OpenCode
+    # config path feeding the startup drift guard, plus the transport bounds
+    # for the observe-only MCP endpoint.  Defaults mirror the SDK-facing
+    # constants in plugins.agent_broker.api.mcp_server
+    # (DEFAULT_ALLOWED_HOSTS / DEFAULT_MAX_REQUEST_BYTES).
+    opencode_config_path: str | None = None
+    agent_mcp_allowed_hosts: Annotated[tuple[str, ...], NoDecode] = (
+        "127.0.0.1:*",
+        "localhost:*",
+        "[::1]:*",
+    )
+    agent_mcp_max_request_bytes: int = Field(default=256 * 1024, ge=1)
     browser_session_ttl_seconds: int = Field(default=8 * 60 * 60, ge=60)
     browser_session_capacity: int = Field(default=4096, ge=1)
     totp_master_key: SecretStr | None = None
@@ -116,6 +128,13 @@ class Settings(BaseSettings):
     @field_validator("trusted_web_origins", mode="before")
     @classmethod
     def parse_trusted_origins(cls, value: object) -> object:
+        if isinstance(value, str):
+            return tuple(part.strip() for part in value.split(",") if part.strip())
+        return value
+
+    @field_validator("agent_mcp_allowed_hosts", mode="before")
+    @classmethod
+    def parse_agent_mcp_allowed_hosts(cls, value: object) -> object:
         if isinstance(value, str):
             return tuple(part.strip() for part in value.split(",") if part.strip())
         return value

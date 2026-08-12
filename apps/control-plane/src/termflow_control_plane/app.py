@@ -5,6 +5,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -12,6 +13,11 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
+from starlette._utils import get_route_path
+from starlette.applications import Starlette
+from starlette.responses import Response
+from starlette.routing import Match, Mount
+from starlette.types import Receive, Scope, Send
 from termflow_protocol import (
     ErrorDetail,
     ErrorEnvelope,
@@ -65,9 +71,21 @@ from termflow_control_plane.plugins.agent_broker.agent.stream_hub import (
     AGENT_STREAM_QUEUE_SIZE,
     AgentStreamHub,
 )
+from termflow_control_plane.plugins.agent_broker.agent.terminal_ports import (
+    ObservationService,
+    WatchContinuationService,
+)
 from termflow_control_plane.plugins.agent_broker.agent.transcription import (
     NullTranscriptionProvider,
 )
+from termflow_control_plane.plugins.agent_broker.api.mcp_server import (
+    MCP_STREAMABLE_HTTP_PATH,
+    build_mcp_server,
+    check_tool_config_drift,
+    create_streamable_http_app,
+    pinned_allowlist_from_fixture,
+)
+from termflow_control_plane.plugins.agent_broker.auth import AgentTokenAuthenticator
 from termflow_control_plane.plugins.agent_broker.plugin import (
     AgentBrokerPlugin,
     run_agent_recovery,
@@ -91,6 +109,93 @@ from termflow_control_plane.web import install_web_hosting
 logger = logging.getLogger(__name__)
 
 _AUTHENTICATION_EPOCH_POLL_SECONDS = 1.0
+
+
+class _AgentMcpInner:
+    """Resolves the lifespan-built MCP app and dispatches to it (fail closed).
+
+    ``_AgentMcpMount`` carries this as its ``app``; both Starlette's and
+    FastAPI's route dispatch call it with the request scope, so requests that
+    arrive before the lifespan builds the inner app get a 404.
+    """
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        root_app = scope.get("app")
+        inner = getattr(getattr(root_app, "state", None), "agent_mcp_app", None)
+        if inner is None:
+            response = Response("Agent Broker MCP endpoint is unavailable", status_code=404)
+            await response(scope, receive, send)
+            return
+        await inner(scope, receive, send)
+
+
+class _AgentMcpMount(Mount):
+    """Mount serving the Agent Broker MCP app under ``/api/v1/agent/mcp``.
+
+    Starlette's ``Mount`` only matches ``path/...`` (a trailing slash is
+    required), and the SPA fallback would otherwise shadow the bare path with
+    a ``405``.  This subclass also matches the exact mount path - with or
+    without the trailing slash - and normalizes the child scope so the inner
+    Streamable HTTP app (built at ``path="/"``) always sees its own ``/``
+    route.  Requests before the lifespan builds the inner app fail closed
+    with 404.
+    """
+
+    def __init__(self, path: str) -> None:
+        super().__init__(path, app=_AgentMcpInner())
+
+    def matches(self, scope: Scope) -> tuple[Match, Scope]:
+        if scope["type"] in ("http", "websocket"):
+            route_path = get_route_path(scope)
+            if route_path == self.path or route_path == f"{self.path}/":
+                root_path = scope.get("root_path", "")
+                return Match.FULL, {
+                    "path": root_path + self.path + "/",
+                    "path_params": {},
+                    "app_root_path": scope.get("app_root_path", root_path),
+                    "root_path": root_path + self.path,
+                    "endpoint": self.app,
+                }
+        return super().matches(scope)
+
+
+async def _build_agent_mcp_app(app: FastAPI, settings: Settings) -> Starlette:
+    """Assemble the observe-only MCP server once the repositories exist.
+
+    B owns the security checks around the SDK (plan §10): bearer auth through
+    ``require_agent_token``, byte limits, per-binding quotas, and the pinned
+    tool-allowlist drift guard.  The drift guard reads the deployment-owned
+    frozen OpenCode config when ``opencode_config_path`` is configured and
+    refuses startup on any mismatch (plan §10, M0.3).
+
+    The SDK app is built at ``path="/"``: Starlette mounts rewrite the child
+    scope's route path, so the mounted app sees its own ``/`` route while the
+    public path stays ``/api/v1/agent/mcp``.
+    """
+    server = build_mcp_server(
+        observation=ObservationService(app.state.registry),
+        continuation=WatchContinuationService(
+            app.state.repositories.watches,
+            app.state.repositories.agent_bindings,
+        ),
+        policy_checker=app.state.repositories,
+        token_auth=AgentTokenAuthenticator(app.state.repositories),
+    )
+    config_path = settings.opencode_config_path
+    if config_path:
+        allowlist = pinned_allowlist_from_fixture(
+            await asyncio.to_thread(
+                lambda: Path(config_path).read_text(encoding="utf-8")
+            )
+        )
+        registered = {tool.name for tool in await server.list_tools()}
+        check_tool_config_drift(registered, allowlist)
+    return create_streamable_http_app(
+        server,
+        path="/",
+        max_request_bytes=settings.agent_mcp_max_request_bytes,
+        allowed_hosts=settings.agent_mcp_allowed_hosts,
+    )
 
 
 def _request_id(request: Request) -> UUID:
@@ -272,6 +377,22 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
                 logger.info("Agent restart recovery: %s", recovered)
         except Exception:
             logger.exception("Agent restart recovery failed")
+        # The MCP capability surface is built here because the continuation
+        # service and token authenticator need the repository bundle; the
+        # mounted ASGI wrapper serves it only while the plugin is enabled.
+        mcp_lifespan_ctx = None
+        if settings.agent_broker_enabled:
+            app.state.agent_mcp_app = await _build_agent_mcp_app(app, settings)
+            # The SDK's Streamable HTTP app starts its session manager from
+            # its own Starlette lifespan, but Starlette only runs the
+            # lifespan of the top-level app: the lifespan of an app mounted
+            # with ``Mount`` is never entered, so every request past the auth
+            # gate would fail with "Task group is not initialized".  Enter
+            # the inner app's lifespan from here instead (the SDK documents
+            # ``session_manager.run()`` as the host-app lifespan hook).
+            mcp_lifespan_ctx = app.state.agent_mcp_app.router.lifespan_context(
+                app.state.agent_mcp_app
+            )
         expiry_task = asyncio.create_task(
             _heartbeat_expiry_loop(app.state.registry, app.state.event_hub, settings)
         )
@@ -290,7 +411,11 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
             )
         )
         try:
-            yield
+            if mcp_lifespan_ctx is not None:
+                async with mcp_lifespan_ctx:
+                    yield
+            else:
+                yield
         finally:
             expiry_task.cancel()
             session_expiry_task.cancel()
@@ -439,5 +564,9 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         app.include_router(agent_stream_router)
         app.include_router(agent_approvals_router)
         app.include_router(transcription_router)
+        # MCP Streamable HTTP is never exposed to a browser (plan §10); the
+        # endpoint is only mounted while the plugin is enabled (plan §3.4).
+        app.state.agent_mcp_app = None
+        app.router.routes.append(_AgentMcpMount(MCP_STREAMABLE_HTTP_PATH))
     install_web_hosting(app, settings.static_dir)
     return app
