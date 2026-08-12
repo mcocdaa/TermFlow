@@ -131,7 +131,13 @@ REUSE_DECISIONS: tuple[ReuseDecision, ...] = (
         notes=(
             "Do not hand-write JSON-RPC/MCP framing; keep AgentToken, Origin/Host, "
             "scope/epoch, limits, and policy checks outside the SDK; MCP Streamable "
-            "HTTP is never exposed to a browser; pinned at M0 commit 9d1aef8."
+            "HTTP is never exposed to a browser; pinned at M0 commit 9d1aef8; mcp "
+            "2.0.0 speaks two protocol eras on one streamable_http_app (legacy "
+            "2025-11-25 initialize/session/Mcp-Session-Id and new 2026-07-28 "
+            "no-session per-request _meta + server/discover); the negotiated era "
+            "is verified against the pinned OpenCode image at the M4 gate; "
+            "AgentToken verification implements the SDK TokenVerifier protocol "
+            "(OAuth 2.1 resource server)."
         ),
     ),
     ReuseDecision(
@@ -171,15 +177,22 @@ REUSE_DECISIONS: tuple[ReuseDecision, ...] = (
     ),
     ReuseDecision(
         candidate="AG-UI",
-        decision=ReuseDecisionKind.EVALUATE,
+        decision=ReuseDecisionKind.ADOPT_NARROWLY,
         reuse_boundary="C-facing projection of run/message/tool/state events",
         required_port=TermFlowPort.AGENT_BACKEND,
+        pinned_version="ag-ui-protocol==0.1.19",
+        license="MIT",
         sbom_owner="termflow-control-plane",
+        contract_fixture=(
+            "https://docs.ag-ui.com/api-reference/openapi.json "
+            "(OpenAPI spec for ag-ui-protocol 0.1.19)"
+        ),
         notes=(
             "Wire projection only; B keeps its own durable canonical event/cursor/"
-            "auth model and AG-UI IDs/events are not the database contract; not "
-            "adopted in M0; evaluate after the durable B timeline/cursor contract "
-            "is stable."
+            "auth model as the source of truth and AG-UI IDs/events are not the "
+            "database contract; official Python SDK ag-ui-protocol 0.1.19 (MIT, "
+            "pydantic>=2.11.2) with weekly spec releases; pre-1.0 watch item: "
+            "THINKING-to-REASONING migration at 1.0.0."
         ),
     ),
     ReuseDecision(
@@ -187,14 +200,15 @@ REUSE_DECISIONS: tuple[ReuseDecision, ...] = (
         decision=ReuseDecisionKind.ADOPT_NARROWLY,
         reuse_boundary="Optional B Agent SSE response implementation",
         required_port=TermFlowPort.AGENT_BACKEND,
+        pinned_version=">=3.4,<4",
         license="BSD-3-Clause",
         sbom_owner="termflow-control-plane",
         notes=(
             "Optional SSE response implementation behind the AgentBackend event "
             "stream; subscribe-before-replay, opaque cursors, auth epoch closure, "
-            "backpressure, and retention stay in B; already present in the lock as "
-            "an mcp transitive dependency; direct pin when the Agent SSE surface "
-            "ships."
+            "backpressure, and retention stay in B; already a direct dependency of "
+            "mcp==2.0.0 (>=3.0.0) so the pin adds zero marginal dependency; "
+            "disconnect detection and bounded channels confirmed."
         ),
     ),
     ReuseDecision(
@@ -242,8 +256,12 @@ REUSE_DECISIONS: tuple[ReuseDecision, ...] = (
         notes=(
             "STT provider plugin only, not B logic; B owns upload limits, raw-audio "
             "deletion, draft confirmation, provider disclosure, and no-auto-submit; "
-            "faster-whisper is the CTranslate2 implementation for a pinned CPU/GPU "
-            "container; first optional plugin in M7."
+            "faster-whisper 1.2.1 (MIT) is the CTranslate2 implementation for a "
+            "pinned CPU/GPU container but is in a maintenance lull; reference "
+            "container is speaches-ai/speaches (MIT, active) at "
+            "ghcr.io/speaches-ai/speaches:latest-cpu / :latest-cuda — the former "
+            "fedirz/faster-whisper-server image is retired; first optional plugin "
+            "in M7."
         ),
     ),
     ReuseDecision(

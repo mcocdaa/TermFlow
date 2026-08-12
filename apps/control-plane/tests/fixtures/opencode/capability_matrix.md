@@ -79,6 +79,14 @@ captured OpenAPI spec confirms the identity components available on the wire.
 | `one_active_run_per_binding` | `contractual` — required by the v0.2 safety default | `unknown` (M4) |
 | `epoch_bound_mcp_capability` | `contractual` — freshly provisioned epoch-bound binding token; late old-epoch calls are rejected and recorded, never reassigned | `unknown` (M4) |
 
+## 8. MCP protocol eras and wire alignment (plan §10, research 2026-08-12)
+
+| Property | Value | Verification |
+| --- | --- | --- |
+| `mcp_protocol_eras` | `dual_era` — legacy `2025-11-25` (initialize handshake, session, `Mcp-Session-Id`) and new `2026-07-28` (no handshake/session/`Mcp-Session-Id`; per-request `_meta` versioning; `server/discover`; `Mcp-Method`/`Mcp-Name` headers); the same `streamable_http_app` serves both; `negotiation_gate`: `decisive` — the revision actually negotiated by the pinned OpenCode image + pinned `mcp` SDK pair is verified by the M4 contract tests, so the negotiated era is `unknown` until then | `unknown` (M4) |
+| `api_namespace` | `out_of_scope` — the undocumented `/api/*` namespace (51 paths, incl. `/api/session/{id}/event?after=` durable replay) is recorded but not part of the 0.2.0 pinned contract; future reconciliation option | `unknown` (M4) |
+| `sse_starlette_alignment` | `aligned` — `>=3.4,<4` (BSD-3-Clause), already a direct dependency of `mcp==2.0.0` (`>=3.0.0`), zero marginal dependency; disconnect detection and bounded channels documented | `unknown` (M4) |
+
 ---
 
 ```json termflow-capability-matrix
@@ -148,6 +156,27 @@ captured OpenAPI spec confirms the identity components available on the wire.
       "one_active_run_per_binding": "contractual",
       "epoch_bound_mcp_capability": "contractual",
       "late_old_epoch_call": "rejected_and_recorded",
+      "verification_status": "unknown"
+    },
+    "mcp_protocol_eras": {
+      "eras": ["2025-11-25", "2026-07-28"],
+      "legacy_era": "initialize handshake, session, Mcp-Session-Id",
+      "new_era": "no handshake/session/Mcp-Session-Id; per-request _meta versioning; server/discover; Mcp-Method/Mcp-Name headers",
+      "server_serves_both": "the same streamable_http_app serves both eras (mcp SDK 2.0.0)",
+      "negotiation_gate": "decisive - revision negotiated by the pinned OpenCode image + pinned mcp SDK pair verified by the M4 contract tests; negotiated era unknown until then",
+      "verification_status": "unknown"
+    },
+    "api_namespace": {
+      "scope": "out_of_0.2_pinned_contract",
+      "paths_recorded": "undocumented /api/* namespace (51 paths, incl. /api/session/{id}/event?after= durable replay)",
+      "reconciliation": "future option, not part of the 0.2.0 pinned contract",
+      "verification_status": "unknown"
+    },
+    "sse_starlette_alignment": {
+      "pin": ">=3.4,<4",
+      "license": "BSD-3-Clause",
+      "dependency_status": "already a direct dependency of mcp==2.0.0 (>=3.0.0); zero marginal dependency",
+      "documented_features": "disconnect detection and bounded channels",
       "verification_status": "unknown"
     }
   }
