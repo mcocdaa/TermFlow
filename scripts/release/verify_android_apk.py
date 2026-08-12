@@ -169,12 +169,17 @@ def verify_launcher_resources(apk: Path, generated_res: Path) -> None:
         raise ValueError("adaptive launcher does not reference the foreground resource")
     if "ic_launcher_background" not in adaptive_source:
         raise ValueError("adaptive launcher does not reference the background resource")
+    background = generated_res / "values" / "ic_launcher_background.xml"
+    if not background.is_file():
+        raise ValueError(f"missing generated launcher background: {background}")
+    if "ic_launcher_background" not in background.read_text():
+        raise ValueError("generated launcher background has an unexpected resource name")
 
     with zipfile.ZipFile(apk) as archive:
         names = set(archive.namelist())
         adaptive_apk = "res/mipmap-anydpi-v26/ic_launcher.xml"
-        if adaptive_apk not in names and "resources.arsc" not in names:
-            raise ValueError("APK is missing compiled adaptive launcher resources")
+        if adaptive_apk not in names:
+            raise ValueError("APK is missing the compiled adaptive launcher resource")
         for density in DENSITIES:
             for launcher_name in LAUNCHER_NAMES:
                 source = generated_res / f"mipmap-{density}" / launcher_name
