@@ -160,6 +160,23 @@ def test_node_image_initializes_managed_mounts_then_drops_privileges() -> None:
         assert expected in verifier
 
 
+def test_node_entrypoint_selects_only_supported_term_shells() -> None:
+    entrypoint = Path("deploy/entrypoint.node.sh").read_text()
+
+    assert 'case "${TERMFLOW_SHELL:-bash}" in' in entrypoint
+    assert "bash)\n        SHELL=/bin/bash" in entrypoint
+    assert "sh)\n        SHELL=/bin/sh" in entrypoint
+    assert 'echo "invalid TERMFLOW_SHELL: expected bash or sh" >&2' in entrypoint
+    assert "exit 64" in entrypoint
+    assert "export SHELL" in entrypoint
+    assert entrypoint.index('case "${TERMFLOW_SHELL:-bash}" in') > entrypoint.index(
+        'cd "${work_dir}"'
+    )
+    assert entrypoint.index("export SHELL") < entrypoint.index(
+        'if [ ! -f "${HOME}/.config/termflow/config.json" ]'
+    )
+
+
 def test_readme_docker_node_uses_local_managed_directories() -> None:
     readme = Path("README.md").read_text()
 
