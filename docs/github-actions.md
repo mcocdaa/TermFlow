@@ -125,12 +125,16 @@ prerelease Tag 只推送版本 Tag 和 commit Tag，不更新 `latest`，并以 
 - Windows：未做代码签名的 NSIS 安装包，SmartScreen 的“未知发布者”是预期结果；
 - Linux：x86_64 deb 和 AppImage，未做发行签名；
 - macOS：arm64 app zip 和 DMG，ad-hoc 签名，未做 Developer ID notarization；
-- Android：arm64 debug APK，由 debug keystore 签名，不能作为长期生产签名；
+- Android：手动默认构建 arm64 debug APK；tag release 与显式
+  `signed_android_candidate=true` 使用仓库 Actions secrets 中的固定项目证书构建 release APK，
+  并在上传前核对包名、版本、证书和 launcher 图标；
 - iOS：arm64 Simulator `.app` zip，只能给匹配架构的 Simulator，不能安装到实体 iPhone；
 - A：当前只有 Linux x86_64 PyInstaller bundle；
 - B + Web C：一个最小 runtime 镜像，生产镜像不包含 Node、npm、Rust、Cargo、Tauri 或仓库源码。
 
-正式签名、notarization、TestFlight、应用商店上传和生产密钥属于未接入本工作流的独立流程。
+Windows/macOS 正式签名、notarization、TestFlight 和应用商店上传仍属于未接入本工作流的独立流程。
+Android 固定 APK 签名已接入 tag release；密钥建立、备份、候选包和真机门禁见
+[`android-release.md`](android-release.md)。
 
 ## CI 与打包的区别
 
