@@ -27,6 +27,7 @@ from datetime import UTC, datetime, timedelta
 from termflow_control_plane.api.agent_admin import router as agent_admin_router
 from termflow_control_plane.api.agent_capabilities import get_agent_capabilities
 from termflow_control_plane.api.agent_conversations import router as agent_conversations_router
+from termflow_control_plane.api.agent_stream import router as agent_stream_router
 from termflow_control_plane.persistence.models import AgentCleanupJob
 from termflow_control_plane.persistence.repositories import RepositoryBundle
 from termflow_control_plane.plugins.agent_broker.agent.inbox import (
@@ -185,7 +186,11 @@ class AgentBrokerPlugin:
             # plugin is disabled without relying on Agent API 404 responses.
             policy=RoutePolicy(auth_required=False, csrf_required=False),
         )
-        for feature_router in (agent_admin_router, agent_conversations_router):
+        for feature_router in (
+            agent_admin_router,
+            agent_conversations_router,
+            agent_stream_router,
+        ):
             for route in feature_router.routes:
                 for method in route.methods:
                     routes.add_route(

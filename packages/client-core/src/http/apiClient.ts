@@ -1,6 +1,7 @@
 import type {
   ErrorEnvelope,
 } from '@termflow/client-contracts'
+import { createAgentsApi } from '../api/agents'
 import { createComputersApi } from '../api/computers'
 import { createClientsApi } from '../api/clients'
 import { createDashboardApi } from '../api/dashboard'
@@ -93,6 +94,7 @@ export function createApiClient(transport: HttpTransport) {
   return {
     request,
     requestResponse,
+    agents: createAgentsApi(request),
     sessions: createSessionApi(request),
     dashboard: createDashboardApi(request),
     computers: createComputersApi(request),

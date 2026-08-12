@@ -25,6 +25,7 @@ from termflow_control_plane import __version__
 from termflow_control_plane.api.agent_admin import router as agent_admin_router
 from termflow_control_plane.api.agent_capabilities import router as agent_capabilities_router
 from termflow_control_plane.api.agent_conversations import router as agent_conversations_router
+from termflow_control_plane.api.agent_stream import router as agent_stream_router
 from termflow_control_plane.api.bridge import router as bridge_router
 from termflow_control_plane.api.clients import router as clients_router
 from termflow_control_plane.api.computers import router as computers_router
@@ -59,6 +60,10 @@ from termflow_control_plane.connections.terminal_hub import TerminalHub
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.database import Database
 from termflow_control_plane.persistence.repositories import RepositoryBundle
+from termflow_control_plane.plugins.agent_broker.agent.stream_hub import (
+    AGENT_STREAM_QUEUE_SIZE,
+    AgentStreamHub,
+)
 from termflow_control_plane.plugins.agent_broker.agent.transcription import (
     NullTranscriptionProvider,
 )
@@ -138,6 +143,7 @@ async def _authentication_epoch_loop(
     browser_sessions: BrowserSessionStore,
     terminal_hub: TerminalHub,
     event_hub: EventHub,
+    agent_stream_hub: AgentStreamHub,
     stop: asyncio.Event,
 ) -> None:
     """Observe reset commands running in another process through persisted epoch state."""
@@ -157,6 +163,9 @@ async def _authentication_epoch_loop(
             browser_sessions.synchronize_epoch(state.epoch)
             await terminal_hub.synchronize_epoch(state.epoch)
             await event_hub.synchronize_epoch(state.epoch)
+            # Agent streams are bound to the same authentication epoch, so a
+            # credential rotation closes them even while idle (plan §13.1).
+            await agent_stream_hub.synchronize_epoch(state.epoch)
         except SQLAlchemyError:
             logger.exception("Authentication epoch poll failed; retrying")
 
@@ -197,6 +206,7 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         app.state.browser_sessions.synchronize_epoch(auth_state.epoch)
         await app.state.terminal_hub.synchronize_epoch(auth_state.epoch)
         await app.state.event_hub.synchronize_epoch(auth_state.epoch)
+        await app.state.agent_stream_hub.synchronize_epoch(auth_state.epoch)
         master_key = resolve_totp_master_key(settings)
         secret_box = (
             AesGcmSecretBox(master_key, key_version=settings.totp_master_key_version)
@@ -274,6 +284,7 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
                 app.state.browser_sessions,
                 app.state.terminal_hub,
                 app.state.event_hub,
+                app.state.agent_stream_hub,
                 auth_epoch_stop,
             )
         )
@@ -314,6 +325,7 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         queue_max_bytes=settings.terminal_queue_max_bytes,
     )
     app.state.event_hub = EventHub(queue_size=settings.event_queue_size)
+    app.state.agent_stream_hub = AgentStreamHub(queue_size=AGENT_STREAM_QUEUE_SIZE)
     app.state.terminal_hub = TerminalHub(
         queue_max_messages=settings.terminal_queue_max_messages,
         queue_max_bytes=settings.terminal_queue_max_bytes,
@@ -423,6 +435,7 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
     if settings.agent_broker_enabled:
         app.include_router(agent_admin_router)
         app.include_router(agent_conversations_router)
+        app.include_router(agent_stream_router)
         app.include_router(transcription_router)
     install_web_hosting(app, settings.static_dir)
     return app
