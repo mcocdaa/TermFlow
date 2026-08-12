@@ -177,6 +177,20 @@ def test_node_entrypoint_selects_only_supported_term_shells() -> None:
     )
 
 
+def test_node_image_verifier_proves_the_actual_tmux_shell() -> None:
+    verifier = Path("scripts/verify-node-image.sh").read_text()
+
+    for expected in (
+        "TERMFLOW_SHELL=sh",
+        "TERMFLOW_SHELL=zsh",
+        "#{pane_current_command}",
+        'test "$(pane_shell "${first_status}")" = "bash"',
+        'test "$(pane_shell "${third_status}")" = "sh"',
+        "invalid TERMFLOW_SHELL: expected bash or sh",
+    ):
+        assert expected in verifier
+
+
 def test_readme_docker_node_uses_local_managed_directories() -> None:
     readme = Path("README.md").read_text()
 
