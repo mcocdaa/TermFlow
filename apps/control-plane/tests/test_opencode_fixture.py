@@ -83,7 +83,8 @@ ENDPOINT_SPEC_PATHS = {
     "session_delete": "/session/{sessionID}",
 }
 
-#: Capability matrix dimensions required by the plan (§6/§6.1/§6.2.1).
+#: Capability matrix dimensions required by the plan (§6/§6.1/§6.2.1) plus the
+#: wire-alignment findings from the 2026-08-12 reuse research (§10).
 REQUIRED_MATRIX_DIMENSIONS = {
     "accepted_input_kinds",
     "event_dedup_identity",
@@ -92,6 +93,9 @@ REQUIRED_MATRIX_DIMENSIONS = {
     "cancel",
     "resume_delete",
     "isolation",
+    "mcp_protocol_eras",
+    "api_namespace",
+    "sse_starlette_alignment",
 }
 
 #: Every matrix dimension must carry an explicit verification status; nothing
@@ -216,6 +220,7 @@ class TestPinDoc:
             "request_ids",
             "session_lifecycle",
             "notification_behavior",
+            "token_verifier",
         ):
             value = handshake[key]
             assert isinstance(value, str) and value.strip(), (
@@ -223,6 +228,47 @@ class TestPinDoc:
             )
         assert handshake["content_type"] == "application/json"
         assert "text/event-stream" in handshake["accept"]
+
+    def test_mcp_handshake_is_dual_era(self) -> None:
+        """The mcp SDK 2.0.0 dual-era baseline is pinned (research 2026-08-12)."""
+        handshake = _pin_contract()["mcp_handshake"]
+        revision = handshake["protocol_revision"]
+        assert "2025-11-25" in revision
+        assert "2026-07-28" in revision
+        # Legacy era keeps the session lifecycle; the new era has no session and
+        # no Mcp-Session-Id, with per-request _meta versioning and
+        # server/discover. The M4 gate decides the negotiated era.
+        assert "Mcp-Session-Id" in handshake["session_lifecycle"]
+        assert "server/discover" in handshake["session_lifecycle"]
+        assert "_meta" in handshake["session_lifecycle"]
+        assert "TokenVerifier" in handshake["token_verifier"]
+        assert "OAuth 2.1" in handshake["token_verifier"]
+        prose = PIN_PATH.read_text(encoding="utf-8")
+        assert "2026-07-28" in prose
+        assert "Decisive gate" in prose
+
+    def test_wire_alignment_findings_recorded_in_pin(self) -> None:
+        """The 2026-08-12 research findings are frozen in the pin contract."""
+        contract = _pin_contract()
+        assert "OPENCODE_SERVER_PASSWORD" in contract["server_password"]
+        assert "not a replacement for AgentToken" in contract["server_password"]
+        namespace = contract["api_namespace_out_of_scope"]
+        assert "/api/*" in namespace and "out of the 0.2.0 pinned contract" in namespace
+        versioning = contract["versioning"]
+        assert "1.0.<n>" in versioning["image_sequence"]
+        assert "1.18.x" in versioning["npm_sequence"]
+        assert "sha256:531d22f5" in versioning["digest"]
+        sse = contract["sse_starlette_alignment"]
+        assert ">=3.4,<4" in sse and "mcp==2.0.0" in sse
+        prose = PIN_PATH.read_text(encoding="utf-8")
+        for marker in (
+            "OPENCODE_SERVER_PASSWORD",
+            "/api/*",
+            "1.0.<n>",
+            "1.18.x",
+            "sse-starlette",
+        ):
+            assert marker in prose
 
     def test_acp_declaration_present(self) -> None:
         contract = _pin_contract()
@@ -378,6 +424,15 @@ class TestCapabilityMatrix:
         assert isolation["runtime_isolation"] == "binding"
         assert isolation["one_active_run_per_binding"] == "contractual"
         assert isolation["epoch_bound_mcp_capability"] == "contractual"
+        eras = dimensions["mcp_protocol_eras"]
+        assert set(eras["eras"]) == {"2025-11-25", "2026-07-28"}
+        assert "unknown until then" in eras["negotiation_gate"]
+        namespace = dimensions["api_namespace"]
+        assert namespace["scope"] == "out_of_0.2_pinned_contract"
+        assert "/api/*" in namespace["paths_recorded"]
+        sse = dimensions["sse_starlette_alignment"]
+        assert sse["pin"] == ">=3.4,<4"
+        assert "mcp==2.0.0" in sse["dependency_status"]
 
 
 class TestAcpScope:

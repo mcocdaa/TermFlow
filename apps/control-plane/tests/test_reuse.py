@@ -36,7 +36,7 @@ EXPECTED_SECTION_22_DECISIONS: dict[str, ReuseDecisionKind] = {
     "official mcp python sdk": ReuseDecisionKind.ADOPT_DIRECT,
     "opencode server/sdk contract": ReuseDecisionKind.ADOPT_DIRECT,
     "pluggy": ReuseDecisionKind.ADOPT_NARROWLY,
-    "ag-ui": ReuseDecisionKind.EVALUATE,
+    "ag-ui": ReuseDecisionKind.ADOPT_NARROWLY,
     "sse-starlette": ReuseDecisionKind.ADOPT_NARROWLY,
     "pyte": ReuseDecisionKind.EVALUATE,
     "libtmux": ReuseDecisionKind.PARTIAL_REUSE,
@@ -99,6 +99,42 @@ class TestSection22Decisions:
         assert pyte.decision is ReuseDecisionKind.EVALUATE
         assert pyte.license == "LGPL-3.0"
         assert pyte.required_port is TermFlowPort.TERMINAL_OBSERVATION_PORT
+
+    def test_ag_ui_adopted_narrowly_as_wire_projection(self) -> None:
+        ag_ui = _decision("AG-UI")
+        assert ag_ui.decision is ReuseDecisionKind.ADOPT_NARROWLY
+        assert ag_ui.required_port is TermFlowPort.AGENT_BACKEND
+        assert ag_ui.pinned_version == "ag-ui-protocol==0.1.19"
+        assert ag_ui.license == "MIT"
+        assert ag_ui.contract_fixture is not None
+        assert "docs.ag-ui.com/api-reference/openapi.json" in ag_ui.contract_fixture
+        assert ag_ui.notes is not None
+        assert "source of truth" in ag_ui.notes
+        assert "wire projection" in ag_ui.notes.lower()
+
+    def test_sse_starlette_pin_is_direct_mcp_dependency(self) -> None:
+        sse_starlette = _decision("sse-starlette")
+        assert sse_starlette.decision is ReuseDecisionKind.ADOPT_NARROWLY
+        assert sse_starlette.pinned_version == ">=3.4,<4"
+        assert sse_starlette.license == "BSD-3-Clause"
+        assert sse_starlette.notes is not None
+        assert "mcp==2.0.0" in sse_starlette.notes
+        assert "zero marginal dependency" in sse_starlette.notes
+
+    def test_faster_whisper_notes_speaches_container(self) -> None:
+        faster_whisper = _decision("OpenAI Whisper / faster-whisper")
+        assert faster_whisper.decision is ReuseDecisionKind.ADOPT_NARROWLY
+        assert faster_whisper.notes is not None
+        assert "ghcr.io/speaches-ai/speaches" in faster_whisper.notes
+        assert "maintenance lull" in faster_whisper.notes
+        assert "fedirz/faster-whisper-server" in faster_whisper.notes
+
+    def test_mcp_sdk_notes_dual_era_and_token_verifier(self) -> None:
+        mcp_sdk = _decision("Official MCP Python SDK")
+        assert mcp_sdk.notes is not None
+        assert "2026-07-28" in mcp_sdk.notes
+        assert "2025-11-25" in mcp_sdk.notes
+        assert "TokenVerifier" in mcp_sdk.notes
 
     def test_a2a_acp_do_not_use(self) -> None:
         a2a_acp = _decision("A2A / ACP")
