@@ -167,3 +167,63 @@ def test_bridge_authenticates_and_updates_live_topology(client, admin_headers) -
             time.sleep(0.01)
         assert connection is not None
         assert connection.topology == topology
+
+
+def test_bridge_hello_negotiates_capability_flags(client, admin_headers) -> None:
+    installation_token = _installation_token(client, admin_headers)
+    instance_id = uuid4()
+    instance_token = _register(client, installation_token, instance_id)
+    with client.websocket_connect(
+        "/api/v1/bridge/connect",
+        headers={"Authorization": f"Bearer {instance_token}"},
+    ) as websocket:
+        hello = BridgeHelloPayload(name="alpha", bounded_capture=True, typed_keys=False)
+        websocket.send_text(
+            WireMessage(
+                type=MessageType.BRIDGE_HELLO,
+                instance_id=instance_id,
+                payload=hello.model_dump(mode="json"),
+            ).model_dump_json()
+        )
+        # Wait for hello_ready (set at the end of the hello handler) rather
+        # than observing mid-handler state: closing the websocket while the
+        # handler is still awaiting its DB touch races the client teardown.
+        connection = None
+        for _ in range(100):
+            connection = client.portal.call(client.app.state.registry.maybe_get, instance_id)
+            if connection is not None and connection.hello_ready.is_set():
+                break
+            time.sleep(0.01)
+        assert connection is not None
+        # A advertises bounded capture (M2.3) and no typed keys (M5); B
+        # records the negotiated capabilities on the live connection.
+        assert connection.bounded_capture is True
+        assert connection.typed_keys is False
+        assert "pane_output" in connection.capabilities
+
+
+def test_old_a_hello_fails_closed_without_capture_capability(client, admin_headers) -> None:
+    installation_token = _installation_token(client, admin_headers)
+    instance_id = uuid4()
+    instance_token = _register(client, installation_token, instance_id)
+    with client.websocket_connect(
+        "/api/v1/bridge/connect",
+        headers={"Authorization": f"Bearer {instance_token}"},
+    ) as websocket:
+        # An old A hello carries no capability fields at all.
+        websocket.send_text(
+            WireMessage(
+                type=MessageType.BRIDGE_HELLO,
+                instance_id=instance_id,
+                payload={"name": "alpha"},
+            ).model_dump_json()
+        )
+        connection = None
+        for _ in range(100):
+            connection = client.portal.call(client.app.state.registry.maybe_get, instance_id)
+            if connection is not None and connection.hello_ready.is_set():
+                break
+            time.sleep(0.01)
+        assert connection is not None
+        assert connection.bounded_capture is False
+        assert connection.typed_keys is False

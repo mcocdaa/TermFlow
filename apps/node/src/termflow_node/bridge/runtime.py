@@ -146,7 +146,14 @@ class BridgeRuntime:
         if isinstance(notification, OutputNotification):
             chunk = self.buffers.append(notification.pane_id, notification.data)
             if not self._publish_chunk(notification.pane_id, chunk):
-                self.buffers.reset_stream(notification.pane_id)
+                # The wire queue is full: the chunk was dropped under
+                # backpressure. Announce the loss explicitly as a
+                # backpressure gap and reset to a fresh stream so the peer
+                # reconciles through a bounded snapshot; never reset a ring
+                # silently. When even the gap cannot be enqueued the ring is
+                # preserved instead (the peer still catches up through it).
+                await self._publish_gap(notification.pane_id, chunk.stream_id, "backpressure")
+                return
             return
         if isinstance(notification, PauseNotification) and notification.paused:
             await self._publish_gap(
@@ -207,7 +214,9 @@ class BridgeRuntime:
             return
         for chunk in replay:
             if not self._publish_chunk(request.pane_id, chunk):
-                self.buffers.reset_stream(request.pane_id)
+                # Backpressure during replay: announce the drop explicitly
+                # instead of resetting the ring silently (§M2.4).
+                await self._publish_gap(request.pane_id, chunk.stream_id, "backpressure")
                 return
 
     def _pane(self, pane_id: str) -> PaneSnapshot | None:
@@ -495,8 +504,14 @@ class BridgeRuntime:
         pane_id: str,
         previous_stream_id: UUID,
         reason: Literal["stream_changed", "overwritten", "backpressure", "control_paused"],
-    ) -> None:
+    ) -> bool:
         """Publish a stream gap and reset the live ring to a fresh stream.
+
+        Returns ``True`` when the gap was enqueued and the ring reset;
+        ``False`` when the gap itself could not be enqueued (fully stalled
+        wire queue). In the latter case the ring is left intact, so a ring is
+        never reset silently: the peer only loses synchronization when it has
+        been told about the gap (M2.4).
 
         Snapshot/live separation (§9.2): a rendered snapshot is NOT appended
         into the live output ring as though it were new terminal output. The
@@ -508,10 +523,12 @@ class BridgeRuntime:
             previous_stream_id=previous_stream_id,
             reason=reason,
         )
-        self.transport.enqueue_nowait(
+        if not self.transport.enqueue_nowait(
             self._message(MessageType.STREAM_GAP, gap.model_dump(mode="json"))
-        )
+        ):
+            return False
         self.buffers.reset_stream(pane_id)
+        return True
 
     async def _control_loop(self, shutdown: asyncio.Event) -> None:
         async for notification in self.control.notifications():

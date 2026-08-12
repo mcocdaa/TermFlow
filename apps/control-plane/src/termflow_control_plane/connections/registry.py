@@ -36,6 +36,15 @@ class ConnectionBackpressure(RuntimeError):
     pass
 
 
+class CapabilityUnavailable(RuntimeError):
+    """A request needs a capability the Instance never negotiated.
+
+    Raised when the live connection does not carry a negotiated capability
+    flag (e.g. ``typed_keys``); B fails closed instead of silently degrading
+    the request against an old A.
+    """
+
+
 _CAPTURE_TIMEOUT_SECONDS = 5.0
 
 
@@ -93,6 +102,31 @@ class LiveConnection:
         UUID, asyncio.Future[PaneCaptureResultPayload | PaneCaptureErrorPayload]
     ] = field(default_factory=dict)
     replaced: asyncio.Event = field(default_factory=asyncio.Event)
+    #: Capabilities negotiated from A's bridge hello (M2.4). Both default to
+    #: False so an old A that never sends the fields fails closed.
+    bounded_capture: bool = False
+    typed_keys: bool = False
+
+    def require_capability(
+        self,
+        *,
+        bounded_capture: bool = False,
+        typed_keys: bool = False,
+    ) -> None:
+        """Fail closed when A did not negotiate a requested capability.
+
+        The M5 command path checks ``typed_keys=True`` before submitting
+        typed key input; capture capability is enforced inside
+        :meth:`submit_capture`.
+        """
+        if bounded_capture and not self.bounded_capture:
+            raise CapabilityUnavailable(
+                f"instance {self.instance_id} did not negotiate bounded pane capture"
+            )
+        if typed_keys and not self.typed_keys:
+            raise CapabilityUnavailable(
+                f"instance {self.instance_id} did not negotiate typed key input"
+            )
 
     async def submit_capture(
         self,
@@ -108,7 +142,22 @@ class LiveConnection:
         not answer within ``timeout_seconds`` the awaitable resolves with a
         synthetic :class:`PaneCaptureErrorPayload` (``capture_timeout``).
         Connection loss while waiting raises :class:`InstanceOffline`.
+
+        An A that never negotiated ``bounded_capture`` (an old A) fails closed
+        with a ``capture_unsupported`` error payload instead of silently
+        degrading the request.
         """
+        if not self.bounded_capture:
+            return PaneCaptureErrorPayload(
+                request_id=request.request_id,
+                instance_id=self.instance_id,
+                pane_id=request.pane_id,
+                error_code="capture_unsupported",
+                message=(
+                    "bounded pane capture is not supported by this Instance: "
+                    "the capability was not negotiated in its bridge hello"
+                ),
+            )
         if request.instance_id != self.instance_id:
             raise ValueError(
                 f"capture request for instance {request.instance_id} submitted "

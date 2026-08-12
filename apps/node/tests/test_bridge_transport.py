@@ -22,6 +22,7 @@ from termflow_node.instances.models import (
 )
 from termflow_node.instances.store import InstanceStore
 from termflow_protocol import (
+    BridgeHelloPayload,
     MessageType,
     TerminalClosedPayload,
     TerminalOutputPayload,
@@ -180,6 +181,49 @@ async def test_transport_sends_hello_then_full_topology_and_stops(tmp_path) -> N
     assert connection_arguments["additional_headers"] == {
         "Authorization": "Bearer instance-secret-token"
     }
+
+
+@pytest.mark.asyncio
+async def test_transport_hello_advertises_supported_capabilities(tmp_path) -> None:
+    websocket = FakeWebSocket()
+
+    @asynccontextmanager
+    async def connect(uri: str, **kwargs):
+        yield websocket
+
+    instance = _instance(tmp_path, token="instance-secret-token")
+    store = InstanceStore(tmp_path / "instances")
+    store.save(instance)
+    transport = BridgeTransport(
+        installation=_installation(),
+        instance=instance,
+        store=store,
+        control_plane=ControlPlaneClient(),
+        topology_provider=lambda: TopologySnapshot(
+            session_id="$0",
+            session_name="main",
+            revision=1,
+            windows=[],
+        ),
+        connect=connect,
+        heartbeat_interval=0.01,
+        backoff=ReconnectBackoff(base=0, cap=0),
+    )
+    shutdown = asyncio.Event()
+    task = asyncio.create_task(transport.run(lambda message: asyncio.sleep(0), shutdown))
+    for _ in range(100):
+        if websocket.sent:
+            break
+        await asyncio.sleep(0.005)
+    shutdown.set()
+    await asyncio.wait_for(task, timeout=1)
+
+    hello = WireMessage.model_validate_json(websocket.sent[0])
+    assert hello.type is MessageType.BRIDGE_HELLO
+    payload = BridgeHelloPayload.model_validate(hello.payload)
+    # Bounded capture landed in M2.3; typed keys are deferred to M5.
+    assert payload.bounded_capture is True
+    assert payload.typed_keys is False
 
 
 @pytest.mark.asyncio

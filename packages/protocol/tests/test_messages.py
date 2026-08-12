@@ -23,6 +23,26 @@ def test_bridge_advertises_full_terminal_capability_by_default() -> None:
     assert "full_terminal" in BridgeHelloPayload(name="term").capabilities
 
 
+def test_bridge_hello_capability_flags_round_trip() -> None:
+    hello = BridgeHelloPayload(name="term", bounded_capture=True, typed_keys=False)
+    parsed = parse_payload("bridge.hello", hello.model_dump(mode="json"))
+    assert parsed == hello
+    assert parsed.bounded_capture is True
+    assert parsed.typed_keys is False
+
+
+def test_bridge_hello_capability_flags_default_false_for_old_a() -> None:
+    # An old A that predates the capability fields sends neither key; B must
+    # read both as False and fail closed instead of silently degrading.
+    hello = BridgeHelloPayload(name="term")
+    assert hello.bounded_capture is False
+    assert hello.typed_keys is False
+    parsed = parse_payload("bridge.hello", {"name": "term"})
+    assert isinstance(parsed, BridgeHelloPayload)
+    assert parsed.bounded_capture is False
+    assert parsed.typed_keys is False
+
+
 def test_output_bytes_round_trip_as_base64() -> None:
     raw = b"\xff\x1b[31mred"
     payload = PaneOutputPayload.from_bytes("%1", uuid4(), 7, raw)

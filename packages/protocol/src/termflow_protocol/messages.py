@@ -70,6 +70,13 @@ class BridgeHelloPayload(PayloadModel):
         "pane_output",
         "full_terminal",
     )
+    #: Negotiated capability flags (M2.4). Both default to False so an old A
+    #: that predates these fields is read as not supporting them; B then
+    #: fails closed for capture/typed-key requests instead of silently
+    #: degrading. A advertises ``bounded_capture=True`` since M2.3 and
+    #: ``typed_keys=False`` until M5.
+    bounded_capture: bool = False
+    typed_keys: bool = False
 
 
 class BridgeHeartbeatPayload(PayloadModel):

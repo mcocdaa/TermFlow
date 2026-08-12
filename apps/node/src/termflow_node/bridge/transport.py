@@ -239,9 +239,11 @@ class BridgeTransport:
                     WireMessage(
                         type=MessageType.BRIDGE_HELLO,
                         instance_id=self._instance.instance_id,
-                        payload=BridgeHelloPayload(name=self._instance.name).model_dump(
-                            mode="json"
-                        ),
+                        payload=BridgeHelloPayload(
+                            name=self._instance.name,
+                            bounded_capture=True,
+                            typed_keys=False,
+                        ).model_dump(mode="json"),
                     ).model_dump_json()
                 )
                 topology = self._topology_provider()

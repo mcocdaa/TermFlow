@@ -8,8 +8,10 @@ from uuid import UUID, uuid4
 import pytest
 from starlette.websockets import WebSocketDisconnect
 from termflow_control_plane.connections.registry import (
+    CapabilityUnavailable,
     ConnectionBackpressure,
     InstanceOffline,
+    LiveConnection,
     LiveInstanceRegistry,
 )
 from termflow_protocol import (
@@ -82,10 +84,17 @@ async def _has_pending_capture(connection, request_id: UUID) -> bool:
     return request_id in connection.pending_captures
 
 
+async def _registered_capture_connection(registry: LiveInstanceRegistry) -> LiveConnection:
+    """Register a connection that negotiated bounded capture (M2.4 hello)."""
+    connection = await registry.register(uuid4())
+    connection.bounded_capture = True
+    return connection
+
+
 @pytest.mark.asyncio
 async def test_submit_capture_enqueues_request_and_resolves_with_result() -> None:
     registry = LiveInstanceRegistry(queue_size=4)
-    connection = await registry.register(uuid4())
+    connection = await _registered_capture_connection(registry)
     request = _capture_request(connection.instance_id)
     submit = asyncio.create_task(connection.submit_capture(request))
 
@@ -106,7 +115,7 @@ async def test_submit_capture_enqueues_request_and_resolves_with_result() -> Non
 @pytest.mark.asyncio
 async def test_submit_capture_resolves_with_error_payload() -> None:
     registry = LiveInstanceRegistry(queue_size=4)
-    connection = await registry.register(uuid4())
+    connection = await _registered_capture_connection(registry)
     request = _capture_request(connection.instance_id)
     submit = asyncio.create_task(connection.submit_capture(request))
 
@@ -120,7 +129,7 @@ async def test_submit_capture_resolves_with_error_payload() -> None:
 @pytest.mark.asyncio
 async def test_submit_capture_times_out_with_bounded_error() -> None:
     registry = LiveInstanceRegistry(queue_size=4)
-    connection = await registry.register(uuid4())
+    connection = await _registered_capture_connection(registry)
     request = _capture_request(connection.instance_id)
     submit = asyncio.create_task(connection.submit_capture(request, timeout_seconds=0.05))
 
@@ -143,7 +152,7 @@ async def test_resolve_capture_ignores_unknown_request_id() -> None:
 @pytest.mark.asyncio
 async def test_submit_capture_backpressure_cleans_pending_entry() -> None:
     registry = LiveInstanceRegistry(queue_size=1)
-    connection = await registry.register(uuid4())
+    connection = await _registered_capture_connection(registry)
     heartbeat = WireMessage(
         type=MessageType.BRIDGE_HEARTBEAT,
         instance_id=connection.instance_id,
@@ -160,7 +169,7 @@ async def test_submit_capture_backpressure_cleans_pending_entry() -> None:
 @pytest.mark.asyncio
 async def test_submit_capture_rejects_foreign_instance_request() -> None:
     registry = LiveInstanceRegistry(queue_size=4)
-    connection = await registry.register(uuid4())
+    connection = await _registered_capture_connection(registry)
     request = _capture_request(uuid4())
 
     with pytest.raises(ValueError):
@@ -168,9 +177,58 @@ async def test_submit_capture_rejects_foreign_instance_request() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unregister_fails_pending_captures() -> None:
+async def test_submit_capture_fails_closed_without_negotiated_capability() -> None:
+    # Old A never negotiates bounded capture (no capability fields in its
+    # hello), so the connection defaults to bounded_capture=False and capture
+    # requests are rejected with a clear error instead of silently degrading.
     registry = LiveInstanceRegistry(queue_size=4)
     connection = await registry.register(uuid4())
+    assert connection.bounded_capture is False
+    request = _capture_request(connection.instance_id)
+
+    outcome = await connection.submit_capture(request)
+
+    assert isinstance(outcome, PaneCaptureErrorPayload)
+    assert outcome.error_code == "capture_unsupported"
+    assert outcome.request_id == request.request_id
+    assert "not supported" in outcome.message
+    assert request.request_id not in connection.pending_captures
+    assert connection.outbound.empty()
+
+
+@pytest.mark.asyncio
+async def test_submit_capture_accepts_after_capability_negotiated() -> None:
+    registry = LiveInstanceRegistry(queue_size=4)
+    connection = await registry.register(uuid4())
+    connection.bounded_capture = True
+    request = _capture_request(connection.instance_id)
+    submit = asyncio.create_task(connection.submit_capture(request))
+
+    await asyncio.sleep(0)
+    assert request.request_id in connection.pending_captures
+
+    forwarded = await connection.outbound.get()
+    assert forwarded.type is MessageType.PANE_CAPTURE_REQUEST
+    result = _capture_result(request)
+    assert connection.resolve_capture(request.request_id, result)
+    assert await submit is result
+
+
+@pytest.mark.asyncio
+async def test_typed_keys_requests_rejected_without_negotiated_capability() -> None:
+    registry = LiveInstanceRegistry(queue_size=4)
+    connection = await registry.register(uuid4())
+    assert connection.typed_keys is False
+    with pytest.raises(CapabilityUnavailable):
+        connection.require_capability(typed_keys=True)
+    connection.typed_keys = True
+    connection.require_capability(typed_keys=True)
+
+
+@pytest.mark.asyncio
+async def test_unregister_fails_pending_captures() -> None:
+    registry = LiveInstanceRegistry(queue_size=4)
+    connection = await _registered_capture_connection(registry)
     request = _capture_request(connection.instance_id)
     submit = asyncio.create_task(connection.submit_capture(request))
     await asyncio.sleep(0)
@@ -184,7 +242,7 @@ async def test_unregister_fails_pending_captures() -> None:
 @pytest.mark.asyncio
 async def test_expire_before_fails_pending_captures() -> None:
     registry = LiveInstanceRegistry(queue_size=4)
-    connection = await registry.register(uuid4())
+    connection = await _registered_capture_connection(registry)
     request = _capture_request(connection.instance_id)
     submit = asyncio.create_task(connection.submit_capture(request))
     await asyncio.sleep(0)
@@ -211,7 +269,9 @@ def test_bridge_capture_round_trip_resolves_pending_future(
             WireMessage(
                 type=MessageType.BRIDGE_HELLO,
                 instance_id=instance_id,
-                payload=BridgeHelloPayload(name="capture").model_dump(mode="json"),
+                payload=BridgeHelloPayload(name="capture", bounded_capture=True).model_dump(
+                    mode="json"
+                ),
             ).model_dump_json()
         )
         registry = client.app.state.registry

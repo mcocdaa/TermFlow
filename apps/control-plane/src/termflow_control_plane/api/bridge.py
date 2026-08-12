@@ -79,6 +79,11 @@ async def _receive_messages(
         if message.type is MessageType.BRIDGE_HELLO:
             hello = cast(BridgeHelloPayload, payload)
             connection.capabilities = frozenset(hello.capabilities)
+            # Negotiated capability flags (M2.4): an old A that predates the
+            # fields leaves both False, so capture and typed-key requests
+            # fail closed instead of silently degrading.
+            connection.bounded_capture = hello.bounded_capture
+            connection.typed_keys = hello.typed_keys
             connection.last_heartbeat = datetime.now(UTC)
             await repositories.instances.touch(
                 connection.instance_id,
