@@ -379,8 +379,19 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         # The MCP capability surface is built here because the continuation
         # service and token authenticator need the repository bundle; the
         # mounted ASGI wrapper serves it only while the plugin is enabled.
+        mcp_lifespan_ctx = None
         if settings.agent_broker_enabled:
             app.state.agent_mcp_app = await _build_agent_mcp_app(app, settings)
+            # The SDK's Streamable HTTP app starts its session manager from
+            # its own Starlette lifespan, but Starlette only runs the
+            # lifespan of the top-level app: the lifespan of an app mounted
+            # with ``Mount`` is never entered, so every request past the auth
+            # gate would fail with "Task group is not initialized".  Enter
+            # the inner app's lifespan from here instead (the SDK documents
+            # ``session_manager.run()`` as the host-app lifespan hook).
+            mcp_lifespan_ctx = app.state.agent_mcp_app.router.lifespan_context(
+                app.state.agent_mcp_app
+            )
         expiry_task = asyncio.create_task(
             _heartbeat_expiry_loop(app.state.registry, app.state.event_hub, settings)
         )
@@ -399,7 +410,11 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
             )
         )
         try:
-            yield
+            if mcp_lifespan_ctx is not None:
+                async with mcp_lifespan_ctx:
+                    yield
+            else:
+                yield
         finally:
             expiry_task.cancel()
             session_expiry_task.cancel()

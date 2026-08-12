@@ -13,7 +13,10 @@ The server is assembled from the existing observe-only handlers
   per-binding concurrency/rate quotas, unknown tools fail closed;
 - config drift against the pinned OpenCode allowlist fails startup;
 - the Streamable HTTP app mounts at ``/api/v1/agent/mcp`` only while
-  ``agent_broker_enabled``.
+  ``agent_broker_enabled``;
+- the mounted SDK app's lifespan (session manager) runs under the FastAPI
+  lifespan: a full initialize + tools/call round trip with a real seeded
+  AgentToken succeeds through the app-level mount (M4.5 regression).
 """
 
 from __future__ import annotations
@@ -64,6 +67,7 @@ from termflow_protocol.mcp import (
     PaneSummary,
     TermFlowToolName,
 )
+from termflow_protocol.topology import PaneSnapshot, TopologySnapshot, WindowSnapshot
 
 #: The pinned OpenCode config fixture (M0.3) that allowlists the TermFlow tools.
 OPENCODE_CONFIG_FIXTURE = (
@@ -161,6 +165,57 @@ def _seed_app_token(client: TestClient) -> str:
 
     async def _seed() -> str:
         binding = await _seed_binding(client.app.state.repositories)
+        return await _seed_token(client.app.state.repositories, binding)
+
+    return client.portal.call(_seed)
+
+
+def _live_topology() -> TopologySnapshot:
+    """A Term topology for the app-level round trip (M4.5 regression)."""
+    return TopologySnapshot(
+        session_id="$0",
+        session_name="test",
+        revision=1,
+        windows=[
+            WindowSnapshot(
+                window_id="@0",
+                index=0,
+                name="win0",
+                active=True,
+                panes=[
+                    PaneSnapshot(
+                        pane_id="%0",
+                        window_id="@0",
+                        index=0,
+                        title="shell",
+                        width=80,
+                        height=24,
+                        active=True,
+                        dead=False,
+                    ),
+                    PaneSnapshot(
+                        pane_id="%1",
+                        window_id="@0",
+                        index=1,
+                        title="build log",
+                        width=80,
+                        height=24,
+                        active=False,
+                        dead=False,
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def _seed_app_round_trip(client: TestClient) -> str:
+    """Seed a binding + AgentToken and a live Term with a pane topology."""
+
+    async def _seed() -> str:
+        binding = await _seed_binding(client.app.state.repositories)
+        connection = await client.app.state.registry.register(binding.term_id)
+        connection.topology = _live_topology()
         return await _seed_token(client.app.state.repositories, binding)
 
     return client.portal.call(_seed)
@@ -934,6 +989,34 @@ def test_mcp_mount_present_when_plugin_enabled(tmp_path) -> None:
         assert response.status_code == 401
 
 
+def test_mcp_mount_full_round_trip_with_valid_agent_token(tmp_path) -> None:
+    # M4.5 regression: the SDK's Streamable HTTP app starts its session
+    # manager from its own Starlette lifespan, but Starlette only runs the
+    # lifespan of the top-level app, so a mounted inner app's lifespan was
+    # never entered and every request past the auth gate failed with
+    # "Task group is not initialized".  This exercises the whole path:
+    # a real seeded AgentToken, initialize + tools/call through the app-level
+    # mount, and a real tool result back.
+    settings = Settings(
+        admin_token="admin-token-that-is-long-enough-for-tests",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'app.db'}",
+        allow_insecure_loopback=True,
+        enable_docs=True,
+        # TestClient sends ``Host: testserver``; name it like deployment
+        # wiring names the agent-internal hosts (plan §16).
+        agent_mcp_allowed_hosts=("testserver",),
+    )
+    app = create_app(settings=settings)
+    with TestClient(app) as client:
+        raw_token = _seed_app_round_trip(client)
+        headers = _initialize(client, raw_token)
+
+        listing = _call_tool(client, headers, TermFlowToolName.LIST_PANES.value, {})
+        assert listing.get("result") is not None
+        panes = listing["result"]["structuredContent"]["panes"]
+        assert {pane["pane_id"] for pane in panes} == {"%0", "%1"}
+
+
 def test_mcp_mount_absent_when_plugin_disabled(tmp_path) -> None:
     settings = Settings(
         admin_token="admin-token-that-is-long-enough-for-tests",
@@ -1030,7 +1113,9 @@ def test_app_built_mcp_transport_honors_configured_agent_network_hosts(tmp_path)
     # settings.agent_mcp_allowed_hosts; a configured agent-network host passes
     # the transport gate while an unlisted host is refused with 421.  The app
     # factory builds the inner Streamable HTTP app from Settings, so this is
-    # the real wiring, not a direct create_streamable_http_app call.
+    # the real wiring, not a direct create_streamable_http_app call.  The
+    # requests go through the app-level mount: the session manager runs under
+    # the FastAPI lifespan (M4.5), so the transport gate is reachable there.
     settings = Settings(
         admin_token="admin-token-that-is-long-enough-for-tests",
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'app.db'}",
@@ -1040,21 +1125,16 @@ def test_app_built_mcp_transport_honors_configured_agent_network_hosts(tmp_path)
     app = create_app(settings=settings, database=Database(settings.database_url))
     with TestClient(app) as client:
         raw_token = _seed_app_token(client)
-        inner = client.app.state.agent_mcp_app
-        assert inner is not None
-        # The inner SDK app runs its own lifespan (session manager) when
-        # entered through TestClient; the outer FastAPI mount only forwards.
-        with TestClient(inner) as mcp_client:
-            headers = {"Authorization": f"Bearer {raw_token}"}
-            allowed = mcp_client.post(
-                "/",
-                json=_app_initialize_body(),
-                headers={**headers, "host": "agent-network.internal"},
-            )
-            assert allowed.status_code == 200
-            refused = mcp_client.post(
-                "/",
-                json=_app_initialize_body(),
-                headers={**headers, "host": "evil.example.com"},
-            )
-            assert refused.status_code == 421
+        bearer = {"Authorization": f"Bearer {raw_token}"}
+        allowed = client.post(
+            MCP_STREAMABLE_HTTP_PATH,
+            json=_app_initialize_body(),
+            headers={**bearer, "host": "agent-network.internal"},
+        )
+        assert allowed.status_code == 200
+        refused = client.post(
+            MCP_STREAMABLE_HTTP_PATH,
+            json=_app_initialize_body(),
+            headers={**bearer, "host": "evil.example.com"},
+        )
+        assert refused.status_code == 421
