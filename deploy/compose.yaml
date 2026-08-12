@@ -31,6 +31,11 @@ services:
     volumes:
       - termflow-data:/app/data
       - termflow-totp-key:/app/totp-secrets
+    networks:
+      # B serves A/C on the public/LAN network and reaches the OpenCode runtime
+      # only over the internal agent network (plan §16).
+      - default
+      - agent_internal
     restart: unless-stopped
     logging:
       driver: json-file
@@ -44,8 +49,100 @@ services:
       retries: 3
       start_period: 5s
 
+  # OpenCode reference runtime for the Agent Broker (plan §6.2.1, §16).
+  #
+  # One runtime per Agent Binding. B never drives Docker: the supervisor
+  # connector (plugins.agent_broker.agent.runtime_supervisor) attests
+  # health/epoch and rotates the epoch-bound MCP capability through a
+  # deployment-owned runtime manager, which is how this container is started
+  # and reconfigured.
+  #
+  # The TermFlow MCP server entry is NOT baked into the frozen config below:
+  # the supervisor injects it at runtime with the epoch-bound capability token
+  # (plan §6.2.1), so no static shared token ever lives in an image or volume.
+  opencode-agent:
+    # M8 pins the exact tested image tag AND digest; this placeholder digest is
+    # intentionally unpullable so an unpinned deployment fails loudly.
+    image: ghcr.io/sst/opencode@sha256:PLACEHOLDER_M8_PINNED_DIGEST
+    command:
+      - opencode
+      - serve
+      - --hostname
+      - 0.0.0.0
+      - --port
+      - "4096"
+    environment:
+      # The frozen deny-by-default config (M0.3 fixture), consumed read-only
+      # from /etc/termflow (see volumes); not overridable at runtime. The
+      # startup drift guard fails closed on any tool/config divergence.
+      OPENCODE_CONFIG: /etc/termflow/opencode-config.yaml
+      # HTTP Basic auth for the internal B-to-OpenCode connection (plan §16);
+      # values must come from deployment secrets, never a committed file.
+      OPENCODE_BASIC_AUTH_USERNAME: ${OPENCODE_BASIC_AUTH_USERNAME:?set OPENCODE_BASIC_AUTH_USERNAME}
+      OPENCODE_BASIC_AUTH_PASSWORD: ${OPENCODE_BASIC_AUTH_PASSWORD:?set OPENCODE_BASIC_AUTH_PASSWORD}
+      # Model provider credentials pass through deployment secrets, not image
+      # layers or committed env files. M8 maps this to the pinned provider's
+      # credential env (e.g. ANTHROPIC_API_KEY) with the pinned image.
+      OPENCODE_MODEL_API_KEY: ${OPENCODE_MODEL_API_KEY:?set OPENCODE_MODEL_API_KEY}
+      HOME: /home/opencode
+    volumes:
+      # Dedicated data volume for backend conversation persistence (plan §16);
+      # no docker socket, no A directories, no TermFlow credentials, and no
+      # arbitrary host workspaces are ever mounted.
+      - opencode-data:/home/opencode/.local/share/opencode
+      # The frozen M0.3 config fixture is the only host file mounted, read-only.
+      - ../apps/control-plane/tests/fixtures/opencode/opencode-config.yaml:/etc/termflow/opencode-config.yaml:ro
+    expose:
+      - "4096"
+    networks:
+      # Internal network only: never attached to the public A/C network. The
+      # optional allowlisted provider_egress network (plan §16) is a
+      # deployment follow-up for model-provider egress.
+      - agent_internal
+    user: "10001:10001"
+    # M8 pins the image's fixed UID and home-directory ownership so the fresh
+    # named volume and tmpfs below are writable by this non-root user.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid
+      - /home/opencode/.cache:size=512m,noexec,nosuid
+    mem_limit: ${OPENCODE_MEM_LIMIT:-2g}
+    cpus: ${OPENCODE_CPUS:-2}
+    pids_limit: 512
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 1024
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      # Default Docker seccomp/AppArmor profiles apply (never "unconfined").
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4096/global/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
 volumes:
   termflow-data:
     name: ${TERMFLOW_DATA_VOLUME:-termflow-data}
   termflow-totp-key:
     name: ${TERMFLOW_TOTP_KEY_VOLUME:-termflow-totp-key}
+  opencode-data:
+    name: ${OPENCODE_DATA_VOLUME:-opencode-data}
+
+networks:
+  agent_internal:
+    internal: true
