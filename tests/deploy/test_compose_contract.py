@@ -209,6 +209,10 @@ def test_readme_docker_node_uses_local_managed_directories() -> None:
         "docker exec --user termflow -it termflow-node termflow attach demo"
         in readme
     )
+    assert "Web C 进入 Docker A 的 Term 默认使用 Bash" in readme
+    assert "--env TERMFLOW_SHELL=sh" in readme
+    assert "只接受 `bash` 和 `sh`" in readme
+    assert "重新创建 Docker A 容器" in readme
 
 
 def test_docker_context_excludes_local_state_and_frontend_build_output() -> None:
