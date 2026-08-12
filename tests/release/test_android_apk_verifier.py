@@ -22,7 +22,12 @@ LAUNCHER_NAMES = (
 KNOWN_TEMPLATE_HASH = "dae1ff05b101efea50e4b622fe6a3af8ba8f761162fa7c4fd864adc7cb39eeac"
 
 
-def _write_resources(root: Path, *, template_at_xxxhdpi: bool = False) -> tuple[Path, Path]:
+def _write_resources(
+    root: Path,
+    *,
+    template_at_xxxhdpi: bool = False,
+    adaptive_background: bool = True,
+) -> tuple[Path, Path]:
     generated = root / "generated-res"
     apk = root / "app.apk"
     with zipfile.ZipFile(apk, "w") as archive:
@@ -37,8 +42,14 @@ def _write_resources(root: Path, *, template_at_xxxhdpi: bool = False) -> tuple[
                 archive.writestr(f"res/mipmap-{density}-v4/{name}", content)
         adaptive = generated / "mipmap-anydpi-v26" / "ic_launcher.xml"
         adaptive.parent.mkdir(parents=True, exist_ok=True)
+        background = (
+            '<background android:drawable="@color/ic_launcher_background"/>'
+            if adaptive_background
+            else ""
+        )
         adaptive.write_text(
-            '<adaptive-icon><foreground android:drawable="@mipmap/ic_launcher_foreground"/>'
+            f"<adaptive-icon>{background}"
+            '<foreground android:drawable="@mipmap/ic_launcher_foreground"/>'
             "</adaptive-icon>"
         )
         archive.writestr("res/mipmap-anydpi-v26/ic_launcher.xml", adaptive.read_bytes())
@@ -56,6 +67,13 @@ def test_rejects_missing_launcher_density(tmp_path: Path) -> None:
     (generated / "mipmap-xhdpi" / "ic_launcher_round.png").unlink()
 
     with pytest.raises(ValueError, match="missing generated launcher"):
+        verify_launcher_resources(apk, generated)
+
+
+def test_rejects_adaptive_launcher_without_background(tmp_path: Path) -> None:
+    apk, generated = _write_resources(tmp_path, adaptive_background=False)
+
+    with pytest.raises(ValueError, match="background resource"):
         verify_launcher_resources(apk, generated)
 
 

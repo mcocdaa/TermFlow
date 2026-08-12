@@ -167,6 +167,8 @@ def verify_launcher_resources(apk: Path, generated_res: Path) -> None:
     adaptive_source = adaptive.read_text()
     if "ic_launcher_foreground" not in adaptive_source:
         raise ValueError("adaptive launcher does not reference the foreground resource")
+    if "ic_launcher_background" not in adaptive_source:
+        raise ValueError("adaptive launcher does not reference the background resource")
 
     with zipfile.ZipFile(apk) as archive:
         names = set(archive.namelist())
