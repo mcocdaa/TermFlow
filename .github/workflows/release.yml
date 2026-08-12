@@ -45,6 +45,7 @@ jobs:
     name: Package native C
     needs: validate-version
     uses: ./.github/workflows/tauri-packages.yml
+    secrets: inherit
     with:
       platform: all
       release_tag: ${{ github.ref_name }}
@@ -99,7 +100,7 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" release-assets/* \
             --title "TermFlow ${GITHUB_REF_NAME}" \
             --generate-notes \
-            --notes "Windows package is unsigned. Android uses a debug key. iOS is Simulator-only." \
+            --notes "Windows package is unsigned. Android release APK uses the fixed TermFlow signing certificate; rc.3/rc.4 Android users must uninstall once before installing rc.5. iOS is Simulator-only." \
             "${prerelease[@]}"
       - uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
         with:
