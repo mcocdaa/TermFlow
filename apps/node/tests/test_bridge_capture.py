@@ -528,6 +528,94 @@ async def test_capture_rejects_malformed_stream_id_as_invalid_request() -> None:
 
 
 @pytest.mark.asyncio
+async def test_large_history_capture_across_chunks_truncates_to_max_bytes() -> None:
+    # A large history fed as many small chunks: the since-capture reassembles
+    # the whole ring and truncates to the bounded tail, reporting the flag
+    # (plan §19 M2: "very large history" and "bounded captures").
+    buffers = OutputBuffers(max_bytes_per_pane=4096)
+    runtime, transport, instance_id = make_runtime(buffers=buffers)
+    raw = bytearray()
+    first = None
+    for index in range(30):
+        chunk_data = f"line-{index:02d}:".encode() * 8  # 64 bytes per chunk
+        chunk = buffers.append("%1", chunk_data)
+        if first is None:
+            first = chunk
+        raw += chunk_data
+    assert buffers.for_pane("%1").last_seq == 30
+    request = capture_request(
+        instance_id,
+        capture_kind=CaptureKind.HISTORY,
+        stream_id=str(first.stream_id),
+        seq=0,
+        max_bytes=512,
+    )
+    message = await deliver(runtime, transport, request)
+    result = PaneCaptureResultPayload.model_validate(message.payload)
+    assert result.result_code == "ok"
+    assert result.truncated is True
+    assert len(result.content.encode("utf-8")) == 512
+    assert result.content.encode("utf-8") == bytes(raw)[-512:]
+    assert result.from_seq == 1
+    assert result.to_seq == 30
+    # The read never mutated the live ring and never synthesized output.
+    ring = buffers.for_pane("%1")
+    assert ring.stream_id == first.stream_id
+    assert ring.last_seq == 30
+    assert ring.total_bytes == len(raw)
+    assert not any(message.type is MessageType.PANE_OUTPUT for message in transport.messages)
+
+
+@pytest.mark.asyncio
+async def test_split_escape_sequence_across_chunks_reassembles_coherently() -> None:
+    # A CSI sequence split across chunk boundaries must survive: the ring
+    # serves raw bytes and the since-capture reassembles them in order, so
+    # the parser state on the reader never desyncs (plan §9.3).
+    buffers = OutputBuffers(max_bytes_per_pane=4096)
+    runtime, transport, instance_id = make_runtime(buffers=buffers)
+    first = buffers.append("%1", b"\x1b[31")
+    buffers.append("%1", b"mred")
+    buffers.append("%1", b"\x1b[0")
+    buffers.append("%1", b"m")
+    request = capture_request(
+        instance_id,
+        capture_kind=CaptureKind.HISTORY,
+        stream_id=str(first.stream_id),
+        seq=0,
+        max_bytes=4096,
+    )
+    message = await deliver(runtime, transport, request)
+    result = PaneCaptureResultPayload.model_validate(message.payload)
+    assert result.result_code == "ok"
+    assert result.content == "\x1b[31mred\x1b[0m"
+    assert result.truncated is False
+    assert result.stream_gap is False
+    # The ring is untouched: the raw chunks remain exactly as they were fed.
+    replay = buffers.for_pane("%1").replay(first.stream_id, 0)
+    assert [chunk.data for chunk in replay] == [b"\x1b[31", b"mred", b"\x1b[0", b"m"]
+
+
+@pytest.mark.asyncio
+async def test_capture_succeeds_with_current_incarnation_after_replacement() -> None:
+    # Pane replacement: the old incarnation's cursor is rejected (covered by
+    # test_capture_rejects_stale_pane_incarnation); a capture re-issued with
+    # the current incarnation works against the fresh ring.
+    buffers = OutputBuffers(max_bytes_per_pane=1024)
+    runtime, transport, instance_id = make_runtime(buffers=buffers)
+    buffers.append("%1", b"old content")
+    buffers.reset_stream("%1")
+    assert buffers.pane_incarnation("%1") == 2
+    request = capture_request(instance_id, pane_incarnation=2)
+    message = await deliver(runtime, transport, request)
+    result = PaneCaptureResultPayload.model_validate(message.payload)
+    assert result.result_code == "ok"
+    assert result.pane_incarnation == 2
+    assert result.from_seq == 0
+    assert result.to_seq == 0
+    assert result.stream_gap is False
+
+
+@pytest.mark.asyncio
 async def test_capture_tmux_failure_returns_bounded_pane_error() -> None:
     class FailingControl(RecordingControl):
         async def capture_pane_bounded(
