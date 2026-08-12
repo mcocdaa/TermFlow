@@ -30,7 +30,7 @@ def test_readme_links_every_operator_document() -> None:
     ):
         assert name in readme
     assert "docs/superpowers/README.md" in readme
-    assert "[.env.example](.env.example)" in readme
+    assert ".env.example" in Path("docs/operations.md").read_text()
 
 
 def test_current_operator_docs_do_not_recommend_removed_runtime_variables() -> None:
@@ -115,15 +115,28 @@ def test_operator_docs_explain_native_device_authorization_and_windows_replaceme
         assert contract in github_actions
 
 
-def test_readme_documents_offline_artifact_install_and_local_image_run() -> None:
+def test_operator_docs_document_offline_artifact_install_and_local_image_run() -> None:
     readme = Path("README.md").read_text()
+    operator_details = "\n".join(
+        Path(path).read_text()
+        for path in (
+            "docs/operations.md",
+            "docs/github-actions.md",
+        )
+    )
 
     for phrase in (
         "Path.cwd().as_uri()",
         "docker load -i termflow-control-plane.tar",
         "docker run -d --name termflow-control-plane",
-        'IMAGE_NAME="$(docker load -i termflow-control-plane.tar',
         'TERMFLOW_ALLOW_INSECURE_LOOPBACK="${TERMFLOW_ALLOW_INSECURE_LOOPBACK:-true}"',
         "curl -fsS http://127.0.0.1:8765/healthz",
     ):
-        assert phrase in readme
+        assert phrase in operator_details
+
+    for detail in (
+        "Path.cwd().as_uri()",
+        "docker load -i termflow-control-plane.tar",
+        'TERMFLOW_ALLOW_INSECURE_LOOPBACK="${TERMFLOW_ALLOW_INSECURE_LOOPBACK:-true}"',
+    ):
+        assert detail not in readme

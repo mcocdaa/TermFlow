@@ -4621,6 +4621,8 @@ dependencies = [
  "http",
  "keyring",
  "keyring-core",
+ "log",
+ "ndk-context",
  "p256",
  "regex",
  "reqwest 0.12.28",

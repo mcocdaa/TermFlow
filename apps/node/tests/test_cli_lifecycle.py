@@ -222,9 +222,7 @@ def test_prune_force_removes_without_interactive_confirmation(monkeypatch) -> No
     assert "Removed 1 stale instances" in result.stdout
 
 
-def test_list_marks_activation_required_without_claiming_connection(
-    tmp_path, monkeypatch
-) -> None:
+def test_list_marks_activation_required_without_claiming_connection(tmp_path, monkeypatch) -> None:
     from termflow_node.instances.models import RemoteAccessState
 
     store = InstanceStore(tmp_path / "instances")
@@ -240,6 +238,20 @@ def test_list_marks_activation_required_without_claiming_connection(
     assert result.exit_code == 0, result.output
     assert "activation-required remote=unknown remote_access=activation_required" in result.stdout
     assert "connected" not in result.stdout
+
+
+def test_serve_command_runs_the_foreground_supervisor(monkeypatch) -> None:
+    captured: list[tuple[str, float]] = []
+
+    def fake_run_serve(name, *, interval=5.0, shutdown=None):
+        captured.append((name, interval))
+
+    monkeypatch.setattr(cli, "_run_serve", fake_run_serve)
+
+    result = CliRunner().invoke(cli.app, ["serve", "--name", "demo"])
+
+    assert result.exit_code == 0, result.output
+    assert captured == [("demo", 5.0)]
 
 
 def test_ambiguous_name_reports_candidate_ids(tmp_path) -> None:
@@ -307,9 +319,7 @@ def test_activate_command_reports_success_without_credentials(tmp_path, monkeypa
         update={"remote_access": RemoteAccessState.ACTIVE}
     )
     activator = FakeActivator(ActivationResult(record, True))
-    monkeypatch.setattr(
-        cli, "default_instance_activator", lambda store: activator, raising=False
-    )
+    monkeypatch.setattr(cli, "default_instance_activator", lambda store: activator, raising=False)
 
     result = CliRunner().invoke(cli.app, ["activate", "alpha"])
 
@@ -324,9 +334,7 @@ def test_activate_command_reports_active_noop(tmp_path, monkeypatch) -> None:
         update={"remote_access": RemoteAccessState.ACTIVE}
     )
     activator = FakeActivator(ActivationResult(record, False))
-    monkeypatch.setattr(
-        cli, "default_instance_activator", lambda store: activator, raising=False
-    )
+    monkeypatch.setattr(cli, "default_instance_activator", lambda store: activator, raising=False)
 
     result = CliRunner().invoke(cli.app, ["activate", str(record.instance_id)])
 
@@ -334,15 +342,11 @@ def test_activate_command_reports_active_noop(tmp_path, monkeypatch) -> None:
     assert f"Remote access already active for {record.instance_id}" in result.stdout
 
 
-def test_activate_command_reports_safe_failure_with_nonzero_exit(
-    tmp_path, monkeypatch
-) -> None:
+def test_activate_command_reports_safe_failure_with_nonzero_exit(tmp_path, monkeypatch) -> None:
     activator = FakeActivator(
         ActivationError("Remote activation failed; local tmux was not changed.")
     )
-    monkeypatch.setattr(
-        cli, "default_instance_activator", lambda store: activator, raising=False
-    )
+    monkeypatch.setattr(cli, "default_instance_activator", lambda store: activator, raising=False)
 
     result = CliRunner().invoke(cli.app, ["activate", "alpha"])
 

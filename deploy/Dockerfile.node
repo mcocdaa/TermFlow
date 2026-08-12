@@ -42,8 +42,6 @@ ENV PATH="/opt/termflow/bin:${PATH}" \
 COPY --from=python-wheels /opt/termflow /opt/termflow
 COPY --chmod=0755 deploy/entrypoint.node.sh /usr/local/bin/termflow-entrypoint
 
-USER termflow
-
 WORKDIR /work
 
 ENTRYPOINT ["/usr/local/bin/termflow-entrypoint"]

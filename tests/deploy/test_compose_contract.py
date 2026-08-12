@@ -40,7 +40,7 @@ def test_full_verification_checks_source_build_compose_configuration() -> None:
     for destructive in ("rm -", "docker stop", "kill-server"):
         assert destructive not in verify
     assert "TERMFLOW_IMAGE" not in verify
-    assert "TERMFLOW_ADMIN_TOKEN=\"verify-admin-token-that-is-long-enough\"" in verify
+    assert 'TERMFLOW_ADMIN_TOKEN="verify-admin-token-that-is-long-enough"' in verify
     assert "docker compose -f deploy/compose.yaml config --quiet" in verify
 
 
@@ -115,7 +115,15 @@ def test_control_plane_image_uses_builders_and_a_source_free_runtime() -> None:
     assert "uv build --wheel --package termflow-control-plane" in dockerfile
     assert "FROM python:3.12-slim AS runtime" in dockerfile
     assert "EXPOSE 8000" in dockerfile
-    assert "USER termflow" in dockerfile
+    assert "mkdir -p /app/data /app/totp-secrets" in dockerfile
+    assert "termflow-control-entrypoint" in dockerfile
+
+    entrypoint = Path("deploy/entrypoint.control-plane.sh").read_text()
+    assert "data_dir=/app/data" in entrypoint
+    assert "totp_dir=/app/totp-secrets" in entrypoint
+    assert "-L" in entrypoint  # refuse symlinked mount points
+    assert "-xdev" in entrypoint  # never recurse across filesystems
+    assert "setpriv" in entrypoint  # exec drop keeps PID 1 non-root
 
     runtime = dockerfile.split("FROM python:3.12-slim AS runtime", maxsplit=1)[1]
     assert "COPY --from=python-wheels /opt/termflow /opt/termflow" in runtime
@@ -134,6 +142,59 @@ def test_control_plane_image_uses_builders_and_a_source_free_runtime() -> None:
         "/uv",
     ):
         assert forbidden not in runtime.lower()
+
+
+def test_node_image_initializes_managed_mounts_then_drops_privileges() -> None:
+    dockerfile = Path("deploy/Dockerfile.node").read_text()
+    runtime = dockerfile.split("FROM python:3.12.11-slim-bookworm AS runtime", maxsplit=1)[1]
+    entrypoint = Path("deploy/entrypoint.node.sh").read_text()
+    verifier = Path("scripts/verify-node-image.sh").read_text()
+
+    assert "USER termflow" not in runtime
+    assert "home_dir=/home/termflow" in entrypoint
+    assert "work_dir=/work" in entrypoint
+    assert "-L" in entrypoint  # refuse symlinked mount points
+    assert "-xdev" in entrypoint  # never recurse across filesystems
+    assert "setpriv" in entrypoint  # re-exec before login/tmux/Bridge startup
+    for optional_environment in (
+        "TERMFLOW_SERVER",
+        "TERMFLOW_CODE",
+        "TERMFLOW_ALLOW_INSECURE_HTTP",
+        "TERMFLOW_NEW",
+    ):
+        assert f"${{{optional_environment}:-}}" in entrypoint
+
+    for expected in (
+        "root-owned bind mounts",
+        "stat -c %u /proc/1",
+        "CapEff",
+        "--cap-add CHOWN",
+        "--cap-add DAC_OVERRIDE",
+        "--cap-add SETUID",
+        "--cap-add SETGID",
+        "docker exec --user termflow",
+    ):
+        assert expected in verifier
+
+
+def test_readme_docker_node_uses_local_managed_directories() -> None:
+    readme = Path("README.md").read_text()
+
+    assert "mkdir -p termflow-node-identity termflow-node-work" in readme
+    assert '--volume "$PWD/termflow-node-identity:/home/termflow"' in readme
+    assert '--volume "$PWD/termflow-node-work:/work"' in readme
+    assert "docker volume create termflow-node-identity" not in readme
+    assert "docker volume create termflow-node-work" not in readme
+    for capability in ("CHOWN", "DAC_OVERRIDE", "SETUID", "SETGID"):
+        assert f"--cap-add {capability}" in readme
+    docker_run = readme.split("docker run -d \\\n", maxsplit=1)[1].split(
+        "ghcr.io/mcocdaa/termflow-node:v0.1.0", maxsplit=1
+    )[0]
+    assert "--user" not in docker_run
+    assert (
+        "docker exec --user termflow -it termflow-node termflow attach demo"
+        in readme
+    )
 
 
 def test_docker_context_excludes_local_state_and_frontend_build_output() -> None:
@@ -172,6 +233,9 @@ def test_delivery_scripts_verify_image_contents_and_tauri_compile_gates() -> Non
         "/opt/termflow/bin/termflow-control",
         "auth totp reset --help",
         "find /",
+        "termflow-control-entrypoint",
+        "/app/totp-secrets",
+        "stat -c %u /proc/1",
     ):
         assert expected in image_check
     for forbidden in (
@@ -186,6 +250,15 @@ def test_delivery_scripts_verify_image_contents_and_tauri_compile_gates() -> Non
         "rustc",
     ):
         assert forbidden in image_check
+
+    node_check = Path("scripts/verify-node-image.sh").read_text()
+    for expected in (
+        "termflow serve --name demo",
+        '"bridge_alive":true',
+        "ExitCode",
+        "single_instance",
+    ):
+        assert expected in node_check
 
     for command in ("cargo fmt", "cargo clippy", "cargo test", "cargo check", "--no-bundle"):
         assert command in tauri_check

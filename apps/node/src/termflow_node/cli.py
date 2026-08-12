@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import signal
+import threading
 from typing import Annotated, NoReturn
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -18,7 +19,11 @@ from termflow_node.config.store import ConfigNotFound, ConfigStore
 from termflow_node.control_plane_client import ControlPlaneClient, validate_server_url
 from termflow_node.diagnostics import probe_instance_health, run_diagnostics
 from termflow_node.instances.activation import ActivationError, default_instance_activator
-from termflow_node.instances.manager import InstanceManager
+from termflow_node.instances.manager import (
+    BridgeStartError,
+    InstanceManager,
+    InstanceResolutionError,
+)
 from termflow_node.instances.models import LocalInstance, RemoteAccessState
 from termflow_node.instances.store import InstanceStore
 from termflow_node.instances.synchronization import InstanceSynchronizer
@@ -188,6 +193,13 @@ def attach(identifier: str) -> None:
 
     _, argv = InstanceManager(InstanceStore.default()).attach(identifier)
     _exec_tmux(argv)
+
+
+@app.command()
+def serve(name: Annotated[str, typer.Option("--name", help="Local Instance name.")]) -> None:
+    """Run one named Instance as a foreground service without attaching."""
+
+    _run_serve(name)
 
 
 @app.command()
@@ -400,3 +412,78 @@ def bridge_process(instance_id: Annotated[UUID, typer.Option("--instance-id")]) 
     """Run the private Bridge process for one explicit Instance."""
 
     asyncio.run(_run_bridge(instance_id))
+
+
+def _run_serve(
+    name: str,
+    *,
+    interval: float = 5.0,
+    shutdown: threading.Event | None = None,
+) -> None:
+    """Foreground supervisor: keep tmux and the Bridge alive, never attach."""
+
+    ConfigStore.default().load()
+    manager = InstanceManager(InstanceStore.default())
+    if shutdown is None:
+        shutdown = threading.Event()
+        signal.signal(signal.SIGTERM, lambda *_args: shutdown.set())
+        signal.signal(signal.SIGINT, lambda *_args: shutdown.set())
+    instance = manager.ensure(name)
+    instance = manager.start_bridge(instance)
+    log_event(
+        "serve_started",
+        instance_id=str(instance.instance_id),
+        name=name,
+        status="running",
+    )
+    print(f"serve: instance {instance.instance_id} ({name}) running", flush=True)
+    try:
+        while not shutdown.is_set():
+            try:
+                record = manager.current(instance.instance_id)
+            except (OSError, RuntimeError, ValueError):
+                log_event(
+                    "serve_recovering",
+                    instance_id=str(instance.instance_id),
+                    status="tmux_down",
+                )
+                print(
+                    f"serve: instance {instance.instance_id} tmux is down; rebuilding",
+                    flush=True,
+                )
+                instance = manager.recover(instance.instance_id)
+                shutdown.wait(interval)
+                continue
+            instance = record
+            _tmux_alive, bridge_alive = probe_instance_health(record)
+            if not bridge_alive:
+                log_event(
+                    "serve_bridge_restart",
+                    instance_id=str(record.instance_id),
+                    status="bridge_down",
+                )
+                print(
+                    f"serve: instance {record.instance_id} bridge is down; restarting",
+                    flush=True,
+                )
+                try:
+                    instance = manager.start_bridge(record)
+                except BridgeStartError:
+                    log_event(
+                        "serve_bridge_restart_failed",
+                        instance_id=str(record.instance_id),
+                        status="error",
+                    )
+            shutdown.wait(interval)
+    finally:
+        log_event(
+            "serve_stopped",
+            instance_id=str(instance.instance_id),
+            name=name,
+            status="stopped",
+        )
+        print(f"serve: instance {instance.instance_id} ({name}) stopped", flush=True)
+        try:
+            manager.kill(instance.instance_id)
+        except (BridgeStartError, InstanceResolutionError, OSError):
+            pass

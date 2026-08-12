@@ -250,15 +250,18 @@ def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() ->
         "ios build --debug --ci --target aarch64-sim --no-sign",
             "gen/apple/build/arm64-sim/*.app",
             "actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4",
+            "RUNNER_TEMP/termflow-linux",
+            "RUNNER_TEMP/termflow-artifacts",
+            "RUNNER_TEMP/termflow-android",
         ):
         assert required in text
     for forbidden in ("contents: write", "gh release", "softprops/action-gh-release"):
         assert forbidden not in text
     expected_paths = {
         "windows-nsis": ("bundle/nsis/*-setup.exe",),
-        "linux-packages": ("bundle/deb/*.deb", "bundle/appimage/*.AppImage"),
-        "macos-packages": ("TermFlow-macos-arm64.app.zip", "bundle/dmg/*.dmg"),
-        "android-debug-apk": ("outputs/apk/**/*-debug.apk",),
+        "linux-packages": ("${{ runner.temp }}/termflow-linux/*",),
+        "macos-packages": ("${{ runner.temp }}/termflow-artifacts/*",),
+        "android-debug-apk": ("${{ runner.temp }}/termflow-android/*",),
         "ios-simulator-app": ("TermFlow-ios-simulator-aarch64.app.zip",),
     }
     for job_name, paths in expected_paths.items():

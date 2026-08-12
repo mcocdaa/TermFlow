@@ -79,6 +79,11 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
+      - name: Drop artifact directory remnants
+        shell: bash
+        run: |
+          set -euo pipefail
+          find release-assets -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
       - name: Regenerate checksums and create the release
         shell: bash
         env:

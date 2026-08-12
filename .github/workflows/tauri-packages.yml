@@ -170,12 +170,18 @@ jobs:
             echo "Expected one deb and one AppImage; found deb=$deb_count AppImage=$appimage_count" >&2
             exit 1
           fi
+      - name: Stage the Linux packages flat
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/termflow-linux"
+          cp apps/clients/tauri/src-tauri/target/release/bundle/deb/*.deb \
+            apps/clients/tauri/src-tauri/target/release/bundle/appimage/*.AppImage \
+            "$RUNNER_TEMP/termflow-linux/"
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
         with:
           name: ${{ needs.validate-version.outputs.artifact_prefix }}-linux-x64
-          path: |
-            apps/clients/tauri/src-tauri/target/release/bundle/deb/*.deb
-            apps/clients/tauri/src-tauri/target/release/bundle/appimage/*.AppImage
+          path: ${{ runner.temp }}/termflow-linux/*
           if-no-files-found: error
           retention-days: ${{ fromJSON(needs.validate-version.outputs.retention_days) }}
           compression-level: 0
@@ -228,12 +234,11 @@ jobs:
             echo "Expected exactly one macOS DMG" >&2
             exit 1
           fi
+          cp "$1" "$RUNNER_TEMP/termflow-artifacts/"
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
         with:
           name: ${{ needs.validate-version.outputs.artifact_prefix }}-macos-arm64
-          path: |
-            ${{ runner.temp }}/termflow-artifacts/TermFlow-macos-arm64.app.zip
-            apps/clients/tauri/src-tauri/target/release/bundle/dmg/*.dmg
+          path: ${{ runner.temp }}/termflow-artifacts/*
           if-no-files-found: error
           retention-days: ${{ fromJSON(needs.validate-version.outputs.retention_days) }}
           compression-level: 0
@@ -284,10 +289,17 @@ jobs:
             echo "Expected exactly one debug APK, found $apk_count" >&2
             exit 1
           fi
+      - name: Stage the Android APK flat
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/termflow-android"
+          find apps/clients/tauri/src-tauri/gen/android/app/build/outputs/apk \
+            -type f -name '*-debug.apk' -exec cp {} "$RUNNER_TEMP/termflow-android/" \;
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
         with:
           name: ${{ needs.validate-version.outputs.artifact_prefix }}-android-arm64-debug
-          path: apps/clients/tauri/src-tauri/gen/android/app/build/outputs/apk/**/*-debug.apk
+          path: ${{ runner.temp }}/termflow-android/*
           if-no-files-found: error
           retention-days: ${{ fromJSON(needs.validate-version.outputs.retention_days) }}
           compression-level: 0

@@ -5,6 +5,40 @@ mod terminal_socket;
 use auth::NativeAuthState;
 use tauri::Manager;
 
+#[cfg(target_os = "android")]
+fn initialize_android_context() {
+    // android-native-keyring-store resolves its Android application context
+    // through ndk-context, which panics when it was never initialized, and
+    // Tauri's stack (tauri/tao/wry) does not initialize it. tao registers the
+    // activity as a process-lifetime JNI GlobalRef in its AndroidContext and
+    // publishes the raw VM and context pointers through
+    // main_android_context(); adopt them into ndk-context so the keyring can
+    // resolve the application context before the first keyring-backed command
+    // runs. The registration happens on the JVM thread during
+    // onActivityCreate, which can race with our setup, so wait briefly for it.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if let Some(ctx) = tauri::tao::platform::android::prelude::main_android_context() {
+            // SAFETY: tao keeps the activity GlobalRef alive for the whole
+            // process and only publishes the pointer once the activity exists;
+            // the JavaVM pointer likewise lives as long as the app.
+            unsafe {
+                ndk_context::initialize_android_context(ctx.java_vm, ctx.context_jobject);
+            }
+            return;
+        }
+        if std::time::Instant::now() >= deadline {
+            let tag = c"termflow";
+            let message = c"android context was not initialized in time";
+            unsafe {
+                tauri::tao::platform::android::prelude::android_log(log::Level::Error, tag, message)
+            }
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -25,6 +59,8 @@ pub fn run() {
         .manage(NativeAuthState::default())
         .manage(terminal_socket::TerminalSocketState::default())
         .setup(|app| {
+            #[cfg(target_os = "android")]
+            initialize_android_context();
             let log_dir = app
                 .path()
                 .app_log_dir()
