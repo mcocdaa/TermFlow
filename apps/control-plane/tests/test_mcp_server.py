@@ -467,6 +467,75 @@ async def test_admin_token_has_no_fallback(repositories) -> None:
 
 
 @pytest.mark.asyncio
+async def test_mismatched_host_header_rejected(repositories) -> None:
+    # Plan §10: B explicitly configures and tests the allowed Host/Origin
+    # values; a Host outside the agent-internal allowlist is refused before
+    # any MCP processing (DNS-rebinding protection).
+    binding = await _seed_binding(repositories)
+    raw_token = await _seed_token(repositories, binding)
+    fake = FakeObservation()
+    continuation = WatchContinuationService(repositories.watches, repositories.agent_bindings)
+    from termflow_control_plane.plugins.agent_broker.auth import AgentTokenAuthenticator
+
+    server = build_mcp_server(
+        observation=fake,
+        continuation=continuation,
+        policy_checker=repositories,
+        token_auth=AgentTokenAuthenticator(repositories),
+    )
+    with _build_http_app(server) as client:
+        response = client.post(
+            MCP_STREAMABLE_HTTP_PATH,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "mcp-test", "version": "1"},
+                },
+            },
+            headers={"host": "evil.example.com", "Authorization": f"Bearer {raw_token}"},
+        )
+        assert response.status_code == 421
+
+
+@pytest.mark.asyncio
+async def test_mismatched_origin_header_rejected(repositories) -> None:
+    # Browsers are not a supported MCP transport (plan §10): a request from a
+    # disallowed Origin is refused at the transport gate.
+    binding = await _seed_binding(repositories)
+    raw_token = await _seed_token(repositories, binding)
+    fake = FakeObservation()
+    continuation = WatchContinuationService(repositories.watches, repositories.agent_bindings)
+    from termflow_control_plane.plugins.agent_broker.auth import AgentTokenAuthenticator
+
+    server = build_mcp_server(
+        observation=fake,
+        continuation=continuation,
+        policy_checker=repositories,
+        token_auth=AgentTokenAuthenticator(repositories),
+    )
+    with _build_http_app(server) as client:
+        response = client.post(
+            MCP_STREAMABLE_HTTP_PATH,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "mcp-test", "version": "1"},
+                },
+            },
+            headers={"origin": "https://evil.example", "Authorization": f"Bearer {raw_token}"},
+        )
+        assert response.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_revoked_token_rejected(repositories) -> None:
     binding = await _seed_binding(repositories)
     raw_token = await _seed_token(repositories, binding)
