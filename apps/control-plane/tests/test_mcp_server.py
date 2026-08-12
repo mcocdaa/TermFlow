@@ -37,6 +37,7 @@ from starlette.routing import Mount
 from termflow_control_plane.app import create_app
 from termflow_control_plane.auth.tokens import hash_token
 from termflow_control_plane.config import Settings
+from termflow_control_plane.persistence.database import Database
 from termflow_control_plane.persistence.models import AgentToken, Base
 from termflow_control_plane.persistence.repositories import RepositoryBundle, digest_secret
 from termflow_control_plane.plugins.agent_broker.agent.terminal_ports import (
@@ -153,6 +154,16 @@ async def _seed_conversation(repositories: RepositoryBundle, binding) -> object:
         binding_id=binding.id,
         title="round trip",
     )
+
+
+def _seed_app_token(client: TestClient) -> str:
+    """Seed a fresh binding + AgentToken through the running app's repositories."""
+
+    async def _seed() -> str:
+        binding = await _seed_binding(client.app.state.repositories)
+        return await _seed_token(client.app.state.repositories, binding)
+
+    return client.portal.call(_seed)
 
 
 async def _allow_async(repositories: RepositoryBundle, binding, pane_id: str) -> None:
@@ -940,3 +951,110 @@ def test_mcp_mount_absent_when_plugin_disabled(tmp_path) -> None:
         # No MCP endpoint exists; the reserved API root is not web-served.
         response = client.get(MCP_STREAMABLE_HTTP_PATH)
         assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# app.py settings plumbing (plan §10: the drift guard and host guard are
+# reachable from deployment settings, not only through direct unit calls)
+# ---------------------------------------------------------------------------
+
+
+def _app_initialize_body() -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "mcp-test", "version": "1"},
+        },
+    }
+
+
+def test_app_startup_fails_on_config_drift_when_opencode_config_path_configured(
+    tmp_path,
+) -> None:
+    # Plan §10/M0.3: with settings.opencode_config_path configured, a
+    # mismatched pinned OpenCode config must refuse startup through the real
+    # app factory (the drift guard is reachable in the deployed app, not only
+    # through direct check_tool_config_drift calls).
+    drifted = tmp_path / "opencode-config.yaml"
+    drifted.write_text(
+        json.dumps(
+            {
+                "$schema": "https://opencode.ai/config.json",
+                "permission": {
+                    "*": "deny",
+                    "termflow_list_panes": "ask",
+                    "termflow_pane_read": "ask",
+                    "termflow_pane_send_text": "ask",
+                    "termflow_pane_send_keys": "ask",
+                    "termflow_watch_create": "ask",
+                    "termflow_watch_list": "ask",
+                    "termflow_watch_get": "ask",
+                    # termflow_watch_cancel deliberately missing -> drift
+                },
+                "mcp": {},
+            }
+        )
+    )
+    settings = Settings(
+        admin_token="admin-token-that-is-long-enough-for-tests",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'app.db'}",
+        allow_insecure_loopback=True,
+        opencode_config_path=str(drifted),
+    )
+    app = create_app(settings=settings)
+    with pytest.raises(ToolConfigDriftError):
+        with TestClient(app):
+            pass
+
+
+def test_app_startup_succeeds_with_matching_opencode_config(tmp_path) -> None:
+    # The pinned fixture allowlist matches the observe surface: the app must
+    # start normally when the configured config is the frozen one (M0.3).
+    settings = Settings(
+        admin_token="admin-token-that-is-long-enough-for-tests",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'app.db'}",
+        allow_insecure_loopback=True,
+        opencode_config_path=str(OPENCODE_CONFIG_FIXTURE),
+    )
+    app = create_app(settings=settings)
+    with TestClient(app) as client:
+        assert client.get("/healthz").status_code == 200
+
+
+def test_app_built_mcp_transport_honors_configured_agent_network_hosts(tmp_path) -> None:
+    # Plan §16: deployment expresses the agent-internal hosts through
+    # settings.agent_mcp_allowed_hosts; a configured agent-network host passes
+    # the transport gate while an unlisted host is refused with 421.  The app
+    # factory builds the inner Streamable HTTP app from Settings, so this is
+    # the real wiring, not a direct create_streamable_http_app call.
+    settings = Settings(
+        admin_token="admin-token-that-is-long-enough-for-tests",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'app.db'}",
+        allow_insecure_loopback=True,
+        agent_mcp_allowed_hosts=("agent-network.internal",),
+    )
+    app = create_app(settings=settings, database=Database(settings.database_url))
+    with TestClient(app) as client:
+        raw_token = _seed_app_token(client)
+        inner = client.app.state.agent_mcp_app
+        assert inner is not None
+        # The inner SDK app runs its own lifespan (session manager) when
+        # entered through TestClient; the outer FastAPI mount only forwards.
+        with TestClient(inner) as mcp_client:
+            headers = {"Authorization": f"Bearer {raw_token}"}
+            allowed = mcp_client.post(
+                "/",
+                json=_app_initialize_body(),
+                headers={**headers, "host": "agent-network.internal"},
+            )
+            assert allowed.status_code == 200
+            refused = mcp_client.post(
+                "/",
+                json=_app_initialize_body(),
+                headers={**headers, "host": "evil.example.com"},
+            )
+            assert refused.status_code == 421

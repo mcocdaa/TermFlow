@@ -78,8 +78,6 @@ from termflow_control_plane.plugins.agent_broker.agent.transcription import (
     NullTranscriptionProvider,
 )
 from termflow_control_plane.plugins.agent_broker.api.mcp_server import (
-    DEFAULT_ALLOWED_HOSTS,
-    DEFAULT_MAX_REQUEST_BYTES,
     MCP_STREAMABLE_HTTP_PATH,
     build_mcp_server,
     check_tool_config_drift,
@@ -182,7 +180,7 @@ async def _build_agent_mcp_app(app: FastAPI, settings: Settings) -> Starlette:
         policy_checker=app.state.repositories,
         token_auth=AgentTokenAuthenticator(app.state.repositories),
     )
-    config_path = getattr(settings, "opencode_config_path", None)
+    config_path = settings.opencode_config_path
     if config_path:
         allowlist = pinned_allowlist_from_fixture(
             await asyncio.to_thread(
@@ -194,10 +192,8 @@ async def _build_agent_mcp_app(app: FastAPI, settings: Settings) -> Starlette:
     return create_streamable_http_app(
         server,
         path="/",
-        max_request_bytes=getattr(
-            settings, "agent_mcp_max_request_bytes", DEFAULT_MAX_REQUEST_BYTES
-        ),
-        allowed_hosts=getattr(settings, "agent_mcp_allowed_hosts", DEFAULT_ALLOWED_HOSTS),
+        max_request_bytes=settings.agent_mcp_max_request_bytes,
+        allowed_hosts=settings.agent_mcp_allowed_hosts,
     )
 
 
