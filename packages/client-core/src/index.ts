@@ -1,3 +1,7 @@
+export * from './agent/frames'
+export * from './agent/ports'
+export * from './agent/stream'
+export * from './api/agents'
 export * from './api/computers'
 export * from './api/clients'
 export * from './api/dashboard'

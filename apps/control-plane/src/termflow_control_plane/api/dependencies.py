@@ -88,6 +88,8 @@ def _required_scope(request: Request) -> str | None:
         return "agent.admin"
     if path.startswith("/api/v1/agent/conversations"):
         return "agent.conversations.write" if mutating else "agent.conversations.read"
+    if path.startswith("/api/v1/agent/stream"):
+        return "agent.conversations.read"
     if path == "/api/v1/dashboard":
         return "computers.read"
     return None
