@@ -6,7 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import NativeDeviceAuthorizeView from './NativeDeviceAuthorizeView.vue'
 
 const mocks = vi.hoisted(() => ({
-  begin: vi.fn(), openUrl: vi.fn(), metadata: vi.fn(), replaceServer: vi.fn(), verifyNativeConnection: vi.fn(),
+  begin: vi.fn(), openUrl: vi.fn(), metadata: vi.fn(), prepareNativeServer: vi.fn(), verifyNativeConnection: vi.fn(),
+  serverConfig: { current: 'https://relay.example.com' },
 }))
 
 vi.mock('@xterm/xterm', () => ({ Terminal: class {} }))
@@ -15,9 +16,9 @@ vi.mock('../nativeAuth', () => ({
   verifyNativeConnection: mocks.verifyNativeConnection,
 }))
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: mocks.openUrl }))
+vi.mock('../serverPreparation', () => ({ prepareNativeServer: mocks.prepareNativeServer }))
 vi.mock('../serverConfig', () => ({
-  canonicalIssuer: (value: string) => new URL(value).origin,
-  serverConfig: { current: 'https://relay.example.com', replace: mocks.replaceServer },
+  serverConfig: { get current() { return mocks.serverConfig.current } },
 }))
 vi.mock('@tauri-apps/plugin-os', () => ({ platform: () => 'linux', arch: () => 'x64' }))
 
@@ -40,9 +41,13 @@ async function render(client = runtime()) {
 }
 
 beforeEach(() => {
-  mocks.begin.mockReset(); mocks.openUrl.mockReset(); mocks.replaceServer.mockReset();
+  mocks.begin.mockReset(); mocks.openUrl.mockReset(); mocks.prepareNativeServer.mockReset();
   mocks.metadata.mockReset().mockResolvedValue({ issuer: 'https://relay.example.com', scopes_supported: ['terminal:read'] })
-  mocks.replaceServer.mockResolvedValue(undefined)
+  mocks.serverConfig.current = 'https://relay.example.com'
+  mocks.prepareNativeServer.mockImplementation(async (issuer: string, loadMetadata: () => Promise<unknown>) => ({
+    issuer,
+    metadata: await loadMetadata(),
+  }))
   mocks.verifyNativeConnection.mockReset().mockResolvedValue({ authenticated: true, expires_at: null })
   mocks.begin.mockResolvedValue({
     response: { device_code: 'secret-device-code', user_code: 'ABCD-EFGH', verification_uri: 'https://relay.example.com/device', verification_uri_complete: 'https://relay.example.com/device?code=ABCD-EFGH', expires_in: 600, interval: 1 },
@@ -60,6 +65,34 @@ describe('NativeDeviceAuthorizeView', () => {
     expect(wrapper.find('.native-device-layout').exists()).toBe(true)
     expect(wrapper.get('[data-action="back-to-connect"]').text()).toBe('返回')
     expect(wrapper.findAll('[data-action="back-to-connect"]')).toHaveLength(1)
+  })
+
+  it('restores the persisted private issuer before generating a device code', async () => {
+    mocks.serverConfig.current = 'https://termflow.mcocdaa-newapi.xin'
+    mocks.metadata.mockResolvedValueOnce({
+      issuer: 'https://termflow.mcocdaa-newapi.xin',
+      scopes_supported: ['terminal:read'],
+    })
+    const { wrapper } = await render()
+    await flushPromises()
+
+    expect(mocks.prepareNativeServer).toHaveBeenCalledWith(
+      'https://termflow.mcocdaa-newapi.xin',
+      expect.any(Function),
+    )
+    expect(mocks.begin).toHaveBeenCalledWith(expect.objectContaining({
+      issuer: 'https://termflow.mcocdaa-newapi.xin',
+    }))
+    expect(wrapper.get('.native-device-server').text()).toContain('https://termflow.mcocdaa-newapi.xin')
+  })
+
+  it('does not create a device code when the prepared issuer is offline', async () => {
+    mocks.prepareNativeServer.mockRejectedValueOnce(new ApiError('offline'))
+    const { wrapper } = await render()
+    await flushPromises()
+
+    expect(mocks.begin).not.toHaveBeenCalled()
+    expect(wrapper.get('[role="alert"]').text()).toBe('无法连接服务器。请检查网络后重试。')
   })
 
   it('starts device authorization with a themed two-column QR layout and never opens a browser', async () => {
@@ -123,7 +156,7 @@ describe('NativeDeviceAuthorizeView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('SECOND-CODE')
-    expect(mocks.replaceServer).toHaveBeenLastCalledWith('https://relay.example.com')
+    expect(mocks.prepareNativeServer).toHaveBeenLastCalledWith('https://relay.example.com', expect.any(Function))
     expect(mocks.begin).toHaveBeenCalledTimes(2)
   })
 

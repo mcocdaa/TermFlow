@@ -28,7 +28,7 @@ tauri-plugin-os = "2.3.2"
 tauri-plugin-store = "2.4.4"
 time = { version = "0.3.41", features = ["formatting"] }
 tokio = { version = "1.53.1", features = ["sync", "net", "rt", "time"] }
-tokio-tungstenite = "0.28.0"
+tokio-tungstenite = { version = "0.28.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 url = "2.5.4"
 uuid = { version = "1.17.0", features = ["v4"] }
 

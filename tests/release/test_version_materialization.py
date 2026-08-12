@@ -111,7 +111,7 @@ def test_materializer_updates_registered_surfaces_and_internal_dependencies(
     android = json.loads(
         (tmp_path / "apps/clients/tauri/src-tauri/tauri.android.conf.json").read_text()
     )
-    assert android["bundle"]["android"]["versionCode"] == 1_004_000
+    assert android["bundle"]["android"]["versionCode"] == 1_040_062
     for platform in ("macos", "ios"):
         config = json.loads(
             (

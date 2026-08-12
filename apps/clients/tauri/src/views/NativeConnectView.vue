@@ -19,7 +19,7 @@
             data-action="device-authorize"
             title="使用已登录的其他设备完成授权，不会打开本机浏览器。"
             :disabled="busy"
-            @click="router.push({ path: '/connect/device', query: route.query })"
+            @click="connectDevice"
           >其他设备授权</button>
         </div>
       </form>
@@ -33,7 +33,8 @@ import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useBottomToast, useClientRuntime } from '@termflow/client-ui'
 import { authorizeNativeClient, verifyNativeConnection } from '../nativeAuth'
-import { canonicalAuthorizeEndpoint, canonicalIssuer, serverConfig } from '../serverConfig'
+import { prepareNativeServer } from '../serverPreparation'
+import { canonicalAuthorizeEndpoint, serverConfig } from '../serverConfig'
 
 const runtime = useClientRuntime(); const router = useRouter(); const route = useRoute()
 const toast = useBottomToast()
@@ -48,8 +49,11 @@ function registrationErrorMessage(error: unknown): string {
   if (code === 'http_capability_denied') {
     return '客户端网络权限配置无效。请升级或重新安装 TermFlow。'
   }
-  if (code === 'offline') {
+  if (code === 'offline' || code === 'network_error') {
     return '无法连接服务器。请检查服务器地址、网络连接和本机服务是否正在运行。'
+  }
+  if (code === 'issuer_mismatch') {
+    return '服务器身份与填写地址不一致。请检查反向代理配置后重试。'
   }
   if (code === 'authorization_cancelled' || code === 'aborted') {
     return '注册申请已取消。请重新申请，并在系统浏览器中完成审批。'
@@ -66,15 +70,25 @@ function registrationErrorMessage(error: unknown): string {
   return '无法完成远程控制注册。请检查服务器地址和系统浏览器中的审批状态后重试。'
 }
 
+function prepareServer() {
+  return prepareNativeServer(issuer.value, () => runtime.api.oauth.metadata())
+}
+
+async function connectDevice() {
+  busy.value = true; message.value = ''
+  try {
+    await prepareServer()
+    await router.push({ path: '/connect/device', query: route.query })
+  } catch (error) { message.value = registrationErrorMessage(error) }
+  finally { busy.value = false }
+}
+
 async function connect() {
   busy.value = true; message.value = ''
   try {
-    const canonical = canonicalIssuer(issuer.value)
-    await serverConfig.replace(canonical)
-    const metadata = await runtime.api.oauth.metadata()
-    if (metadata.issuer !== canonical) throw new Error('issuer_mismatch')
-    const authorizeEndpoint = canonicalAuthorizeEndpoint(canonical, metadata.authorization_endpoint)
-    await authorizeNativeClient(canonical, authorizeEndpoint, metadata.scopes_supported)
+    const prepared = await prepareServer()
+    const authorizeEndpoint = canonicalAuthorizeEndpoint(prepared.issuer, prepared.metadata.authorization_endpoint)
+    await authorizeNativeClient(prepared.issuer, authorizeEndpoint, prepared.metadata.scopes_supported)
     await verifyNativeConnection(runtime)
     toast.show({ text: '已连接', tone: 'success' })
     const target = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') && !route.query.redirect.startsWith('//') ? route.query.redirect : '/'

@@ -100,6 +100,16 @@ docker run -d \
   ghcr.io/mcocdaa/termflow-node:v0.1.0
 ```
 
+Web C 进入 Docker A 的 Term 默认使用 Bash。如需改用 POSIX sh，在上述
+`docker run` 命令中追加：
+
+```bash
+--env TERMFLOW_SHELL=sh
+```
+
+`TERMFLOW_SHELL` 只接受 `bash` 和 `sh`。修改后需要保留身份和工作目录，并
+重新创建 Docker A 容器；新的 tmux pane 使用所选 shell，已经运行的 pane 不会热切换。
+
 进入 Docker A 的 Term：
 
 ```bash

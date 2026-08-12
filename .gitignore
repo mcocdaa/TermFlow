@@ -15,4 +15,7 @@ dist/
 apps/clients/tauri/src-tauri/target/
 apps/clients/tauri/src-tauri/gen/
 *.tsbuildinfo
+*.jks
+*.keystore
+keystore.properties
 .gstack/

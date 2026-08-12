@@ -27,6 +27,10 @@ export async function verifyNativeConnection(runtime: Pick<ClientRuntime, 'api'>
   await withTimeout(runtime.api.sessions.status(), VERIFY_TIMEOUT_MS)
 }
 
+export function usesLoopbackAuthorization(targetPlatform = platform()): boolean {
+  return targetPlatform !== 'ios' && targetPlatform !== 'android'
+}
+
 function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) {
     return Promise.reject(new DOMException('The device authorization was cancelled.', 'AbortError'))
@@ -62,7 +66,7 @@ export async function authorizeNativeClient(issuer: string, authorizeEndpoint: s
     scopes,
     browser: tauriAuthorizationBrowser({
       issuer: serverConfig.current,
-      loopback: platform() !== 'ios' && platform() !== 'android',
+      loopback: usesLoopbackAuthorization(),
     }),
     vault,
     key,

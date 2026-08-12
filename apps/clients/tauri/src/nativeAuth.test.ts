@@ -1,7 +1,7 @@
 import { ApiError } from '@termflow/client-core'
 import type { ClientRuntime } from '@termflow/client-ui'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { verifyNativeConnection } from './nativeAuth'
+import { usesLoopbackAuthorization, verifyNativeConnection } from './nativeAuth'
 
 vi.mock('@tauri-apps/plugin-os', () => ({ platform: () => 'linux', arch: () => 'x64' }))
 vi.mock('./serverConfig', () => ({
@@ -18,6 +18,15 @@ vi.mock('./buildVersion', () => ({ buildVersion: '0.0.1-test' }))
 vi.mock('./diagnostics', () => ({ logNativeEvent: vi.fn(), sanitizeNativeDetail: (value: unknown) => String(value) }))
 
 beforeEach(() => { vi.clearAllMocks() })
+
+describe('usesLoopbackAuthorization', () => {
+  it('uses app deep links on mobile and loopback listeners on desktop', () => {
+    expect(usesLoopbackAuthorization('android')).toBe(false)
+    expect(usesLoopbackAuthorization('ios')).toBe(false)
+    expect(usesLoopbackAuthorization('windows')).toBe(true)
+    expect(usesLoopbackAuthorization('linux')).toBe(true)
+  })
+})
 
 describe('verifyNativeConnection', () => {
   it('calls the protected session status through the runtime', async () => {

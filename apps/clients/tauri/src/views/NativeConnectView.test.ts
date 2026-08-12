@@ -7,6 +7,7 @@ import NativeConnectView from './NativeConnectView.vue'
 
 const mocks = vi.hoisted(() => ({
   authorizeNativeClient: vi.fn(),
+  prepareNativeServer: vi.fn(),
   verifyNativeConnection: vi.fn(),
   replaceServer: vi.fn(),
   serverConfig: { current: 'https://relay.example.com' },
@@ -16,6 +17,9 @@ vi.mock('@xterm/xterm', () => ({ Terminal: class {} }))
 vi.mock('../nativeAuth', () => ({
   authorizeNativeClient: mocks.authorizeNativeClient,
   verifyNativeConnection: mocks.verifyNativeConnection,
+}))
+vi.mock('../serverPreparation', () => ({
+  prepareNativeServer: mocks.prepareNativeServer,
 }))
 vi.mock('../serverConfig', () => ({
   canonicalIssuer: (value: string) => new URL(value).origin,
@@ -58,6 +62,18 @@ async function render(metadata = vi.fn().mockResolvedValue({
 beforeEach(() => {
   mocks.authorizeNativeClient.mockReset()
   mocks.authorizeNativeClient.mockResolvedValue({})
+  mocks.prepareNativeServer.mockReset()
+  mocks.prepareNativeServer.mockImplementation(async (input: string) => {
+    const canonical = new URL(input).origin
+    return {
+      issuer: canonical,
+      metadata: {
+        issuer: canonical,
+        authorization_endpoint: `${canonical}/api/v1/oauth/authorize`,
+        scopes_supported: ['terminal:read'],
+      },
+    }
+  })
   mocks.replaceServer.mockReset()
   mocks.replaceServer.mockResolvedValue(undefined)
   mocks.serverConfig.current = 'https://relay.example.com'
@@ -82,11 +98,31 @@ describe('NativeConnectView', () => {
     expect(wrapper.text()).not.toMatch(/\bB\b|Web C/)
   })
 
-  it('offers device authorization without invoking the system browser', async () => {
-    const { wrapper, router, clientUi } = await render()
+  it('prepares the typed private issuer before entering device authorization', async () => {
+    const { wrapper, router } = await render()
+    await wrapper.get('#server-url').setValue('https://termflow.mcocdaa-newapi.xin/')
     await wrapper.get('[data-action="device-authorize"]').trigger('click')
     await flushPromises()
+
+    expect(mocks.prepareNativeServer).toHaveBeenCalledWith(
+      'https://termflow.mcocdaa-newapi.xin/',
+      expect.any(Function),
+    )
     expect(router.currentRoute.value.path).toBe('/connect/device')
+    expect(mocks.authorizeNativeClient).not.toHaveBeenCalled()
+  })
+
+  it('stays on connect when device authorization cannot prepare the server', async () => {
+    mocks.prepareNativeServer.mockRejectedValueOnce(new ApiError('offline'))
+    const { wrapper, router } = await render()
+
+    await wrapper.get('[data-action="device-authorize"]').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/connect')
+    expect(wrapper.get('[role="alert"]').text()).toBe(
+      '无法连接服务器。请检查服务器地址、网络连接和本机服务是否正在运行。',
+    )
     expect(mocks.authorizeNativeClient).not.toHaveBeenCalled()
   })
 

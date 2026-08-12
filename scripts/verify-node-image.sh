@@ -56,6 +56,26 @@ cleanup() {
 }
 trap cleanup EXIT
 
+pane_shell() {
+  local status_payload="$1"
+  local socket_path
+  socket_path="$(printf '%s' "${status_payload}" \
+    | python3 -c 'import json, sys; print(json.load(sys.stdin)["socket_path"])')"
+  docker exec --user termflow "${NODE_CONTAINER}" \
+    tmux -S "${socket_path}" display-message -p -t demo:0.0 '#{pane_current_command}'
+}
+
+invalid_shell_output=""
+if invalid_shell_output="$(docker run --rm \
+  "${NODE_RUNTIME_SECURITY_ARGS[@]}" \
+  --env TERMFLOW_SHELL=zsh \
+  "${NODE_IMAGE}" true 2>&1)"; then
+  echo "node entrypoint accepted an unsupported TERMFLOW_SHELL" >&2
+  exit 1
+fi
+printf '%s\n' "${invalid_shell_output}" \
+  | grep -Fq "invalid TERMFLOW_SHELL: expected bash or sh"
+
 # Minimal-permission runtime smoke: the privileged init only receives the
 # capabilities needed to normalize ownership and drop identity. The command
 # that ultimately becomes PID 1 must be non-root with no effective capabilities.
@@ -148,6 +168,7 @@ first_status="$(docker exec --user termflow "${NODE_CONTAINER}" termflow status 
 echo "${first_status}" | grep -q '"tmux_alive":true'
 echo "${first_status}" | grep -q '"bridge_alive":true'
 echo "${first_status}" | grep -q '"lifecycle":"running"'
+test "$(pane_shell "${first_status}")" = "bash"
 
 # docker stop sends SIGTERM; the exit code must be 0 (clean), not 137.
 docker stop --time 15 "${NODE_CONTAINER}" >/dev/null
@@ -168,3 +189,27 @@ test "${second_id}" = "${first_id}"
 single_instance="$(docker exec --user termflow "${NODE_CONTAINER}" termflow list --json \
   | python3 -c 'import json, sys; print(len(json.load(sys.stdin)))')"
 test "${single_instance}" = "1"
+
+# Environment changes require container recreation. Preserve the identity
+# volume, then prove the same Term comes back with POSIX sh as its pane shell.
+docker stop --time 15 "${NODE_CONTAINER}" >/dev/null
+docker rm "${NODE_CONTAINER}" >/dev/null
+docker run --detach \
+  --name "${NODE_CONTAINER}" \
+  "${NODE_RUNTIME_SECURITY_ARGS[@]}" \
+  --env TERMFLOW_SHELL=sh \
+  --volume "${NODE_VOLUME}:/home/termflow" \
+  "${NODE_IMAGE}" \
+  termflow serve --name demo >/dev/null
+
+third_status=""
+for attempt in $(seq 1 30); do
+  third_status="$(docker exec --user termflow "${NODE_CONTAINER}" \
+    termflow status demo --json 2>/dev/null)" || { sleep 1; continue; }
+  echo "${third_status}" | grep -q '"bridge_alive":true' && break
+  sleep 1
+done
+third_id="$(echo "${third_status}" \
+  | python3 -c 'import json, sys; print(json.load(sys.stdin)["instance_id"])')"
+test "${third_id}" = "${first_id}"
+test "$(pane_shell "${third_status}")" = "sh"

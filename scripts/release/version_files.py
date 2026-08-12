@@ -7,6 +7,11 @@ import json
 import re
 from pathlib import Path
 
+if __package__:
+    from .build_version import android_version_code
+else:
+    from build_version import android_version_code
+
 PYPROJECTS = (
     Path("apps/node/pyproject.toml"),
     Path("apps/control-plane/pyproject.toml"),
@@ -191,14 +196,6 @@ def _version_core(version: str) -> str:
     return version.split("+", 1)[0].split("-", 1)[0]
 
 
-def _android_version_code(version: str) -> int:
-    major, minor, patch = (int(component) for component in _version_core(version).split("."))
-    version_code = major * 1_000_000 + minor * 1_000 + patch
-    if not 1 <= version_code <= 2_100_000_000 or minor > 99 or patch > 99:
-        raise ValueError(f"{version}: outside the supported mobile bundle range")
-    return version_code
-
-
 def _materialize_android_config(path: Path, version: str) -> None:
     data = _read_json(path)
     bundle = data.get("bundle")
@@ -207,7 +204,7 @@ def _materialize_android_config(path: Path, version: str) -> None:
     android = bundle.get("android")
     if not isinstance(android, dict) or not isinstance(android.get("versionCode"), int):
         raise ValueError(f"{path}: missing integer bundle.android.versionCode")
-    android["versionCode"] = _android_version_code(version)
+    android["versionCode"] = android_version_code(version)
     _write_json(path, data)
 
 
@@ -345,7 +342,7 @@ def verify_materialized_version(root: Path, expected: str) -> list[str]:
     android_code = (
         android_config.get("versionCode") if isinstance(android_config, dict) else None
     )
-    expected_android_code = _android_version_code(expected)
+    expected_android_code = android_version_code(expected)
     if android_code != expected_android_code:
         errors.append(
             f"{ANDROID_CONFIG}: expected versionCode {expected_android_code}, "

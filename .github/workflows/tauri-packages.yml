@@ -21,6 +21,11 @@ on:
         required: false
         default: ""
         type: string
+      signed_android_candidate:
+        description: Build Android with the fixed release signing certificate
+        required: false
+        default: false
+        type: boolean
   workflow_call:
     inputs:
       platform:
@@ -38,6 +43,22 @@ on:
         required: false
         default: ""
         type: string
+      signed_android_candidate:
+        description: Build Android with the fixed release signing certificate
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      ANDROID_KEYSTORE_BASE64:
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        required: false
+      ANDROID_KEY_ALIAS:
+        required: false
+      ANDROID_KEY_PASSWORD:
+        required: false
+      ANDROID_SIGNING_CERT_SHA256:
+        required: false
 
 permissions:
   contents: read
@@ -58,6 +79,7 @@ jobs:
       is_prerelease: ${{ steps.version.outputs.is_prerelease }}
       artifact_prefix: ${{ steps.version.outputs.artifact_prefix }}
       retention_days: ${{ steps.version.outputs.retention_days }}
+      android_release_build: ${{ steps.version.outputs.android_release_build }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
@@ -72,6 +94,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
           TERMFLOW_BUILD_VERSION: ${{ inputs.version || vars.TERMFLOW_BUILD_VERSION }}
+          SIGNED_ANDROID_CANDIDATE: ${{ inputs.signed_android_candidate }}
         shell: bash
         run: |
           set -euo pipefail
@@ -85,8 +108,14 @@ jobs:
             artifact_prefix=termflow
             retention_days=14
           fi
+          if [[ -n "$release_tag" || "$SIGNED_ANDROID_CANDIDATE" == "true" ]]; then
+            android_release_build=true
+          else
+            android_release_build=false
+          fi
           echo "artifact_prefix=$artifact_prefix" >> "$GITHUB_OUTPUT"
           echo "retention_days=$retention_days" >> "$GITHUB_OUTPUT"
+          echo "android_release_build=$android_release_build" >> "$GITHUB_OUTPUT"
 
   windows-nsis:
     name: Windows x64 · NSIS
@@ -243,8 +272,8 @@ jobs:
           retention-days: ${{ fromJSON(needs.validate-version.outputs.retention_days) }}
           compression-level: 0
 
-  android-debug-apk:
-    name: Android arm64 · debug APK
+  android-apk:
+    name: Android arm64 · APK
     needs: validate-version
     if: >-
       ${{ needs.validate-version.result == 'success' &&
@@ -278,31 +307,103 @@ jobs:
       - run: npm ci
       - name: Generate the Android project
         run: npm run tauri --workspace @termflow/tauri-client -- android init --ci
-      - name: Build an installable debug-keystore-signed APK
-        run: npm run tauri --workspace @termflow/tauri-client -- android build --debug --ci --target aarch64 --apk
-      - name: Require exactly one debug APK
+      - name: Generate TermFlow launcher resources
+        run: npm run tauri --workspace @termflow/tauri-client -- icon app-icon.svg
+      - name: Configure Android release signing
+        if: ${{ needs.validate-version.outputs.android_release_build == 'true' }}
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
         shell: bash
         run: |
           set -euo pipefail
-          apk_count="$(find apps/clients/tauri/src-tauri/gen/android/app/build/outputs/apk -type f -name '*-debug.apk' | wc -l)"
-          if [ "$apk_count" -ne 1 ]; then
-            echo "Expected exactly one debug APK, found $apk_count" >&2
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD ANDROID_SIGNING_CERT_SHA256; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing required Android release secret: $name" >&2
+              exit 1
+            fi
+          done
+          keystore="$RUNNER_TEMP/termflow-android-release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          export ANDROID_KEYSTORE_PATH="$keystore"
+          python scripts/release/configure_android_signing.py \
+            --gradle apps/clients/tauri/src-tauri/gen/android/app/build.gradle.kts \
+            --properties apps/clients/tauri/src-tauri/gen/android/keystore.properties
+      - name: Build the signed release APK
+        if: ${{ needs.validate-version.outputs.android_release_build == 'true' }}
+        run: npm run tauri --workspace @termflow/tauri-client -- android build --ci --target aarch64 --apk
+      - name: Build a manual debug APK
+        if: ${{ needs.validate-version.outputs.android_release_build != 'true' }}
+        run: npm run tauri --workspace @termflow/tauri-client -- android build --debug --ci --target aarch64 --apk
+      - name: Resolve Android APK
+        id: apk
+        env:
+          ANDROID_RELEASE_BUILD: ${{ needs.validate-version.outputs.android_release_build }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$ANDROID_RELEASE_BUILD" == "true" ]]; then
+            pattern='*-release.apk'
+          else
+            pattern='*-debug.apk'
+          fi
+          mapfile -d '' apk_files < <(find \
+            apps/clients/tauri/src-tauri/gen/android/app/build/outputs/apk \
+            -type f -name "$pattern" -print0)
+          if [[ "${#apk_files[@]}" -ne 1 ]]; then
+            echo "Expected exactly one Android APK matching $pattern; found ${#apk_files[@]}" >&2
             exit 1
           fi
+          echo "apk_path=${apk_files[0]}" >> "$GITHUB_OUTPUT"
+      - name: Verify Android APK identity
+        env:
+          APK_PATH: ${{ steps.apk.outputs.apk_path }}
+          TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
+          ANDROID_RELEASE_BUILD: ${{ needs.validate-version.outputs.android_release_build }}
+          ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ANDROID_VERSION_CODE="$(python -c \
+            'import sys; from scripts.release.build_version import android_version_code; print(android_version_code(sys.argv[1]))' \
+            "$TERMFLOW_BUILD_VERSION")"
+          verify_args=(
+            --apk "$APK_PATH"
+            --generated-res apps/clients/tauri/src-tauri/gen/android/app/src/main/res
+            --expected-package io.termflow.client
+            --expected-version-name "$TERMFLOW_BUILD_VERSION"
+            --expected-version-code "$ANDROID_VERSION_CODE"
+          )
+          if [[ "$ANDROID_RELEASE_BUILD" == "true" ]]; then
+            verify_args+=(--expected-cert-sha256 "$ANDROID_SIGNING_CERT_SHA256")
+          fi
+          python scripts/release/verify_android_apk.py "${verify_args[@]}"
       - name: Stage the Android APK flat
+        env:
+          APK_PATH: ${{ steps.apk.outputs.apk_path }}
+          TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/termflow-android"
-          find apps/clients/tauri/src-tauri/gen/android/app/build/outputs/apk \
-            -type f -name '*-debug.apk' -exec cp {} "$RUNNER_TEMP/termflow-android/" \;
+          cp "$APK_PATH" \
+            "$RUNNER_TEMP/termflow-android/TermFlow-${TERMFLOW_BUILD_VERSION}-android-arm64.apk"
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
         with:
-          name: ${{ needs.validate-version.outputs.artifact_prefix }}-android-arm64-debug
+          name: ${{ needs.validate-version.outputs.artifact_prefix }}-android-arm64-apk
           path: ${{ runner.temp }}/termflow-android/*
           if-no-files-found: error
           retention-days: ${{ fromJSON(needs.validate-version.outputs.retention_days) }}
           compression-level: 0
+      - name: Remove Android signing material
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/termflow-android-release.jks"
+          rm -f apps/clients/tauri/src-tauri/gen/android/keystore.properties
 
   ios-simulator-app:
     name: iOS arm64 simulator · app

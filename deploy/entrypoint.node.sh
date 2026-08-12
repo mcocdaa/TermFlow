@@ -28,6 +28,20 @@ HOME=${home_dir}
 export HOME
 cd "${work_dir}"
 
+case "${TERMFLOW_SHELL:-bash}" in
+    bash)
+        SHELL=/bin/bash
+        ;;
+    sh)
+        SHELL=/bin/sh
+        ;;
+    *)
+        echo "invalid TERMFLOW_SHELL: expected bash or sh" >&2
+        exit 64
+        ;;
+esac
+export SHELL
+
 if [ ! -f "${HOME}/.config/termflow/config.json" ] && [ -n "${TERMFLOW_SERVER:-}" ] && [ -n "${TERMFLOW_CODE:-}" ]; then
     login_command="termflow login --server ${TERMFLOW_SERVER} --code ${TERMFLOW_CODE}"
     if [ "${TERMFLOW_ALLOW_INSECURE_HTTP:-}" = "true" ]; then

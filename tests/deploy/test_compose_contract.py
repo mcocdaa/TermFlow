@@ -177,6 +177,37 @@ def test_node_image_initializes_managed_mounts_then_drops_privileges() -> None:
         assert expected in verifier
 
 
+def test_node_entrypoint_selects_only_supported_term_shells() -> None:
+    entrypoint = Path("deploy/entrypoint.node.sh").read_text()
+
+    assert 'case "${TERMFLOW_SHELL:-bash}" in' in entrypoint
+    assert "bash)\n        SHELL=/bin/bash" in entrypoint
+    assert "sh)\n        SHELL=/bin/sh" in entrypoint
+    assert 'echo "invalid TERMFLOW_SHELL: expected bash or sh" >&2' in entrypoint
+    assert "exit 64" in entrypoint
+    assert "export SHELL" in entrypoint
+    assert entrypoint.index('case "${TERMFLOW_SHELL:-bash}" in') > entrypoint.index(
+        'cd "${work_dir}"'
+    )
+    assert entrypoint.index("export SHELL") < entrypoint.index(
+        'if [ ! -f "${HOME}/.config/termflow/config.json" ]'
+    )
+
+
+def test_node_image_verifier_proves_the_actual_tmux_shell() -> None:
+    verifier = Path("scripts/verify-node-image.sh").read_text()
+
+    for expected in (
+        "TERMFLOW_SHELL=sh",
+        "TERMFLOW_SHELL=zsh",
+        "#{pane_current_command}",
+        'test "$(pane_shell "${first_status}")" = "bash"',
+        'test "$(pane_shell "${third_status}")" = "sh"',
+        "invalid TERMFLOW_SHELL: expected bash or sh",
+    ):
+        assert expected in verifier
+
+
 def test_readme_docker_node_uses_local_managed_directories() -> None:
     readme = Path("README.md").read_text()
 
@@ -195,6 +226,10 @@ def test_readme_docker_node_uses_local_managed_directories() -> None:
         "docker exec --user termflow -it termflow-node termflow attach demo"
         in readme
     )
+    assert "Web C 进入 Docker A 的 Term 默认使用 Bash" in readme
+    assert "--env TERMFLOW_SHELL=sh" in readme
+    assert "只接受 `bash` 和 `sh`" in readme
+    assert "重新创建 Docker A 容器" in readme
 
 
 def test_docker_context_excludes_local_state_and_frontend_build_output() -> None:

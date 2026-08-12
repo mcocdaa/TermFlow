@@ -41,4 +41,15 @@ describe('native diagnostics', () => {
     expect(detail).toContain('<redacted>')
     expect(detail.length).toBeLessThanOrEqual(256)
   })
+
+  it('redacts device authorization codes', () => {
+    const detail = sanitizeNativeDetail(new Error(
+      'device_code=secret-device user_code=ABCD-EFGH code_verifier=verifier',
+    ))
+
+    expect(detail).not.toContain('secret-device')
+    expect(detail).not.toContain('ABCD-EFGH')
+    expect(detail).not.toContain('code_verifier=verifier')
+    expect(detail).toContain('code_verifier=<redacted>')
+  })
 })
