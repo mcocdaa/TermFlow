@@ -44,8 +44,8 @@ export interface AgentStreamOptions {
 
 const MAX_RECONNECT_DELAY_MS = 10_000
 //: Global live streams carry no sequence component in the opaque cursor, so
-//: duplicates are deduplicated by event id over a bounded recent window.
-const GLOBAL_DEDUP_WINDOW = 512
+//: duplicates are deduplicated by event id over a bounded recent-id set.
+const GLOBAL_DEDUP_LIMIT = 512
 
 /**
  * Conversation-scoped or global Agent live stream client.
@@ -124,7 +124,7 @@ export class AgentStreamSession {
     } else {
       if (this.recentEventIds.has(event.event_id)) return
       this.recentEventIds.add(event.event_id)
-      if (this.recentEventIds.size > GLOBAL_DEDUP_WINDOW) this.recentEventIds.clear()
+      if (this.recentEventIds.size > GLOBAL_DEDUP_LIMIT) this.recentEventIds.clear()
     }
     this.cursor = cursor
     this.callbacks.onEvent(event)

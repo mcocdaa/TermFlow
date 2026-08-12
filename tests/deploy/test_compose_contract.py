@@ -53,13 +53,28 @@ def test_compose_is_single_worker_and_persists_only_metadata() -> None:
         "termflow-totp-key:/app/totp-secrets",
     ]
     assert service["healthcheck"]["test"][-1].endswith("/healthz")
-    assert list(compose["services"]) == ["control-plane"]
+    assert list(compose["services"]) == ["control-plane", "opencode-agent"]
     assert compose["volumes"]["termflow-data"] == {
         "name": "${TERMFLOW_DATA_VOLUME:-termflow-data}"
     }
     assert compose["volumes"]["termflow-totp-key"] == {
         "name": "${TERMFLOW_TOTP_KEY_VOLUME:-termflow-totp-key}"
     }
+
+
+def test_opencode_agent_service_is_isolated_and_hardened() -> None:
+    compose = yaml.safe_load(Path("deploy/compose.yaml").read_text())
+    agent = compose["services"]["opencode-agent"]
+    # Internal network only: never attached to the public A/C network (plan §16).
+    assert agent["networks"] == ["agent_internal"]
+    # No host-published ports: exposed on the internal network only.
+    assert "ports" not in agent
+    # Hardening (plan §16), mirroring test_runtime_supervisor.py.
+    assert agent["cap_drop"] == ["ALL"]
+    assert agent["read_only"] is True
+    assert not any(
+        "/var/run/docker.sock" in mount for mount in agent["volumes"]
+    )
 
 
 def test_compose_configures_same_origin_web_control_limits() -> None:
