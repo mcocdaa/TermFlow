@@ -43,7 +43,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { ThemedQrCode, useBottomToast, useClientRuntime } from '@termflow/client-ui'
 import { beginNativeDeviceAuthorization, verifyNativeConnection } from '../nativeAuth'
 import { buildVersion } from '../buildVersion'
-import { canonicalIssuer, serverConfig } from '../serverConfig'
+import { prepareNativeServer } from '../serverPreparation'
+import { serverConfig } from '../serverConfig'
 import { pollDeviceAuthorization } from '../adapters/tauriAuthorization'
 
 const runtime = useClientRuntime()
@@ -70,6 +71,7 @@ function actionableMessage(error: unknown): string {
   if (code === 'access_denied') return '浏览器拒绝了这次授权。请重新生成设备码。'
   if (code === 'expired_token') return '设备码已过期，请重新生成。'
   if (code === 'offline' || code === 'network_error') return '无法连接服务器。请检查网络后重试。'
+  if (code === 'issuer_mismatch') return '服务器身份与已保存地址不一致。请返回并检查反向代理配置。'
   if (code === 'authorization_verify_timeout') return '连接确认超时。请检查服务器是否在线后重试。'
   return '设备授权未完成。请重新生成设备码后重试。'
 }
@@ -79,17 +81,15 @@ function stopTimer() { if (timer !== undefined) { clearInterval(timer); timer = 
 async function start() {
   busy.value = true; message.value = ''
   try {
-    const canonical = canonicalIssuer(issuer.value)
-    await serverConfig.replace(canonical)
-    const metadata = await runtime.api.oauth.metadata()
-    if (metadata.issuer !== canonical) throw new Error('issuer_mismatch')
+    const prepared = await prepareNativeServer(serverConfig.current, () => runtime.api.oauth.metadata())
+    issuer.value = prepared.issuer
     const result = await beginNativeDeviceAuthorization({
-      issuer: canonical,
-      scopes: metadata.scopes_supported,
+      issuer: prepared.issuer,
+      scopes: prepared.metadata.scopes_supported,
       client: { name: 'TermFlow', platform: `${platform()} ${arch()}`, version: buildVersion },
       create: (input) => runtime.api.oauth.createDeviceAuthorization(input),
       poll: async (input, signal) => {
-        try { return await pollDeviceAuthorization({ issuer: canonical, ...input }, signal) }
+        try { return await pollDeviceAuthorization({ issuer: prepared.issuer, ...input }, signal) }
         catch (error) {
           const code = error instanceof ApiError ? error.code : error instanceof Error ? error.message : typeof error === 'string' ? error : ''
           if (code === 'authorization_pending') status.value = '等待浏览器确认…'

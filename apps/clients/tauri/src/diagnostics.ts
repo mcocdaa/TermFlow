@@ -16,7 +16,7 @@ export function sanitizeNativeDetail(error: unknown): string {
     .replace(/https?:\/\/[^\s]+/gi, '<url>')
     .replace(/termflow:\/\/[^\s]+/gi, '<callback>')
     .replace(/(authorization\s*:\s*(?:bearer|dpop)\s+)[^\s,]+/gi, '$1<redacted>')
-    .replace(/(["']?(?:access_token|refresh_token|client_secret|code_verifier|dpop(?:_proof)?|authorization|token|secret)["']?\s*[=:]\s*["']?)[^"',}\s]+["']?/gi, '$1<redacted>')
+    .replace(/(["']?(?:access_token|refresh_token|client_secret|code_verifier|device_code|user_code|dpop(?:_proof)?|authorization|token|secret)["']?\s*[=:]\s*["']?)[^"',}\s]+["']?/gi, '$1<redacted>')
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '<jwt>')
     .slice(0, 256)
 }
