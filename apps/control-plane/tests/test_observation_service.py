@@ -125,6 +125,9 @@ async def _register_topology() -> tuple[LiveInstanceRegistry, UUID, object]:
     registry = LiveInstanceRegistry(queue_size=4)
     instance_id = uuid4()
     connection = await registry.register(instance_id)
+    # M2.4: A negotiates bounded capture in its bridge hello; without this the
+    # connection fails closed and never enqueues capture requests.
+    connection.bounded_capture = True
     connection.topology = _topology()
     return registry, instance_id, connection
 
@@ -462,6 +465,24 @@ async def test_read_maps_structured_capture_errors(
     with pytest.raises(TermFlowToolError) as caught:
         await submit
     assert caught.value.error_code is expected_code
+
+
+@pytest.mark.asyncio
+async def test_read_pane_fails_closed_for_old_a_without_capture_capability() -> None:
+    # An old A never negotiates bounded_capture in its bridge hello (M2.4), so
+    # the request fails closed with a structured policy error instead of
+    # hanging on a capture that will never be enqueued.
+    registry = LiveInstanceRegistry(queue_size=4)
+    instance_id = uuid4()
+    connection = await registry.register(instance_id)
+    connection.topology = _topology()
+    service = ObservationService(registry)
+
+    with pytest.raises(TermFlowToolError) as caught:
+        await service.read_pane(instance_id, _pane_read_params(pane_id="%0"))
+
+    assert caught.value.error_code is TermFlowErrorCode.POLICY_DENIED
+    assert connection.outbound.empty()
 
 
 @pytest.mark.asyncio

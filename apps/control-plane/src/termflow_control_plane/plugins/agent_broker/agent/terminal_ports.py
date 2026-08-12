@@ -61,6 +61,7 @@ from termflow_protocol.messages import (
 from termflow_protocol.topology import PaneId
 
 from termflow_control_plane.connections.registry import (
+    CapabilityUnavailable,
     ConnectionBackpressure,
     InstanceOffline,
     LiveConnection,
@@ -78,6 +79,9 @@ _WIRE_ERROR_CODES: dict[str, TermFlowErrorCode] = {
     "quota_exceeded": TermFlowErrorCode.QUOTA_EXCEEDED,
     "stream_gap": TermFlowErrorCode.STREAM_GAP,
     "invalid_request": TermFlowErrorCode.INVALID_REQUEST,
+    #: An old A that never negotiated ``bounded_capture`` fails closed (M2.4);
+    #: surface the denial as a policy error, not an internal error.
+    "capture_unsupported": TermFlowErrorCode.POLICY_DENIED,
 }
 
 #: The literal gap reasons A can report on the wire (§9.2).
@@ -231,6 +235,11 @@ class ObservationService:
             raise TermFlowToolError(
                 TermFlowErrorCode.INTERNAL_ERROR,
                 "the Term bridge queue is full; retry later",
+            ) from exc
+        except CapabilityUnavailable as exc:
+            raise TermFlowToolError(
+                TermFlowErrorCode.POLICY_DENIED,
+                "bounded pane capture was not negotiated by this Instance",
             ) from exc
         if isinstance(outcome, PaneCaptureErrorPayload):
             raise self._map_capture_error(outcome)
