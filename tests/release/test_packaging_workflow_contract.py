@@ -11,6 +11,22 @@ def _workflow(path: Path) -> dict[object, object]:
     return yaml.safe_load(path.read_text())
 
 
+def _step_index(steps: list[dict[str, object]], marker: str) -> int:
+    return next(
+        index
+        for index, step in enumerate(steps)
+        if marker in str(step.get("run", ""))
+    )
+
+
+def _step_index_by_action(steps: list[dict[str, object]], action: str) -> int:
+    return next(
+        index
+        for index, step in enumerate(steps)
+        if str(step.get("uses", "")).startswith(action)
+    )
+
+
 def test_node_workflow_is_manual_and_reusable() -> None:
     workflow = _workflow(NODE_WORKFLOW)
     triggers = workflow[True]
@@ -196,6 +212,12 @@ def test_client_workflow_is_manual_and_reusable() -> None:
     assert set(triggers) == {"workflow_dispatch", "workflow_call"}
     assert triggers["workflow_dispatch"]["inputs"]["platform"]["default"] == "all"
     assert triggers["workflow_dispatch"]["inputs"]["version"]["default"] == ""
+    assert triggers["workflow_dispatch"]["inputs"]["signed_android_candidate"] == {
+        "description": "Build Android with the fixed release signing certificate",
+        "required": False,
+        "default": False,
+        "type": "boolean",
+    }
     assert triggers["workflow_call"]["inputs"]["platform"] == {
         "description": "Native client platform set",
         "required": False,
@@ -204,6 +226,23 @@ def test_client_workflow_is_manual_and_reusable() -> None:
     }
     assert "release_tag" in triggers["workflow_call"]["inputs"]
     assert triggers["workflow_call"]["inputs"]["version"]["default"] == ""
+    assert triggers["workflow_call"]["inputs"]["signed_android_candidate"] == {
+        "description": "Build Android with the fixed release signing certificate",
+        "required": False,
+        "default": False,
+        "type": "boolean",
+    }
+    assert set(triggers["workflow_call"]["secrets"]) == {
+        "ANDROID_KEYSTORE_BASE64",
+        "ANDROID_KEYSTORE_PASSWORD",
+        "ANDROID_KEY_ALIAS",
+        "ANDROID_KEY_PASSWORD",
+        "ANDROID_SIGNING_CERT_SHA256",
+    }
+    assert all(
+        secret["required"] is False
+        for secret in triggers["workflow_call"]["secrets"].values()
+    )
     assert workflow["permissions"] == {"contents": "read"}
     jobs = workflow["jobs"]
     assert set(jobs) == {
@@ -211,14 +250,14 @@ def test_client_workflow_is_manual_and_reusable() -> None:
         "windows-nsis",
         "linux-packages",
         "macos-packages",
-        "android-debug-apk",
+        "android-apk",
         "ios-simulator-app",
     }
     for job_name, runner, platform in (
         ("windows-nsis", "windows-latest", "windows"),
         ("linux-packages", "ubuntu-22.04", "linux"),
         ("macos-packages", "macos-15", "macos"),
-        ("android-debug-apk", "ubuntu-latest", "android"),
+        ("android-apk", "ubuntu-latest", "android"),
         ("ios-simulator-app", "macos-15", "ios"),
     ):
         job = jobs[job_name]
@@ -238,7 +277,7 @@ def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() ->
         "windows-x64-nsis",
         "linux-x64",
         "macos-arm64",
-        "android-arm64-debug",
+        "android-arm64-apk",
         "ios-simulator-aarch64",
     ):
         assert f"${{{{ needs.validate-version.outputs.artifact_prefix }}}}-{suffix}" in text
@@ -246,6 +285,7 @@ def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() ->
         "--bundles nsis",
         "--bundles deb,appimage",
         "--bundles app,dmg",
+        "android build --ci --target aarch64 --apk",
         "android build --debug --ci --target aarch64 --apk",
         "ios build --debug --ci --target aarch64-sim --no-sign",
             "gen/apple/build/arm64-sim/*.app",
@@ -261,7 +301,7 @@ def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() ->
         "windows-nsis": ("bundle/nsis/*-setup.exe",),
         "linux-packages": ("${{ runner.temp }}/termflow-linux/*",),
         "macos-packages": ("${{ runner.temp }}/termflow-artifacts/*",),
-        "android-debug-apk": ("${{ runner.temp }}/termflow-android/*",),
+        "android-apk": ("${{ runner.temp }}/termflow-android/*",),
         "ios-simulator-app": ("TermFlow-ios-simulator-aarch64.app.zip",),
     }
     for job_name, paths in expected_paths.items():
@@ -284,7 +324,7 @@ def test_every_native_runner_materializes_before_reading_package_manifests() -> 
         "windows-nsis",
         "linux-packages",
         "macos-packages",
-        "android-debug-apk",
+        "android-apk",
         "ios-simulator-app",
     ):
         steps = workflow["jobs"][job_name]["steps"]
@@ -305,6 +345,58 @@ def test_every_native_runner_materializes_before_reading_package_manifests() -> 
         )
         assert materialize < rust_cache
         assert materialize < npm_install
+
+
+def test_android_release_is_signed_verified_and_iconized() -> None:
+    workflow = _workflow(CLIENT_WORKFLOW)
+    validate = workflow["jobs"]["validate-version"]
+    assert validate["outputs"]["android_release_build"] == (
+        "${{ steps.version.outputs.android_release_build }}"
+    )
+
+    job = workflow["jobs"]["android-apk"]
+    assert job["name"] == "Android arm64 · APK"
+    steps = job["steps"]
+    init = _step_index(steps, "android init --ci")
+    icon = _step_index(steps, "icon app-icon.svg")
+    signing = _step_index(steps, "configure_android_signing.py")
+    release_build = _step_index(
+        steps, "android build --ci --target aarch64 --apk"
+    )
+    resolve = _step_index(steps, "apk_path=")
+    verify = _step_index(steps, "verify_android_apk.py")
+    upload = _step_index_by_action(steps, "actions/upload-artifact@")
+    cleanup = _step_index(steps, 'rm -f "$RUNNER_TEMP/termflow-android-release.jks"')
+
+    assert init < icon < signing < release_build < resolve < verify < upload < cleanup
+    assert steps[signing]["if"] == (
+        "${{ needs.validate-version.outputs.android_release_build == 'true' }}"
+    )
+    assert steps[release_build]["if"] == (
+        "${{ needs.validate-version.outputs.android_release_build == 'true' }}"
+    )
+    debug_build = _step_index(
+        steps, "android build --debug --ci --target aarch64 --apk"
+    )
+    assert steps[debug_build]["if"] == (
+        "${{ needs.validate-version.outputs.android_release_build != 'true' }}"
+    )
+    assert steps[cleanup]["if"] == "${{ always() }}"
+
+    text = CLIENT_WORKFLOW.read_text()
+    for required in (
+        "ANDROID_KEYSTORE_BASE64",
+        "ANDROID_KEYSTORE_PASSWORD",
+        "ANDROID_KEY_ALIAS",
+        "ANDROID_KEY_PASSWORD",
+        "ANDROID_SIGNING_CERT_SHA256",
+        "Missing required Android release secret: $name",
+        "*-release.apk",
+        "*-debug.apk",
+        "TermFlow-${TERMFLOW_BUILD_VERSION}-android-arm64.apk",
+        "--expected-cert-sha256",
+    ):
+        assert required in text
 
 
 def test_packaging_workflows_do_not_use_unix_null_device_redirection() -> None:

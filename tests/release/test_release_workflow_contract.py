@@ -35,6 +35,7 @@ def test_release_calls_the_three_base_packaging_workflows() -> None:
         "name": "Package native C",
         "needs": "validate-version",
         "uses": "./.github/workflows/tauri-packages.yml",
+        "secrets": "inherit",
         "with": {
             "platform": "all",
             "release_tag": "${{ github.ref_name }}",
@@ -112,3 +113,11 @@ def test_release_contains_no_product_packaging_implementation() -> None:
         "--prerelease",
     ):
         assert required in text
+
+
+def test_release_notes_describe_fixed_android_signing_and_upgrade_boundary() -> None:
+    text = WORKFLOW_PATH.read_text()
+
+    assert "Android uses a debug key" not in text
+    assert "Android release APK uses the fixed TermFlow signing certificate" in text
+    assert "rc.3/rc.4 Android users must uninstall once before installing rc.5" in text

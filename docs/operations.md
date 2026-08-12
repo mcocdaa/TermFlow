@@ -208,7 +208,8 @@ Artifact，prerelease 的 Debian 版本排序不作为 apt 升级通道承诺。
   手动导入不会覆盖 Compose 配置、重启服务或删除 `termflow-data`；部署者应显式选择镜像运行方式。
 - `Package C · Native Clients` 的 `platform` 可选 `all`、`windows`、`linux`、`macos`、
   `android` 或 `ios`。Artifacts 分别包含 Windows NSIS `*-setup.exe`、Linux deb/AppImage、
-  macOS app zip/DMG、Android debug APK 和 iOS simulator app zip。
+  macOS app zip/DMG、Android APK 和 iOS simulator app zip。Android 手动运行默认走 debug；
+  tag release 或显式 `signed_android_candidate=true` 走固定项目证书的 release APK。
 
 手动验证时，把目标 commit 推送到 GitHub，打开上述 workflow 的 Run workflow，等待所选 job
 成功后下载 Artifact，并在目标平台实际解包、安装和启动。workflow 成功本身不等于安装验收通过。
@@ -240,9 +241,11 @@ GitHub Release。Tag 中间 Artifact 名含完整 Tag、保留 1 天；永久文
 - Linux deb/AppImage 没有发行签名；AppImage 使用 Ubuntu 22.04 作为兼容性构建基线。
 - macOS app 使用 ad-hoc identity 打包，DMG 未做 Developer ID notarization；下载后仍可能需要用户
   在 Privacy & Security 中明确放行。公开分发需要 Developer ID、notarization 和 stapling。
-- Android 是可安装的 debug APK。它由 Gradle debug keystore 签名，而不是“完全无签名”，也不是
-  稳定的生产签名；不同 run 之间可能无法覆盖升级。Google Play 发布需要受保护的长期 upload key、
-  release signing 配置、递增 versionCode 和正式 AAB/APK。
+- Android 手动默认 APK 由 Gradle debug keystore 签名，只用于开发验证；tag release 和显式
+  signed candidate 使用 GitHub Actions secrets 中的固定项目证书，构建 release APK，并核对
+  application ID、versionName/versionCode、证书和 launcher 图标。从 rc.5 起保持同一证书和递增
+  versionCode 才能覆盖升级；rc.3/rc.4 需卸载一次。密钥保管、候选包和真机验收按
+  [`android-release.md`](android-release.md) 执行。Google Play/AAB 上传仍未接入。
 - iOS zip 内是 `aarch64-sim` simulator `.app`，只能安装到匹配架构的 iOS Simulator，不能安装到
   物理 iPhone。物理设备、TestFlight 或 App Store 需要 Apple Developer team、证书、provisioning
   profile、entitlements 和受保护的签名流程。
