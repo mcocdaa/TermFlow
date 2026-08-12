@@ -139,7 +139,7 @@ async def subscribe_events(
                 after_seq=after_seq,
             )
             try:
-                await registry.enqueue(
+                connection = await registry.enqueue(
                     instance_id,
                     WireMessage(
                         type=MessageType.PANE_REPLAY_REQUEST,
@@ -147,6 +147,10 @@ async def subscribe_events(
                         payload=payload.model_dump(mode="json"),
                     ),
                 )
+                # A answers a replay request by re-sending already-accepted
+                # chunks as PANE_OUTPUT; open the window so the bridge does
+                # not reject those re-deliveries as stale envelopes.
+                connection.open_replay_window(pane_id, stream_id, after_seq)
             except InstanceOffline:
                 await websocket.close(code=4409, reason="Instance offline")
                 return

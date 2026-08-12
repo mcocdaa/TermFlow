@@ -4,10 +4,43 @@ from uuid import UUID, uuid4
 import pytest
 from starlette.websockets import WebSocketDisconnect
 from termflow_protocol import (
+    BridgeHelloPayload,
     MessageType,
     PaneOutputPayload,
+    PaneSnapshot,
+    TopologySnapshot,
+    TopologySnapshotPayload,
+    WindowSnapshot,
     WireMessage,
 )
+
+
+def _topology_with_pane() -> TopologySnapshot:
+    return TopologySnapshot(
+        session_id="$0",
+        session_name="main",
+        revision=1,
+        windows=[
+            WindowSnapshot(
+                window_id="@0",
+                index=0,
+                name="main",
+                active=True,
+                panes=[
+                    PaneSnapshot(
+                        pane_id="%1",
+                        window_id="@0",
+                        index=0,
+                        title="shell",
+                        width=80,
+                        height=24,
+                        active=True,
+                        dead=False,
+                    )
+                ],
+            )
+        ],
+    )
 
 
 def test_events_reject_invalid_admin_token(client) -> None:
@@ -29,6 +62,25 @@ def test_matching_pane_output_is_forwarded(client, admin_headers, provision_term
             "/api/v1/bridge/connect",
             headers={"Authorization": f"Bearer {term.instance_token}"},
         ) as bridge:
+            # M2.5: B validates pane identity against the current topology
+            # before EventHub fan-out, so A must present hello + topology
+            # first (the real A always sends topology before any output).
+            bridge.send_text(
+                WireMessage(
+                    type=MessageType.BRIDGE_HELLO,
+                    instance_id=instance_id,
+                    payload=BridgeHelloPayload(name="events").model_dump(mode="json"),
+                ).model_dump_json()
+            )
+            bridge.send_text(
+                WireMessage(
+                    type=MessageType.TOPOLOGY_SNAPSHOT,
+                    instance_id=instance_id,
+                    payload=TopologySnapshotPayload(topology=_topology_with_pane()).model_dump(
+                        mode="json"
+                    ),
+                ).model_dump_json()
+            )
             output = PaneOutputPayload.from_bytes("%1", uuid4(), 1, b"hello\xff")
             bridge.send_text(
                 WireMessage(
@@ -39,6 +91,8 @@ def test_matching_pane_output_is_forwarded(client, admin_headers, provision_term
             )
             received = WireMessage.model_validate(events.receive_json())
             if received.type is MessageType.INSTANCE_ONLINE:
+                received = WireMessage.model_validate(events.receive_json())
+            while received.type is MessageType.TOPOLOGY_SNAPSHOT:
                 received = WireMessage.model_validate(events.receive_json())
             assert received.type is MessageType.PANE_OUTPUT
             assert received.instance_id == instance_id

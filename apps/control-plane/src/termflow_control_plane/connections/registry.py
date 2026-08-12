@@ -106,6 +106,102 @@ class LiveConnection:
     #: False so an old A that never sends the fields fails closed.
     bounded_capture: bool = False
     typed_keys: bool = False
+    #: Accepted live stream position per pane: pane_id -> (stream_id, seq).
+    #: Envelopes that duplicate, roll back, or jump this position are rejected
+    #: by the bridge before EventHub fan-out or watch persistence (plan §19 M2).
+    pane_streams: dict[str, tuple[UUID, int]] = field(default_factory=dict)
+    #: Panes whose stream change was announced via STREAM_GAP and that are
+    #: awaiting the fresh stream A promised; only that stream may re-anchor.
+    pane_gap_pending: set[str] = field(default_factory=set)
+    #: Open pane replay windows: (pane_id, stream_id) -> requested after_seq.
+    #: Chunks inside an open window were already accepted live but are
+    #: legitimately re-delivered by A in answer to a PANE_REPLAY_REQUEST, so
+    #: they must reach EventHub subscribers instead of being rejected as
+    #: duplicates/out-of-order.
+    replay_windows: dict[tuple[str, UUID], int] = field(default_factory=dict)
+
+    def accept_pane_output(self, pane_id: str, stream_id: UUID, seq: int) -> bool:
+        """Validate one ``PANE_OUTPUT`` envelope against this connection.
+
+        The envelope is rejected when its pane is not part of the current
+        topology, when its stream epoch does not match the accepted stream, or
+        when its seq is not exactly the next expected position (duplicate,
+        out-of-order, or an unannounced gap). A stream epoch change is only
+        accepted after an explicit :class:`~termflow_protocol.StreamGapPayload`
+        announced it. The first envelope of a pane (or the first envelope on
+        the fresh stream after a gap) anchors the accepted state. Chunks
+        inside an open replay window are re-deliveries of already-accepted
+        output and are accepted as-is.
+        """
+        if self.topology is None or not self.topology.contains_pane(pane_id):
+            return False
+        accepted = self.pane_streams.get(pane_id)
+        if accepted is None:
+            self.pane_streams[pane_id] = (stream_id, seq)
+            self.pane_gap_pending.discard(pane_id)
+            return True
+        accepted_stream, accepted_seq = accepted
+        if pane_id in self.pane_gap_pending:
+            if stream_id == accepted_stream:
+                # The gap announced a change; the old stream contradicts it.
+                return False
+            self.pane_streams[pane_id] = (stream_id, seq)
+            self.pane_gap_pending.discard(pane_id)
+            self._drop_replay_windows(pane_id)
+            return True
+        if stream_id != accepted_stream:
+            # Unannounced stream epoch change: spoofed or stale envelope.
+            return False
+        after_seq = self.replay_windows.get((pane_id, stream_id))
+        if after_seq is not None and after_seq < seq <= accepted_seq:
+            # Replay delivery: A re-sent an already-accepted chunk in answer
+            # to a PANE_REPLAY_REQUEST; forward it without moving the ledger.
+            return True
+        if seq <= accepted_seq:
+            return False
+        if seq != accepted_seq + 1:
+            # Unannounced seq jump: continuity cannot be proven.
+            return False
+        self.pane_streams[pane_id] = (stream_id, seq)
+        return True
+
+    def accept_pane_gap(self, pane_id: str) -> bool:
+        """Validate one ``STREAM_GAP`` envelope and arm the fresh-stream wait."""
+        if self.topology is None or not self.topology.contains_pane(pane_id):
+            return False
+        self.pane_gap_pending.add(pane_id)
+        return True
+
+    def open_replay_window(self, pane_id: str, stream_id: UUID, after_seq: int) -> None:
+        """Mark a PANE_REPLAY_REQUEST so its response chunks are not rejected.
+
+        Called by the events subscription path whenever it enqueues a
+        ``pane.replay_request`` to A; the window covers the requested range
+        on exactly the requested stream and expires when the pane's stream
+        epoch changes or the pane leaves the topology.
+        """
+        self.replay_windows[(pane_id, stream_id)] = after_seq
+
+    def _drop_replay_windows(self, pane_id: str) -> None:
+        for key in tuple(self.replay_windows):
+            if key[0] == pane_id:
+                del self.replay_windows[key]
+
+    def synchronize_topology(self, topology: TopologySnapshot) -> None:
+        """Drop accepted stream state for panes absent from the new topology.
+
+        tmux never reuses pane ids, but a pane that leaves the topology must
+        not blackhole its accepted state if it ever reappears: the next
+        envelope for it anchors fresh instead.
+        """
+        current = {pane.pane_id for window in topology.windows for pane in window.panes}
+        for pane_id in tuple(self.pane_streams):
+            if pane_id not in current:
+                del self.pane_streams[pane_id]
+        self.pane_gap_pending.intersection_update(current)
+        for key in tuple(self.replay_windows):
+            if key[0] not in current:
+                del self.replay_windows[key]
 
     def require_capability(
         self,

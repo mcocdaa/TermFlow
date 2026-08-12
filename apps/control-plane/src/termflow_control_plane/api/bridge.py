@@ -19,6 +19,8 @@ from termflow_protocol import (
     PaneCaptureErrorPayload,
     PaneCaptureRequestPayload,
     PaneCaptureResultPayload,
+    PaneOutputPayload,
+    StreamGapPayload,
     TerminalActionResultPayload,
     TerminalBindingsPayload,
     TerminalClosedPayload,
@@ -109,6 +111,9 @@ async def _receive_messages(
             )
             connection.topology = topology_payload.topology
             connection.topology_ready.set()
+            # Pane identity is validated against the current topology, so a
+            # pane that leaves it stops holding accepted stream state.
+            connection.synchronize_topology(topology_payload.topology)
         elif message.type is MessageType.COMMAND_RESULT:
             result = cast(CommandResultPayload, payload)
             future = connection.pending.pop(result.command_id, None)
@@ -162,8 +167,18 @@ async def _receive_messages(
                 payload,
             )
             await terminal_router.forward_from_bridge(message)
-        elif message.type in {MessageType.PANE_OUTPUT, MessageType.STREAM_GAP}:
-            await event_hub.publish(message)
+        elif message.type is MessageType.PANE_OUTPUT:
+            output = cast(PaneOutputPayload, payload)
+            # Reject envelopes whose pane identity or stream epoch does not
+            # match the authenticated connection's current topology/accepted
+            # stream before they reach EventHub or watch persistence (plan
+            # §19 M2). Rejected envelopes are dropped, never fanned out.
+            if connection.accept_pane_output(output.pane_id, output.stream_id, output.seq):
+                await event_hub.publish(message)
+        elif message.type is MessageType.STREAM_GAP:
+            gap = cast(StreamGapPayload, payload)
+            if connection.accept_pane_gap(gap.pane_id):
+                await event_hub.publish(message)
 
         if message.type in {
             MessageType.TOPOLOGY_SNAPSHOT,
