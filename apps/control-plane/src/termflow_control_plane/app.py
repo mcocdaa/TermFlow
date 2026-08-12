@@ -23,6 +23,7 @@ from termflow_protocol import (
 
 from termflow_control_plane import __version__
 from termflow_control_plane.api.agent_admin import router as agent_admin_router
+from termflow_control_plane.api.agent_approvals import router as agent_approvals_router
 from termflow_control_plane.api.agent_capabilities import router as agent_capabilities_router
 from termflow_control_plane.api.agent_conversations import router as agent_conversations_router
 from termflow_control_plane.api.agent_stream import router as agent_stream_router
@@ -436,6 +437,7 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         app.include_router(agent_admin_router)
         app.include_router(agent_conversations_router)
         app.include_router(agent_stream_router)
+        app.include_router(agent_approvals_router)
         app.include_router(transcription_router)
     install_web_hosting(app, settings.static_dir)
     return app

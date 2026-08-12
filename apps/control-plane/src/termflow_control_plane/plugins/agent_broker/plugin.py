@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from termflow_control_plane.api.agent_admin import router as agent_admin_router
+from termflow_control_plane.api.agent_approvals import router as agent_approvals_router
 from termflow_control_plane.api.agent_capabilities import get_agent_capabilities
 from termflow_control_plane.api.agent_conversations import router as agent_conversations_router
 from termflow_control_plane.api.agent_stream import router as agent_stream_router
@@ -190,6 +191,7 @@ class AgentBrokerPlugin:
             agent_admin_router,
             agent_conversations_router,
             agent_stream_router,
+            agent_approvals_router,
         ):
             for route in feature_router.routes:
                 for method in route.methods:
