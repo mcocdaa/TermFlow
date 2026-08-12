@@ -16,6 +16,8 @@ _PRERELEASE = r"(?:-(?:dev|alpha|beta|rc)\.(?:0|[1-9][0-9]*))?"
 _METADATA = r"(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?"
 BUILD_VERSION_PATTERN = re.compile(rf"{_CORE}{_PRERELEASE}{_METADATA}\Z")
 V_PREFIXED_VERSION_PATTERN = re.compile(rf"v{_CORE}{_PRERELEASE}{_METADATA}\Z")
+_ANDROID_STAGE_BASE = {"dev": 0, "alpha": 20, "beta": 40, "rc": 60}
+_ANDROID_STAGE_MAX = {"dev": 19, "alpha": 19, "beta": 19, "rc": 38}
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +28,30 @@ class BuildVersion:
     is_prerelease: bool
 
 
+def android_version_code(version: str) -> int:
+    """Map a validated build version to a monotonically ordered Android code."""
+
+    release = version.split("+", 1)[0]
+    core, separator, prerelease = release.partition("-")
+    major, minor, patch = (int(component) for component in core.split("."))
+    if (
+        (major, minor, patch) == (0, 0, 0)
+        or major > 2099
+        or minor > 99
+        or patch > 99
+    ):
+        raise ValueError("build version is outside the supported mobile bundle range")
+    rank = 99
+    if separator:
+        stage, raw_number = prerelease.split(".", 1)
+        number = int(raw_number)
+        maximum = _ANDROID_STAGE_MAX.get(stage)
+        if maximum is None or number > maximum:
+            raise ValueError("build version is outside the supported mobile bundle range")
+        rank = _ANDROID_STAGE_BASE[stage] + number
+    return major * 1_000_000 + minor * 10_000 + patch * 100 + rank
+
+
 def validate_version(value: str) -> str:
     """Return a cross-ecosystem build version or raise ``ValueError``."""
 
@@ -34,16 +60,7 @@ def validate_version(value: str) -> str:
             "build version must be MAJOR.MINOR.PATCH with an optional "
             "dev/alpha/beta/rc prerelease and build metadata"
         )
-    core = value.split("+", 1)[0].split("-", 1)[0]
-    major, minor, patch = (int(component) for component in core.split("."))
-    android_version_code = major * 1_000_000 + minor * 1_000 + patch
-    if (
-        android_version_code < 1
-        or android_version_code > 2_100_000_000
-        or minor > 99
-        or patch > 99
-    ):
-        raise ValueError("build version is outside the supported mobile bundle range")
+    android_version_code(value)
     return value
 
 

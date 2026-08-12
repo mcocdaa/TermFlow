@@ -11,6 +11,7 @@ import pytest
 from scripts.release.build_version import (
     DEFAULT_BUILD_VERSION,
     BuildVersion,
+    android_version_code,
     resolve_build_version,
     validate_version,
 )
@@ -100,6 +101,22 @@ def test_metadata_hyphen_does_not_make_a_stable_version_prerelease() -> None:
     assert resolved.is_prerelease is False
 
 
+def test_android_version_codes_preserve_release_order() -> None:
+    versions = (
+        "0.1.0-rc.4",
+        "0.1.0-rc.5",
+        "0.1.0",
+        "0.1.1-rc.1",
+    )
+
+    assert [android_version_code(value) for value in versions] == [
+        10_064,
+        10_065,
+        10_099,
+        10_161,
+    ]
+
+
 @pytest.mark.parametrize(
     "version",
     [
@@ -149,7 +166,18 @@ def test_invalid_environment_versions_do_not_fall_back(version: str) -> None:
 
 @pytest.mark.parametrize(
     "version",
-    ["0.0.0", "0.0.0-dev.1", "2101.0.0", "2100.99.99", "1.100.0", "1.0.100"],
+    [
+        "0.0.0",
+        "0.0.0-dev.1",
+        "1.0.0-dev.20",
+        "1.0.0-alpha.20",
+        "1.0.0-beta.20",
+        "1.0.0-rc.39",
+        "2100.0.0",
+        "2100.99.99",
+        "1.100.0",
+        "1.0.100",
+    ],
 )
 def test_versions_outside_mobile_bundle_ranges_are_rejected(version: str) -> None:
     with pytest.raises(ValueError, match="mobile bundle"):
