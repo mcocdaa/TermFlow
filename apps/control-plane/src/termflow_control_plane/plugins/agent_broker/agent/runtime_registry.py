@@ -3,15 +3,13 @@
 ``AgentRuntimeRegistry`` resolves each :class:`AgentBinding` to a dedicated
 adapter instance (``OpenCodeAdapter`` with base_url/directory/runtime_id/
 binding_capability_epoch pinned from the binding), proves activation through
-the supervisor's fail-closed ``accept_activation`` gate, and owns the adapter
-lifecycle (``start_all`` / ``stop_all``).
+the supervisor's fail-closed ``accept_activation`` gate, and owns the
+per-binding ``AgentPipelineService`` lifecycle (``start_all`` / ``stop_all`` /
+``pipeline_for``).
 
-The per-binding ``AgentPipelineService`` orchestration is the *next* M4.5
-task.  Until it lands, :meth:`build_pipeline` constructs and registers the
-bare adapter and returns it; the pipeline assembly point is marked with a
-``TODO`` and :meth:`pipeline_for` resolves to that adapter (the next task
-swaps the returned type for ``AgentPipelineService`` without touching this
-mapping/gate/lifecycle behaviour).
+Every binding gets an independent adapter and pipeline instance; the
+``directory``/``runtime_id`` are fixed per binding, which satisfies the
+two-binding isolation of plan gate 6.
 """
 
 from __future__ import annotations
@@ -20,17 +18,24 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from uuid import UUID
 
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from termflow_control_plane.config import Settings
 from termflow_control_plane.persistence.models import AgentBinding
+from termflow_control_plane.persistence.repositories import RepositoryBundle
 from termflow_control_plane.plugins.agent_broker.agent.backend import (
     AgentBackend,
     AgentBackendCapabilities,
 )
 from termflow_control_plane.plugins.agent_broker.agent.opencode import OpenCodeAdapter
+from termflow_control_plane.plugins.agent_broker.agent.pipeline import (
+    AgentPipelineService,
+)
 from termflow_control_plane.plugins.agent_broker.agent.runtime_supervisor import (
     RuntimeNotReadyError,
     SupervisorConnector,
 )
+from termflow_control_plane.plugins.agent_broker.agent.stream_hub import AgentStreamHub
 from termflow_control_plane.plugins.agent_broker.agent.turns import BackendEventScope
 from termflow_control_plane.plugins.protocol import RuntimeRef
 
@@ -84,6 +89,7 @@ def _build_opencode_adapter(
 class _BoundRuntime:
     """Registry-side record for one activated binding."""
 
+    pipeline: AgentPipelineService
     adapter: AgentBackend
     scope: BackendEventScope
     capabilities: AgentBackendCapabilities
@@ -93,20 +99,21 @@ class _BoundRuntime:
 
 
 class AgentRuntimeRegistry:
-    """binding → (adapter, scope, supervisor gate) mapping with adapter lifecycle.
+    """binding → (pipeline, adapter, scope, supervisor gate) mapping with lifecycle.
 
-    Every binding gets an independent adapter instance (M4.5 spec §6: the
-    ``directory``/``runtime_id`` are fixed per binding, which satisfies the
-    two-binding isolation of plan gate 6).  A binding whose runtime is missing
-    or rejected by the supervisor never enters the mapping and stays disabled
-    (fail closed); the API layer treats an unmapped binding as
-    ``binding_runtime_unavailable``.
+    Every binding gets an independent adapter and pipeline instance (M4.5
+    spec §6).  A binding whose runtime is missing or rejected by the
+    supervisor never enters the mapping and stays disabled (fail closed); the
+    API layer treats an unmapped binding as ``binding_runtime_unavailable``.
     """
 
     def __init__(
         self,
         *,
         settings: Settings,
+        repositories: RepositoryBundle,
+        sessions: async_sessionmaker[AsyncSession],
+        hub: AgentStreamHub,
         supervisor: SupervisorConnector | None,
         endpoint_provider: RuntimeEndpointProvider | None = None,
         adapter_factory: AdapterFactory | None = None,
@@ -114,23 +121,23 @@ class AgentRuntimeRegistry:
         # None in unit tests: the activation gate stays open, but a binding
         # still needs a runtime_ref/epoch to build an adapter (spec §6).
         self._supervisor = supervisor
+        self._repositories = repositories
+        self._sessions = sessions
+        self._hub = hub
         self._endpoint_provider = endpoint_provider or _settings_endpoint_provider(settings)
         self._adapter_factory = adapter_factory or _build_opencode_adapter
         self._bindings: dict[UUID, _BoundRuntime] = {}
         self.unavailable_bindings: dict[UUID, str] = {}
 
-    async def build_pipeline(self, binding: AgentBinding) -> AgentBackend:
+    async def build_pipeline(self, binding: AgentBinding) -> AgentPipelineService:
         """Resolve and activate one binding's runtime, fail closed on any doubt.
 
         Resolution order follows M4.5 spec §6: binding runtime fields →
         endpoint → adapter → capabilities → scope → supervisor
-        ``accept_activation`` gate.  Any missing runtime field or a rejected
-        activation raises :class:`RuntimeNotReadyError` and the binding stays
-        unmapped (the constructed adapter is closed so its owned HTTP client
-        is never leaked).
-
-        TODO(M4.5 pipeline task): wrap the adapter in ``AgentPipelineService``,
-        start it, and return the pipeline instead of the bare adapter.
+        ``accept_activation`` gate → pipeline.  Any missing runtime field or a
+        rejected activation raises :class:`RuntimeNotReadyError` and the
+        binding stays unmapped (the constructed adapter is closed so its owned
+        HTTP client is never leaked).
         """
         runtime_ref, epoch = self._resolve_binding_runtime(binding)
         base_url, directory = self._endpoint_provider(runtime_ref)
@@ -156,7 +163,20 @@ class AgentRuntimeRegistry:
                 f"supervisor rejected activation for binding {binding.id}: "
                 f"runtime {runtime_ref} epoch {epoch} is not ready"
             )
+        pipeline = AgentPipelineService(
+            binding_id=binding.id,
+            adapter=adapter,
+            scope=scope,
+            capabilities=capabilities,
+            repositories=self._repositories,
+            sessions=self._sessions,
+            hub=self._hub,
+            supervisor=self._supervisor,
+            runtime_ref=str(runtime_ref),
+            runtime_epoch=epoch,
+        )
         self._bindings[binding.id] = _BoundRuntime(
+            pipeline=pipeline,
             adapter=adapter,
             scope=scope,
             capabilities=capabilities,
@@ -164,10 +184,10 @@ class AgentRuntimeRegistry:
             runtime_epoch=epoch,
             capability_ref=binding.capability_ref,
         )
-        return adapter
+        return pipeline
 
     async def start_all(self, bindings: Iterable[AgentBinding]) -> None:
-        """Activate every binding that can prove runtime readiness.
+        """Activate and start every binding that can prove runtime readiness.
 
         Bindings are activated independently (per-binding fail-closed
         isolation): a binding whose runtime is missing or rejected is left
@@ -177,30 +197,25 @@ class AgentRuntimeRegistry:
         """
         for binding in bindings:
             try:
-                await self.build_pipeline(binding)
+                pipeline = await self.build_pipeline(binding)
             except RuntimeNotReadyError as exc:
                 self.unavailable_bindings[binding.id] = str(exc)
+                continue
+            await pipeline.start()
 
     async def stop_all(self) -> None:
-        """Stop every pipeline and release every runtime adapter.
-
-        TODO(M4.5 pipeline task): ``pipeline.stop()`` precedes ``adapter.close()``.
-        """
+        """Stop every pipeline (cancelling its tasks and closing its adapter)."""
         runtimes = list(self._bindings.values())
-        # Clear the mapping before closing so a failing close can never leave
+        # Clear the mapping before stopping so a failing stop can never leave
         # a half-closed binding resolvable again.
         self._bindings.clear()
         for runtime in runtimes:
-            await runtime.adapter.close()
+            await runtime.pipeline.stop()
 
-    def pipeline_for(self, binding_id: UUID) -> AgentBackend | None:
-        """Return the binding's pipeline; currently resolves to the bare adapter.
-
-        TODO(M4.5 pipeline task): returns ``AgentPipelineService`` once the
-        per-binding orchestration exists.
-        """
+    def pipeline_for(self, binding_id: UUID) -> AgentPipelineService | None:
+        """Return the binding's pipeline, or ``None`` when it is unmapped."""
         runtime = self._bindings.get(binding_id)
-        return runtime.adapter if runtime is not None else None
+        return runtime.pipeline if runtime is not None else None
 
     def _resolve_binding_runtime(self, binding: AgentBinding) -> tuple[RuntimeRef, int]:
         """Extract the runtime identity a binding is provisioned for (fail closed)."""

@@ -3,10 +3,8 @@
 The registry resolves each ``AgentBinding`` to a dedicated adapter instance
 (base_url/directory/runtime_id/binding_capability_epoch), proves activation
 through the supervisor's fail-closed ``accept_activation`` gate, and owns the
-adapter lifecycle (``start_all`` / ``stop_all``).  The per-binding
-``AgentPipelineService`` orchestration is the next M4.5 task; until it lands,
-``build_pipeline`` returns the bare adapter and ``pipeline_for`` resolves to
-it.
+per-binding ``AgentPipelineService`` lifecycle (``start_all`` / ``stop_all`` /
+``pipeline_for``).
 """
 
 from __future__ import annotations
@@ -16,8 +14,11 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 from termflow_control_plane.config import Settings
+from termflow_control_plane.persistence.database import Database
 from termflow_control_plane.persistence.models import AgentBinding
+from termflow_control_plane.persistence.repositories import RepositoryBundle
 from termflow_control_plane.plugins.agent_broker.agent.backend import (
     AgentBackendCapabilities,
     CancelScope,
@@ -28,6 +29,9 @@ from termflow_control_plane.plugins.agent_broker.agent.backend import (
     SubmitMode,
     ToolCallIdentity,
 )
+from termflow_control_plane.plugins.agent_broker.agent.pipeline import (
+    AgentPipelineService,
+)
 from termflow_control_plane.plugins.agent_broker.agent.runtime_registry import (
     PINNED_OPENCODE_BACKEND_VERSION,
     AgentRuntimeRegistry,
@@ -36,6 +40,7 @@ from termflow_control_plane.plugins.agent_broker.agent.runtime_supervisor import
     RuntimeNotReadyError,
     SupervisorConnector,
 )
+from termflow_control_plane.plugins.agent_broker.agent.stream_hub import AgentStreamHub
 from termflow_control_plane.plugins.protocol import (
     BackendOperationOutcome,
     BackendOperationResult,
@@ -53,6 +58,24 @@ CAPABILITY_REF = "capability-1"
 # ---------------------------------------------------------------------------
 # Test doubles.
 # ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def repositories(tmp_path) -> RepositoryBundle:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}")
+    await database.initialize()
+    bundle = RepositoryBundle(database.session_factory)
+    # Test seam: let tests open ad-hoc sessions against the same database.
+    bundle.session_factory = database.session_factory  # type: ignore[attr-defined]
+    try:
+        yield bundle
+    finally:
+        await database.dispose()
+
+
+@pytest.fixture
+def hub() -> AgentStreamHub:
+    return AgentStreamHub()
 
 
 def make_binding(
@@ -108,11 +131,18 @@ def make_supervisor(*, ready: bool = True, epoch: int = 1) -> SupervisorConnecto
 
 
 class FakeAdapter:
-    """Adapter double recording its constructor kwargs and close calls."""
+    """Adapter double recording its constructor kwargs and close calls.
+
+    ``events`` never yields (a hanging subscription) so a started pipeline's
+    SSE consumer idles until ``stop()`` cancels it; no registry test needs to
+    drive real backend events.
+    """
 
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
         self.closed = False
+        self.directory = kwargs.get("directory", "/workspace")
+        self.runtime_id = kwargs.get("runtime_id") or "runtime-1"
 
     async def capabilities(self) -> AgentBackendCapabilities:
         return AgentBackendCapabilities(
@@ -125,8 +155,32 @@ class FakeAdapter:
             runtime_isolation=RuntimeIsolation.BINDING,
         )
 
+    async def events(self, scope):  # pragma: no cover - hanging subscription
+        if False:
+            yield
+
     async def close(self) -> None:
         self.closed = True
+
+
+def make_registry(
+    settings: Settings,
+    repositories: RepositoryBundle,
+    hub: AgentStreamHub,
+    *,
+    supervisor: SupervisorConnector | None = None,
+    endpoint_provider=None,
+    adapter_factory=None,
+) -> AgentRuntimeRegistry:
+    return AgentRuntimeRegistry(
+        settings=settings,
+        repositories=repositories,
+        sessions=repositories.session_factory,
+        hub=hub,
+        supervisor=supervisor,
+        endpoint_provider=endpoint_provider,
+        adapter_factory=adapter_factory,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -134,53 +188,64 @@ class FakeAdapter:
 # ---------------------------------------------------------------------------
 
 
-async def test_build_pipeline_maps_binding_to_adapter(settings: Settings) -> None:
-    registry = AgentRuntimeRegistry(settings=settings, supervisor=None)
+async def test_build_pipeline_maps_binding_to_adapter(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    registry = make_registry(settings, repositories, hub)
     binding = make_binding(runtime_ref=RUNTIME_REF, runtime_epoch=3)
 
-    adapter = await registry.build_pipeline(binding)
+    pipeline = await registry.build_pipeline(binding)
 
+    assert isinstance(pipeline, AgentPipelineService)
+    adapter = pipeline.adapter
     assert adapter.base_url == settings.agent_opencode_base_url
     assert adapter.directory == settings.agent_opencode_directory
     assert adapter.runtime_id == RUNTIME_REF
     assert adapter.binding_capability_epoch == 3
     assert adapter.backend_version == PINNED_OPENCODE_BACKEND_VERSION
-    assert registry.pipeline_for(binding.id) is adapter
+    assert registry.pipeline_for(binding.id) is pipeline
+    assert pipeline.started is False  # build constructs; start_all starts
     await registry.stop_all()
 
 
-async def test_injected_endpoint_provider_resolves_runtime(settings: Settings) -> None:
+async def test_injected_endpoint_provider_resolves_runtime(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
     def provider(runtime_ref: RuntimeRef) -> tuple[str, str]:
         return (f"http://endpoint/{runtime_ref}", f"/workspaces/{runtime_ref}")
 
-    registry = AgentRuntimeRegistry(
-        settings=settings, supervisor=None, endpoint_provider=provider
-    )
+    registry = make_registry(settings, repositories, hub, endpoint_provider=provider)
     binding = make_binding(runtime_ref=RUNTIME_REF, runtime_epoch=1)
 
-    adapter = await registry.build_pipeline(binding)
+    pipeline = await registry.build_pipeline(binding)
 
-    assert adapter.base_url == "http://endpoint/runtime-1"
-    assert adapter.directory == "/workspaces/runtime-1"
+    assert pipeline.adapter.base_url == "http://endpoint/runtime-1"
+    assert pipeline.adapter.directory == "/workspaces/runtime-1"
     await registry.stop_all()
 
 
-async def test_start_all_activates_each_binding(settings: Settings) -> None:
-    registry = AgentRuntimeRegistry(settings=settings, supervisor=None)
+async def test_start_all_activates_and_starts_each_binding(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    registry = make_registry(settings, repositories, hub)
     first = make_binding()
     second = make_binding(runtime_ref="runtime-2", runtime_epoch=5)
 
     await registry.start_all([first, second])
 
-    first_adapter = registry.pipeline_for(first.id)
-    second_adapter = registry.pipeline_for(second.id)
-    assert first_adapter is not None
-    assert second_adapter is not None
-    assert first_adapter.runtime_id == RUNTIME_REF
-    assert first_adapter.binding_capability_epoch == 1
-    assert second_adapter.runtime_id == "runtime-2"
-    assert second_adapter.binding_capability_epoch == 5
+    first_pipeline = registry.pipeline_for(first.id)
+    second_pipeline = registry.pipeline_for(second.id)
+    assert isinstance(first_pipeline, AgentPipelineService)
+    assert isinstance(second_pipeline, AgentPipelineService)
+    assert first_pipeline.started is True
+    assert second_pipeline.started is True
+    assert first_pipeline.adapter.runtime_id == RUNTIME_REF
+    assert first_pipeline.adapter.binding_capability_epoch == 1
+    assert second_pipeline.adapter.runtime_id == "runtime-2"
+    assert second_pipeline.adapter.binding_capability_epoch == 5
     await registry.stop_all()
+    assert first_pipeline.started is False
+    assert second_pipeline.started is False
 
 
 # ---------------------------------------------------------------------------
@@ -188,9 +253,11 @@ async def test_start_all_activates_each_binding(settings: Settings) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_supervisor_rejects_unregistered_runtime(settings: Settings) -> None:
+async def test_supervisor_rejects_unregistered_runtime(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
     supervisor = make_supervisor()  # nothing attested
-    registry = AgentRuntimeRegistry(settings=settings, supervisor=supervisor)
+    registry = make_registry(settings, repositories, hub, supervisor=supervisor)
     binding = make_binding()
 
     with pytest.raises(RuntimeNotReadyError):
@@ -199,12 +266,14 @@ async def test_supervisor_rejects_unregistered_runtime(settings: Settings) -> No
     assert registry.pipeline_for(binding.id) is None
 
 
-async def test_supervisor_rejects_epoch_mismatch(settings: Settings) -> None:
+async def test_supervisor_rejects_epoch_mismatch(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
     supervisor = make_supervisor(epoch=2)
     await supervisor.register(
         str(uuid4()), RuntimeRef(RUNTIME_REF), 2, CapabilityRef(CAPABILITY_REF)
     )
-    registry = AgentRuntimeRegistry(settings=settings, supervisor=supervisor)
+    registry = make_registry(settings, repositories, hub, supervisor=supervisor)
     binding = make_binding(runtime_epoch=1)
 
     with pytest.raises(RuntimeNotReadyError):
@@ -213,7 +282,9 @@ async def test_supervisor_rejects_epoch_mismatch(settings: Settings) -> None:
     assert registry.pipeline_for(binding.id) is None
 
 
-async def test_rejected_activation_closes_adapter(settings: Settings) -> None:
+async def test_rejected_activation_closes_adapter(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
     supervisor = make_supervisor()  # nothing attested -> gate rejects
     created: list[FakeAdapter] = []
 
@@ -222,8 +293,8 @@ async def test_rejected_activation_closes_adapter(settings: Settings) -> None:
         created.append(adapter)
         return adapter
 
-    registry = AgentRuntimeRegistry(
-        settings=settings, supervisor=supervisor, adapter_factory=factory
+    registry = make_registry(
+        settings, repositories, hub, supervisor=supervisor, adapter_factory=factory
     )
     binding = make_binding()
 
@@ -235,28 +306,32 @@ async def test_rejected_activation_closes_adapter(settings: Settings) -> None:
     assert registry.pipeline_for(binding.id) is None  # never mapped
 
 
-async def test_supervisor_none_skips_gate(settings: Settings) -> None:
-    registry = AgentRuntimeRegistry(settings=settings, supervisor=None)
+async def test_supervisor_none_skips_gate(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    registry = make_registry(settings, repositories, hub)
     binding = make_binding()
 
-    adapter = await registry.build_pipeline(binding)
+    pipeline = await registry.build_pipeline(binding)
 
-    assert registry.pipeline_for(binding.id) is adapter
+    assert registry.pipeline_for(binding.id) is pipeline
     await registry.stop_all()
 
 
-async def test_attested_runtime_passes_gate(settings: Settings) -> None:
+async def test_attested_runtime_passes_gate(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
     supervisor = make_supervisor(epoch=1)
     await supervisor.register(
         str(uuid4()), RuntimeRef(RUNTIME_REF), 1, CapabilityRef(CAPABILITY_REF)
     )
-    registry = AgentRuntimeRegistry(settings=settings, supervisor=supervisor)
+    registry = make_registry(settings, repositories, hub, supervisor=supervisor)
     binding = make_binding()
 
-    adapter = await registry.build_pipeline(binding)
+    pipeline = await registry.build_pipeline(binding)
 
-    assert registry.pipeline_for(binding.id) is adapter
-    assert adapter.runtime_id == RUNTIME_REF
+    assert registry.pipeline_for(binding.id) is pipeline
+    assert pipeline.adapter.runtime_id == RUNTIME_REF
     await registry.stop_all()
 
 
@@ -265,22 +340,28 @@ async def test_attested_runtime_passes_gate(settings: Settings) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_binding_without_runtime_ref_fails_closed(settings: Settings) -> None:
-    registry = AgentRuntimeRegistry(settings=settings, supervisor=None)
+async def test_binding_without_runtime_ref_fails_closed(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    registry = make_registry(settings, repositories, hub)
 
     with pytest.raises(RuntimeNotReadyError):
         await registry.build_pipeline(make_binding(runtime_ref=None, runtime_epoch=None))
 
 
-async def test_binding_without_runtime_epoch_fails_closed(settings: Settings) -> None:
-    registry = AgentRuntimeRegistry(settings=settings, supervisor=None)
+async def test_binding_without_runtime_epoch_fails_closed(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    registry = make_registry(settings, repositories, hub)
 
     with pytest.raises(RuntimeNotReadyError):
         await registry.build_pipeline(make_binding(runtime_epoch=None))
 
 
-async def test_start_all_keeps_runtimeless_binding_disabled(settings: Settings) -> None:
-    registry = AgentRuntimeRegistry(settings=settings, supervisor=None)
+async def test_start_all_keeps_runtimeless_binding_disabled(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    registry = make_registry(settings, repositories, hub)
     ok = make_binding()
     broken = make_binding(runtime_ref=None, runtime_epoch=None)
 
@@ -294,11 +375,13 @@ async def test_start_all_keeps_runtimeless_binding_disabled(settings: Settings) 
 
 
 # ---------------------------------------------------------------------------
-# Tests: adapter lifecycle.
+# Tests: pipeline/adapter lifecycle.
 # ---------------------------------------------------------------------------
 
 
-async def test_stop_all_closes_every_adapter(settings: Settings) -> None:
+async def test_stop_all_stops_pipelines_and_closes_every_adapter(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
     created: list[FakeAdapter] = []
 
     def factory(**kwargs: Any) -> FakeAdapter:
@@ -306,8 +389,8 @@ async def test_stop_all_closes_every_adapter(settings: Settings) -> None:
         created.append(adapter)
         return adapter
 
-    registry = AgentRuntimeRegistry(
-        settings=settings, supervisor=None, adapter_factory=factory
+    registry = make_registry(
+        settings, repositories, hub, adapter_factory=factory
     )
     await registry.start_all([make_binding(), make_binding(runtime_ref="runtime-2")])
     assert len(created) == 2
@@ -316,19 +399,19 @@ async def test_stop_all_closes_every_adapter(settings: Settings) -> None:
     await registry.stop_all()
 
     assert all(adapter.closed for adapter in created)
-    assert registry.pipeline_for(created[0].kwargs.get("binding_id")) is None
+    assert registry.pipeline_for(uuid4()) is None
 
 
-async def test_fake_adapter_receives_expected_constructor_kwargs(settings: Settings) -> None:
+async def test_fake_adapter_receives_expected_constructor_kwargs(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
     received: dict[str, Any] = {}
 
     def factory(**kwargs: Any) -> FakeAdapter:
         received.update(kwargs)
         return FakeAdapter(**kwargs)
 
-    registry = AgentRuntimeRegistry(
-        settings=settings, supervisor=None, adapter_factory=factory
-    )
+    registry = make_registry(settings, repositories, hub, adapter_factory=factory)
     binding = make_binding(runtime_ref=RUNTIME_REF, runtime_epoch=7)
 
     await registry.build_pipeline(binding)
