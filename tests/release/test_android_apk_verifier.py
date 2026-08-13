@@ -28,6 +28,7 @@ def _write_resources(
     template_at_xxxhdpi: bool = False,
     adaptive_background: bool = True,
     compiled_adaptive: bool = True,
+    compiled_adaptive_as_drawables: bool = False,
 ) -> tuple[Path, Path]:
     generated = root / "generated-res"
     apk = root / "app.apk"
@@ -58,7 +59,17 @@ def _write_resources(
         background_source.write_text(
             '<resources><color name="ic_launcher_background">#ffffff</color></resources>'
         )
-        if compiled_adaptive:
+        if compiled_adaptive_as_drawables:
+            archive.writestr(
+                "res/drawable-v24/ic_launcher_foreground.xml",
+                b"compiled adaptive foreground",
+            )
+            archive.writestr(
+                "res/drawable/ic_launcher_background.xml",
+                b"compiled adaptive background",
+            )
+            archive.writestr("resources.arsc", b"compiled resource table")
+        elif compiled_adaptive:
             archive.writestr(
                 "res/mipmap-anydpi-v26/ic_launcher.xml", adaptive.read_bytes()
             )
@@ -69,6 +80,12 @@ def _write_resources(
 
 def test_accepts_complete_termflow_launcher_resources(tmp_path: Path) -> None:
     apk, generated = _write_resources(tmp_path)
+
+    verify_launcher_resources(apk, generated)
+
+
+def test_accepts_adaptive_launcher_compiled_as_drawable_resources(tmp_path: Path) -> None:
+    apk, generated = _write_resources(tmp_path, compiled_adaptive_as_drawables=True)
 
     verify_launcher_resources(apk, generated)
 
