@@ -147,7 +147,7 @@ client-core 的 reset/too-slow 恢复走 REST replay（`fetchEventsSince`）。�
 ### Repository
 
 - `AgentEventRepository.append(payload_json: str | None = None)`：校验大小（≤64 KiB）与 digest 不变量（`payload_digest == sha256(payload_json.encode())`，提供时强制）；INSERT 含新列。
-- `AgentEventCursor.append` 透传 `payload_json`；`list_since_cursor`/`list_for_conversation` 返回的 ORM 行自动携带 payload（hub 队列与 replay 均直接可用，**stream_hub.py 零改动**）。
+- `AgentEventCursor.append` 透传 `payload_json`；`list_since_cursor`/`list_for_conversation` 返回的 ORM 行自动携带 payload（hub 队列与 replay 均直接可用，stream_hub.py 仅 `AgentEventCursor.append` 透传 `payload_json` 一行参数）。
 - 既有调用（不传 payload）不变。
 
 ### API
@@ -187,7 +187,7 @@ client-core 的 reset/too-slow 恢复走 REST replay（`fetchEventsSince`）。�
 - `apps/control-plane/tests/test_agent_migrations.py` —— HEAD/exact-schema
 - `apps/control-plane/tests/test_agent_repositories.py` —— append payload 用例
 
-**不改**：`stream_hub.py`、`turns.py`、`packages/client-contracts/`、`uv.lock`（零依赖变更）、`plugin.py`（router 已注册；投影器无状态，无需组合根装配）。M4.5 的 `pipeline.py`（尚未存在）实现时把 canonical payload JSON 传入 `append`，本任务在测试中直接驱动 append 验证。
+**不改**：`stream_hub.py`（仅 `AgentEventCursor.append` 透传 `payload_json`，2 行）、`turns.py`、`packages/client-contracts/`、`uv.lock`（零依赖变更）、`plugin.py`（router 已注册；投影器无状态，无需组合根装配）。M4.5 的 `pipeline.py`（尚未存在）实现时把 canonical payload JSON 传入 `append`，本任务在测试中直接驱动 append 验证。
 
 ## 8. 测试矩阵
 
@@ -226,7 +226,7 @@ client-core 的 reset/too-slow 恢复走 REST replay（`fetchEventsSince`）。�
 - **不泄露**：AG-UI 事件永不带 cursor/seq/digest/event_id/epoch(storage)/dedup/auth 字段；`threadId`/`runId` 用 B 已公开的 conversation_id/run_id。
 - **端点**：复用 `/api/v1/agent/stream` 加 `wire=agui`（query param，EventSource 兼容；不新增端点、不用 Accept）；`reset`/`closed`/opaque cursor 信封语义原样；`/events` 同步 `wire=agui` 支持 REST replay 恢复。
 - **client-contracts 不改**（AG-UI 类型非 B 契约面；C 侧 TS 类型随 transport 任务手写）；**不引入 ag-ui-protocol 依赖**；本地 pinned wire fixture 为防漂移契约；修正 reuse.py 的 404 contract_fixture URL。
-- 零新配置；错误码 `invalid_wire`(400)；stream_hub.py/turns.py/generated.ts 零改动。
+- 零新配置；错误码 `invalid_wire`(400)；stream_hub.py 仅 `AgentEventCursor.append` 透传 `payload_json`（2 行），turns.py/generated.ts 零改动。
 
 ## 12. 开放问题
 
