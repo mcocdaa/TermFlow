@@ -21,7 +21,7 @@ from termflow_control_plane.persistence.models import Base
 # this constant; upgrade-path fixtures still pin "0005" explicitly.
 HEAD = "0009"
 
-# Every Agent Broker table created by migrations 0006 and 0007 (plan §15).
+# Every Agent Broker table created by migrations 0006, 0007, and 0009 (plan §15).
 AGENT_TABLES = (
     "agent_profiles",
     "agent_bindings",

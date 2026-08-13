@@ -3,6 +3,11 @@
 Revision ID: 0009
 Revises: 0007
 
+Numbering note: revision 0008 is reserved for the M5.2 approval_audit
+migration, which is developed on a parallel branch; this migration pins
+``down_revision = "0007"`` (the head when M6a landed) and the parallel 0008
+must adopt ``0007`` as its parent (or rebase) so the chains merge cleanly.
+
 Adds the nullable ``agent_events.payload`` column that the AG-UI wire
 projection needs: today ``agent_events`` carries only ``payload_digest`` (no
 content), so live and replay delivery have nothing to project.  The column is

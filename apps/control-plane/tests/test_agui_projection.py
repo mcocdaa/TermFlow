@@ -150,6 +150,36 @@ def test_projection_never_leaks_b_internal_identifiers() -> None:
             assert token not in serialized, f"{kind} leaked {token!r}"
 
 
+def test_naive_created_at_is_interpreted_as_utc() -> None:
+    """SQLite round-trips ``created_at`` as a naive datetime; the projection
+    must read it as UTC so the AG-UI millisecond timestamp stays correct on
+    non-UTC hosts (review fix: naive -> UTC before ``.timestamp()``)."""
+    import os
+    import time as time_module
+
+    original_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "Asia/Shanghai"
+    time_module.tzset()
+    try:
+        naive = datetime(2026, 8, 13, 12, 0, 0)  # no tzinfo, like a DB read
+        event = _event("message_delta")
+        event.created_at = naive
+        projected, drops = project_agent_event(event, _payload("message_delta"))
+        assert drops == ProjectionDropCounts()
+        # The wire timestamp is the UTC reading of the naive value, never the
+        # local (UTC+8 here) reading.
+        assert projected[0]["timestamp"] == int(
+            naive.replace(tzinfo=UTC).timestamp() * 1000
+        )
+        assert projected[0]["timestamp"] != int(naive.timestamp() * 1000)
+    finally:
+        if original_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original_tz
+        time_module.tzset()
+
+
 # ---------------------------------------------------------------------------
 # Explicit drops and diagnostic counters (spec §4.6)
 # ---------------------------------------------------------------------------

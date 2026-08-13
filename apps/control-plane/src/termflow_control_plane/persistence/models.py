@@ -558,6 +558,13 @@ class AgentMessage(Base):
     )
 
 
+#: Bounded canonical payload JSON limit for ``AgentEvent.payload`` (M6a spec
+#: §4.2; aligned with ``MAX_CONTEXT_BYTES``).  Lives next to the column it
+#: bounds and is shared by ``AgentEventRepository.append`` (which enforces it)
+#: and the AG-UI projection module.
+MAX_AGENT_EVENT_PAYLOAD_BYTES = 64 * 1024
+
+
 class AgentEvent(Base):
     """Canonical product event with a B-assigned database cursor (plan §4.4)."""
 

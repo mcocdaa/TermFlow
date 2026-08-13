@@ -17,7 +17,8 @@ AG-UI shapes; B's canonical events, opaque cursors, auth, retention, and
 approval semantics remain the source of truth and are never leaked into the
 AG-UI event objects (spec §4.3 "不泄露不变量").
 
-``MAX_AGENT_EVENT_PAYLOAD_BYTES`` is the bounded-payload storage limit that
+``MAX_AGENT_EVENT_PAYLOAD_BYTES`` (defined in ``persistence.models`` next to
+the ``AgentEvent.payload`` column) is the bounded-payload storage limit that
 :class:`~termflow_control_plane.persistence.repositories.AgentEventRepository`
 enforces on ``append(payload_json=...)`` (spec §4.2).
 """
@@ -27,15 +28,14 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
-from datetime import datetime
-from typing import NamedTuple
+from datetime import UTC, datetime
+from typing import NamedTuple, cast
 
 from termflow_control_plane.errors import TermFlowError
-from termflow_control_plane.persistence.models import AgentEvent
+from termflow_control_plane.persistence.models import (
+    AgentEvent,
+)
 
-#: Bounded canonical payload storage limit (spec §4.2; aligned with
-#: ``MAX_CONTEXT_BYTES``).  Enforced by ``AgentEventRepository.append``.
-MAX_AGENT_EVENT_PAYLOAD_BYTES = 64 * 1024
 #: The pinned AG-UI protocol version this projection targets (spec §3).
 AGUI_PROTOCOL_VERSION = "0.1.19"
 #: RFC 6902 patch path used by ``STATE_DELTA`` (spec §4.3).
@@ -75,6 +75,11 @@ class ProjectionDropCounts(NamedTuple):
 
 
 def _epoch_ms(created_at: datetime) -> int:
+    # SQLite round-trips DateTime(timezone=True) values as naive datetimes:
+    # interpret them as UTC so the wire timestamp is host-timezone agnostic
+    # (same pattern as api/dashboard.py `_as_utc` and api/transcription.py).
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
     return int(created_at.timestamp() * 1000)
 
 
@@ -175,8 +180,8 @@ def _project_tool_completed(
     # hashes stay in B.
     summary: dict[str, object] = {
         "status": str(_required(payload, "status")),
-        "input_bytes": int(_required(payload, "input_bytes")),
-        "output_bytes": int(_required(payload, "output_bytes")),
+        "input_bytes": cast(int, _required(payload, "input_bytes")),
+        "output_bytes": cast(int, _required(payload, "output_bytes")),
         "truncated": bool(payload.get("truncated", False)),
     }
     for optional in ("error_code", "error_message"):
@@ -247,7 +252,7 @@ def _project_backend_state_changed(
     if payload is None:
         return [], ProjectionDropCounts(missing_payload=1)
     state = str(_required(payload, "state"))
-    epoch = int(_required(payload, "epoch"))
+    epoch = cast(int, _required(payload, "epoch"))
     return [
         {
             "type": "STATE_DELTA",

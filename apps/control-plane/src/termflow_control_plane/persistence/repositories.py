@@ -19,11 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from termflow_control_plane.auth.pkce import create_s256_challenge
 from termflow_control_plane.auth.secret_box import EncryptedSecret
-from termflow_control_plane.plugins.agent_broker.agent.agui_projection import (
-    MAX_AGENT_EVENT_PAYLOAD_BYTES,
-)
 
 from .models import (
+    MAX_AGENT_EVENT_PAYLOAD_BYTES,
     AgentBinding,
     AgentCleanupJob,
     AgentConversation,
