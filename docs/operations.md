@@ -210,6 +210,9 @@ Artifact，prerelease 的 Debian 版本排序不作为 apt 升级通道承诺。
   `android` 或 `ios`。Artifacts 分别包含 Windows NSIS `*-setup.exe`、Linux deb/AppImage、
   macOS app zip/DMG、Android APK 和 iOS simulator app zip。Android 手动运行默认走 debug；
   tag release 或显式 `signed_android_candidate=true` 走固定项目证书的 release APK。
+  Linux job 先构建一次 deb，再单独构建 AppImage。若 AppImage 的外部打包工具失败，job 最多
+  重试三次；每次重试只删除 AppImage 输出目录，保留 deb 和 Rust 编译缓存，并记录 Tauri 工具
+  缓存文件的名称、大小与 SHA-256 以便排查。最后一次仍失败时，job 返回该次构建的真实退出码。
 
 手动验证时，把目标 commit 推送到 GitHub，打开上述 workflow 的 Run workflow，等待所选 job
 成功后下载 Artifact，并在目标平台实际解包、安装和启动。workflow 成功本身不等于安装验收通过。

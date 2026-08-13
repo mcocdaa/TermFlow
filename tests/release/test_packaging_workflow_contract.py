@@ -283,7 +283,7 @@ def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() ->
         assert f"${{{{ needs.validate-version.outputs.artifact_prefix }}}}-{suffix}" in text
     for required in (
         "--bundles nsis",
-        "--bundles deb,appimage",
+        "--bundles deb --ci",
         "--bundles app,dmg",
         "android build --ci --target aarch64 --apk",
         "android build --debug --ci --target aarch64 --apk",
@@ -315,6 +315,20 @@ def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() ->
             "${{ fromJSON(needs.validate-version.outputs.retention_days) }}"
         )
         assert all(path in upload["path"] for path in paths)
+
+
+def test_linux_builds_deb_once_before_bounded_appimage_retries() -> None:
+    text = CLIENT_WORKFLOW.read_text()
+
+    deb_command = (
+        "npm run tauri:build --workspace @termflow/tauri-client -- --bundles deb --ci"
+    )
+    appimage_wrapper = "scripts/release/build_linux_appimage.sh"
+
+    assert text.count(deb_command) == 1
+    assert appimage_wrapper in text
+    assert "--bundles deb,appimage" not in text
+    assert text.index(deb_command) < text.index(appimage_wrapper)
 
 
 def test_every_native_runner_materializes_before_reading_package_manifests() -> None:
