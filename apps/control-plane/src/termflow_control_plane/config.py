@@ -69,6 +69,15 @@ class Settings(BaseSettings):
         "[::1]:*",
     )
     agent_mcp_max_request_bytes: int = Field(default=256 * 1024, ge=1)
+    # M5.2 approval flow: the write tools wait synchronously for the human
+    # decision (must stay below the MCP tool guard timeout) and created
+    # approvals expire after the TTL.
+    agent_approval_wait_timeout_seconds: float = Field(default=25.0, gt=0)
+    agent_approval_ttl_seconds: float = Field(default=300.0, gt=0)
+    # Delegated Write Grants stay disabled in 0.2.0: no code path reads the
+    # table, the canonical hash always binds grant_id=None, and this flag is
+    # only exposed for C to display (spec §8).
+    agent_delegated_write_grants_enabled: bool = False
     browser_session_ttl_seconds: int = Field(default=8 * 60 * 60, ge=60)
     browser_session_capacity: int = Field(default=4096, ge=1)
     totp_master_key: SecretStr | None = None

@@ -210,6 +210,86 @@ class TestBindings:
         assert gone.status_code == 404
         assert gone.json()["error"]["code"] == "binding_not_found"
 
+    def test_binding_revoked_or_disabled_revokes_pending_approvals(
+        self,
+        client,
+        admin_headers,
+        provision_term,
+    ) -> None:
+        """Spec §5: a revoked/disabled binding cannot keep approvals alive."""
+        from datetime import UTC, datetime, timedelta
+
+        from termflow_control_plane.persistence.repositories import RepositoryBundle
+        from termflow_control_plane.plugins.agent_broker.agent.permissions import (
+            ApprovalState,
+            canonical_hash,
+        )
+
+        profile = _create_profile(client, admin_headers)
+        term = provision_term(name="revoke-binding-term")
+        binding = _create_binding(
+            client,
+            admin_headers,
+            profile_id=UUID(str(profile["profile_id"])),
+            term_id=term.instance_id,
+        )
+        binding_id = UUID(str(binding["binding_id"]))
+        repositories: RepositoryBundle = client.app.state.repositories
+
+        async def _seed_approvals() -> list[UUID]:
+            conversation = await repositories.agent_conversations.create(
+                binding_id=binding_id, title="revoke-approvals"
+            )
+            created = []
+            for index in range(2):
+                approval = await repositories.approvals.create(
+                    binding_id=binding_id,
+                    conversation_id=conversation.id,
+                    tool_call_id=f"tool-{index}",
+                    canonical_hash=canonical_hash(
+                        __import__(
+                            "termflow_control_plane.plugins.agent_broker.agent.permissions",
+                            fromlist=["ApprovalArgsHashInput"],
+                        ).ApprovalArgsHashInput(
+                            schema_version=1,
+                            operation="send_text",
+                            instance_id=term.instance_id,
+                            pane_id="%1",
+                            pane_incarnation="1",
+                            encoded_bytes=b"x",
+                            submit=False,
+                            cursor_precondition=None,
+                            run_id=None,
+                            grant_id=None,
+                            expiry=datetime.now(UTC) + timedelta(minutes=5),
+                            policy_epoch=1,
+                        )
+                    ),
+                    auth_epoch=1,
+                    expires_at=datetime.now(UTC) + timedelta(minutes=5),
+                )
+                created.append(approval.id)
+            return created
+
+        approval_ids = client.portal.call(_seed_approvals)
+
+        for status in ("revoked", "disabled"):
+            patched = client.patch(
+                f"/api/v1/agent/admin/bindings/{binding_id}",
+                headers=admin_headers,
+                json={"status": status},
+            )
+            assert patched.status_code == 200
+            assert patched.json()["status"] == status
+
+        for approval_id in approval_ids:
+            detail = client.get(
+                f"/api/v1/agent/approvals/{approval_id}",
+                headers=admin_headers,
+            )
+            assert detail.status_code == 200
+            assert detail.json()["state"] == ApprovalState.REVOKED.value
+
     def test_binding_runtime_update_requires_all_runtime_fields(
         self,
         client,

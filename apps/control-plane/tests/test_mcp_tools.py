@@ -1,12 +1,11 @@
-"""Observe-only MCP tool handler tests (plan §10, task M2.3).
+"""MCP tool handler tests (plan §10, §12.1; tasks M2.3, M4.4, M5.2).
 
 Handlers enforce the ``terminal.observe`` pane allowlist (with the explicit
 ``all_panes`` consent row), map observation failures to stable
 ``TermFlowErrorCode`` values, round-trip watches against the repositories,
-and reject every terminal write for observe-only tokens.
-
-The M2 exit gate is exercised handler-level: a fake MCP client can inspect
-multiple panes and every write is denied.
+and gate the write tools with the ``terminal.write`` scope, the pane
+allowlist, and conversation ownership before delegating to the
+approval-gated command port.
 """
 
 from uuid import uuid4
@@ -45,7 +44,9 @@ from termflow_protocol.mcp import (
     PaneReadResult,
     PaneReadView,
     PaneSendKeysParams,
+    PaneSendKeysResult,
     PaneSendTextParams,
+    PaneSendTextResult,
     PaneSummary,
     TermFlowErrorCode,
     WatchCancelParams,
@@ -155,6 +156,32 @@ class FakeObservation:
 
     async def resolve_cursor(self, instance_id, pane_id):
         return None
+
+
+class FakeCommands:
+    """Handler-level fake for TerminalCommandPort (approval flow not here)."""
+
+    def __init__(self) -> None:
+        self.text_calls: list[tuple] = []
+        self.keys_calls: list[tuple] = []
+
+    async def send_text(self, principal, params, *, tool_call_id) -> PaneSendTextResult:
+        self.text_calls.append((principal, params, tool_call_id))
+        return PaneSendTextResult(
+            request_key=params.request_key,
+            ok=True,
+            outcome="confirmed",
+            approval_id=uuid4(),
+        )
+
+    async def send_keys(self, principal, params, *, tool_call_id) -> PaneSendKeysResult:
+        self.keys_calls.append((principal, params, tool_call_id))
+        return PaneSendKeysResult(
+            request_key=params.request_key,
+            ok=True,
+            outcome="confirmed",
+            approval_id=uuid4(),
+        )
 
 
 def _pane_read_params(pane_id: str = "%0", **overrides) -> PaneReadParams:
@@ -598,30 +625,50 @@ async def test_watch_cancel_is_idempotent_for_inactive_watch(repositories) -> No
 async def test_send_text_denied_for_observe_only_token(repositories) -> None:
     binding = await _seed_binding(repositories)
     principal = _principal(binding)
+    conversation = await _seed_conversation(repositories, binding)
     await _allow_async(repositories, binding, "%0")
+    commands = FakeCommands()
 
     with pytest.raises(TermFlowToolError) as caught:
         await handle_pane_send_text(
             principal,
-            PaneSendTextParams(pane_id="%0", request_key="key-1", text="ls -la"),
+            PaneSendTextParams(
+                pane_id="%0",
+                request_key="key-1",
+                conversation_id=conversation.id,
+                text="ls -la",
+            ),
+            commands=commands,
             repositories=repositories,
+            tool_call_id="tool-1",
         )
     assert caught.value.error_code is TermFlowErrorCode.POLICY_DENIED
+    assert commands.text_calls == []
 
 
 @pytest.mark.asyncio
 async def test_send_keys_denied_for_observe_only_token(repositories) -> None:
     binding = await _seed_binding(repositories)
     principal = _principal(binding)
+    conversation = await _seed_conversation(repositories, binding)
     await _allow_async(repositories, binding, "%0")
+    commands = FakeCommands()
 
     with pytest.raises(TermFlowToolError) as caught:
         await handle_pane_send_keys(
             principal,
-            PaneSendKeysParams(pane_id="%0", request_key="key-2", keys=("enter",)),
+            PaneSendKeysParams(
+                pane_id="%0",
+                request_key="key-2",
+                conversation_id=conversation.id,
+                keys=("enter",),
+            ),
+            commands=commands,
             repositories=repositories,
+            tool_call_id="tool-2",
         )
     assert caught.value.error_code is TermFlowErrorCode.POLICY_DENIED
+    assert commands.keys_calls == []
 
 
 @pytest.mark.asyncio
@@ -678,8 +725,13 @@ async def test_watch_create_requires_observe_scope(repositories) -> None:
     assert await repositories.watches.list_for_binding(binding.id) == []
 
 
+# ---------------------------------------------------------------------------
+# M5.2 write tools: scope, pane policy, conversation ownership, delegation
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
-async def test_send_text_denied_even_with_write_scope_in_milestone(
+async def test_write_scope_missing_is_policy_denied_without_approval(
     repositories,
 ) -> None:
     binding = await _seed_binding(repositories)
@@ -687,33 +739,161 @@ async def test_send_text_denied_even_with_write_scope_in_milestone(
         binding,
         scopes=frozenset({SCOPE_TERMINAL_OBSERVE, SCOPE_TERMINAL_WRITE}),
     )
+    conversation = await _seed_conversation(repositories, binding)
     await _allow_async(repositories, binding, "%0")
+    commands = FakeCommands()
+
+    result = await handle_pane_send_text(
+        principal,
+        PaneSendTextParams(
+            pane_id="%0",
+            request_key="key-1",
+            conversation_id=conversation.id,
+            text="ls -la",
+        ),
+        commands=commands,
+        repositories=repositories,
+        tool_call_id="tool-1",
+    )
+    assert result.ok is True
+    assert result.outcome == "confirmed"
+    assert result.approval_id is not None
+    assert len(commands.text_calls) == 1
+    call = commands.text_calls[0]
+    assert call[0] == principal
+    assert call[1].pane_id == "%0"
+    assert call[2] == "tool-1"
+
+
+@pytest.mark.asyncio
+async def test_write_without_pane_allowlist_is_policy_denied(repositories) -> None:
+    binding = await _seed_binding(repositories)
+    principal = _principal(
+        binding,
+        scopes=frozenset({SCOPE_TERMINAL_OBSERVE, SCOPE_TERMINAL_WRITE}),
+    )
+    conversation = await _seed_conversation(repositories, binding)
+    commands = FakeCommands()
 
     with pytest.raises(TermFlowToolError) as caught:
         await handle_pane_send_text(
             principal,
-            PaneSendTextParams(pane_id="%0", request_key="key-1", text="ls -la"),
+            PaneSendTextParams(
+                pane_id="%9",
+                request_key="key-1",
+                conversation_id=conversation.id,
+                text="ls",
+            ),
+            commands=commands,
             repositories=repositories,
+            tool_call_id="tool-1",
         )
     assert caught.value.error_code is TermFlowErrorCode.POLICY_DENIED
-
-
-# ---------------------------------------------------------------------------
-# M2 exit gate: a fake MCP client can safely inspect multiple panes
-# without terminal writes.
-# ---------------------------------------------------------------------------
+    assert commands.text_calls == []
 
 
 @pytest.mark.asyncio
-async def test_exit_gate_fake_mcp_client_inspects_panes_without_writes(
+async def test_write_rejects_foreign_conversation(repositories) -> None:
+    binding = await _seed_binding(repositories)
+    other_binding = await _seed_binding(repositories)
+    conversation = await _seed_conversation(repositories, other_binding)
+    principal = _principal(
+        binding,
+        scopes=frozenset({SCOPE_TERMINAL_OBSERVE, SCOPE_TERMINAL_WRITE}),
+    )
+    await _allow_async(repositories, binding, "%0")
+    commands = FakeCommands()
+
+    with pytest.raises(TermFlowToolError) as caught:
+        await handle_pane_send_keys(
+            principal,
+            PaneSendKeysParams(
+                pane_id="%0",
+                request_key="key-2",
+                conversation_id=conversation.id,
+                keys=("enter",),
+            ),
+            commands=commands,
+            repositories=repositories,
+            tool_call_id="tool-2",
+        )
+    assert caught.value.error_code is TermFlowErrorCode.POLICY_DENIED
+    assert commands.keys_calls == []
+
+
+@pytest.mark.asyncio
+async def test_write_keys_delegates_sequence_to_command_port(repositories) -> None:
+    binding = await _seed_binding(repositories)
+    principal = _principal(
+        binding,
+        scopes=frozenset({SCOPE_TERMINAL_OBSERVE, SCOPE_TERMINAL_WRITE}),
+    )
+    conversation = await _seed_conversation(repositories, binding)
+    await _allow_async(repositories, binding, "%0")
+    commands = FakeCommands()
+
+    result = await handle_pane_send_keys(
+        principal,
+        PaneSendKeysParams(
+            pane_id="%0",
+            request_key="key-2",
+            conversation_id=conversation.id,
+            intent="interrupt the build",
+            keys=("ctrl-c",),
+        ),
+        commands=commands,
+        repositories=repositories,
+        tool_call_id="tool-2",
+    )
+    assert result.ok is True
+    assert len(commands.keys_calls) == 1
+    call = commands.keys_calls[0]
+    assert call[1].keys == ("ctrl-c",)
+    assert call[1].intent == "interrupt the build"
+    assert call[2] == "tool-2"
+
+
+@pytest.mark.asyncio
+async def test_write_observe_only_token_never_reaches_command_port(
+    repositories,
+) -> None:
+    binding = await _seed_binding(repositories)
+    principal = _principal(binding, scopes=frozenset({SCOPE_TERMINAL_OBSERVE}))
+    conversation = await _seed_conversation(repositories, binding)
+    await _allow_async(repositories, binding, "%0")
+    commands = FakeCommands()
+
+    with pytest.raises(TermFlowToolError) as caught:
+        await handle_pane_send_text(
+            principal,
+            PaneSendTextParams(
+                pane_id="%0",
+                request_key="key-1",
+                conversation_id=conversation.id,
+                text="ls",
+            ),
+            commands=commands,
+            repositories=repositories,
+            tool_call_id="tool-1",
+        )
+    assert caught.value.error_code is TermFlowErrorCode.POLICY_DENIED
+    assert commands.text_calls == []
+
+
+@pytest.mark.asyncio
+async def test_exit_gate_fake_mcp_client_inspects_panes_and_writes_through_port(
     repositories,
 ) -> None:
     binding = await _seed_binding(repositories)
     conversation = await _seed_conversation(repositories, binding)
-    principal = _principal(binding)
+    principal = _principal(
+        binding,
+        scopes=frozenset({SCOPE_TERMINAL_OBSERVE, SCOPE_TERMINAL_WRITE}),
+    )
     await _allow_async(repositories, binding, "%0")
     await _allow_async(repositories, binding, "%1")
     fake = FakeObservation()
+    commands = FakeCommands()
     from termflow_control_plane.plugins.agent_broker.agent.terminal_ports import (
         WatchContinuationService,
     )
@@ -736,21 +916,32 @@ async def test_exit_gate_fake_mcp_client_inspects_panes_without_writes(
         assert read.pane_id == pane_id
         assert read.content == "bounded output"
 
-    with pytest.raises(TermFlowToolError) as denied_text:
-        await handle_pane_send_text(
-            principal,
-            PaneSendTextParams(pane_id="%0", request_key="key-1", text="ls"),
-            repositories=repositories,
-        )
-    assert denied_text.value.error_code is TermFlowErrorCode.POLICY_DENIED
-
-    with pytest.raises(TermFlowToolError) as denied_keys:
-        await handle_pane_send_keys(
-            principal,
-            PaneSendKeysParams(pane_id="%1", request_key="key-2", keys=("enter",)),
-            repositories=repositories,
-        )
-    assert denied_keys.value.error_code is TermFlowErrorCode.POLICY_DENIED
+    text = await handle_pane_send_text(
+        principal,
+        PaneSendTextParams(
+            pane_id="%0",
+            request_key="key-1",
+            conversation_id=conversation.id,
+            text="ls",
+        ),
+        commands=commands,
+        repositories=repositories,
+        tool_call_id="tool-1",
+    )
+    assert text.ok is True
+    keys = await handle_pane_send_keys(
+        principal,
+        PaneSendKeysParams(
+            pane_id="%1",
+            request_key="key-2",
+            conversation_id=conversation.id,
+            keys=("enter",),
+        ),
+        commands=commands,
+        repositories=repositories,
+        tool_call_id="tool-2",
+    )
+    assert keys.ok is True
 
     watch = await handle_watch_create(
         principal,
@@ -760,8 +951,11 @@ async def test_exit_gate_fake_mcp_client_inspects_panes_without_writes(
     )
     assert watch.watch_id is not None
 
-    # The fake observation port saw only reads; no write ever reached it.
+    # The fake observation port saw only reads; writes went through the
+    # command port with their tool call ids.
     assert [read.pane_id for read in fake.reads] == ["%0", "%1"]
+    assert [call[2] for call in commands.text_calls] == ["tool-1"]
+    assert [call[2] for call in commands.keys_calls] == ["tool-2"]
 
 
 # ---------------------------------------------------------------------------

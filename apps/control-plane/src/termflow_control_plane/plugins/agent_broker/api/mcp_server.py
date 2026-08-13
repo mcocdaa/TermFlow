@@ -62,6 +62,10 @@ from termflow_protocol.mcp import (
     ListPanesResult,
     PaneReadParams,
     PaneReadResult,
+    PaneSendKeysParams,
+    PaneSendKeysResult,
+    PaneSendTextParams,
+    PaneSendTextResult,
     TermFlowErrorCode,
     TermFlowToolName,
     WatchCancelParams,
@@ -78,6 +82,7 @@ from termflow_control_plane.persistence.repositories import RepositoryBundle
 from termflow_control_plane.plugins.agent_broker.agent.terminal_ports import (
     ContinuationPort,
     TermFlowToolError,
+    TerminalCommandPort,
     TerminalObservationPort,
 )
 from termflow_control_plane.plugins.agent_broker.api import mcp_tools
@@ -93,21 +98,29 @@ logger = logging.getLogger(__name__)
 #: Streamable HTTP mount path inside B's API namespace (plan §3.4/§13.1).
 MCP_STREAMABLE_HTTP_PATH = "/api/v1/agent/mcp"
 
-#: The observe-only tool surface served in this milestone (plan §10; the write
-#: tools land with M5).  ``termflow_list_panes`` and ``termflow_watch_list``
-#: take no required arguments; the rest validate against their protocol model.
-OBSERVE_TOOLS: tuple[TermFlowToolName, ...] = (
+#: The complete tool surface served by this milestone (plan §10 + M5.2): the
+#: observe tools plus the two approval-gated write tools.  ``list_panes`` and
+#: ``watch_list`` take no required arguments; the rest validate against their
+#: protocol model.
+SERVED_TOOLS: tuple[TermFlowToolName, ...] = (
     TermFlowToolName.LIST_PANES,
     TermFlowToolName.PANE_READ,
+    TermFlowToolName.PANE_SEND_TEXT,
+    TermFlowToolName.PANE_SEND_KEYS,
     TermFlowToolName.WATCH_CREATE,
     TermFlowToolName.WATCH_LIST,
     TermFlowToolName.WATCH_GET,
     TermFlowToolName.WATCH_CANCEL,
 )
 
-#: Write tools explicitly deferred to M5: never registered and never allowed
-#: past the config drift check in the observe-only milestone.
-DEFERRED_WRITE_TOOLS: frozenset[str] = frozenset(
+#: Tools deferred from the served surface.  Empty since M5.2: the drift check
+#: therefore requires the registered surface to equal the pinned allowlist
+#: exactly (spec §6).
+DEFERRED_WRITE_TOOLS: frozenset[str] = frozenset()
+
+#: The write tools: their handlers receive the MCP request id as
+#: ``tool_call_id`` (the replay gate of the approval flow, spec §6).
+_WRITE_TOOLS: frozenset[str] = frozenset(
     {
         TermFlowToolName.PANE_SEND_TEXT.value,
         TermFlowToolName.PANE_SEND_KEYS.value,
@@ -124,6 +137,12 @@ DEFAULT_MAX_CONCURRENT_PER_BINDING = 2
 DEFAULT_RATE_PER_SECOND = 4.0
 DEFAULT_RATE_BURST = 4
 DEFAULT_MAX_TRACKED_BINDINGS = 64
+#: The write tools wait synchronously for the human decision; the wait must
+#: stay well below the tool timeout so the guard can still settle the call
+#: (spec §1: the guardrail validates wait < timeout).
+DEFAULT_APPROVAL_WAIT_TIMEOUT_SECONDS = 25.0
+#: How long a created approval stays valid before it expires (spec §3).
+DEFAULT_APPROVAL_TTL_SECONDS = 300.0
 
 #: Loopback-only Host allowlist default: the MCP endpoint is never exposed to
 #: a browser (plan §10) and deployment wiring must name the agent-internal
@@ -155,6 +174,8 @@ class McpGuardrailConfig:
     rate_per_second: float = DEFAULT_RATE_PER_SECOND
     rate_burst: int = DEFAULT_RATE_BURST
     max_tracked_bindings: int = DEFAULT_MAX_TRACKED_BINDINGS
+    approval_wait_timeout_seconds: float = DEFAULT_APPROVAL_WAIT_TIMEOUT_SECONDS
+    approval_ttl_seconds: float = DEFAULT_APPROVAL_TTL_SECONDS
 
     def __post_init__(self) -> None:
         if self.max_request_bytes < 1:
@@ -171,6 +192,15 @@ class McpGuardrailConfig:
             raise ValueError("rate_burst must be at least 1")
         if self.max_tracked_bindings < 1:
             raise ValueError("max_tracked_bindings must be at least 1")
+        if self.approval_wait_timeout_seconds <= 0:
+            raise ValueError("approval_wait_timeout_seconds must be positive")
+        if self.approval_wait_timeout_seconds >= self.tool_timeout_seconds:
+            raise ValueError(
+                "approval_wait_timeout_seconds must be smaller than tool_timeout_seconds "
+                "so the guard can settle a waiting write call"
+            )
+        if self.approval_ttl_seconds <= 0:
+            raise ValueError("approval_ttl_seconds must be positive")
 
 
 class ToolConfigDriftError(RuntimeError):
@@ -183,6 +213,7 @@ def _termflow_tool_error(exc: TermFlowToolError) -> MCPError:
     The stable ``TermFlowErrorCode`` travels in ``data.termflow_error_code``;
     the JSON-RPC code is transport-level only.  Not-found and malformed-request
     failures map to ``invalid_params``; everything else to ``internal_error``.
+    Handler-supplied ``data`` (e.g. an ``approval_id``) is merged in.
     """
     if exc.error_code in {
         TermFlowErrorCode.PANE_NOT_FOUND,
@@ -193,10 +224,13 @@ def _termflow_tool_error(exc: TermFlowToolError) -> MCPError:
         code = INVALID_PARAMS
     else:
         code = INTERNAL_ERROR
+    data = {"termflow_error_code": exc.error_code.value}
+    if exc.data:
+        data.update(exc.data)
     return MCPError(
         code=code,
         message=exc.message,
-        data={"termflow_error_code": exc.error_code.value},
+        data=data,
     )
 
 
@@ -387,16 +421,19 @@ class PerBindingQuota:
 
 @dataclass(slots=True)
 class _ToolPorts:
-    """The typed ports the observe-only handlers delegate to (plan §10, §18)."""
+    """The typed ports the handlers delegate to (plan §10, §18, M5.2)."""
 
     observation: TerminalObservationPort
     continuation: ContinuationPort
+    commands: TerminalCommandPort
     repositories: RepositoryBundle
 
     def kwargs_for(self, name: TermFlowToolName) -> dict[str, Any]:
         """Keyword dependencies for the named handler (see ``api/mcp_tools``)."""
         if name in {TermFlowToolName.LIST_PANES, TermFlowToolName.PANE_READ}:
             return {"observation": self.observation, "repositories": self.repositories}
+        if name in {TermFlowToolName.PANE_SEND_TEXT, TermFlowToolName.PANE_SEND_KEYS}:
+            return {"commands": self.commands, "repositories": self.repositories}
         return {"continuation": self.continuation, "repositories": self.repositories}
 
 
@@ -410,6 +447,7 @@ async def _run_guarded(
     ports: _ToolPorts,
     quota: PerBindingQuota,
     config: McpGuardrailConfig,
+    ctx: Context | None = None,
 ) -> BaseModel:
     """Execute one handler under the binding quota, timeout, and byte bounds."""
     if params is None and param_model is not None:
@@ -421,6 +459,29 @@ async def _run_guarded(
         try:
             async with asyncio.timeout(config.tool_timeout_seconds):
                 kwargs = ports.kwargs_for(name)
+                if name in _WRITE_TOOLS:
+                    # The write tools pin replay protection on the MCP
+                    # request id; a call without one cannot be approved
+                    # (spec §6: no ctx/request_id -> invalid_request).
+                    request_id = ctx.request_id if ctx is not None else None
+                    if request_id is None:
+                        raise MCPError(
+                            code=INVALID_REQUEST,
+                            message=f"tool {name.value} requires a request id",
+                            data={
+                                "termflow_error_code": TermFlowErrorCode.INVALID_REQUEST.value
+                            },
+                        )
+                    tool_call_id = str(request_id)
+                    if not 1 <= len(tool_call_id) <= 128:
+                        raise MCPError(
+                            code=INVALID_REQUEST,
+                            message="tool call id must be 1-128 characters",
+                            data={
+                                "termflow_error_code": TermFlowErrorCode.INVALID_REQUEST.value
+                            },
+                        )
+                    kwargs["tool_call_id"] = tool_call_id
                 if params is None:
                     result = await handler(principal, **kwargs)
                 else:
@@ -478,6 +539,7 @@ def _guarded_tool(
                 ports=ports,
                 quota=quota,
                 config=config,
+                ctx=ctx,
             )
 
         # ``from __future__ import annotations`` stores annotations as strings;
@@ -505,6 +567,7 @@ def _guarded_tool(
                 ports=ports,
                 quota=quota,
                 config=config,
+                ctx=ctx,
             )
 
         call.__annotations__ = {
@@ -518,14 +581,14 @@ def _guarded_tool(
     return call
 
 
-def _register_observe_tools(
+def _register_tools(
     *,
     server: MCPServer,
     ports: _ToolPorts,
     quota: PerBindingQuota,
     config: McpGuardrailConfig,
 ) -> None:
-    """Register exactly the observe-only tools; write tools are never added."""
+    """Register exactly the served tools (observe + approval-gated writes)."""
     specs: list[
         tuple[
             TermFlowToolName,
@@ -536,6 +599,18 @@ def _register_observe_tools(
     ] = [
         (TermFlowToolName.LIST_PANES, mcp_tools.handle_list_panes, None, ListPanesResult),
         (TermFlowToolName.PANE_READ, mcp_tools.handle_pane_read, PaneReadParams, PaneReadResult),
+        (
+            TermFlowToolName.PANE_SEND_TEXT,
+            mcp_tools.handle_pane_send_text,
+            PaneSendTextParams,
+            PaneSendTextResult,
+        ),
+        (
+            TermFlowToolName.PANE_SEND_KEYS,
+            mcp_tools.handle_pane_send_keys,
+            PaneSendKeysParams,
+            PaneSendKeysResult,
+        ),
         (
             TermFlowToolName.WATCH_CREATE,
             mcp_tools.handle_watch_create,
@@ -556,11 +631,11 @@ def _register_observe_tools(
             WatchCancelResult,
         ),
     ]
-    # Self-check: the registered surface must equal the declared observe set,
-    # so the milestone contract cannot silently drift (plan §10).
-    if tuple(name for name, _, _, _ in specs) != OBSERVE_TOOLS:
+    # Self-check: the registered surface must equal the declared served set,
+    # so the milestone contract cannot silently drift (plan §10, M5.2).
+    if tuple(name for name, _, _, _ in specs) != SERVED_TOOLS:
         raise ToolConfigDriftError(
-            "the observe tool registration drifted from OBSERVE_TOOLS"
+            "the tool registration drifted from SERVED_TOOLS"
         )
     for name, handler, param_model, result_model in specs:
         server.add_tool(
@@ -589,24 +664,31 @@ def build_mcp_server(
     policy_checker: RepositoryBundle,
     token_auth: AgentTokenAuthenticator,
     *,
+    sessions,
+    commands: TerminalCommandPort,
     guardrails: McpGuardrailConfig | None = None,
     name: str = "termflow",
     version: str = "0.2.0-dev.0",
 ) -> MCPServer:
-    """Assemble the observe-only MCP server from the existing handlers.
+    """Assemble the MCP server from the existing handlers.
 
-    ``policy_checker`` is the repository bundle the observe-only handlers use
-    for pane policy and conversation ownership checks (plan §10); ``token_auth``
-    is the ``require_agent_token`` authenticator the SDK ``TokenVerifier`` hook
-    delegates to (plan §22).  The returned :class:`~mcp.server.MCPServer`
-    enforces bearer auth with the ``terminal.observe`` scope at the HTTP gate
-    and guards every tool call with the configured B-side bounds.
+    ``policy_checker`` is the repository bundle the handlers use for pane
+    policy and conversation ownership checks (plan §10); ``token_auth`` is
+    the ``require_agent_token`` authenticator the SDK ``TokenVerifier`` hook
+    delegates to (plan §22); ``sessions`` is the session factory the
+    caller's approval flow was built on and ``commands`` is the
+    approval-gated :class:`TerminalCommandPort` the write handlers delegate
+    to (M5.2).  The returned :class:`~mcp.server.MCPServer` enforces bearer
+    auth with the ``terminal.observe`` scope at the HTTP gate (the write
+    tools add their own ``terminal.write`` gate inside the handlers) and
+    guards every tool call with the configured B-side bounds.
     """
     config = guardrails or McpGuardrailConfig()
     quota = PerBindingQuota(config)
     ports = _ToolPorts(
         observation=observation,
         continuation=continuation,
+        commands=commands,
         repositories=policy_checker,
     )
     server = MCPServer(
@@ -623,7 +705,7 @@ def build_mcp_server(
             required_scopes=[SCOPE_TERMINAL_OBSERVE],
         ),
     )
-    _register_observe_tools(server=server, ports=ports, quota=quota, config=config)
+    _register_tools(server=server, ports=ports, quota=quota, config=config)
     return server
 
 
@@ -668,12 +750,9 @@ def check_tool_config_drift(
     """Fail closed when the served tool surface drifts from the pinned config.
 
     The M0.3 frozen OpenCode config allowlists the exact TermFlow MCP tools.
-    This milestone serves the observe-only subset, so the registered surface
-    must equal the pinned allowlist minus the explicitly deferred write tools,
-    and must never contain a tool that is not allowlisted at all.  The check
-    is deliberately exact in both directions: an un-reviewed tool, a missing
-    observe tool, a write tool slipping in, or an allowlist losing a served
-    tool all refuse startup.
+    Since M5.2 the deferred set is empty, so the registered surface must
+    equal the pinned allowlist exactly - an un-reviewed tool, a missing
+    served tool, or an allowlist losing a served tool all refuse startup.
     """
     registered = frozenset(registered_tools)
     allowlist = frozenset(pinned_allowlist)

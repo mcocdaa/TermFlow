@@ -1,6 +1,6 @@
-"""Observe-only MCP tool handlers (plan §10, task M2.3).
+"""MCP tool handlers (plan §10, §12.1; tasks M2.3, M4.4, M5.2).
 
-These pure handler functions implement the observe-only tool surface:
+These pure handler functions implement the MCP tool surface:
 
 - ``termflow_list_panes`` omits sensitive titles/cwd unless the pane is
   explicitly allowlisted in ``pane_policies``.
@@ -8,12 +8,13 @@ These pure handler functions implement the observe-only tool surface:
   delegates to the ObservationService port
   (``agent.terminal_ports.TerminalObservationPort``) for pane existence,
   incarnation, and byte bounds.
+- ``termflow_pane_send_text`` / ``termflow_pane_send_keys`` run through the
+  approval-gated :class:`TerminalCommandPort` (``CommandService``): the
+  handler enforces the write scope, the pane allowlist, and conversation
+  ownership, and the service owns the persistent single-use approval flow.
 - ``termflow_watch_create/list/get/cancel`` run through the
   :class:`~termflow_control_plane.plugins.agent_broker.agent.terminal_ports.ContinuationPort`
   with the same pane policy gate on creation.
-- The write tools are intentionally unavailable in this milestone: the
-  handlers raise ``policy_denied`` for every token, observe-only or not
-  (writes land with M5).
 
 Every failure is a :class:`TermFlowToolError` with a stable
 ``TermFlowErrorCode``; the MCP server adapter (M4/M5) translates it into a
@@ -22,7 +23,6 @@ structured MCP error.
 
 from __future__ import annotations
 
-from typing import NoReturn
 from uuid import UUID
 
 from termflow_protocol.mcp import (
@@ -52,6 +52,7 @@ from termflow_control_plane.persistence.repositories import (
 from termflow_control_plane.plugins.agent_broker.agent.terminal_ports import (
     ContinuationPort,
     TermFlowToolError,
+    TerminalCommandPort,
     TerminalObservationPort,
 )
 from termflow_control_plane.plugins.agent_broker.auth import (
@@ -72,6 +73,49 @@ def _require_observe_scope(principal: AgentTokenPrincipal) -> None:
         raise TermFlowToolError(
             TermFlowErrorCode.POLICY_DENIED,
             "the agent token lacks the terminal.observe scope",
+        )
+
+
+def _require_write_scope(principal: AgentTokenPrincipal) -> None:
+    """Enforce the token scope: writes need the terminal.write scope.
+
+    The HTTP auth gate only requires ``terminal.observe``; the write tools
+    enforce the write scope inside the handler so a token with observe-only
+    scopes fails closed at the tool boundary (spec §6 double gate).
+    """
+    if SCOPE_TERMINAL_WRITE not in principal.scopes:
+        raise TermFlowToolError(
+            TermFlowErrorCode.POLICY_DENIED,
+            "the agent token lacks the terminal.write scope",
+        )
+
+
+async def _require_owned_conversation(
+    repositories: RepositoryBundle,
+    principal: AgentTokenPrincipal,
+    conversation_id: UUID,
+) -> None:
+    """The conversation must belong to the principal's binding (spec §1)."""
+    conversation = await repositories.agent_conversations.get_by_id(conversation_id)
+    if conversation is None or conversation.binding_id != principal.binding_id:
+        raise TermFlowToolError(
+            TermFlowErrorCode.POLICY_DENIED,
+            "the conversation does not belong to this binding",
+        )
+
+
+async def _require_writable_pane(
+    repositories: RepositoryBundle,
+    principal: AgentTokenPrincipal,
+    pane_id: str,
+) -> None:
+    """A pane that cannot be observed can never be written (spec §1)."""
+    if not await pane_observe_allowed(
+        repositories.pane_policies, principal.binding_id, pane_id
+    ):
+        raise TermFlowToolError(
+            TermFlowErrorCode.POLICY_DENIED,
+            f"the binding is not allowed to write pane {pane_id}",
         )
 
 
@@ -154,45 +198,34 @@ async def handle_pane_read(
     return await observation.read_pane(principal.instance_id, params)
 
 
-async def _deny_write(principal: AgentTokenPrincipal, tool_name: str) -> NoReturn:
-    """Write tools are unavailable in the observe-only milestone (plan §12).
-
-    Observe-only tokens are denied for lack of the ``terminal.write`` scope;
-    even a write-scoped token cannot write yet because the approval-gated
-    command path lands with M5.  Both cases fail closed with
-    ``policy_denied`` so the client never falls through to a write.
-    """
-    if SCOPE_TERMINAL_WRITE not in principal.scopes:
-        raise TermFlowToolError(
-            TermFlowErrorCode.POLICY_DENIED,
-            f"{tool_name} requires the terminal.write scope, which "
-            "observe-only tokens do not carry",
-        )
-    raise TermFlowToolError(
-        TermFlowErrorCode.POLICY_DENIED,
-        f"{tool_name} is not available yet: the approval-gated pane write "
-        "path lands with M5",
-    )
-
-
 async def handle_pane_send_text(
     principal: AgentTokenPrincipal,
     params: PaneSendTextParams,
     *,
+    commands: TerminalCommandPort,
     repositories: RepositoryBundle,
+    tool_call_id: str,
 ) -> PaneSendTextResult:
-    """Unavailable in the observe-only milestone; writes land with M5."""
-    await _deny_write(principal, "termflow_pane_send_text")
+    """Send literal text to a pane through the approval flow (spec §1)."""
+    _require_write_scope(principal)
+    await _require_writable_pane(repositories, principal, params.pane_id)
+    await _require_owned_conversation(repositories, principal, params.conversation_id)
+    return await commands.send_text(principal, params, tool_call_id=tool_call_id)
 
 
 async def handle_pane_send_keys(
     principal: AgentTokenPrincipal,
     params: PaneSendKeysParams,
     *,
+    commands: TerminalCommandPort,
     repositories: RepositoryBundle,
+    tool_call_id: str,
 ) -> PaneSendKeysResult:
-    """Unavailable in the observe-only milestone; writes land with M5."""
-    await _deny_write(principal, "termflow_pane_send_keys")
+    """Send a named-key sequence to a pane through the approval flow (spec §1)."""
+    _require_write_scope(principal)
+    await _require_writable_pane(repositories, principal, params.pane_id)
+    await _require_owned_conversation(repositories, principal, params.conversation_id)
+    return await commands.send_keys(principal, params, tool_call_id=tool_call_id)
 
 
 async def handle_watch_create(

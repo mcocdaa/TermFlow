@@ -80,6 +80,11 @@ class ApprovalResponse(BaseModel):
     decision: str | None
     auth_epoch: int
     created_at: datetime
+    # M5.2 display metadata for the M6 approval UI; legacy rows degrade to
+    # None.  Raw text/keys are never exposed (canonical hash only).
+    pane_id: str | None = None
+    operation: str | None = None
+    intent_summary: str | None = None
 
 
 class ApprovalBindingInfo(BaseModel):
@@ -125,6 +130,9 @@ def _approval_response(approval: ApprovalRequest) -> ApprovalResponse:
         decision=approval.decision,
         auth_epoch=approval.auth_epoch,
         created_at=approval.created_at,
+        pane_id=approval.pane_id,
+        operation=approval.operation,
+        intent_summary=approval.intent_summary,
     )
 
 

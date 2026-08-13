@@ -35,14 +35,21 @@ class TestCapabilityDiscovery:
         response = client.get("/api/v1/agent/capabilities")
 
         assert response.status_code == 200
-        assert response.json() == {"agent_broker_enabled": True}
+        assert response.json() == {
+            "agent_broker_enabled": True,
+            # Delegated Write Grants stay disabled in 0.2.0 (spec §8).
+            "delegated_write_grants_enabled": False,
+        }
 
     def test_reports_disabled_when_plugin_disabled(self, tmp_path) -> None:
         with _make_client(tmp_path, agent_broker_enabled=False) as client:
             response = client.get("/api/v1/agent/capabilities")
 
             assert response.status_code == 200
-            assert response.json() == {"agent_broker_enabled": False}
+            assert response.json() == {
+                "agent_broker_enabled": False,
+                "delegated_write_grants_enabled": False,
+            }
 
     def test_reports_disabled_via_environment_override(self, tmp_path, monkeypatch) -> None:
         monkeypatch.setenv("TERMFLOW_AGENT_BROKER_ENABLED", "false")
@@ -58,7 +65,10 @@ class TestCapabilityDiscovery:
             response = client.get("/api/v1/agent/capabilities")
 
             assert response.status_code == 200
-            assert response.json() == {"agent_broker_enabled": False}
+            assert response.json() == {
+                "agent_broker_enabled": False,
+                "delegated_write_grants_enabled": False,
+            }
 
     def test_setting_defaults_to_enabled(self) -> None:
         settings = Settings(admin_token=ADMIN_TOKEN)

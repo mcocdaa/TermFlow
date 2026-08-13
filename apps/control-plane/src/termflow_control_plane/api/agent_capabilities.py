@@ -28,10 +28,16 @@ class AgentCapabilitiesResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     agent_broker_enabled: bool
+    #: Delegated Write Grants are design-only in 0.2.0; always False so C can
+    #: display the disabled capability (spec §8).
+    delegated_write_grants_enabled: bool = False
 
 
 @router.get("/capabilities", response_model=AgentCapabilitiesResponse)
 async def get_agent_capabilities(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AgentCapabilitiesResponse:
-    return AgentCapabilitiesResponse(agent_broker_enabled=settings.agent_broker_enabled)
+    return AgentCapabilitiesResponse(
+        agent_broker_enabled=settings.agent_broker_enabled,
+        delegated_write_grants_enabled=settings.agent_delegated_write_grants_enabled,
+    )

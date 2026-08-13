@@ -1,17 +1,20 @@
-"""Observe-only MCP server connector tests (plan §10, §22; task M4.4).
+"""MCP server connector tests (plan §10, §22; tasks M4.4, M5.2).
 
-The server is assembled from the existing observe-only handlers
-(``api/mcp_tools.py``) through the official MCP Python SDK 2.0.0:
+The server is assembled from the handlers (``api/mcp_tools.py``) through
+the official MCP Python SDK 2.0.0:
 
-- exactly the six observe tools are registered; ``send_text``/``send_keys``
-  are never registered in this milestone;
+- exactly the eight served tools are registered (observe + writes);
 - list/read/watch calls succeed through the SDK's in-memory client transport
   and over Streamable HTTP with a real seeded AgentToken;
+- the write tools round-trip through the approval-gated command port with a
+  tool_call_id derived from the MCP request id, and a call without a request
+  id fails closed;
 - invalid, revoked, expired, epoch-mismatched, and admin tokens fail closed
   at the HTTP auth gate (``TokenVerifier`` hook, plan §22);
 - B-side guardrails (plan §10): request/result byte limits, tool timeout,
   per-binding concurrency/rate quotas, unknown tools fail closed;
-- config drift against the pinned OpenCode allowlist fails startup;
+- config drift against the pinned OpenCode allowlist fails startup
+  (registered must equal the allowlist exactly since M5.2);
 - the Streamable HTTP app mounts at ``/api/v1/agent/mcp`` only while
   ``agent_broker_enabled``;
 - the mounted SDK app's lifespan (session manager) runs under the FastAPI
@@ -64,6 +67,9 @@ from termflow_control_plane.plugins.agent_broker.auth import (
 from termflow_protocol.mcp import (
     PaneReadParams,
     PaneReadResult,
+    PaneSendKeysResult,
+    PaneSendTextParams,
+    PaneSendTextResult,
     PaneSummary,
     TermFlowToolName,
 )
@@ -266,11 +272,44 @@ class FakeObservation:
         return None
 
 
-def _principal(binding) -> AgentTokenPrincipal:
+class FakeCommands:
+    """TerminalCommandPort fake: records calls, returns confirmed receipts."""
+
+    def __init__(self) -> None:
+        self.text_calls: list[tuple] = []
+        self.keys_calls: list[tuple] = []
+        self.text_delay: float = 0.0
+
+    async def send_text(self, principal, params, *, tool_call_id):
+        if self.text_delay:
+            await asyncio.sleep(self.text_delay)
+        self.text_calls.append((principal, params, tool_call_id))
+        return PaneSendTextResult(
+            request_key=params.request_key,
+            ok=True,
+            outcome="confirmed",
+            approval_id=uuid4(),
+        )
+
+    async def send_keys(self, principal, params, *, tool_call_id):
+        self.keys_calls.append((principal, params, tool_call_id))
+        return PaneSendKeysResult(
+            request_key=params.request_key,
+            ok=True,
+            outcome="confirmed",
+            approval_id=uuid4(),
+        )
+
+
+def _principal(binding, *, scopes: frozenset[str] | None = None) -> AgentTokenPrincipal:
     return AgentTokenPrincipal(
         binding_id=binding.id,
         instance_id=binding.term_id,
-        scopes=frozenset({SCOPE_TERMINAL_OBSERVE}),
+        scopes=(
+            scopes
+            if scopes is not None
+            else frozenset({SCOPE_TERMINAL_OBSERVE, SCOPE_TERMINAL_WRITE})
+        ),
         runtime_epoch=binding.runtime_epoch or 1,
     )
 
@@ -342,7 +381,7 @@ def _call_tool(
 
 
 @pytest.mark.asyncio
-async def test_server_registers_exactly_the_six_observe_tools(repositories) -> None:
+async def test_server_registers_exactly_the_eight_served_tools(repositories) -> None:
     fake = FakeObservation()
     continuation = WatchContinuationService(repositories.watches, repositories.agent_bindings)
     from termflow_control_plane.plugins.agent_broker.auth import AgentTokenAuthenticator
@@ -352,6 +391,8 @@ async def test_server_registers_exactly_the_six_observe_tools(repositories) -> N
         continuation=continuation,
         policy_checker=repositories,
         token_auth=AgentTokenAuthenticator(repositories),
+        sessions=repositories.session_factory,  # type: ignore[attr-defined]
+        commands=FakeCommands(),
     )
 
     tools = await server.list_tools()
@@ -360,14 +401,134 @@ async def test_server_registers_exactly_the_six_observe_tools(repositories) -> N
     assert names == {
         TermFlowToolName.LIST_PANES.value,
         TermFlowToolName.PANE_READ.value,
+        TermFlowToolName.PANE_SEND_TEXT.value,
+        TermFlowToolName.PANE_SEND_KEYS.value,
         TermFlowToolName.WATCH_CREATE.value,
         TermFlowToolName.WATCH_LIST.value,
         TermFlowToolName.WATCH_GET.value,
         TermFlowToolName.WATCH_CANCEL.value,
     }
-    # The observe-only milestone never registers the write tools (plan §12).
-    assert TermFlowToolName.PANE_SEND_TEXT.value not in names
-    assert TermFlowToolName.PANE_SEND_KEYS.value not in names
+    assert len(tools) == 8
+
+
+@pytest.mark.asyncio
+async def test_write_tools_round_trip_over_in_memory_transport(repositories) -> None:
+    binding = await _seed_binding(repositories)
+    conversation = await _seed_conversation(repositories, binding)
+    await _allow_async(repositories, binding, "%0")
+    await _allow_async(repositories, binding, "%1")
+    fake = FakeObservation()
+    commands = FakeCommands()
+    continuation = WatchContinuationService(repositories.watches, repositories.agent_bindings)
+    from termflow_control_plane.plugins.agent_broker.auth import AgentTokenAuthenticator
+
+    server = build_mcp_server(
+        observation=fake,
+        continuation=continuation,
+        policy_checker=repositories,
+        token_auth=AgentTokenAuthenticator(repositories),
+        sessions=repositories.session_factory,  # type: ignore[attr-defined]
+        commands=commands,
+    )
+
+    async with Client(server) as client:
+        async with principal_override(_principal(binding)):
+            text = await client.call_tool(
+                TermFlowToolName.PANE_SEND_TEXT.value,
+                {
+                    "params": {
+                        "pane_id": "%0",
+                        "request_key": "req-1",
+                        "conversation_id": str(conversation.id),
+                        "intent": "run the tests",
+                        "text": "make test",
+                        "submit": True,
+                    }
+                },
+            )
+            assert text.is_error is False
+            content = text.structured_content
+            assert content["ok"] is True
+            assert content["outcome"] == "confirmed"
+            assert content["request_key"] == "req-1"
+            assert content["approval_id"] is not None
+
+            keys = await client.call_tool(
+                TermFlowToolName.PANE_SEND_KEYS.value,
+                {
+                    "params": {
+                        "pane_id": "%1",
+                        "request_key": "req-2",
+                        "conversation_id": str(conversation.id),
+                        "keys": ["ctrl-c"],
+                    }
+                },
+            )
+            assert keys.is_error is False
+            assert keys.structured_content["outcome"] == "confirmed"
+
+    # The command port received the principal and a non-empty tool_call_id
+    # derived from the MCP request id (spec §6).
+    assert len(commands.text_calls) == 1
+    text_call = commands.text_calls[0]
+    assert text_call[0] == _principal(binding)
+    assert text_call[1].text == "make test"
+    assert text_call[2]
+    assert len(commands.keys_calls) == 1
+    assert commands.keys_calls[0][1].keys == ("ctrl-c",)
+
+
+@pytest.mark.asyncio
+async def test_write_tool_without_request_id_fails_closed(repositories) -> None:
+    """A write tool call without an MCP request id cannot be approved (spec §6)."""
+    from termflow_control_plane.plugins.agent_broker.api import mcp_server as server_module
+    from termflow_control_plane.plugins.agent_broker.api.mcp_tools import handle_pane_send_text
+
+    binding = await _seed_binding(repositories)
+    conversation = await _seed_conversation(repositories, binding)
+    await _allow_async(repositories, binding, "%0")
+    ports = server_module._ToolPorts(
+        observation=FakeObservation(),
+        continuation=WatchContinuationService(
+            repositories.watches, repositories.agent_bindings
+        ),
+        commands=FakeCommands(),
+        repositories=repositories,
+    )
+    principal = _principal(binding)
+
+    with pytest.raises(MCPError) as caught:
+        await server_module._run_guarded(
+            name=TermFlowToolName.PANE_SEND_TEXT,
+            principal=principal,
+            params=PaneSendTextParams(
+                pane_id="%0",
+                request_key="req-1",
+                conversation_id=conversation.id,
+                text="make test",
+            ),
+            param_model=PaneSendTextParams,
+            handler=handle_pane_send_text,
+            ports=ports,
+            quota=server_module.PerBindingQuota(McpGuardrailConfig()),
+            config=McpGuardrailConfig(),
+            ctx=None,
+        )
+    assert caught.value.data.get("termflow_error_code") == "invalid_request"
+
+
+def test_guardrail_requires_wait_timeout_below_tool_timeout() -> None:
+    with pytest.raises(ValueError, match="approval_wait_timeout_seconds"):
+        McpGuardrailConfig(tool_timeout_seconds=10.0, approval_wait_timeout_seconds=10.0)
+    with pytest.raises(ValueError, match="approval_wait_timeout_seconds"):
+        McpGuardrailConfig(tool_timeout_seconds=10.0, approval_wait_timeout_seconds=11.0)
+    with pytest.raises(ValueError):
+        McpGuardrailConfig(approval_wait_timeout_seconds=0)
+    with pytest.raises(ValueError):
+        McpGuardrailConfig(approval_ttl_seconds=0)
+    # Defaults satisfy the constraint: 25 < 30.
+    assert McpGuardrailConfig().approval_wait_timeout_seconds == 25.0
+    assert McpGuardrailConfig().approval_ttl_seconds == 300.0
 
 
 @pytest.mark.asyncio
@@ -384,6 +545,8 @@ async def test_all_observe_tools_round_trip_over_in_memory_transport(repositorie
         continuation=continuation,
         policy_checker=repositories,
         token_auth=AgentTokenAuthenticator(repositories),
+        sessions=repositories.session_factory,  # type: ignore[attr-defined]
+        commands=FakeCommands(),
     )
 
     async with Client(server) as client:
@@ -462,6 +625,8 @@ async def test_list_panes_and_pane_read_over_http_with_valid_agent_token(
         continuation=continuation,
         policy_checker=repositories,
         token_auth=AgentTokenAuthenticator(repositories),
+        sessions=repositories.session_factory,  # type: ignore[attr-defined]
+        commands=FakeCommands(),
     )
     with _build_http_app(server) as client:
         headers = _initialize(client, raw_token)
@@ -491,6 +656,8 @@ async def _unauthorized_statuses(repositories, token: str | None) -> int:
         continuation=continuation,
         policy_checker=repositories,
         token_auth=AgentTokenAuthenticator(repositories),
+        sessions=repositories.session_factory,  # type: ignore[attr-defined]
+        commands=FakeCommands(),
     )
     with _build_http_app(server) as client:
         headers = {"Authorization": f"Bearer {token}"} if token else {}
@@ -548,6 +715,8 @@ async def test_mismatched_host_header_rejected(repositories) -> None:
         continuation=continuation,
         policy_checker=repositories,
         token_auth=AgentTokenAuthenticator(repositories),
+        sessions=repositories.session_factory,  # type: ignore[attr-defined]
+        commands=FakeCommands(),
     )
     with _build_http_app(server) as client:
         response = client.post(
@@ -582,6 +751,8 @@ async def test_mismatched_origin_header_rejected(repositories) -> None:
         continuation=continuation,
         policy_checker=repositories,
         token_auth=AgentTokenAuthenticator(repositories),
+        sessions=repositories.session_factory,  # type: ignore[attr-defined]
+        commands=FakeCommands(),
     )
     with _build_http_app(server) as client:
         response = client.post(
@@ -636,6 +807,8 @@ async def test_token_without_observe_scope_rejected(repositories) -> None:
         continuation=continuation,
         policy_checker=repositories,
         token_auth=AgentTokenAuthenticator(repositories),
+        sessions=repositories.session_factory,  # type: ignore[attr-defined]
+        commands=FakeCommands(),
     )
     with _build_http_app(server) as client:
         response = client.post(
@@ -671,6 +844,8 @@ async def test_request_byte_limit_enforced(repositories) -> None:
         continuation=continuation,
         policy_checker=repositories,
         token_auth=AgentTokenAuthenticator(repositories),
+        sessions=repositories.session_factory,  # type: ignore[attr-defined]
+        commands=FakeCommands(),
     )
     with _build_http_app(server, max_request_bytes=1024) as client:
         binding = await _seed_binding(repositories)
@@ -706,7 +881,9 @@ async def test_result_byte_limit_enforced(repositories) -> None:
         continuation=continuation,
         policy_checker=repositories,
         token_auth=AgentTokenAuthenticator(repositories),
-        guardrails=McpGuardrailConfig(max_result_bytes=1024),
+        sessions=repositories.session_factory,  # type: ignore[attr-defined]
+        commands=FakeCommands(),
+guardrails=McpGuardrailConfig(max_result_bytes=1024),
     )
     with _build_http_app(server) as client:
         headers = _initialize(client, raw_token)
@@ -735,7 +912,12 @@ async def test_tool_timeout_enforced(repositories) -> None:
         continuation=continuation,
         policy_checker=repositories,
         token_auth=AgentTokenAuthenticator(repositories),
-        guardrails=McpGuardrailConfig(tool_timeout_seconds=0.05),
+        guardrails=McpGuardrailConfig(
+            tool_timeout_seconds=0.05,
+            approval_wait_timeout_seconds=0.02,
+        ),
+        sessions=repositories.session_factory,  # type: ignore[attr-defined]
+        commands=FakeCommands(),
     )
 
     async with Client(server) as client:
@@ -767,6 +949,8 @@ async def test_concurrency_quota_serializes_per_binding(repositories) -> None:
             rate_per_second=100.0,
             rate_burst=100,
         ),
+        sessions=repositories.session_factory,  # type: ignore[attr-defined]
+        commands=FakeCommands(),
     )
 
     async with Client(server) as client:
@@ -807,6 +991,8 @@ async def test_concurrency_quota_is_per_binding(repositories) -> None:
             rate_per_second=100.0,
             rate_burst=100,
         ),
+        sessions=repositories.session_factory,  # type: ignore[attr-defined]
+        commands=FakeCommands(),
     )
 
     async def _read(binding) -> object:
@@ -841,6 +1027,8 @@ async def test_rate_quota_delays_followup_calls(repositories) -> None:
             rate_per_second=10.0,
             rate_burst=1,
         ),
+        sessions=repositories.session_factory,  # type: ignore[attr-defined]
+        commands=FakeCommands(),
     )
 
     async def _read() -> object:
@@ -870,6 +1058,8 @@ async def test_unknown_tool_fails_closed(repositories) -> None:
         continuation=continuation,
         policy_checker=repositories,
         token_auth=AgentTokenAuthenticator(repositories),
+        sessions=repositories.session_factory,  # type: ignore[attr-defined]
+        commands=FakeCommands(),
     )
 
     async with Client(server) as client:
@@ -897,17 +1087,10 @@ def test_pinned_allowlist_fixture_parses_to_eight_tools() -> None:
     }
 
 
-def test_config_drift_accepts_the_observe_surface() -> None:
+def test_config_drift_accepts_the_full_served_surface() -> None:
     allowlist = pinned_allowlist_from_fixture(OPENCODE_CONFIG_FIXTURE.read_text())
-    registered = {
-        TermFlowToolName.LIST_PANES.value,
-        TermFlowToolName.PANE_READ.value,
-        TermFlowToolName.WATCH_CREATE.value,
-        TermFlowToolName.WATCH_LIST.value,
-        TermFlowToolName.WATCH_GET.value,
-        TermFlowToolName.WATCH_CANCEL.value,
-    }
-    check_tool_config_drift(registered, allowlist)
+    # Since M5.2 the deferred set is empty: registered == allowlist exactly.
+    check_tool_config_drift(allowlist, allowlist)
 
 
 def test_config_drift_rejects_unreviewed_tool() -> None:
@@ -918,18 +1101,17 @@ def test_config_drift_rejects_unreviewed_tool() -> None:
         check_tool_config_drift(registered, allowlist)
 
 
-def test_config_drift_rejects_missing_observe_tool() -> None:
+def test_config_drift_rejects_missing_served_tool() -> None:
     allowlist = pinned_allowlist_from_fixture(OPENCODE_CONFIG_FIXTURE.read_text())
-    registered = set(allowlist - {"termflow_pane_send_text", "termflow_pane_send_keys"})
-    registered.discard(TermFlowToolName.WATCH_CANCEL.value)
+    registered = set(allowlist) - {TermFlowToolName.WATCH_CANCEL.value}
     with pytest.raises(ToolConfigDriftError):
         check_tool_config_drift(registered, allowlist)
 
 
-def test_config_drift_rejects_registered_write_tool_in_observe_milestone() -> None:
+def test_config_drift_rejects_missing_write_tool() -> None:
     allowlist = pinned_allowlist_from_fixture(OPENCODE_CONFIG_FIXTURE.read_text())
-    # A write tool slipping into the served surface is drift even though the
-    # pinned config allowlists it: writes land only with M5.
+    # With the deferred set empty, a missing write tool is drift just like a
+    # missing observe tool (registered must equal the allowlist exactly).
     registered = set(allowlist) - {TermFlowToolName.PANE_SEND_KEYS.value}
     with pytest.raises(ToolConfigDriftError):
         check_tool_config_drift(registered, allowlist)
@@ -941,14 +1123,9 @@ def test_config_drift_rejects_allowlist_losing_a_tool() -> None:
     allowlist = set(
         pinned_allowlist_from_fixture(OPENCODE_CONFIG_FIXTURE.read_text())
     ) - {TermFlowToolName.PANE_READ.value}
-    registered = {
-        TermFlowToolName.LIST_PANES.value,
-        TermFlowToolName.PANE_READ.value,
-        TermFlowToolName.WATCH_CREATE.value,
-        TermFlowToolName.WATCH_LIST.value,
-        TermFlowToolName.WATCH_GET.value,
-        TermFlowToolName.WATCH_CANCEL.value,
-    }
+    registered = set(
+        pinned_allowlist_from_fixture(OPENCODE_CONFIG_FIXTURE.read_text())
+    )
     with pytest.raises(ToolConfigDriftError):
         check_tool_config_drift(registered, allowlist)
 

@@ -403,31 +403,6 @@ class ObservationService:
         )
 
 
-class UnsupportedCommandService:
-    """Concrete :class:`TerminalCommandPort` for the observe-only milestone.
-
-    Writes are declared but not implemented: any call raises
-    :class:`NotImplementedError`.  The M5 milestone replaces this service
-    with the policy/approval-gated command router.
-    """
-
-    async def send_text(
-        self, instance_id: UUID, params: PaneSendTextParams
-    ) -> PaneSendTextResult:
-        raise NotImplementedError(
-            "pane writes land with M5; the M2 observe-only milestone declares "
-            "TerminalCommandPort without an implementation"
-        )
-
-    async def send_keys(
-        self, instance_id: UUID, params: PaneSendKeysParams
-    ) -> PaneSendKeysResult:
-        raise NotImplementedError(
-            "pane writes land with M5; the M2 observe-only milestone declares "
-            "TerminalCommandPort without an implementation"
-        )
-
-
 def _decode_watch_start(encoded: str) -> tuple[WatchCondition, PaneCursor | None]:
     """Decode the versioned creation envelope persisted in ``start_cursor``."""
     try:

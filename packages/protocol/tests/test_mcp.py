@@ -228,6 +228,32 @@ def test_send_text_params_validate_intent_bound() -> None:
         )
 
 
+def test_write_params_have_no_permission_claim_input_surface() -> None:
+    """Backend ``always``-style permission claims can never reach the write
+    handlers: the models forbid extra fields, so every call is a fresh
+    approval-gated request (spec §6: no pre-authorized fast path)."""
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        PaneSendTextParams.model_validate(
+            {
+                "pane_id": "%1",
+                "request_key": "req-1",
+                "conversation_id": uuid4(),
+                "text": "make test",
+                "permission": "always",
+            }
+        )
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        PaneSendKeysParams.model_validate(
+            {
+                "pane_id": "%1",
+                "request_key": "req-1",
+                "conversation_id": uuid4(),
+                "keys": ["enter"],
+                "permissionID": "perm-1",
+            }
+        )
+
+
 def test_pane_read_result_truncated_flag_round_trips() -> None:
     result = PaneReadResult(
         instance_id=uuid4(),

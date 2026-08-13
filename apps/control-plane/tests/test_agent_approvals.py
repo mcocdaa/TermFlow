@@ -665,6 +665,52 @@ class TestApprovalsApi:
         assert body["binding"]["binding_id"] == str(binding_id)
         assert body["binding"]["term_id"] is not None
 
+    def test_get_approval_detail_exposes_m52_display_metadata(
+        self, client: TestClient, admin_headers: dict[str, str], provision_term
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        repositories: RepositoryBundle = client.app.state.repositories
+
+        async def _create() -> UUID:
+            approval = await repositories.approvals.create(
+                binding_id=binding_id,
+                conversation_id=conversation_id,
+                tool_call_id="tool-call-m52",
+                canonical_hash=canonical_hash(_hash_input()),
+                auth_epoch=1,
+                expires_at=datetime.now(UTC) + timedelta(minutes=5),
+                pane_id="%1",
+                operation="send_text",
+                intent_summary="run the test suite",
+            )
+            return approval.id
+
+        approval_id = client.portal.call(_create)
+
+        detail = client.get(f"/api/v1/agent/approvals/{approval_id}", headers=admin_headers)
+        assert detail.status_code == 200
+        body = detail.json()
+        assert body["pane_id"] == "%1"
+        assert body["operation"] == "send_text"
+        assert body["intent_summary"] == "run the test suite"
+
+    def test_approval_detail_legacy_rows_degrade_to_none(
+        self, client: TestClient, admin_headers: dict[str, str], provision_term
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        approval_id = self._seed_approval(
+            client, binding_id=binding_id, conversation_id=UUID(str(conversation["conversation_id"]))
+        )
+        detail = client.get(f"/api/v1/agent/approvals/{approval_id}", headers=admin_headers)
+        assert detail.status_code == 200
+        body = detail.json()
+        assert body["pane_id"] is None
+        assert body["operation"] is None
+        assert body["intent_summary"] is None
+
     def test_decide_approve_and_deny_via_api(
         self, client: TestClient, admin_headers: dict[str, str], provision_term
     ) -> None:

@@ -70,6 +70,10 @@ from termflow_control_plane.persistence.repositories import RepositoryBundle
 from termflow_control_plane.plugins.agent_broker.agent.approval_audit import (
     ApprovalAuditWriter,
 )
+from termflow_control_plane.plugins.agent_broker.agent.command_service import (
+    CommandRouterGateway,
+    CommandService,
+)
 from termflow_control_plane.plugins.agent_broker.agent.permissions import ApprovalPolicy
 from termflow_control_plane.plugins.agent_broker.agent.stream_hub import (
     AGENT_STREAM_QUEUE_SIZE,
@@ -79,11 +83,13 @@ from termflow_control_plane.plugins.agent_broker.agent.terminal_ports import (
     ObservationService,
     WatchContinuationService,
 )
+from termflow_control_plane.plugins.agent_broker.agent.watches import ObservationCursorStore
 from termflow_control_plane.plugins.agent_broker.agent.transcription import (
     NullTranscriptionProvider,
 )
 from termflow_control_plane.plugins.agent_broker.api.mcp_server import (
     MCP_STREAMABLE_HTTP_PATH,
+    McpGuardrailConfig,
     build_mcp_server,
     check_tool_config_drift,
     create_streamable_http_app,
@@ -164,7 +170,7 @@ class _AgentMcpMount(Mount):
 
 
 async def _build_agent_mcp_app(app: FastAPI, settings: Settings) -> Starlette:
-    """Assemble the observe-only MCP server once the repositories exist.
+    """Assemble the MCP server once the repositories exist.
 
     B owns the security checks around the SDK (plan §10): bearer auth through
     ``require_agent_token``, byte limits, per-binding quotas, and the pinned
@@ -172,18 +178,48 @@ async def _build_agent_mcp_app(app: FastAPI, settings: Settings) -> Starlette:
     frozen OpenCode config when ``opencode_config_path`` is configured and
     refuses startup on any mismatch (plan §10, M0.3).
 
+    The write tools run through the approval-gated :class:`CommandService`
+    (M5.2): its gateway is the production :class:`CommandRouterGateway` over
+    the app's :class:`CommandRouter`, its ledger comes from the observation
+    cursor store, and it shares the composition-root approval policy and
+    audit writer.
+
     The SDK app is built at ``path="/"``: Starlette mounts rewrite the child
     scope's route path, so the mounted app sees its own ``/`` route while the
     public path stays ``/api/v1/agent/mcp``.
     """
+    guardrails = McpGuardrailConfig(
+        approval_wait_timeout_seconds=settings.agent_approval_wait_timeout_seconds,
+        approval_ttl_seconds=settings.agent_approval_ttl_seconds,
+    )
+    commands = CommandService(
+        repositories=app.state.repositories,
+        sessions=app.state.session_factory,
+        gateway=CommandRouterGateway(app.state.command_router),
+        observation=ObservationService(
+            app.state.registry,
+            cursor_store=ObservationCursorStore(app.state.session_factory),
+        ),
+        approval_wait_timeout_seconds=settings.agent_approval_wait_timeout_seconds,
+        approval_ttl_seconds=settings.agent_approval_ttl_seconds,
+        audit=app.state.approval_audit,
+        policy=app.state.approval_policy,
+    )
+    app.state.command_service = commands
     server = build_mcp_server(
-        observation=ObservationService(app.state.registry),
+        observation=ObservationService(
+            app.state.registry,
+            cursor_store=ObservationCursorStore(app.state.session_factory),
+        ),
         continuation=WatchContinuationService(
             app.state.repositories.watches,
             app.state.repositories.agent_bindings,
         ),
         policy_checker=app.state.repositories,
         token_auth=AgentTokenAuthenticator(app.state.repositories),
+        sessions=app.state.session_factory,
+        commands=commands,
+        guardrails=guardrails,
     )
     config_path = settings.opencode_config_path
     if config_path:

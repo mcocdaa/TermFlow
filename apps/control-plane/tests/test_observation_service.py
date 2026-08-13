@@ -18,7 +18,7 @@ from termflow_control_plane.plugins.agent_broker.agent.terminal_ports import (
     ObservationService,
     PaneCursorStore,
     TermFlowToolError,
-    UnsupportedCommandService,
+    TerminalCommandPort,
 )
 from termflow_protocol.mcp import (
     MAX_PANE_READ_BYTES,
@@ -500,13 +500,15 @@ async def test_resolve_cursor_delegates_to_cursor_store() -> None:
 
 
 @pytest.mark.asyncio
-async def test_command_port_is_declared_but_writes_not_implemented() -> None:
-    service = UnsupportedCommandService()
+async def test_command_port_contract_is_principal_and_approval_gated() -> None:
+    """The M5.2 write port takes the authenticated principal and a tool id;
+    the implementation lives in ``agent.command_service`` (M5.2)."""
+    from termflow_control_plane.plugins.agent_broker.agent.command_service import (
+        CommandService,
+    )
 
-    with pytest.raises(NotImplementedError, match="M5"):
-        await service.send_text(uuid4(), None)  # type: ignore[arg-type]
-    with pytest.raises(NotImplementedError, match="M5"):
-        await service.send_keys(uuid4(), None)  # type: ignore[arg-type]
+    assert isinstance(CommandService, type)
+    assert TerminalCommandPort is not None
 
 
 @pytest.mark.asyncio
