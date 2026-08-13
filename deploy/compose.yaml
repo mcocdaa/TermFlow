@@ -26,6 +26,15 @@ services:
       TERMFLOW_TERMINAL_QUEUE_MAX_MESSAGES: ${TERMFLOW_TERMINAL_QUEUE_MAX_MESSAGES:-256}
       TERMFLOW_TERMINAL_QUEUE_MAX_BYTES: ${TERMFLOW_TERMINAL_QUEUE_MAX_BYTES:-1048576}
       TERMFLOW_TERMINAL_RESUME_GRACE_SECONDS: ${TERMFLOW_TERMINAL_RESUME_GRACE_SECONDS:-30}
+      # Optional STT (M7a): B reaches the pinned speaches container only over
+      # the internal network; enabling requires the stt profile AND these
+      # envs (spec §4.2). STT_API_KEY expands to "" without the profile and
+      # B normalizes the empty token to "not configured".
+      TERMFLOW_STT_ENABLED: ${TERMFLOW_STT_ENABLED:-false}
+      TERMFLOW_STT_URL: ${TERMFLOW_STT_URL:-http://stt-speaches:8000}
+      TERMFLOW_STT_TOKEN: ${STT_API_KEY:-}
+      TERMFLOW_STT_MODEL: ${STT_MODEL:-Systran/faster-distil-whisper-small.en}
+      TERMFLOW_STT_TIMEOUT_SECONDS: ${STT_TIMEOUT_SECONDS:-55}
     ports:
       - 127.0.0.1:${TERMFLOW_HOST_PORT:-8765}:8000
     volumes:
@@ -135,6 +144,68 @@ services:
       retries: 3
       start_period: 15s
 
+  # Optional pinned STT container (M7a spec §4.2): the `stt` profile service
+  # is started only with `docker compose --profile stt up` AND
+  # TERMFLOW_STT_ENABLED=true + STT_API_KEY; otherwise it never runs and B
+  # keeps the Null provider (503). It is internal-only (no egress), so the
+  # model cache volume must be pre-seeded once with the pinned image before
+  # first enable (spec §4.4) and PRELOAD_MODELS fails loud on any miss.
+  # Image tag+digest double pin (spec §5.4); the digest was re-captured from
+  # ghcr.io on 2026-08-13 and matches the pin fixture.
+  stt-speaches:
+    image: ghcr.io/speaches-ai/speaches:0.8.3-cpu@sha256:21e3df06d842fb7802ab470dd77c25f0e8c0d22950e8d8c6ae886e851af53ef8
+    profiles: ["stt"]
+    environment:
+      UVICORN_PORT: "8000"
+      # Disable the Gradio UI; keep logs compact (model loads are chatty).
+      ENABLE_UI: "false"
+      LOG_LEVEL: "warning"
+      # Keep the single preloaded model resident; the JSON array form is
+      # required (pydantic-settings parses complex env as JSON) and the
+      # model must exist in the pre-seeded volume or startup fails loud.
+      STT_MODEL_TTL: "-1"
+      PRELOAD_MODELS: '["${STT_MODEL:-Systran/faster-distil-whisper-small.en}"]'
+      WHISPER__COMPUTE_TYPE: "int8"
+      # Required deployment secret, same `:?` style as the OpenCode service;
+      # /health stays public inside the internal network.
+      API_KEY: ${STT_API_KEY:?set STT_API_KEY}
+    volumes:
+      # Pre-seeded model cache (spec §4.4); never the TermFlow data volume.
+      - ${STT_MODELS_VOLUME:-stt-models}:/home/ubuntu/.cache/huggingface/hub
+    expose:
+      - "8000"
+    networks:
+      # Internal network only: never attached to the public A/C network.
+      - agent_internal
+    user: "1000:1000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid
+    mem_limit: ${STT_MEM_LIMIT:-2g}
+    cpus: ${STT_CPUS:-2}
+    pids_limit: 256
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 1024
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      # curl is baked into the image; /health is public (no API key).
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+
 volumes:
   termflow-data:
     name: ${TERMFLOW_DATA_VOLUME:-termflow-data}
@@ -142,6 +213,9 @@ volumes:
     name: ${TERMFLOW_TOTP_KEY_VOLUME:-termflow-totp-key}
   opencode-data:
     name: ${OPENCODE_DATA_VOLUME:-opencode-data}
+  # One-time model cache content (spec §4.4): unrelated to termflow-data.
+  stt-models:
+    name: ${STT_MODELS_VOLUME:-stt-models}
 
 networks:
   agent_internal:

@@ -53,12 +53,19 @@ def test_compose_is_single_worker_and_persists_only_metadata() -> None:
         "termflow-totp-key:/app/totp-secrets",
     ]
     assert service["healthcheck"]["test"][-1].endswith("/healthz")
-    assert list(compose["services"]) == ["control-plane", "opencode-agent"]
+    assert list(compose["services"]) == [
+        "control-plane",
+        "opencode-agent",
+        "stt-speaches",
+    ]
     assert compose["volumes"]["termflow-data"] == {
         "name": "${TERMFLOW_DATA_VOLUME:-termflow-data}"
     }
     assert compose["volumes"]["termflow-totp-key"] == {
         "name": "${TERMFLOW_TOTP_KEY_VOLUME:-termflow-totp-key}"
+    }
+    assert compose["volumes"]["stt-models"] == {
+        "name": "${STT_MODELS_VOLUME:-stt-models}"
     }
 
 
@@ -75,6 +82,71 @@ def test_opencode_agent_service_is_isolated_and_hardened() -> None:
     assert not any(
         "/var/run/docker.sock" in mount for mount in agent["volumes"]
     )
+
+
+def test_stt_speaches_service_is_optional_and_hardened() -> None:
+    compose = yaml.safe_load(Path("deploy/compose.yaml").read_text())
+    stt = compose["services"]["stt-speaches"]
+    # Optional by profile: never started by a plain `docker compose up`
+    # (spec §4.2: enabling requires the profile AND the B-side env).
+    assert stt["profiles"] == ["stt"]
+    # Internal network only: never attached to the public A/C network.
+    assert stt["networks"] == ["agent_internal"]
+    # No host-published ports: exposed on the internal network only.
+    assert "ports" not in stt
+    assert stt["cap_drop"] == ["ALL"]
+    assert stt["read_only"] is True
+    assert not any(
+        "/var/run/docker.sock" in mount for mount in stt["volumes"]
+    )
+    assert stt["user"] == "1000:1000"
+    environment = stt["environment"]
+    assert environment["ENABLE_UI"] == "false"
+    assert environment["LOG_LEVEL"] == "warning"
+    assert environment["UVICORN_PORT"] == "8000"
+    assert environment["STT_MODEL_TTL"] == "-1"
+    assert environment["WHISPER__COMPUTE_TYPE"] == "int8"
+    assert environment["API_KEY"] == "${STT_API_KEY:?set STT_API_KEY}"
+    # PRELOAD_MODELS must stay a JSON array (pydantic-settings complex type
+    # env parsing); a bare model string fails container startup (spec §4.2).
+    assert environment["PRELOAD_MODELS"] == (
+        '["${STT_MODEL:-Systran/faster-distil-whisper-small.en}"]'
+    )
+    assert stt["healthcheck"]["test"][-1].endswith("/health")
+    assert stt["mem_limit"] == "${STT_MEM_LIMIT:-2g}"
+    assert stt["cpus"] == "${STT_CPUS:-2}"
+    assert stt["pids_limit"] == 256
+    assert stt["volumes"] == [
+        "${STT_MODELS_VOLUME:-stt-models}:/home/ubuntu/.cache/huggingface/hub"
+    ]
+
+
+def test_stt_image_is_pinned_tag_and_digest() -> None:
+    compose = yaml.safe_load(Path("deploy/compose.yaml").read_text())
+    image = compose["services"]["stt-speaches"]["image"]
+    # tag+digest double pin; never `latest` (spec §5.4).
+    assert image.startswith("ghcr.io/speaches-ai/speaches:0.8.3-cpu@")
+    assert "@sha256:" in image
+    tag = image.split(":", 2)[1].split("@", 1)[0]
+    assert not tag.startswith("latest")
+    # Full-text scan: no `latest-*` tag may appear anywhere in the file.
+    assert "latest-" not in Path("deploy/compose.yaml").read_text()
+
+
+def test_compose_passes_stt_environment_to_control_plane() -> None:
+    compose = yaml.safe_load(Path("deploy/compose.yaml").read_text())
+    environment = compose["services"]["control-plane"]["environment"]
+    assert environment["TERMFLOW_STT_ENABLED"] == "${TERMFLOW_STT_ENABLED:-false}"
+    assert environment["TERMFLOW_STT_URL"] == (
+        "${TERMFLOW_STT_URL:-http://stt-speaches:8000}"
+    )
+    # Empty-default passthrough: when the profile is not enabled STT_API_KEY
+    # expands to "" and B normalizes it to an unconfigured token.
+    assert environment["TERMFLOW_STT_TOKEN"] == "${STT_API_KEY:-}"
+    assert environment["TERMFLOW_STT_MODEL"] == (
+        "${STT_MODEL:-Systran/faster-distil-whisper-small.en}"
+    )
+    assert environment["TERMFLOW_STT_TIMEOUT_SECONDS"] == "${STT_TIMEOUT_SECONDS:-55}"
 
 
 def test_compose_configures_same_origin_web_control_limits() -> None:
