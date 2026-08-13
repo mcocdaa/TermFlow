@@ -184,8 +184,9 @@ REUSE_DECISIONS: tuple[ReuseDecision, ...] = (
         license="MIT",
         sbom_owner="termflow-control-plane",
         contract_fixture=(
-            "https://docs.ag-ui.com/api-reference/openapi.json "
-            "(OpenAPI spec for ag-ui-protocol 0.1.19)"
+            "tests/fixtures/agui/agui-0.1.19-wire.json (local pinned wire "
+            "fixture; the previous docs.ag-ui.com/api-reference/openapi.json "
+            "URL returns 404) and https://docs.ag-ui.com (AG-UI SDK docs)"
         ),
         notes=(
             "Wire projection only; B keeps its own durable canonical event/cursor/"
