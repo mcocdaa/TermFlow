@@ -258,10 +258,12 @@ REUSE_DECISIONS: tuple[ReuseDecision, ...] = (
             "deletion, draft confirmation, provider disclosure, and no-auto-submit; "
             "faster-whisper 1.2.1 (MIT) is the CTranslate2 implementation for a "
             "pinned CPU/GPU container but is in a maintenance lull; reference "
-            "container is speaches-ai/speaches (MIT, active) at "
-            "ghcr.io/speaches-ai/speaches:latest-cpu / :latest-cuda — the former "
+            "container is speaches-ai/speaches (MIT, active); the former "
             "fedirz/faster-whisper-server image is retired; first optional plugin "
-            "in M7."
+            "in M7. Pinned at M7a: ghcr.io/speaches-ai/speaches:0.8.3-cpu@"
+            "sha256:21e3df06d842fb7802ab470dd77c25f0e8c0d22950e8d8c6ae886e851af53ef8 "
+            "(digest re-captured 2026-08-13, no drift; 0.8.3-cuda recorded in "
+            "tests/fixtures/speaches/speaches-pin.md as a deployment follow-up)."
         ),
     ),
     ReuseDecision(

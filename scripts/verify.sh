@@ -24,6 +24,10 @@ scripts/verify-tauri.sh
 
 CONTROL_PLANE_IMAGE="${TERMFLOW_VERIFY_IMAGE:-termflow-control-plane:verify}"
 TERMFLOW_ADMIN_TOKEN="verify-admin-token-that-is-long-enough" \
+  STT_API_KEY="verify-stt-api-key" \
   docker compose -f deploy/compose.yaml config --quiet
 scripts/build-control-plane-image.sh "${CONTROL_PLANE_IMAGE}"
 scripts/verify-control-plane-image.sh "${CONTROL_PLANE_IMAGE}"
+# Docker-gated STT container integration (M7a spec §7.3): skips with an
+# explicit UNVERIFIED record when the Docker daemon is unavailable.
+scripts/verify-stt.sh
