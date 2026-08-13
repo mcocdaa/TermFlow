@@ -112,6 +112,81 @@ async def test_offline_instance_is_rejected_without_queueing(routing_subject) ->
 
 
 @pytest.mark.asyncio
+async def test_send_keys_requires_negotiated_typed_keys_capability(
+    routing_subject,
+) -> None:
+    """Old A instances (typed_keys=False) fail closed before enqueueing (M5.2)."""
+    from termflow_control_plane.connections.registry import CapabilityUnavailable
+
+    router, live_connection, audit = routing_subject
+    live_connection.typed_keys = False
+    with pytest.raises(CapabilityUnavailable):
+        await router.send_keys(live_connection.instance_id, "%1", ("enter",), uuid4())
+    assert live_connection.outbound.empty()
+    assert audit.records[-1]["operation"] == "pane.keys"
+    assert audit.records[-1]["error_code"] == "typed_keys_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_send_keys_enqueues_typed_key_message_with_incarnation(
+    routing_subject,
+) -> None:
+    router, live_connection, audit = routing_subject
+    live_connection.typed_keys = True
+    idempotency_key = uuid4()
+    task = asyncio.create_task(
+        router.send_keys(
+            live_connection.instance_id, "%1", ("ctrl-c", "enter"), idempotency_key,
+            pane_incarnation=2,
+        )
+    )
+    message = await live_connection.outbound.get()
+    assert message.type == "pane.key_input"
+    assert message.payload["pane_id"] == "%1"
+    assert message.payload["keys"] == ["ctrl-c", "enter"]
+    assert message.payload["pane_incarnation"] == 2
+    command_id = UUID(str(message.payload["command_id"]))
+    router.resolve_result(
+        live_connection,
+        CommandResultPayload(
+            command_id=command_id,
+            idempotency_key=idempotency_key,
+            ok=True,
+        ),
+    )
+    assert (await task).ok is True
+    assert audit.records[-1] == {
+        "operation": "pane.keys",
+        "instance_id": live_connection.instance_id,
+        "pane_id": "%1",
+        "input_bytes": len('["ctrl-c","enter"]'.encode()),
+        "result": "ok",
+        "error_code": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_send_input_carries_optional_pane_incarnation(routing_subject) -> None:
+    router, live_connection, _ = routing_subject
+    task = asyncio.create_task(
+        router.send_input(
+            live_connection.instance_id, "%1", "ls", True, uuid4(), pane_incarnation=2
+        )
+    )
+    message = await live_connection.outbound.get()
+    assert message.payload["pane_incarnation"] == 2
+    router.resolve_result(
+        live_connection,
+        CommandResultPayload(
+            command_id=UUID(str(message.payload["command_id"])),
+            idempotency_key=UUID(str(message.payload["idempotency_key"])),
+            ok=True,
+        ),
+    )
+    assert (await task).ok is True
+
+
+@pytest.mark.asyncio
 async def test_input_waits_for_an_inflight_initial_topology() -> None:
     registry = LiveInstanceRegistry(queue_size=2)
     connection = await registry.register(uuid4())

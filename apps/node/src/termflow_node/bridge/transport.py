@@ -242,7 +242,7 @@ class BridgeTransport:
                         payload=BridgeHelloPayload(
                             name=self._instance.name,
                             bounded_capture=True,
-                            typed_keys=False,
+                            typed_keys=True,
                         ).model_dump(mode="json"),
                     ).model_dump_json()
                 )

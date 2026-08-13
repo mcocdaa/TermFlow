@@ -254,6 +254,16 @@ class TmuxRunner:
         if submit:
             self._execute("send-keys", "-t", pane_id, "Enter")
 
+    def send_keys(self, pane_id: str, keys: tuple[str, ...]) -> None:
+        """Send already-mapped tmux key names in one ``send-keys`` call.
+
+        The caller (``bridge.input_handler``) validates the protocol key
+        sequence against the pinned vocabulary and maps it through
+        ``bridge.key_names`` first; only mapped tmux key names ever reach
+        this method (never arbitrary strings or control bytes).
+        """
+        self._execute("send-keys", "-t", pane_id, *keys)
+
     def capture_pane(self, pane_id: str) -> bytes:
         argv = self._argv("capture-pane", "-p", "-e", "-S", "-", "-t", pane_id)
         result = subprocess.run(

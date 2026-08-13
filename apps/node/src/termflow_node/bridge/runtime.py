@@ -17,6 +17,7 @@ from termflow_protocol import (
     PaneCaptureRequestPayload,
     PaneCaptureResultPayload,
     PaneInputPayload,
+    PaneKeyInputPayload,
     PaneOutputPayload,
     PaneReplayRequestPayload,
     PaneSnapshot,
@@ -76,6 +77,8 @@ class RuntimeTransport(Protocol):
 
 class RuntimeInputHandler(Protocol):
     async def handle(self, command: PaneInputPayload) -> CommandResultPayload: ...
+
+    async def handle_keys(self, command: PaneKeyInputPayload) -> CommandResultPayload: ...
 
     def retain_panes(self, pane_ids: set[str]) -> None: ...
 
@@ -191,7 +194,12 @@ class BridgeRuntime:
             return
         payload = parse_payload(message.type, message.payload)
         if message.type is MessageType.PANE_INPUT:
-            result = await self.input_handler.handle(cast(PaneInputPayload, payload))
+            result = await self._handle_input(cast(PaneInputPayload, payload))
+            self.transport.enqueue_nowait(
+                self._message(MessageType.COMMAND_RESULT, result.model_dump(mode="json"))
+            )
+        elif message.type is MessageType.PANE_KEY_INPUT:
+            result = await self._handle_input(cast(PaneKeyInputPayload, payload))
             self.transport.enqueue_nowait(
                 self._message(MessageType.COMMAND_RESULT, result.model_dump(mode="json"))
             )
@@ -199,6 +207,28 @@ class BridgeRuntime:
             await self._handle_replay(cast(PaneReplayRequestPayload, payload))
         elif message.type is MessageType.PANE_CAPTURE_REQUEST:
             await self._handle_capture(cast(PaneCaptureRequestPayload, payload))
+
+    async def _handle_input(
+        self, payload: PaneInputPayload | PaneKeyInputPayload
+    ) -> CommandResultPayload:
+        """Dispatch one input message with the optional incarnation check.
+
+        The agent write path always fills ``pane_incarnation`` from the B
+        ledger; when present it must match the pane's current content
+        incarnation (same check as capture requests).  The C terminal input
+        path omits it and keeps only the pane existence check (M5.2).
+        """
+        if payload.pane_incarnation is not None:
+            if self.buffers.pane_incarnation(payload.pane_id) != payload.pane_incarnation:
+                return CommandResultPayload(
+                    command_id=payload.command_id,
+                    idempotency_key=payload.idempotency_key,
+                    ok=False,
+                    error_code="incarnation_changed",
+                )
+        if isinstance(payload, PaneKeyInputPayload):
+            return await self.input_handler.handle_keys(payload)
+        return await self.input_handler.handle(payload)
 
     async def _handle_replay(self, request: PaneReplayRequestPayload) -> None:
         topology = self.topology_provider()

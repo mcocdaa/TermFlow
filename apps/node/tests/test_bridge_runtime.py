@@ -1,4 +1,4 @@
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from termflow_node.bridge.buffer import OutputBuffers
@@ -6,7 +6,10 @@ from termflow_node.bridge.runtime import BridgeRuntime
 from termflow_node.tmux.capture import RenderedCapture
 from termflow_node.tmux.control_parser import OutputNotification, PauseNotification
 from termflow_protocol import (
+    CommandResultPayload,
     MessageType,
+    PaneInputPayload,
+    PaneKeyInputPayload,
     PaneReplayRequestPayload,
     PaneSnapshot,
     TopologySnapshot,
@@ -302,3 +305,119 @@ async def test_runtime_delegates_terminal_messages_without_disturbing_pane_chann
     )
     await runtime.handle_message(message)
     assert terminals.messages == [message]
+
+
+class RecordingInput:
+    """Records dispatched input commands and answers with ok receipts."""
+
+    def __init__(self) -> None:
+        self.commands: list[tuple[str, object]] = []
+
+    async def handle(self, command: PaneInputPayload) -> CommandResultPayload:
+        self.commands.append(("text", command))
+        return CommandResultPayload(
+            command_id=command.command_id,
+            idempotency_key=command.idempotency_key,
+            ok=True,
+        )
+
+    async def handle_keys(self, command: PaneKeyInputPayload) -> CommandResultPayload:
+        self.commands.append(("keys", command))
+        return CommandResultPayload(
+            command_id=command.command_id,
+            idempotency_key=command.idempotency_key,
+            ok=True,
+        )
+
+    def retain_panes(self, pane_ids: set[str]) -> None:
+        pass
+
+
+def _runtime_with(handler) -> tuple[BridgeRuntime, OutputBuffers, FakeTransport, UUID]:
+    buffers = OutputBuffers(max_bytes_per_pane=1024)
+    transport = FakeTransport(buffers)
+    instance_id = uuid4()
+    runtime = BridgeRuntime(
+        instance_id=instance_id,
+        control=FakeControl(),
+        topology_provider=topology,
+        transport=transport,
+        buffers=buffers,
+        input_handler=handler,
+    )
+    return runtime, buffers, transport, instance_id
+
+
+@pytest.mark.asyncio
+async def test_pane_key_input_dispatches_to_handler_and_returns_receipt() -> None:
+    handler = RecordingInput()
+    runtime, _, transport, instance_id = _runtime_with(handler)
+    command_id = uuid4()
+    request = PaneKeyInputPayload(
+        command_id=command_id,
+        idempotency_key=uuid4(),
+        pane_id="%1",
+        keys=("ctrl-c",),
+        pane_incarnation=1,
+    )
+    await runtime.handle_message(
+        WireMessage(
+            type=MessageType.PANE_KEY_INPUT,
+            instance_id=instance_id,
+            payload=request.model_dump(mode="json"),
+        )
+    )
+    assert [message.type for message in transport.messages] == [MessageType.COMMAND_RESULT]
+    assert transport.messages[0].payload["command_id"] == str(command_id)
+    assert transport.messages[0].payload["ok"] is True
+    assert handler.commands == [("keys", request)]
+
+
+@pytest.mark.asyncio
+async def test_pane_input_with_stale_incarnation_is_rejected() -> None:
+    handler = RecordingInput()
+    runtime, _, transport, instance_id = _runtime_with(handler)
+    command_id = uuid4()
+    request = PaneInputPayload(
+        command_id=command_id,
+        idempotency_key=uuid4(),
+        pane_id="%1",
+        text="ls",
+        submit=True,
+        pane_incarnation=99,  # the ledger incarnation no longer matches
+    )
+    await runtime.handle_message(
+        WireMessage(
+            type=MessageType.PANE_INPUT,
+            instance_id=instance_id,
+            payload=request.model_dump(mode="json"),
+        )
+    )
+    result = transport.messages[0]
+    assert result.payload["ok"] is False
+    assert result.payload["error_code"] == "incarnation_changed"
+    assert handler.commands == []
+
+
+@pytest.mark.asyncio
+async def test_pane_input_without_incarnation_skips_the_check() -> None:
+    handler = RecordingInput()
+    runtime, _, transport, instance_id = _runtime_with(handler)
+    request = PaneInputPayload(
+        command_id=uuid4(),
+        idempotency_key=uuid4(),
+        pane_id="%1",
+        text="ls",
+        submit=True,
+    )
+    await runtime.handle_message(
+        WireMessage(
+            type=MessageType.PANE_INPUT,
+            instance_id=instance_id,
+            payload=request.model_dump(mode="json"),
+        )
+    )
+    assert transport.messages[0].payload["ok"] is True
+    # The C terminal input path keeps its existing behavior: the handler
+    # still runs its pane existence check.
+    assert handler.commands and handler.commands[0][0] == "text"

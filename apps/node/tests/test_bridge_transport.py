@@ -221,9 +221,9 @@ async def test_transport_hello_advertises_supported_capabilities(tmp_path) -> No
     hello = WireMessage.model_validate_json(websocket.sent[0])
     assert hello.type is MessageType.BRIDGE_HELLO
     payload = BridgeHelloPayload.model_validate(hello.payload)
-    # Bounded capture landed in M2.3; typed keys are deferred to M5.
+    # Bounded capture landed in M2.3; typed keys landed with M5 (M5.2).
     assert payload.bounded_capture is True
-    assert payload.typed_keys is False
+    assert payload.typed_keys is True
 
 
 @pytest.mark.asyncio

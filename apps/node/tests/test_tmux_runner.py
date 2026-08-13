@@ -84,6 +84,41 @@ def test_command_error_exposes_only_argv_and_exit_code(tmp_path) -> None:
     assert "pane secret" not in str(caught.value)
 
 
+def test_send_keys_passes_mapped_tmux_names_in_one_call(tmp_path) -> None:
+    """M5.2: a key sequence is one send-keys call with multiple key names."""
+    fake_run = FakeRun()
+    socket_path = (tmp_path / "tmux.sock").absolute()
+    runner = TmuxRunner(socket_path, run=fake_run)
+    runner.send_keys("%1", ("C-c", "Enter", "F5"))
+    assert fake_run.calls == [
+        ["tmux", "-V"],
+        [
+            "tmux",
+            "-S",
+            str(socket_path),
+            "send-keys",
+            "-t",
+            "%1",
+            "C-c",
+            "Enter",
+            "F5",
+        ],
+    ]
+    # Literal text still goes through the -l literal path (unchanged).
+    runner.send_text("%1", "ls -la", False)
+    assert fake_run.calls[-1] == [
+        "tmux",
+        "-S",
+        str(socket_path),
+        "send-keys",
+        "-t",
+        "%1",
+        "-l",
+        "--",
+        "ls -la",
+    ]
+
+
 def test_overlong_socket_path_is_rejected_before_spawn(tmp_path) -> None:
     path = Path("/") / ("a" * 108)
     with pytest.raises(SocketPathTooLong):
