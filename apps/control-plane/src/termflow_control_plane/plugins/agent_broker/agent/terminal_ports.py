@@ -1,9 +1,9 @@
 """Typed terminal capability ports and concrete services (plan §10, §18).
 
 ``TerminalObservationPort`` covers bounded pane listing, cursor-based reads,
-and cursor resolution; ``TerminalCommandPort`` covers typed pane writes and
-is intentionally *declared but not implemented* in the observe-only M2
-milestone; ``ContinuationPort`` covers durable watch continuations.
+and cursor resolution; ``TerminalCommandPort`` covers approval-gated pane
+writes and is implemented by ``agent.command_service.CommandService`` (M5.2);
+``ContinuationPort`` covers durable watch continuations.
 
 The concrete services run against B's live instance registry and the M1.3
 watch repositories.  Every failure surfaces as a structured
@@ -69,6 +69,7 @@ from termflow_control_plane.connections.registry import (
 )
 from termflow_control_plane.persistence.models import Watch
 from termflow_control_plane.persistence.repositories import AgentBindingRepository, WatchRepository
+from termflow_control_plane.plugins.agent_broker.auth import AgentTokenPrincipal
 
 logger = logging.getLogger(__name__)
 
@@ -105,13 +106,21 @@ class TermFlowToolError(Exception):
 
     Raised by the terminal capability services and the MCP tool handlers;
     the MCP server adapter translates it into a structured MCP error without
-    re-deriving semantics.
+    re-deriving semantics.  ``data`` is optional machine-readable context
+    (e.g. an ``approval_id``) merged into the MCP error payload.
     """
 
-    def __init__(self, error_code: TermFlowErrorCode, message: str) -> None:
+    def __init__(
+        self,
+        error_code: TermFlowErrorCode,
+        message: str,
+        *,
+        data: dict[str, object] | None = None,
+    ) -> None:
         super().__init__(message)
         self.error_code = error_code
         self.message = message
+        self.data = data
 
 
 @runtime_checkable
@@ -127,18 +136,31 @@ class TerminalObservationPort(Protocol):
 
 @runtime_checkable
 class TerminalCommandPort(Protocol):
-    """Policy-gated terminal input with typed receipts (plan §12).
+    """Approval-gated terminal input with typed receipts (plan §12, M5.2).
 
-    Declared in the observe-only milestone but not implemented: the concrete
-    service raises :class:`NotImplementedError` until writes land with M5.
+    Every write enters the persistent single-use approval flow
+    (``agent.command_service.CommandService``): the tool call waits
+    synchronously for a human decision, then executes through the
+    CommandRouter only after the pre-execution rechecks pass.  ``principal``
+    is the authenticated binding (the instance id always comes from it),
+    ``tool_call_id`` is the MCP request id that pins replay protection, and
+    the receipt carries the consuming approval id.
     """
 
     async def send_text(
-        self, instance_id: UUID, params: PaneSendTextParams
+        self,
+        principal: AgentTokenPrincipal,
+        params: PaneSendTextParams,
+        *,
+        tool_call_id: str,
     ) -> PaneSendTextResult: ...
 
     async def send_keys(
-        self, instance_id: UUID, params: PaneSendKeysParams
+        self,
+        principal: AgentTokenPrincipal,
+        params: PaneSendKeysParams,
+        *,
+        tool_call_id: str,
     ) -> PaneSendKeysResult: ...
 
 

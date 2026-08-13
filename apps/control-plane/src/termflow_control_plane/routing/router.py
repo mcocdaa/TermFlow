@@ -1,4 +1,4 @@
-"""Confirmed, fail-fast routing for one plain-text Pane input."""
+"""Confirmed, fail-fast routing for pane text and typed-key input."""
 
 from __future__ import annotations
 
@@ -10,13 +10,16 @@ from termflow_protocol import (
     CommandResultPayload,
     MessageType,
     PaneInputPayload,
+    PaneKeyInputPayload,
     TermRenamePayload,
     TermRenameResultPayload,
     WireMessage,
 )
+from termflow_protocol.keys import canonical_key_bytes
 
 from termflow_control_plane.config import Settings
 from termflow_control_plane.connections.registry import (
+    CapabilityUnavailable,
     ConnectionBackpressure,
     InstanceOffline,
     LiveConnection,
@@ -64,9 +67,11 @@ class CommandRouter:
         input_bytes: int,
         result: str,
         error_code: str | None,
+        *,
+        operation: str = "pane.input",
     ) -> None:
         await self._audit.record(
-            operation="pane.input",
+            operation=operation,
             instance_id=instance_id,
             pane_id=pane_id,
             input_bytes=input_bytes,
@@ -81,6 +86,7 @@ class CommandRouter:
         text: str,
         submit: bool,
         idempotency_key: UUID,
+        pane_incarnation: int | None = None,
     ) -> CommandResultPayload:
         input_bytes = len(text.encode("utf-8"))
         try:
@@ -123,6 +129,7 @@ class CommandRouter:
             pane_id=pane_id,
             text=text,
             submit=submit,
+            pane_incarnation=pane_incarnation,
         )
         message = WireMessage(
             type=MessageType.PANE_INPUT,
@@ -184,6 +191,182 @@ class CommandRouter:
                     "The Bridge rejected the command.",
                 )
             await self._record(instance_id, pane_id, input_bytes, "ok", None)
+            return result
+        finally:
+            connection.pending.pop(command_id, None)
+
+    async def send_keys(
+        self,
+        instance_id: UUID,
+        pane_id: str,
+        keys: tuple[str, ...],
+        idempotency_key: UUID,
+        pane_incarnation: int | None = None,
+    ) -> CommandResultPayload:
+        """Mirror :meth:`send_input` for the typed key input message (M5.2).
+
+        Before enqueueing, the connection must have negotiated ``typed_keys``
+        (plan §10: old A instances fail closed with
+        :class:`CapabilityUnavailable`).  ``pane.keys`` audit rows record the
+        canonical byte count of the key sequence, never the names themselves.
+        """
+        input_bytes = len(canonical_key_bytes(keys))
+        try:
+            connection = await self._registry.get(instance_id)
+        except InstanceOffline as exc:
+            await self._record(
+                instance_id, pane_id, input_bytes, "rejected", "instance_offline",
+                operation="pane.keys",
+            )
+            raise TermFlowError(
+                "instance_offline",
+                409,
+                "The Instance is not connected.",
+            ) from exc
+
+        if connection.topology is None:
+            try:
+                async with asyncio.timeout(self._timeout):
+                    await connection.topology_ready.wait()
+            except TimeoutError:
+                pass
+        if connection.topology is None:
+            await self._record(
+                instance_id,
+                pane_id,
+                input_bytes,
+                "rejected",
+                "topology_unavailable",
+                operation="pane.keys",
+            )
+            raise TermFlowError(
+                "topology_unavailable",
+                409,
+                "The Instance has not reported its topology.",
+            )
+        if not connection.topology.contains_pane(pane_id):
+            await self._record(
+                instance_id,
+                pane_id,
+                input_bytes,
+                "rejected",
+                "pane_not_found",
+                operation="pane.keys",
+            )
+            raise TermFlowError("pane_not_found", 404, "The Pane does not exist.")
+
+        try:
+            connection.require_capability(typed_keys=True)
+        except CapabilityUnavailable as exc:
+            await self._record(
+                instance_id,
+                pane_id,
+                input_bytes,
+                "rejected",
+                "typed_keys_unavailable",
+                operation="pane.keys",
+            )
+            raise
+
+        command_id = uuid4()
+        payload = PaneKeyInputPayload(
+            command_id=command_id,
+            idempotency_key=idempotency_key,
+            pane_id=pane_id,
+            keys=keys,
+            pane_incarnation=pane_incarnation,
+        )
+        message = WireMessage(
+            type=MessageType.PANE_KEY_INPUT,
+            instance_id=instance_id,
+            payload=payload.model_dump(mode="json"),
+        )
+        future: asyncio.Future[CommandResultPayload] = (
+            asyncio.get_running_loop().create_future()
+        )
+        connection.pending[command_id] = future
+        try:
+            try:
+                await self._registry.enqueue(instance_id, message)
+            except ConnectionBackpressure as exc:
+                await self._record(
+                    instance_id,
+                    pane_id,
+                    input_bytes,
+                    "rejected",
+                    "backpressure",
+                    operation="pane.keys",
+                )
+                raise TermFlowError(
+                    "backpressure",
+                    429,
+                    "The Instance command queue is full.",
+                ) from exc
+            except InstanceOffline as exc:
+                await self._record(
+                    instance_id,
+                    pane_id,
+                    input_bytes,
+                    "rejected",
+                    "instance_offline",
+                    operation="pane.keys",
+                )
+                raise TermFlowError(
+                    "instance_offline",
+                    409,
+                    "The Instance is not connected.",
+                ) from exc
+
+            try:
+                async with asyncio.timeout(self._timeout):
+                    result = await future
+            except TimeoutError as exc:
+                await self._record(
+                    instance_id,
+                    pane_id,
+                    input_bytes,
+                    "unknown",
+                    "command_timeout",
+                    operation="pane.keys",
+                )
+                raise TermFlowError(
+                    "command_timeout",
+                    504,
+                    "The Bridge did not confirm the command in time.",
+                ) from exc
+            except InstanceOffline as exc:
+                await self._record(
+                    instance_id,
+                    pane_id,
+                    input_bytes,
+                    "unknown",
+                    "outcome_unknown",
+                    operation="pane.keys",
+                )
+                raise TermFlowError(
+                    "outcome_unknown",
+                    409,
+                    "The connection was lost before command confirmation.",
+                ) from exc
+
+            if not result.ok:
+                error_code = result.error_code or "connection_lost"
+                await self._record(
+                    instance_id,
+                    pane_id,
+                    input_bytes,
+                    "failed",
+                    error_code,
+                    operation="pane.keys",
+                )
+                raise TermFlowError(
+                    error_code,
+                    _BRIDGE_ERROR_STATUS.get(error_code, 409),
+                    "The Bridge rejected the command.",
+                )
+            await self._record(
+                instance_id, pane_id, input_bytes, "ok", None, operation="pane.keys"
+            )
             return result
         finally:
             connection.pending.pop(command_id, None)
