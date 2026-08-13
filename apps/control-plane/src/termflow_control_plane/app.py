@@ -67,6 +67,9 @@ from termflow_control_plane.connections.terminal_hub import TerminalHub
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.database import Database
 from termflow_control_plane.persistence.repositories import RepositoryBundle
+from termflow_control_plane.plugins.agent_broker.agent.speaches import (
+    SpeachesTranscriptionProvider,
+)
 from termflow_control_plane.plugins.agent_broker.agent.stream_hub import (
     AGENT_STREAM_QUEUE_SIZE,
     AgentStreamHub,
@@ -478,7 +481,20 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
     # chat fully functional until an optional STT container implements the
     # TranscriptionProvider port; the remaining bounds mirror the documented
     # constants in api.transcription and stay overridable per-app for tests.
-    app.state.transcription_provider = NullTranscriptionProvider()
+    # M7a: explicit TERMFLOW_STT_ENABLED switches to the pinned speaches
+    # container; the config combination validation guarantees stt_url is set
+    # whenever stt_enabled is true (spec §4.5/§4.6).
+    if settings.stt_enabled:
+        stt_url = settings.stt_url
+        assert stt_url is not None
+        app.state.transcription_provider = SpeachesTranscriptionProvider(
+            stt_url,
+            model=settings.stt_model,
+            token=settings.stt_token.get_secret_value() if settings.stt_token else None,
+            timeout_seconds=settings.stt_timeout_seconds,
+        )
+    else:
+        app.state.transcription_provider = NullTranscriptionProvider()
     app.state.transcription_semaphore = asyncio.Semaphore(MAX_CONCURRENT_TRANSCRIPTIONS)
     app.state.transcription_timeout_seconds = TRANSCRIPTION_TIMEOUT_SECONDS
     app.state.transcription_staging_dir = None

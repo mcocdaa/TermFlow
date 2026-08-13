@@ -12,14 +12,24 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import struct
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+import httpx
 from fastapi.testclient import TestClient
+from termflow_control_plane.app import create_app
+from termflow_control_plane.config import Settings
+from termflow_control_plane.persistence.database import Database
 from termflow_control_plane.persistence.models import TranscriptDraft
 from termflow_control_plane.persistence.repositories import RepositoryBundle
+from termflow_control_plane.plugins.agent_broker.agent.speaches import (
+    SpeachesTranscriptionProvider,
+)
 from termflow_control_plane.plugins.agent_broker.agent.transcription import (
+    NullTranscriptionProvider,
     TranscriptionProviderError,
     TranscriptionResult,
 )
@@ -33,6 +43,7 @@ from .oauth_helpers import (
 )
 
 _TRANSCRIPT = "hello from voice"
+_ADMIN_TOKEN = "admin-token-that-is-long-enough-for-tests"
 
 
 def _wav_bytes(
@@ -737,3 +748,119 @@ class TestDraftActions:
         )
         assert missing.status_code == 404
         assert missing.json()["error"]["code"] == "draft_not_found"
+
+
+class TestSttAssembly:
+    """M7a assembly tests (spec §7.5): default Null provider vs speaches."""
+
+    @contextmanager
+    def _stt_enabled_app(
+        self, tmp_path
+    ) -> Iterator[tuple[TestClient, Settings]]:
+        settings = Settings(
+            admin_token=_ADMIN_TOKEN,
+            database_url=f"sqlite+aiosqlite:///{tmp_path / 'stt-control-plane.db'}",
+            allow_insecure_loopback=True,
+            enable_docs=True,
+            stt_enabled=True,
+            stt_url="http://stt-speaches:8000",
+            stt_token="deployment-secret",
+        )
+        database = Database(settings.database_url)
+        app = create_app(settings=settings, database=database)
+        with TestClient(app) as client:
+            yield client, settings
+
+    def _provision_term_on(
+        self, client: TestClient, admin_headers: dict[str, str]
+    ) -> UUID:
+        enrollment = client.post("/api/v1/enrollment-tokens", headers=admin_headers)
+        enrollment.raise_for_status()
+        installed = client.post(
+            "/api/v1/installations/enroll",
+            json={"enrollment_token": enrollment.json()["token"]},
+        )
+        installed.raise_for_status()
+        registered = client.post(
+            "/api/v1/instances/register",
+            headers={
+                "Authorization": f"Bearer {installed.json()['installation_token']}"
+            },
+            json={"instance_id": str(uuid4()), "name": "stt-term"},
+        )
+        registered.raise_for_status()
+        return UUID(str(registered.json()["instance_id"]))
+
+    def test_default_assembly_uses_null_provider(self, client) -> None:
+        provider = client.app.state.transcription_provider
+        assert isinstance(provider, NullTranscriptionProvider)
+        assert provider.available() is False
+
+    def test_stt_enabled_assembles_speaches_provider_and_uploads_through_it(
+        self, tmp_path, admin_headers
+    ) -> None:
+        with self._stt_enabled_app(tmp_path) as (client, settings):
+            provider = client.app.state.transcription_provider
+            assert isinstance(provider, SpeachesTranscriptionProvider)
+            # Config plumbing (§4.6): URL/model/token/timeout come from the
+            # TERMFLOW_STT_* settings, token unwrapped from its SecretStr.
+            assert provider.base_url == "http://stt-speaches:8000"
+            assert provider.model == settings.stt_model
+            assert provider.token == "deployment-secret"
+            assert provider.timeout_seconds == settings.stt_timeout_seconds
+
+            # The assembled provider owns a real httpx client; inject the
+            # MockTransport client so the upload exercises the real provider
+            # code path (pinned endpoint, multipart, Bearer) without a
+            # container.
+            requests: list[httpx.Request] = []
+
+            def record(request: httpx.Request) -> httpx.Response:
+                requests.append(request)
+                return httpx.Response(200, json={"text": "hello from speaches"})
+
+            provider._client = httpx.AsyncClient(transport=httpx.MockTransport(record))
+
+            term_id = self._provision_term_on(client, admin_headers)
+            profile = _create_profile(
+                client,
+                admin_headers,
+                display_name=f"opencode-{uuid4().hex[:8]}",
+            )
+            binding = _create_binding(
+                client,
+                admin_headers,
+                profile_id=UUID(str(profile["profile_id"])),
+                term_id=term_id,
+            )
+            conversation = _create_conversation(
+                client,
+                admin_headers,
+                binding_id=UUID(str(binding["binding_id"])),
+            )
+
+            response = _upload(
+                client,
+                binding_id=UUID(str(binding["binding_id"])),
+                conversation_id=UUID(str(conversation["conversation_id"])),
+                audio=_wav_bytes(),
+                headers=admin_headers,
+            )
+
+            assert response.status_code == 201, response.text
+            body = response.json()
+            assert body["provider"] == "speaches"
+            assert body["transcript"] == "hello from speaches"
+            assert len(requests) == 1
+            assert (
+                str(requests[0].url)
+                == "http://stt-speaches:8000/v1/audio/transcriptions"
+            )
+            assert requests[0].headers["authorization"] == "Bearer deployment-secret"
+            draft = client.portal.call(
+                _get_draft,
+                client.app.state.repositories,
+                UUID(str(body["draft_id"])),
+            )
+            assert draft is not None
+            assert draft.provider == "speaches"
