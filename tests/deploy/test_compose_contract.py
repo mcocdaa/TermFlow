@@ -55,6 +55,10 @@ def test_verify_stt_script_is_docker_gated_and_follows_the_pin() -> None:
     # unavailable environment is never inferred as passing).
     assert "docker info" in script
     assert "UNVERIFIED" in script
+    # STT_API_KEY must be *exported*: the four E2E `docker compose` calls
+    # interpolate it from the process environment, and a plain shell
+    # assignment would never reach them.
+    assert "export STT_API_KEY=" in script
     # The frozen pinned digest must agree with the pin fixture (drift fails).
     assert "21e3df06d842fb7802ab470dd77c25f0e8c0d22950e8d8c6ae886e851af53ef8" in script
     # Hardening and E2E checks from spec §7.3.

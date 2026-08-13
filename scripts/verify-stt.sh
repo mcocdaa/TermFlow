@@ -36,7 +36,10 @@ cd "${REPOSITORY_ROOT}"
 STT_IMAGE="ghcr.io/speaches-ai/speaches:0.8.3-cpu@sha256:21e3df06d842fb7802ab470dd77c25f0e8c0d22950e8d8c6ae886e851af53ef8"
 STT_DIGEST="sha256:21e3df06d842fb7802ab470dd77c25f0e8c0d22950e8d8c6ae886e851af53ef8"
 STT_MODEL="${STT_MODEL:-Systran/faster-distil-whisper-small.en}"
-STT_API_KEY="${STT_API_KEY:-verify-stt-api-key}"
+# Exported: the four E2E `docker compose` calls interpolate STT_API_KEY
+# from the process environment (${STT_API_KEY:?} applies to the whole
+# compose file), so a plain shell assignment would never reach them.
+export STT_API_KEY="${STT_API_KEY:-verify-stt-api-key}"
 STT_MODELS_VOLUME="${STT_MODELS_VOLUME:-termflow-verify-stt-models}"
 STT_NETWORK="termflow-verify-stt-net"
 STT_CONTAINER="termflow-verify-stt-$$"
