@@ -42,6 +42,33 @@ def test_full_verification_checks_source_build_compose_configuration() -> None:
     assert "TERMFLOW_IMAGE" not in verify
     assert 'TERMFLOW_ADMIN_TOKEN="verify-admin-token-that-is-long-enough"' in verify
     assert "docker compose -f deploy/compose.yaml config --quiet" in verify
+    # The compose file now requires STT_API_KEY at interpolation time (the
+    # `:?` contract applies to every service, profile or not), and the
+    # Docker-gated STT container integration runs in the same section.
+    assert "STT_API_KEY=" in verify
+    assert "scripts/verify-stt.sh" in verify
+
+
+def test_verify_stt_script_is_docker_gated_and_follows_the_pin() -> None:
+    script = Path("scripts/verify-stt.sh").read_text()
+    # Docker-gated with an explicit unverified record (M8 contract: an
+    # unavailable environment is never inferred as passing).
+    assert "docker info" in script
+    assert "UNVERIFIED" in script
+    # The frozen pinned digest must agree with the pin fixture (drift fails).
+    assert "21e3df06d842fb7802ab470dd77c25f0e8c0d22950e8d8c6ae886e851af53ef8" in script
+    # Hardening and E2E checks from spec §7.3.
+    for expected in (
+        "CapEff",
+        "stat -c %u /proc/1",
+        "--read-only",
+        "no-new-privileges",
+        "/health",
+        "snapshot_download",
+        "speech_to_text_unavailable",
+        "agent_internal",
+    ):
+        assert expected in script
 
 
 def test_compose_is_single_worker_and_persists_only_metadata() -> None:
