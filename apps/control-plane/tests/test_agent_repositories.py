@@ -1234,7 +1234,8 @@ async def test_approval_expire_pending(repositories: RepositoryBundle) -> None:
             expires_at=observed - timedelta(seconds=1),
         )
     expired = await repositories.approvals.expire_pending(now=observed)
-    assert expired == 2
+    assert len(expired) == 2
+    assert all(row.state == "expired" for row in expired)
 
 
 # ---------------------------------------------------------------------------
