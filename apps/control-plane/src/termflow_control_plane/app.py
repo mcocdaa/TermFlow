@@ -345,9 +345,8 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await active_database.initialize()
         app.state.repositories = RepositoryBundle(active_database.session_factory)
-        purged = await app.state.repositories.purge_expired(now=datetime.now(UTC))
-        if any(purged.values()):
-            logger.info("Purged expired persistence rows: %s", purged)
+        purge_now = datetime.now(UTC)
+        purged = await app.state.repositories.purge_expired(now=purge_now)
         auth_state = await app.state.repositories.auth_state.get()
         app.state.browser_sessions.synchronize_epoch(auth_state.epoch)
         await app.state.terminal_hub.synchronize_epoch(auth_state.epoch)
@@ -387,6 +386,12 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
             app.state.session_factory,
             audit=app.state.approval_audit,
         )
+        # Expired approvals sweep through the policy (spec §5/§7), never the
+        # repository directly: the policy records one ``expired`` audit event
+        # per swept row.  The count joins the startup purge report.
+        purged["approvals"] = await app.state.approval_policy.expire_pending(now=purge_now)
+        if any(purged.values()):
+            logger.info("Purged expired persistence rows: %s", purged)
         app.state.terminal_router = TerminalRouter(
             registry=app.state.registry,
             hub=app.state.terminal_hub,

@@ -4436,10 +4436,12 @@ class RepositoryBundle:
         """Delete rows past their expiry; native clients are retained forever.
 
         The same startup sweep covers the Agent Broker classes (plan §15):
-        expired tokens are deleted, expired approvals and transcript drafts
-        are expired in place, diagnostics are pruned, expired watches are
-        deleted, and inbox/run rows and cleanup tombstones in terminal states
-        older than the retention window are removed.
+        expired tokens are deleted, transcript drafts are expired in place,
+        diagnostics are pruned, expired watches are deleted, and inbox/run
+        rows and cleanup tombstones in terminal states older than the
+        retention window are removed.  Expired approvals are NOT swept here:
+        the composition root sweeps them through ``ApprovalPolicy`` so every
+        swept row records an ``expired`` audit event (spec §5/§7).
         """
 
         counts: dict[str, int] = {}
@@ -4460,7 +4462,6 @@ class RepositoryBundle:
                 counts[name] = int(result.rowcount or 0)
             await session.commit()
         counts["agent_tokens"] = await self.agent_tokens.purge_expired(now=now)
-        counts["approvals"] = len(await self.approvals.expire_pending(now=now))
         counts["approval_audit"] = await self.approval_audit.purge_expired(now=now)
         counts["transcript_drafts"] = await self.transcript_drafts.expire_pending(
             now=now

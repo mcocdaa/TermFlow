@@ -3,8 +3,10 @@
 Covers the M1.6 verification wave:
 
 * startup purge/rebuild integration: ``purge_expired`` sweeps every Agent
-  persistence class (tokens, approvals, transcript drafts, diagnostics,
-  watches, terminal inbox/run rows, confirmed cleanup tombstones).
+  persistence class except approvals (tokens, transcript drafts,
+  diagnostics, watches, terminal inbox/run rows, confirmed cleanup
+  tombstones); expired approvals sweep through ``ApprovalPolicy`` at the
+  composition root so each swept row records an ``expired`` audit event.
 * deterministic restart recovery order
   (``run_agent_recovery``: inbox claims -> stuck runs -> cleanup jobs)
   including fail-safe error handling.
@@ -31,6 +33,8 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 from sqlalchemy import select
+from termflow_control_plane.app import create_app
+from termflow_control_plane.config import Settings
 from termflow_control_plane.persistence.database import Database
 from termflow_control_plane.persistence.models import AgentCleanupJob, TranscriptDraft
 from termflow_control_plane.persistence.repositories import RepositoryBundle, digest_secret
@@ -210,7 +214,8 @@ async def test_purge_expired_sweeps_every_agent_expiry_class(
         expiry_epoch=int((observed + timedelta(days=1)).timestamp()),
         binding_epoch=1,
     )
-    # Expired approval + one still pending.
+    # Expired approval + one still pending: both must survive this sweep
+    # (approvals are finished by ApprovalPolicy at the composition root).
     await repositories.approvals.create(
         binding_id=binding_id,
         conversation_id=conversation_id,
@@ -282,20 +287,23 @@ async def test_purge_expired_sweeps_every_agent_expiry_class(
     counts = await repositories.purge_expired(now=observed)
 
     assert counts["agent_tokens"] == 1
-    assert counts["approvals"] == 1
     assert counts["transcript_drafts"] == 1
     assert counts["diagnostics"] == 1
     assert counts["watches"] == 1
     assert counts["agent_inbox"] == 0
     assert counts["agent_runs"] == 0
     assert counts["cleanup_jobs"] == 0
+    # Approvals are not swept here: the composition root sweeps them through
+    # ApprovalPolicy so every row records an `expired` audit event (§5/§7).
+    assert "approvals" not in counts
 
     # Expired rows are gone or expired in place; valid rows survive.
     assert await repositories.agent_tokens.get_by_hash(_hash("expired-token")) is None
     assert await repositories.agent_tokens.get_by_hash(_hash("valid-token")) is not None
+    # The expired approval stays pending: this sweep never touches it.
     assert (
         await repositories.approvals.get_by_tool_call(conversation_id, "expired-call")
-    ).state == "expired"
+    ).state == "pending"
     assert (
         await repositories.approvals.get_by_tool_call(conversation_id, "valid-call")
     ).state == "pending"
@@ -303,6 +311,70 @@ async def test_purge_expired_sweeps_every_agent_expiry_class(
     assert await _list_draft_states(repositories) == {"expired", "pending"}
     active_watches = await repositories.watches.list_active(now=observed)
     assert [watch.intent_summary for watch in active_watches] == ["valid"]
+
+
+@pytest.mark.asyncio
+async def test_app_startup_sweeps_expired_approvals_through_policy_with_audit(
+    tmp_path,
+) -> None:
+    """The production expiry sweep goes through ``ApprovalPolicy`` (spec §5/§7).
+
+    Seeding rows before startup and running the real composition-root
+    lifespan proves the wired path: an expired approval is finished as
+    ``expired`` WITH an ``expired`` audit event (the policy records one per
+    swept row), while a still-valid approval is untouched by the sweep (the
+    restart recovery then finishes it as ``revoked``, never ``expired``).
+    """
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'app.db'}")
+    await database.initialize()
+    repositories = RepositoryBundle(database.session_factory)
+    profile_id = await _seed_profile(repositories)
+    term_id = await _seed_term(repositories)
+    binding_id = await _seed_binding(repositories, profile_id=profile_id, term_id=term_id)
+    conversation_id = await _seed_conversation(repositories, binding_id=binding_id)
+    now = datetime.now(UTC)
+    expired = await repositories.approvals.create(
+        binding_id=binding_id,
+        conversation_id=conversation_id,
+        tool_call_id="expired-call",
+        canonical_hash=_hash("expired"),
+        auth_epoch=1,
+        expires_at=now - timedelta(minutes=5),
+    )
+    valid = await repositories.approvals.create(
+        binding_id=binding_id,
+        conversation_id=conversation_id,
+        tool_call_id="valid-call",
+        canonical_hash=_hash("valid"),
+        auth_epoch=1,
+        expires_at=now + timedelta(minutes=5),
+    )
+
+    app = create_app(
+        settings=Settings(
+            admin_token="admin-token-that-is-long-enough-for-tests",
+            database_url=f"sqlite+aiosqlite:///{tmp_path / 'app.db'}",
+            allow_insecure_loopback=True,
+        ),
+        database=database,
+    )
+    async with app.router.lifespan_context(app):
+        pass
+
+    # The swept approval expired through the policy: state and audit.
+    swept = await repositories.approvals.get_by_id(expired.id)
+    assert swept is not None
+    assert swept.state == "expired"
+    swept_events = await repositories.approval_audit.list_for_approval(expired.id)
+    assert [event.event_type for event in swept_events] == ["expired"]
+    # The still-valid approval was never expired by the sweep; the restart
+    # recovery finishes it as revoked with its own audit event.
+    survivor = await repositories.approvals.get_by_id(valid.id)
+    assert survivor is not None
+    assert survivor.state == "revoked"
+    survivor_events = await repositories.approval_audit.list_for_approval(valid.id)
+    assert [event.event_type for event in survivor_events] == ["revoked"]
+    await database.dispose()
 
 
 @pytest.mark.asyncio
