@@ -43,6 +43,7 @@ from .agent import (
     parse_agent_input,
 )
 from .common import PROTOCOL_VERSION, MessageType, WireMessage
+from .keys import MAX_KEY_SEQUENCE_LENGTH, NAMED_KEYS, canonical_key_bytes
 from .http import (
     BrowserSessionChallengeResponse,
     BrowserSessionCreateRequest,
@@ -147,6 +148,7 @@ from .messages import (
     PaneCaptureRequestPayload,
     PaneCaptureResultPayload,
     PaneInputPayload,
+    PaneKeyInputPayload,
     PaneOutputPayload,
     PaneReplayRequestPayload,
     StreamGapPayload,
@@ -217,11 +219,13 @@ __all__ = [
     "InstanceRegisterResponse",
     "InstanceResponse",
     "ListPanesResult",
+    "MAX_KEY_SEQUENCE_LENGTH",
     "MessageCompletedEvent",
     "MessageCompletedPayload",
     "MessageDeltaEvent",
     "MessageDeltaPayload",
     "MessageType",
+    "NAMED_KEYS",
     "NativeClientDeleteResponse",
     "NativeClientListResponse",
     "NativeClientResponse",
@@ -247,6 +251,7 @@ __all__ = [
     "PaneCursor",
     "PaneInputPayload",
     "PaneInputRequest",
+    "PaneKeyInputPayload",
     "PaneOutputPayload",
     "PaneReadParams",
     "PaneReadResult",
@@ -337,6 +342,7 @@ __all__ = [
     "WatchTriggeredPayload",
     "WindowSnapshot",
     "WireMessage",
+    "canonical_key_bytes",
     "parse_agent_event",
     "parse_agent_input",
     "parse_payload",

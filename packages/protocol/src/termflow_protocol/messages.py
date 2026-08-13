@@ -12,6 +12,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .common import utc_now
+from .keys import MAX_KEY_SEQUENCE_LENGTH, NAMED_KEYS
 from .topology import PaneId, TopologySnapshot
 
 MAX_INPUT_BYTES = 16 * 1024
@@ -129,6 +130,10 @@ class PaneInputPayload(PayloadModel):
     pane_id: PaneId
     text: str
     submit: bool
+    #: Ledger incarnation of the target pane, when the sender knows it (the
+    #: M5 agent write path always fills it); the C terminal input path omits
+    #: it and A then skips the incarnation check (M5.2).
+    pane_incarnation: int | None = None
 
     @field_validator("text")
     @classmethod
@@ -140,6 +145,30 @@ class PaneInputPayload(PayloadModel):
         if not self.text and not self.submit:
             raise ValueError("text must be non-empty unless submit is true")
         return self
+
+
+class PaneKeyInputPayload(PayloadModel):
+    """One typed named-key sequence for a pane (plan §10, task M5.2).
+
+    Keys are validated against the shared :data:`NAMED_KEYS` vocabulary, so
+    arbitrary strings and control bytes can never be smuggled through the
+    plain-text input path.  ``pane_incarnation`` is the B ledger value when
+    present (agent write path); A validates it only when it is present.
+    """
+
+    command_id: UUID
+    idempotency_key: UUID
+    pane_id: PaneId
+    keys: tuple[str, ...] = Field(min_length=1, max_length=MAX_KEY_SEQUENCE_LENGTH)
+    pane_incarnation: int | None = None
+
+    @field_validator("keys")
+    @classmethod
+    def named_keys_only(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        unknown = [key for key in value if key not in NAMED_KEYS]
+        if unknown:
+            raise ValueError(f"unknown named keys: {sorted(unknown)}")
+        return value
 
 
 class PaneReplayRequestPayload(PayloadModel):
@@ -420,6 +449,7 @@ PAYLOAD_MODELS: dict[str, type[PayloadModel]] = {
     "topology.changed": TopologyChangedPayload,
     "pane.output": PaneOutputPayload,
     "pane.input": PaneInputPayload,
+    "pane.key_input": PaneKeyInputPayload,
     "pane.replay_request": PaneReplayRequestPayload,
     "pane.capture_request": PaneCaptureRequestPayload,
     "pane.capture_result": PaneCaptureResultPayload,

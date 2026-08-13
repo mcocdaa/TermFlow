@@ -23,6 +23,7 @@ class MessageType(StrEnum):
     TOPOLOGY_CHANGED = "topology.changed"
     PANE_OUTPUT = "pane.output"
     PANE_INPUT = "pane.input"
+    PANE_KEY_INPUT = "pane.key_input"
     PANE_REPLAY_REQUEST = "pane.replay_request"
     PANE_CAPTURE_REQUEST = "pane.capture_request"
     PANE_CAPTURE_RESULT = "pane.capture_result"

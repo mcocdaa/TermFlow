@@ -9,6 +9,8 @@ from termflow_protocol import (
     PaneReadParams,
     PaneReadResult,
     PaneReadView,
+    PaneSendKeysParams,
+    PaneSendTextParams,
     PaneSendTextResult,
     PaneWriteResult,
     StreamGapInfo,
@@ -102,6 +104,9 @@ def test_error_code_enum_values_are_stable() -> None:
         "watch_not_found",
         "approval_required",
         "approval_denied",
+        "approval_revoked",
+        "approval_expired",
+        "approval_conflict",
         "outcome_unknown",
         "internal_error",
     }
@@ -157,6 +162,70 @@ def test_pane_write_result_round_trips() -> None:
     dumped = result.model_dump()
     reparsed = PaneWriteResult.model_validate(dumped)
     assert reparsed == result
+    assert reparsed.approval_id is None
+
+
+def test_pane_write_result_round_trips_approval_id() -> None:
+    approval_id = uuid4()
+    result = PaneWriteResult(
+        request_key="req-1",
+        ok=False,
+        outcome="failed",
+        error_code="outcome_unknown",
+        approval_id=approval_id,
+    )
+    reparsed = PaneWriteResult.model_validate(result.model_dump())
+    assert reparsed.approval_id == approval_id
+
+
+def test_send_text_params_require_conversation_id() -> None:
+    with pytest.raises(ValidationError, match="conversation_id"):
+        PaneSendTextParams.model_validate(
+            {
+                "pane_id": "%1",
+                "request_key": "req-1",
+                "text": "ls",
+                "submit": True,
+            }
+        )
+
+
+def test_send_keys_params_require_conversation_id() -> None:
+    with pytest.raises(ValidationError, match="conversation_id"):
+        PaneSendKeysParams.model_validate(
+            {
+                "pane_id": "%1",
+                "request_key": "req-1",
+                "keys": ["enter"],
+            }
+        )
+
+
+def test_send_text_params_validate_intent_bound() -> None:
+    params = PaneSendTextParams(
+        pane_id="%1",
+        request_key="req-1",
+        conversation_id=uuid4(),
+        intent="run the test suite",
+        text="make test",
+    )
+    assert params.intent == "run the test suite"
+    with pytest.raises(ValidationError, match="intent"):
+        PaneSendTextParams(
+            pane_id="%1",
+            request_key="req-1",
+            conversation_id=uuid4(),
+            intent="",
+            text="make test",
+        )
+    with pytest.raises(ValidationError, match="intent"):
+        PaneSendTextParams(
+            pane_id="%1",
+            request_key="req-1",
+            conversation_id=uuid4(),
+            intent="x" * 1025,
+            text="make test",
+        )
 
 
 def test_pane_read_result_truncated_flag_round_trips() -> None:

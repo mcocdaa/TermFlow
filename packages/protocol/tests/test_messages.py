@@ -5,6 +5,8 @@ import pytest
 from pydantic import ValidationError
 from termflow_protocol import (
     BridgeHelloPayload,
+    PaneInputPayload,
+    PaneKeyInputPayload,
     PaneOutputPayload,
     PaneSnapshot,
     TerminalActionPayload,
@@ -293,6 +295,99 @@ def test_close_pane_requires_explicit_confirmation() -> None:
             target_pane_id="%1",
             confirmed=False,
         )
+
+
+def test_pane_input_round_trips_optional_incarnation() -> None:
+    command_id = uuid4()
+    key = uuid4()
+    payload = PaneInputPayload(
+        command_id=command_id,
+        idempotency_key=key,
+        pane_id="%1",
+        text="ls -la",
+        submit=True,
+        pane_incarnation=3,
+    )
+    assert payload.pane_incarnation == 3
+    parsed = parse_payload("pane.input", payload.model_dump(mode="json"))
+    assert parsed.pane_incarnation == 3
+
+    # The C terminal input path omits the field; it defaults to None.
+    legacy = PaneInputPayload(
+        command_id=command_id,
+        idempotency_key=key,
+        pane_id="%1",
+        text="ls -la",
+        submit=True,
+    )
+    assert legacy.pane_incarnation is None
+    reparsed = parse_payload("pane.input", legacy.model_dump(mode="json"))
+    assert reparsed.pane_incarnation is None
+
+
+def test_pane_key_input_round_trips_and_requires_named_keys() -> None:
+    command_id = uuid4()
+    key = uuid4()
+    payload = PaneKeyInputPayload(
+        command_id=command_id,
+        idempotency_key=key,
+        pane_id="%1",
+        keys=("ctrl-c", "enter"),
+        pane_incarnation=2,
+    )
+    parsed = parse_payload("pane.key_input", payload.model_dump(mode="json"))
+    assert isinstance(parsed, PaneKeyInputPayload)
+    assert parsed.keys == ("ctrl-c", "enter")
+    assert parsed.pane_incarnation == 2
+    assert parsed.command_id == command_id
+
+
+def test_pane_key_input_rejects_unknown_names() -> None:
+    with pytest.raises(ValidationError, match="unknown named keys"):
+        PaneKeyInputPayload(
+            command_id=uuid4(),
+            idempotency_key=uuid4(),
+            pane_id="%1",
+            keys=("ctrl-c", "not-a-key"),
+        )
+    with pytest.raises(ValidationError, match="unknown named keys"):
+        PaneKeyInputPayload(
+            command_id=uuid4(),
+            idempotency_key=uuid4(),
+            pane_id="%1",
+            keys=("C-c",),
+        )
+
+
+def test_pane_key_input_rejects_empty_and_oversized_sequences() -> None:
+    with pytest.raises(ValidationError, match="keys"):
+        PaneKeyInputPayload(
+            command_id=uuid4(),
+            idempotency_key=uuid4(),
+            pane_id="%1",
+            keys=(),
+        )
+    with pytest.raises(ValidationError, match="keys"):
+        PaneKeyInputPayload(
+            command_id=uuid4(),
+            idempotency_key=uuid4(),
+            pane_id="%1",
+            keys=tuple(["enter"] * 17),
+        )
+
+
+def test_pane_key_input_omits_incarnation_for_legacy_senders() -> None:
+    payload = parse_payload(
+        "pane.key_input",
+        {
+            "command_id": uuid4(),
+            "idempotency_key": uuid4(),
+            "pane_id": "%1",
+            "keys": ["enter"],
+        },
+    )
+    assert isinstance(payload, PaneKeyInputPayload)
+    assert payload.pane_incarnation is None
 
 
 def test_term_rename_command_and_result_are_strongly_typed() -> None:

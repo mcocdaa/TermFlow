@@ -16,12 +16,12 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .common import utc_now
+from .keys import MAX_KEY_SEQUENCE_LENGTH
 from .messages import validate_plain_text
 from .topology import PaneId
 
 MAX_PANE_READ_BYTES = 256 * 1024
 MAX_PANE_READ_LINES = 1_000_000
-MAX_KEY_SEQUENCE_LENGTH = 16
 MAX_WATCH_MATCH_LENGTH = 1024
 
 
@@ -46,6 +46,9 @@ class TermFlowErrorCode(StrEnum):
     WATCH_NOT_FOUND = "watch_not_found"
     APPROVAL_REQUIRED = "approval_required"
     APPROVAL_DENIED = "approval_denied"
+    APPROVAL_REVOKED = "approval_revoked"
+    APPROVAL_EXPIRED = "approval_expired"
+    APPROVAL_CONFLICT = "approval_conflict"
     OUTCOME_UNKNOWN = "outcome_unknown"
     INTERNAL_ERROR = "internal_error"
 
@@ -126,6 +129,8 @@ class PaneSendTextParams(ToolModel):
     pane_id: PaneId
     instance_id: UUID | None = None
     request_key: str = Field(min_length=1, max_length=256)
+    conversation_id: UUID
+    intent: str | None = Field(default=None, min_length=1, max_length=1024)
     text: str
     submit: bool = False
 
@@ -139,6 +144,8 @@ class PaneSendKeysParams(ToolModel):
     pane_id: PaneId
     instance_id: UUID | None = None
     request_key: str = Field(min_length=1, max_length=256)
+    conversation_id: UUID
+    intent: str | None = Field(default=None, min_length=1, max_length=1024)
     keys: tuple[str, ...] = Field(min_length=1, max_length=MAX_KEY_SEQUENCE_LENGTH)
 
     @field_validator("keys")
@@ -244,6 +251,10 @@ class PaneWriteResult(ToolModel):
     ok: bool
     outcome: Literal["confirmed", "outcome_unknown", "failed"]
     error_code: TermFlowErrorCode | None = None
+    #: The single-use approval that authorized this write, when one exists
+    #: (always set by the M5.2 approval-gated path; null keeps older receipts
+    #: backward compatible).
+    approval_id: UUID | None = None
 
     @model_validator(mode="after")
     def result_is_consistent(self) -> PaneWriteResult:
