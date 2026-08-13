@@ -26,6 +26,7 @@ because this starlette transport waits for the app task to complete).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 from collections.abc import Callable
@@ -35,6 +36,9 @@ from uuid import UUID, uuid4
 from fastapi.testclient import TestClient
 from sqlalchemy import delete
 from termflow_control_plane.persistence.models import AgentEvent
+from termflow_control_plane.plugins.agent_broker.agent.agui_projection import (
+    AgentEventProjector,
+)
 from termflow_control_plane.plugins.agent_broker.agent.stream_hub import (
     AgentEventCursor,
     AgentStreamHub,
@@ -126,18 +130,53 @@ def _append_event(
     *,
     kind: str = "run_started",
     dedup_key: str | None = None,
+    run_id: UUID | None = None,
+    payload: str | None = None,
 ) -> int:
     """Append a canonical event through the publish hook; returns database_seq."""
     cursor = _event_cursor(client)
+    if payload is not None:
+        payload_digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    else:
+        payload_digest = "test-digest"
     event = client.portal.call(
         lambda: cursor.append(
             conversation_id=conversation_id,
             event_kind=kind,
             dedup_key=dedup_key or f"dedup-{uuid4()}",
-            payload_digest="test-digest",
+            payload_digest=payload_digest,
+            run_id=run_id,
+            payload_json=payload,
         )
     )
     return event.database_seq
+
+
+def _seed_run(client: TestClient, conversation_id: UUID) -> UUID:
+    """Create a run row so run events can carry a foreign-keyed run_id."""
+    run = client.portal.call(
+        lambda: client.app.state.repositories.agent_runs.create(
+            conversation_id=conversation_id
+        )
+    )
+    return run.id
+
+
+def _message_delta_payload(message_id: UUID, text: str = "hello") -> str:
+    return json.dumps(
+        {
+            "message_id": str(message_id),
+            "part_id": "part-1",
+            "assembly_revision": 1,
+            "text": text,
+            "ephemeral": True,
+        },
+        separators=(",", ":"),
+    )
+
+
+def _run_started_payload() -> str:
+    return json.dumps({"input_id": None}, separators=(",", ":"))
 
 
 def _current_auth_epoch(client: TestClient) -> int:
@@ -223,6 +262,7 @@ class _GeneratorStream:
         conversation_id: UUID | None = None,
         binding_id: UUID | None = None,
         cursor: tuple[int, int] | None = None,
+        wire: str = "canonical",
     ) -> None:
         self._client = client
         state = client.app.state
@@ -232,6 +272,7 @@ class _GeneratorStream:
         self.conversation_id = conversation_id
         self.binding_id = binding_id
         self.cursor = cursor
+        self.wire = wire
         self.auth_epoch = _current_auth_epoch(client)
         self.frames: list[str] = []
         self._task: asyncio.Task[None] | None = None
@@ -243,6 +284,7 @@ class _GeneratorStream:
         client = self._client
         holder = client.portal.call(list)
         self._frames_holder = holder
+        projector = AgentEventProjector() if self.wire == "agui" else None
         generator = stream_events_generator(
             hub=self.hub,
             repositories=self.repositories,
@@ -251,6 +293,7 @@ class _GeneratorStream:
             binding_id=self.binding_id,
             cursor=self.cursor,
             auth_epoch=self.auth_epoch,
+            projector=projector,
         )
 
         async def consume() -> None:
@@ -277,6 +320,9 @@ class _GeneratorStream:
     def parsed_frames(self) -> list[tuple[str, dict[str, object]]]:
         raw = self._client.portal.call(lambda: list(self._frames_holder or ()))
         return [_parse_frame(frame) for frame in raw]
+
+    def raw_frames(self) -> list[str]:
+        return self._client.portal.call(lambda: list(self._frames_holder or ()))
 
     def wait_for(
         self,
@@ -667,6 +713,356 @@ class TestAgentStreamClosure:
         assert frames[-1][0] == "closed"
         assert frames[-1][1]["code"] == CLOSE_BINDING_REVOKED
         assert frames[-1][1]["reason"] == "binding_revoked"
+
+
+class TestAgentStreamAGUI:
+    """wire=agui projection over the same SSE stream (plan M6a spec §4.4, §8).
+
+    The frame contract is unchanged: ``event: agent_event`` with
+    ``{"type": "event", "event": <AG-UI event>, "cursor": "{epoch}-{seq}"}``;
+    the AG-UI event object itself never carries B cursor/seq/digest fields.
+    """
+
+    def test_unknown_wire_value_is_rejected(self, client, admin_headers) -> None:
+        response = client.get(
+            "/api/v1/agent/stream",
+            headers=admin_headers,
+            params={"wire": "bogus"},
+        )
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "invalid_wire"
+
+    def test_agui_happy_path_projects_canonical_event(
+        self, client, admin_headers, provision_term
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(
+            client, admin_headers, binding_id=binding_id
+        )
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        epoch = _current_auth_epoch(client)
+        message_id = uuid4()
+
+        with _GeneratorStream(
+            client, conversation_id=conversation_id, wire="agui"
+        ) as stream:
+            seq = _append_event(
+                client,
+                conversation_id,
+                kind="message_delta",
+                dedup_key="agui-live-1",
+                payload=_message_delta_payload(message_id),
+            )
+            frames = stream.wait_for(
+                lambda f: any(name == "agent_event" for name, _d in f)
+            )
+
+        assert seq == 1
+        name, data = frames[0]
+        assert name == "agent_event"
+        assert data["type"] == "event"
+        event = data["event"]
+        # The AG-UI event shape: camelCase fields, no B storage identifiers.
+        assert set(event) == {"type", "messageId", "role", "delta", "timestamp"}
+        assert event["type"] == "TEXT_MESSAGE_CHUNK"
+        assert event["messageId"] == str(message_id)
+        assert event["role"] == "assistant"
+        assert event["delta"] == "hello"
+        assert isinstance(event["timestamp"], int)
+        # The opaque cursor envelope is unchanged: epoch-seq, never inside the
+        # AG-UI event object.
+        assert data["cursor"] == f"{epoch}-1"
+
+    def test_agui_replay_from_cursor_preserves_order(
+        self, client, admin_headers, provision_term
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(
+            client, admin_headers, binding_id=binding_id
+        )
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        epoch = _current_auth_epoch(client)
+        first_message = uuid4()
+        second_message = uuid4()
+        _append_event(
+            client,
+            conversation_id,
+            kind="message_delta",
+            dedup_key="agui-pre-1",
+            payload=_message_delta_payload(first_message, "first"),
+        )
+        _append_event(
+            client,
+            conversation_id,
+            kind="message_delta",
+            dedup_key="agui-pre-2",
+            payload=_message_delta_payload(second_message, "second"),
+        )
+
+        with _GeneratorStream(
+            client, conversation_id=conversation_id, cursor=(epoch, 1), wire="agui"
+        ) as stream:
+            live_message = uuid4()
+            _append_event(
+                client,
+                conversation_id,
+                kind="message_delta",
+                dedup_key="agui-live-2",
+                payload=_message_delta_payload(live_message, "live"),
+            )
+            frames = stream.wait_for(
+                lambda f: sum(1 for name, _d in f if name == "agent_event") >= 2
+            )
+
+        events = [data["event"] for name, data in frames if name == "agent_event"]
+        assert [event["messageId"] for event in events] == [
+            str(second_message),
+            str(live_message),
+        ]
+        assert [data["cursor"] for name, data in frames] == [f"{epoch}-2", f"{epoch}-3"]
+
+    def test_agui_unprojectable_events_emit_no_frame_but_stream_continues(
+        self, client, admin_headers, provision_term
+    ) -> None:
+        """A payload-less event is dropped (no frame), yet the cursor
+        bookkeeping advances past it and later events still arrive."""
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(
+            client, admin_headers, binding_id=binding_id
+        )
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        run_id = _seed_run(client, conversation_id)
+        epoch = _current_auth_epoch(client)
+
+        with _GeneratorStream(
+            client, conversation_id=conversation_id, wire="agui"
+        ) as stream:
+            # Unprojectable: no payload stored.
+            _append_event(
+                client, conversation_id, kind="message_delta", dedup_key="agui-skip-1"
+            )
+            # Projectable: run_started with a run_id and payload.
+            _append_event(
+                client,
+                conversation_id,
+                kind="run_started",
+                dedup_key="agui-skip-2",
+                run_id=run_id,
+                payload=_run_started_payload(),
+            )
+            frames = stream.wait_for(
+                lambda f: any(name == "agent_event" for name, _d in f)
+            )
+
+        assert len(frames) == 1
+        name, data = frames[0]
+        assert name == "agent_event"
+        assert data["event"]["type"] == "RUN_STARTED"
+        assert data["event"]["threadId"] == str(conversation_id)
+        assert data["event"]["runId"] == str(run_id)
+        # The cursor advanced past the skipped event (seq 2, not 1).
+        assert data["cursor"] == f"{epoch}-2"
+
+    def test_agui_dedup_still_projects_once(
+        self, client, admin_headers, provision_term
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(
+            client, admin_headers, binding_id=binding_id
+        )
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        message_id = uuid4()
+        payload = _message_delta_payload(message_id)
+
+        with _GeneratorStream(
+            client, conversation_id=conversation_id, wire="agui"
+        ) as stream:
+            _append_event(
+                client, conversation_id, kind="message_delta", dedup_key="agui-same",
+                payload=payload,
+            )
+            _append_event(
+                client, conversation_id, kind="message_delta", dedup_key="agui-same",
+                payload=payload,
+            )
+            stream.wait_for(
+                lambda f: any(name == "agent_event" for name, _d in f)
+            )
+            time.sleep(0.3)
+
+        events = [
+            data["event"]
+            for name, data in stream.parsed_frames()
+            if name == "agent_event"
+        ]
+        assert [event["messageId"] for event in events] == [str(message_id)]
+
+    def test_agui_global_stream_events_are_mergeable_by_thread_id(
+        self, client, admin_headers, provision_term
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        first = UUID(
+            str(
+                _create_conversation(client, admin_headers, binding_id=binding_id)[
+                    "conversation_id"
+                ]
+            )
+        )
+        second = UUID(
+            str(
+                _create_conversation(client, admin_headers, binding_id=binding_id)[
+                    "conversation_id"
+                ]
+            )
+        )
+        first_run = _seed_run(client, first)
+        second_run = _seed_run(client, second)
+        epoch = _current_auth_epoch(client)
+
+        with _GeneratorStream(client, wire="agui") as stream:
+            _append_event(
+                client, first, dedup_key="agui-global-1", run_id=first_run,
+                payload=_run_started_payload(),
+            )
+            _append_event(
+                client, second, dedup_key="agui-global-2", run_id=second_run,
+                payload=_run_started_payload(),
+            )
+            frames = stream.wait_for(
+                lambda f: sum(1 for name, _d in f if name == "agent_event") >= 2
+            )
+
+        events = [data["event"] for name, data in frames if name == "agent_event"]
+        assert {event["type"] for event in events} == {"RUN_STARTED"}
+        # threadId is the conversation id: clients merge the global stream by it.
+        assert {event["threadId"] for event in events} == {str(first), str(second)}
+        assert {event["runId"] for event in events} == {str(first_run), str(second_run)}
+        assert all(data["cursor"] == f"{epoch}-0" for name, data in frames)
+
+    def test_agui_epoch_mismatched_cursor_returns_reset(
+        self, client, admin_headers, provision_term
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(
+            client, admin_headers, binding_id=binding_id
+        )
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        _append_event(client, conversation_id, dedup_key="agui-reset-pre")
+        epoch = _current_auth_epoch(client)
+
+        with _GeneratorStream(
+            client, conversation_id=conversation_id, cursor=(epoch + 1, 1), wire="agui"
+        ) as stream:
+            frames = stream.wait_for(
+                lambda f: any(name == "reset" for name, _d in f)
+            )
+
+        name, data = frames[0]
+        assert name == "reset"
+        assert data["type"] == "reset"
+        assert data["reason"] == "cursor_too_old"
+        assert str(data["cursor"]) == f"{epoch}-1"
+
+    def test_agui_binding_revocation_closes_stream_in_band(
+        self, client, admin_headers, provision_term
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(
+            client, admin_headers, binding_id=binding_id
+        )
+        conversation_id = UUID(str(conversation["conversation_id"]))
+
+        with _GeneratorStream(
+            client,
+            conversation_id=conversation_id,
+            binding_id=binding_id,
+            wire="agui",
+        ) as stream:
+            _set_binding_status(client, binding_id, "revoked")
+            _append_event(client, conversation_id, dedup_key="agui-after-revoke")
+            stream.wait_for(lambda f: any(name == "closed" for name, _d in f))
+            stream.wait_done()
+
+        frames = stream.parsed_frames()
+        name, data = frames[-1]
+        assert name == "closed"
+        assert data["code"] == CLOSE_BINDING_REVOKED
+        assert data["reason"] == "binding_revoked"
+        assert not any(name == "agent_event" for name, _d in frames)
+
+    def test_agui_hub_closed_subscriber_emits_in_band_closed_frame(
+        self, client, admin_headers, provision_term
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(
+            client, admin_headers, binding_id=binding_id
+        )
+        conversation_id = UUID(str(conversation["conversation_id"]))
+
+        with _GeneratorStream(
+            client,
+            conversation_id=conversation_id,
+            binding_id=binding_id,
+            wire="agui",
+        ) as stream:
+            closed = client.portal.call(stream.hub.close_for_binding, binding_id)
+            assert closed == 1
+            _append_event(client, conversation_id, dedup_key="agui-after-close")
+            stream.wait_for(lambda f: any(name == "closed" for name, _d in f))
+            stream.wait_done()
+
+        frames = stream.parsed_frames()
+        assert frames[-1][0] == "closed"
+        assert frames[-1][1]["code"] == CLOSE_BINDING_REVOKED
+        assert frames[-1][1]["reason"] == "binding_revoked"
+
+    def test_default_canonical_wire_frames_are_byte_identical(
+        self, client, admin_headers, provision_term
+    ) -> None:
+        """wire defaults to canonical: the canonical SSE frame is byte-for-byte
+        the same as before the wire parameter existed (M6a spec §4.4)."""
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(
+            client, admin_headers, binding_id=binding_id
+        )
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        epoch = _current_auth_epoch(client)
+
+        with _GeneratorStream(client, conversation_id=conversation_id) as stream:
+            _append_event(
+                client, conversation_id, kind="message_delta", dedup_key="agui-bytes"
+            )
+            stream.wait_for(
+                lambda f: any(name == "agent_event" for name, _d in f)
+            )
+
+        event = client.portal.call(
+            client.app.state.repositories.agent_events.list_for_conversation,
+            conversation_id,
+        )[0]
+        expected_envelope = {
+            "event_id": str(event.id),
+            "conversation_id": str(event.conversation_id),
+            "run_id": None,
+            "event_kind": event.event_kind,
+            "database_seq": event.database_seq,
+            "payload_digest": event.payload_digest,
+            "ephemeral": event.ephemeral,
+            "created_at": event.created_at.isoformat(),
+        }
+        expected_data = json.dumps(
+            {
+                "type": "event",
+                "event": expected_envelope,
+                "cursor": f"{epoch}-1",
+            },
+            separators=(",", ":"),
+        )
+        expected = (
+            "event: agent_event\n"
+            f"data: {expected_data}\n\n"
+        )
+        assert stream.raw_frames()[0] == expected
 
 
 class TestAgentStreamHub:
