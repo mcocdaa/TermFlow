@@ -301,6 +301,7 @@ export interface TerminalActionResultFrame {
 
 export interface AgentCapabilitiesResponse {
   agent_broker_enabled: boolean
+  delegated_write_grants_enabled: boolean
 }
 
 export interface AgentConversationCreateRequest {

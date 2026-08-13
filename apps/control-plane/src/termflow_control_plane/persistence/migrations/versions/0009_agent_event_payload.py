@@ -1,12 +1,12 @@
 """Bounded canonical event payload storage (plan M6a spec §4.2).
 
 Revision ID: 0009
-Revises: 0007
+Revises: 0008
 
-Numbering note: revision 0008 is reserved for the M5.2 approval_audit
-migration, which is developed on a parallel branch; this migration pins
-``down_revision = "0007"`` (the head when M6a landed) and the parallel 0008
-must adopt ``0007`` as its parent (or rebase) so the chains merge cleanly.
+Numbering note: revision 0008 is the M5.2 approval_audit migration,
+developed on a parallel branch.  Both branches merged into the main
+feature line, so this migration chains onto 0008 (not 0007) to keep a
+single linear head.
 
 Adds the nullable ``agent_events.payload`` column that the AG-UI wire
 projection needs: today ``agent_events`` carries only ``payload_digest`` (no
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0009"
-down_revision: str | None = "0007"
+down_revision: str | None = "0008"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
