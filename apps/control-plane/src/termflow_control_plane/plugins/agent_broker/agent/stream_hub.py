@@ -222,6 +222,7 @@ class AgentEventCursor:
         payload_digest: str,
         run_id: UUID | None = None,
         ephemeral: bool = False,
+        payload_json: str | None = None,
     ) -> AgentEvent:
         event = await self._repository.append(
             conversation_id=conversation_id,
@@ -230,6 +231,7 @@ class AgentEventCursor:
             payload_digest=payload_digest,
             run_id=run_id,
             ephemeral=ephemeral,
+            payload_json=payload_json,
         )
         if self._publisher is not None:
             await self._publisher(event)

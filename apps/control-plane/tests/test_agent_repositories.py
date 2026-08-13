@@ -9,6 +9,7 @@ use).
 
 import asyncio
 import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -1018,6 +1019,81 @@ async def test_event_concurrent_append_same_dedup_key_inserts_once(
         payload_digest=_hash("done"),
     )
     assert later.database_seq == 2
+
+
+@pytest.mark.asyncio
+async def test_event_append_persists_payload_and_enforces_digest_invariant(
+    repositories: RepositoryBundle,
+) -> None:
+    """M6a: ``append(payload_json=...)`` persists the payload and requires the
+    digest invariant ``payload_digest == sha256(payload_json)`` (plan spec §4.2)."""
+    conversation = await _seed_conversation(repositories)
+    payload_json = json.dumps(
+        {"message_id": str(uuid4()), "text": "hello"}, separators=(",", ":")
+    )
+
+    event = await repositories.agent_events.append(
+        conversation_id=conversation.id,
+        event_kind="message_delta",
+        dedup_key="payload-1",
+        payload_digest=_hash(payload_json),
+        payload_json=payload_json,
+    )
+    assert event.payload == payload_json
+
+    fetched = (await repositories.agent_events.list_for_conversation(conversation.id))[0]
+    assert fetched.payload == payload_json
+    since = await repositories.agent_events.list_since_cursor(conversation.id, 0)
+    assert since[0].payload == payload_json
+
+    # Digest invariant: providing a payload requires the exact sha256 digest.
+    with pytest.raises(ValueError, match="payload_digest"):
+        await repositories.agent_events.append(
+            conversation_id=conversation.id,
+            event_kind="message_delta",
+            dedup_key="payload-2",
+            payload_digest=_hash("other"),
+            payload_json=payload_json,
+        )
+
+    # Existing calls without a payload stay unchanged (payload column is NULL).
+    no_payload = await repositories.agent_events.append(
+        conversation_id=conversation.id,
+        event_kind="run_completed",
+        dedup_key="payload-3",
+        payload_digest=_hash("done"),
+    )
+    assert no_payload.payload is None
+
+
+@pytest.mark.asyncio
+async def test_event_append_rejects_payload_over_64_kib(
+    repositories: RepositoryBundle,
+) -> None:
+    """M6a: payloads are bounded to 64 KiB; the exact bound is accepted."""
+    conversation = await _seed_conversation(repositories)
+
+    exact_json = '{"text":"' + "a" * (64 * 1024 - 11) + '"}'
+    assert len(exact_json.encode("utf-8")) == 64 * 1024
+    accepted = await repositories.agent_events.append(
+        conversation_id=conversation.id,
+        event_kind="message_delta",
+        dedup_key="payload-boundary",
+        payload_digest=_hash(exact_json),
+        payload_json=exact_json,
+    )
+    assert accepted.payload == exact_json
+
+    oversized_json = '{"text":"' + "b" * (64 * 1024 - 10) + '"}'
+    assert len(oversized_json.encode("utf-8")) == 64 * 1024 + 1
+    with pytest.raises(ValueError, match="64"):
+        await repositories.agent_events.append(
+            conversation_id=conversation.id,
+            event_kind="message_delta",
+            dedup_key="payload-oversized",
+            payload_digest=_hash(oversized_json),
+            payload_json=oversized_json,
+        )
 
 
 # ---------------------------------------------------------------------------

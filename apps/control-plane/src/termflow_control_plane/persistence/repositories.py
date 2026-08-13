@@ -19,6 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from termflow_control_plane.auth.pkce import create_s256_challenge
 from termflow_control_plane.auth.secret_box import EncryptedSecret
+from termflow_control_plane.plugins.agent_broker.agent.agui_projection import (
+    MAX_AGENT_EVENT_PAYLOAD_BYTES,
+)
 
 from .models import (
     AgentBinding,
@@ -3460,7 +3463,23 @@ class AgentEventRepository:
         payload_digest: str,
         run_id: UUID | None = None,
         ephemeral: bool = False,
+        payload_json: str | None = None,
     ) -> AgentEvent:
+        if payload_json is not None:
+            payload_bytes = payload_json.encode("utf-8")
+            if len(payload_bytes) > MAX_AGENT_EVENT_PAYLOAD_BYTES:
+                raise ValueError(
+                    f"event payload must not exceed {MAX_AGENT_EVENT_PAYLOAD_BYTES} "
+                    "bytes (64 KiB)"
+                )
+            # Digest invariant (M6a spec §4.2): storage and hash are the same
+            # byte string, so the digest stays verifiable and payload/digest
+            # drift fails fast instead of corrupting the projection silently.
+            if hashlib.sha256(payload_bytes).hexdigest() != payload_digest:
+                raise ValueError(
+                    "payload_digest must equal sha256(payload_json) when a payload "
+                    "is provided"
+                )
         observed_at = datetime.now(UTC)
         next_seq = (
             select(func.coalesce(func.max(AgentEvent.database_seq), 0) + 1)
@@ -3478,6 +3497,7 @@ class AgentEventRepository:
                         AgentEvent.dedup_key,
                         AgentEvent.database_seq,
                         AgentEvent.payload_digest,
+                        AgentEvent.payload,
                         AgentEvent.ephemeral,
                         AgentEvent.created_at,
                     ],
@@ -3488,6 +3508,7 @@ class AgentEventRepository:
                         literal(dedup_key),
                         next_seq,
                         literal(payload_digest),
+                        literal(payload_json),
                         literal(ephemeral),
                         literal(observed_at),
                     ).where(

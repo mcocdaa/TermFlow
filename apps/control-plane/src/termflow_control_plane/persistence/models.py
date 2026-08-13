@@ -579,6 +579,9 @@ class AgentEvent(Base):
     # B-assigned monotonic database sequence: the unique conversation cursor.
     database_seq: Mapped[int] = mapped_column(Integer)
     payload_digest: Mapped[str] = mapped_column(String(64))
+    # Bounded canonical payload JSON (M6a): NULL for pre-migration rows and
+    # callers that append digest-only events.  Its lifecycle is the row's.
+    payload: Mapped[str | None] = mapped_column(Text, default=None)
     ephemeral: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
