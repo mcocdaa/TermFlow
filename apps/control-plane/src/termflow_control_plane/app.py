@@ -279,6 +279,20 @@ async def _authentication_epoch_loop(
             logger.exception("Authentication epoch poll failed; retrying")
 
 
+async def _close_transcription_provider(app: FastAPI) -> None:
+    """Release a provider-owned HTTP client at shutdown (M7a).
+
+    The transcription provider is a process-lifetime singleton.  Only a
+    :class:`SpeachesTranscriptionProvider` that lazily created its own httpx
+    client defines ``close()`` (``agent/opencode.py`` precedent); the Null
+    provider and test-injected providers have no such hook and are skipped.
+    """
+    provider = getattr(app.state, "transcription_provider", None)
+    close = getattr(provider, "close", None)
+    if close is not None:
+        await close()
+
+
 async def _verify_oauth_totp(service: AuthenticationService, code: str) -> bool:
     """Convert unavailable or invalid TOTP state into a closed authorization denial."""
 
@@ -436,7 +450,10 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
                     try:
                         await app.state.feature_registry.shutdown()
                     finally:
-                        await active_database.dispose()
+                        try:
+                            await _close_transcription_provider(app)
+                        finally:
+                            await active_database.dispose()
 
     app = FastAPI(
         title="TermFlow Control Plane",

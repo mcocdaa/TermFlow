@@ -126,7 +126,10 @@ def test_stt_speaches_service_is_optional_and_hardened() -> None:
     # No host-published ports: exposed on the internal network only.
     assert "ports" not in stt
     assert stt["cap_drop"] == ["ALL"]
+    assert stt["security_opt"] == ["no-new-privileges:true"]
     assert stt["read_only"] is True
+    assert stt["tmpfs"] == ["/tmp:size=64m,mode=1777,noexec,nosuid"]
+    assert stt["ulimits"] == {"nofile": {"soft": 1024, "hard": 1024}}
     assert not any(
         "/var/run/docker.sock" in mount for mount in stt["volumes"]
     )

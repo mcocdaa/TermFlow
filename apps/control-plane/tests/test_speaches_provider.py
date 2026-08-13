@@ -253,3 +253,66 @@ class TestDefensiveBounds:
 
         with pytest.raises(TranscriptionProviderError):
             await provider.transcribe(AUDIO, mime_type="audio/ogg")
+
+
+class TestResponseBounds:
+    async def test_declared_oversized_response_body_is_invalid(self) -> None:
+        # A Content-Length over the cap is rejected before parsing (a
+        # transcription JSON is never close to 64 KiB).
+        provider = _provider(
+            lambda request: httpx.Response(
+                200,
+                headers={"content-length": str(64 * 1024 + 1)},
+                content=b'{"text": "hi"}',
+            )
+        )
+
+        with pytest.raises(
+            TranscriptionProviderError, match="invalid transcription response"
+        ):
+            await provider.transcribe(AUDIO, mime_type="audio/wav")
+
+    async def test_undeclared_oversized_response_body_is_invalid(self) -> None:
+        # No content-length header: the parsed body itself exceeds the cap.
+        provider = _provider(
+            lambda request: httpx.Response(
+                200,
+                content=b'{"text": "' + b"a" * (64 * 1024 + 8) + b'"}',
+            )
+        )
+
+        with pytest.raises(
+            TranscriptionProviderError, match="invalid transcription response"
+        ):
+            await provider.transcribe(AUDIO, mime_type="audio/wav")
+
+
+class TestOwnedClientClose:
+    async def test_close_releases_only_an_owned_client(self) -> None:
+        requests: list[httpx.Request] = []
+        provider = _provider(
+            lambda request: httpx.Response(200, json={"text": "hi"}),
+            requests=requests,
+        )
+        injected = provider._client
+
+        await provider.close()
+
+        # The injected client belongs to the injector (the test), so it must
+        # stay open after the provider is closed (opencode.py precedent).
+        assert injected is not None
+        assert not injected.is_closed
+
+    async def test_close_releases_a_lazily_owned_client(self) -> None:
+        # No client injected: the provider lazily creates and owns its
+        # httpx.AsyncClient, and close() must release exactly that client.
+        provider = SpeachesTranscriptionProvider(
+            "http://stt-speaches:8000",
+            model=MODEL,
+            timeout_seconds=5.0,
+        )
+        owned = provider._client
+
+        await provider.close()
+
+        assert owned.is_closed

@@ -44,6 +44,11 @@ _TRANSCRIPTIONS_PATH = "/v1/audio/transcriptions"
 #: re-checked here as port-boundary defense in depth (spec §5.1).
 DEFAULT_MAX_AUDIO_BYTES = 10 * 1024 * 1024
 
+#: Response body cap: a transcription JSON ({"text": ...} up to the port's
+#: 4096-char transcript bound) is far below this; anything larger is a
+#: malformed or malicious provider response and is rejected before parsing.
+MAX_RESPONSE_BYTES = 64 * 1024
+
 #: Stable safe filenames per sniffed mime; the port never trusts callers.
 _MIME_FILENAMES = {
     "audio/wav": "speech.wav",
@@ -104,6 +109,17 @@ class SpeachesTranscriptionProvider:
         """Describe capability: configuration-derived, no live probing (§5.3)."""
         return True
 
+    async def close(self) -> None:
+        """Close the HTTP client only when this provider owns it.
+
+        The composition root installs the provider as a process-lifetime
+        singleton and calls this during application shutdown; an injected
+        (test) client belongs to its injector and is left open (the
+        ``agent/opencode.py`` precedent).
+        """
+        if self._owns_client:
+            await self._client.aclose()
+
     async def transcribe(self, audio: bytes, *, mime_type: str) -> TranscriptionResult:
         """Transcribe bounded ``audio`` bytes against the pinned endpoint.
 
@@ -141,8 +157,26 @@ class SpeachesTranscriptionProvider:
             raise TranscriptionProviderError(
                 f"speaches returned HTTP {response.status_code}"
             )
+        # Bound the response before parsing (spec §4.3 invalid-response
+        # family): a declared Content-Length over the cap is rejected up
+        # front, and the materialized body is re-checked for chunked/absent
+        # headers before any JSON parsing cost is paid.
+        declared = response.headers.get("content-length")
+        if declared is not None:
+            try:
+                declared_bytes = int(declared)
+            except ValueError:
+                declared_bytes = -1
+            if declared_bytes > MAX_RESPONSE_BYTES:
+                logger.error("speaches transcription failed: invalid response")
+                raise TranscriptionProviderError("invalid transcription response")
         try:
+            if len(response.content) > MAX_RESPONSE_BYTES:
+                logger.error("speaches transcription failed: invalid response")
+                raise TranscriptionProviderError("invalid transcription response")
             payload = response.json()
+        except TranscriptionProviderError:
+            raise
         except Exception as exc:
             logger.error("speaches transcription failed: invalid response")
             raise TranscriptionProviderError(
