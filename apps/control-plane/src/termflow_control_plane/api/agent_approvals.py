@@ -21,7 +21,7 @@ M1.1 model; they surface with the tool-call context in M5.2+.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -149,7 +149,7 @@ def _shared_policy(
     """
     shared = getattr(request.app.state, "approval_policy", None)
     if shared is not None:
-        return shared
+        return cast(ApprovalPolicy, shared)
     return ApprovalPolicy(repositories, sessions)
 
 

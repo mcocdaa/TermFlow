@@ -1,10 +1,10 @@
-"""Observe-only MCP server connector over the official MCP Python SDK (plan §10, task M4.4).
+"""MCP server connector over the official MCP Python SDK (plan §10, task M4.4/M5.2).
 
-This module assembles B's MCP capability surface from the existing observe-only
-handlers in :mod:`termflow_control_plane.plugins.agent_broker.api.mcp_tools`
-(plan §10 initial tools; writes land with M5) and exposes it over the pinned
-official MCP SDK's Streamable HTTP transport (plan §22: adopt the SDK directly,
-keep B's security checks outside it).
+This module assembles B's MCP capability surface from the handlers in
+:mod:`termflow_control_plane.plugins.agent_broker.api.mcp_tools` - the six
+observe tools plus the two approval-gated write tools (M5.2) - and exposes
+them over the pinned official MCP SDK's Streamable HTTP transport (plan §22:
+adopt the SDK directly, keep B's security checks outside it).
 
 SDK 2.0.0 surface used here (documented against the installed 2.0.0):
 
@@ -519,7 +519,7 @@ def _guarded_tool(
     quota: PerBindingQuota,
     config: McpGuardrailConfig,
 ) -> Callable[..., Awaitable[BaseModel]]:
-    """Build the SDK tool callable wrapping one observe-only handler.
+    """Build the SDK tool callable wrapping one observe or write handler.
 
     Tools without arguments (``list_panes``, ``watch_list``) get a bare
     signature; the rest validate their arguments against the protocol model

@@ -34,6 +34,7 @@ from termflow_control_plane.persistence.repositories import RepositoryBundle
 from termflow_control_plane.plugins.agent_broker.agent.inbox import (
     InboxDeliveryStateMachine,
 )
+from termflow_control_plane.plugins.agent_broker.agent.permissions import ApprovalPolicy
 from termflow_control_plane.plugins.agent_broker.agent.runs import AgentRunStateMachine
 from termflow_control_plane.plugins.protocol import (
     BFeatureContext,
@@ -77,7 +78,7 @@ async def run_agent_recovery(
     inbox_machine: InboxDeliveryStateMachine | None = None,
     run_machine: AgentRunStateMachine | None = None,
     cleanup_handlers: Mapping[str, CleanupJobHandler] | None = None,
-    approval_policy=None,
+    approval_policy: ApprovalPolicy | None = None,
 ) -> AgentRecoveryReport:
     """Deterministic restart recovery in the plan §17 order.
 

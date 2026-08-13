@@ -434,6 +434,12 @@ async def update_agent_binding(
             # A revoked/disabled binding must not keep pending or approved
             # approvals alive (spec §5): every request of the binding is
             # revoked so no waiter can ever execute a reviewed write.
+            # NOTE: the binding status is already committed at this point.  A
+            # revocation failure still fails the call with 409, but the status
+            # change stays.  That is safe (not a security gap): CommandService
+            # rechecks the binding state before every execution, so a write
+            # can never run under a revoked binding even when this sweep
+            # missed its approvals.
             shared = getattr(http_request.app.state, "approval_policy", None)
             policy = shared or ApprovalPolicy(repositories, sessions)
             try:
