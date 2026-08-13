@@ -43,17 +43,18 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import update
-from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from termflow_protocol.agent import ApprovalDecision
 
 from termflow_control_plane.persistence.models import ApprovalRequest
 from termflow_control_plane.persistence.repositories import RepositoryBundle
+from termflow_control_plane.plugins.agent_broker.agent.approval_audit import (
+    ApprovalAuditWriter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -223,7 +224,7 @@ class ApprovalPolicy:
         sessions: async_sessionmaker[AsyncSession],
         *,
         clock: Callable[[], datetime] | None = None,
-        audit=None,
+        audit: ApprovalAuditWriter | None = None,
     ) -> None:
         self._repositories = repositories
         self._sessions = sessions

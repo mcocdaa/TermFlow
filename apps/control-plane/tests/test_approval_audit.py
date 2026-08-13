@@ -22,7 +22,6 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-import pytest
 import pytest_asyncio
 from sqlalchemy import inspect
 from termflow_control_plane.persistence.database import Database
@@ -424,7 +423,6 @@ class TestRetentionAndSchema:
         now = datetime.now(UTC)
         # Move the event row back past the retention window.
         from sqlalchemy import update
-
         from termflow_control_plane.persistence.models import ApprovalAuditEvent
 
         async with repos.session_factory() as session:  # type: ignore[attr-defined]

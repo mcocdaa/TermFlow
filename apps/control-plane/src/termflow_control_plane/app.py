@@ -83,10 +83,10 @@ from termflow_control_plane.plugins.agent_broker.agent.terminal_ports import (
     ObservationService,
     WatchContinuationService,
 )
-from termflow_control_plane.plugins.agent_broker.agent.watches import ObservationCursorStore
 from termflow_control_plane.plugins.agent_broker.agent.transcription import (
     NullTranscriptionProvider,
 )
+from termflow_control_plane.plugins.agent_broker.agent.watches import ObservationCursorStore
 from termflow_control_plane.plugins.agent_broker.api.mcp_server import (
     MCP_STREAMABLE_HTTP_PATH,
     McpGuardrailConfig,

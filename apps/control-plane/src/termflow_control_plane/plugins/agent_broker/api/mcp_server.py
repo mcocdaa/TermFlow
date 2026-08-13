@@ -56,6 +56,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.exceptions import MCPError
 from mcp_types import INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST
 from pydantic import AnyHttpUrl, BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.applications import Starlette
 from termflow_protocol.mcp import (
     MAX_PANE_READ_BYTES,
@@ -224,7 +225,7 @@ def _termflow_tool_error(exc: TermFlowToolError) -> MCPError:
         code = INVALID_PARAMS
     else:
         code = INTERNAL_ERROR
-    data = {"termflow_error_code": exc.error_code.value}
+    data: dict[str, object] = {"termflow_error_code": exc.error_code.value}
     if exc.data:
         data.update(exc.data)
     return MCPError(
@@ -664,7 +665,7 @@ def build_mcp_server(
     policy_checker: RepositoryBundle,
     token_auth: AgentTokenAuthenticator,
     *,
-    sessions,
+    sessions: async_sessionmaker[AsyncSession],
     commands: TerminalCommandPort,
     guardrails: McpGuardrailConfig | None = None,
     name: str = "termflow",

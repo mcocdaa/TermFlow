@@ -702,7 +702,9 @@ class TestApprovalsApi:
         binding_id = _seed_binding(client, admin_headers, provision_term)
         conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
         approval_id = self._seed_approval(
-            client, binding_id=binding_id, conversation_id=UUID(str(conversation["conversation_id"]))
+            client,
+            binding_id=binding_id,
+            conversation_id=UUID(str(conversation["conversation_id"])),
         )
         detail = client.get(f"/api/v1/agent/approvals/{approval_id}", headers=admin_headers)
         assert detail.status_code == 200

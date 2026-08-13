@@ -219,7 +219,6 @@ class TestBindings:
         """Spec §5: a revoked/disabled binding cannot keep approvals alive."""
         from datetime import UTC, datetime, timedelta
 
-        from termflow_control_plane.persistence.repositories import RepositoryBundle
         from termflow_control_plane.plugins.agent_broker.agent.permissions import (
             ApprovalState,
             canonical_hash,

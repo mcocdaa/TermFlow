@@ -257,7 +257,7 @@ class CommandRouter:
 
         try:
             connection.require_capability(typed_keys=True)
-        except CapabilityUnavailable as exc:
+        except CapabilityUnavailable:
             await self._record(
                 instance_id,
                 pane_id,

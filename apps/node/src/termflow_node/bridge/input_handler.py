@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Protocol
+from typing import Protocol, cast
 
 from termflow_protocol import (
     CommandResultPayload,
@@ -49,7 +49,11 @@ class InputHandler:
     ) -> None:
         self._topology_provider = topology_provider
         self._sender = sender
-        self._keys_sender = keys_sender or sender
+        # In production ``AsyncTmuxInput`` implements both senders; when no
+        # dedicated key sender is given the text sender must double as one.
+        self._keys_sender: KeysSender = (
+            keys_sender if keys_sender is not None else cast(KeysSender, sender)
+        )
         self._idempotency = idempotency or IdempotencyResults()
         self._pane_locks: dict[str, asyncio.Lock] = {}
 

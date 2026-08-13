@@ -159,7 +159,7 @@ async def test_send_keys_enqueues_typed_key_message_with_incarnation(
         "operation": "pane.keys",
         "instance_id": live_connection.instance_id,
         "pane_id": "%1",
-        "input_bytes": len('["ctrl-c","enter"]'.encode()),
+        "input_bytes": len(b'["ctrl-c","enter"]'),
         "result": "ok",
         "error_code": None,
     }

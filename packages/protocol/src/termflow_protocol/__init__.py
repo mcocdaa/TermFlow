@@ -43,7 +43,6 @@ from .agent import (
     parse_agent_input,
 )
 from .common import PROTOCOL_VERSION, MessageType, WireMessage
-from .keys import MAX_KEY_SEQUENCE_LENGTH, NAMED_KEYS, canonical_key_bytes
 from .http import (
     BrowserSessionChallengeResponse,
     BrowserSessionCreateRequest,
@@ -108,6 +107,7 @@ from .http import (
     TotpSetupResponse,
     TotpStatusResponse,
 )
+from .keys import MAX_KEY_SEQUENCE_LENGTH, NAMED_KEYS, canonical_key_bytes
 from .mcp import (
     ListPanesResult,
     PaneCursor,

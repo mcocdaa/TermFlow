@@ -9,7 +9,6 @@ the approval hash (``["enter","space"]`` must differ from
 
 from __future__ import annotations
 
-import pytest
 from termflow_protocol.keys import (
     MAX_KEY_SEQUENCE_LENGTH,
     NAMED_KEYS,

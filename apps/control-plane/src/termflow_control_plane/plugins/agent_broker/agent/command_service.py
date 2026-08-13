@@ -36,9 +36,10 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import UUID, uuid4
 
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from termflow_protocol import CommandResultPayload
 from termflow_protocol.keys import NAMED_KEYS, canonical_key_bytes
 from termflow_protocol.mcp import (
@@ -54,10 +55,13 @@ from termflow_control_plane.connections.registry import CapabilityUnavailable
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.models import ApprovalRequest
 from termflow_control_plane.persistence.repositories import RepositoryBundle
+from termflow_control_plane.plugins.agent_broker.agent.approval_audit import (
+    ApprovalAuditWriter,
+)
 from termflow_control_plane.plugins.agent_broker.agent.permissions import (
+    ApprovalArgsHashInput,
     ApprovalError,
     ApprovalPolicy,
-    ApprovalArgsHashInput,
     ApprovalState,
     ApprovalToolCallConflict,
     canonical_hash,
@@ -220,14 +224,14 @@ class CommandService:
         self,
         *,
         repositories: RepositoryBundle,
-        sessions,
+        sessions: async_sessionmaker[AsyncSession],
         gateway: CommandGateway,
         observation: TerminalObservationPort,
         clock: Callable[[], datetime] | None = None,
         approval_wait_timeout_seconds: float = 25.0,
         approval_ttl_seconds: float = 300.0,
         poll_interval_seconds: float = 0.5,
-        audit=None,
+        audit: ApprovalAuditWriter | None = None,
         policy: ApprovalPolicy | None = None,
     ) -> None:
         self._repositories = repositories
@@ -239,10 +243,9 @@ class CommandService:
         self._ttl = approval_ttl_seconds
         self._poll_interval = poll_interval_seconds
         self._audit = audit
-        policy_kwargs: dict[str, object] = {"clock": self._clock}
-        if audit is not None:
-            policy_kwargs["audit"] = audit
-        self.policy = policy or ApprovalPolicy(repositories, sessions, **policy_kwargs)
+        if policy is None:
+            policy = ApprovalPolicy(repositories, sessions, clock=self._clock, audit=audit)
+        self.policy = policy
 
     async def send_text(
         self,
@@ -251,7 +254,10 @@ class CommandService:
         *,
         tool_call_id: str,
     ) -> PaneSendTextResult:
-        return await self._execute(principal, params, tool_call_id, operation="send_text")
+        return cast(
+            PaneSendTextResult,
+            await self._execute(principal, params, tool_call_id, operation="send_text"),
+        )
 
     async def send_keys(
         self,
@@ -260,7 +266,10 @@ class CommandService:
         *,
         tool_call_id: str,
     ) -> PaneSendKeysResult:
-        return await self._execute(principal, params, tool_call_id, operation="send_keys")
+        return cast(
+            PaneSendKeysResult,
+            await self._execute(principal, params, tool_call_id, operation="send_keys"),
+        )
 
     # ------------------------------------------------------------------
     # main flow
@@ -637,7 +646,7 @@ class CommandService:
 
     @staticmethod
     def _decision_failure(approval_id: UUID, state: ApprovalState) -> TermFlowToolError:
-        data = {"approval_id": str(approval_id)}
+        data: dict[str, object] = {"approval_id": str(approval_id)}
         if state is ApprovalState.DENIED:
             return TermFlowToolError(
                 TermFlowErrorCode.APPROVAL_DENIED,
@@ -663,7 +672,7 @@ class CommandService:
         )
 
     @staticmethod
-    def _aware(value) -> datetime | None:
+    def _aware(value: datetime | None) -> datetime | None:
         if value is None or value.tzinfo is not None:
             return value
         return value.replace(tzinfo=UTC)
