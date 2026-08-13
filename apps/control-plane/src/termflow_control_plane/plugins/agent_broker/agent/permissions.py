@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -53,6 +54,8 @@ from termflow_protocol.agent import ApprovalDecision
 
 from termflow_control_plane.persistence.models import ApprovalRequest
 from termflow_control_plane.persistence.repositories import RepositoryBundle
+
+logger = logging.getLogger(__name__)
 
 _CANONICAL_HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _MAX_TOOL_CALL_ID_LENGTH = 128
@@ -204,6 +207,14 @@ class ApprovalPolicy:
     replays, and double consumption can never win twice.  Rejections raise a
     specific :class:`ApprovalError` subclass that maps to a stable HTTP code
     at the API boundary.
+
+    Since M5.2 the policy optionally writes one metadata-only audit event
+    per successful transition through an injected
+    :class:`~termflow_control_plane.plugins.agent_broker.agent.approval_audit.ApprovalAuditWriter`
+    (default ``None`` = no-op, keeping the M5.1 surface unchanged).
+    ``consume``/``mark_unknown`` accept optional ``outcome``/``error_code``/
+    ``input_bytes`` metadata that only enters the audit row; the CAS
+    semantics never change.
     """
 
     def __init__(
@@ -212,10 +223,12 @@ class ApprovalPolicy:
         sessions: async_sessionmaker[AsyncSession],
         *,
         clock: Callable[[], datetime] | None = None,
+        audit=None,
     ) -> None:
         self._repositories = repositories
         self._sessions = sessions
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._audit = audit
 
     async def create_approval(
         self,
@@ -227,6 +240,10 @@ class ApprovalPolicy:
         auth_epoch: int,
         expires_at: datetime,
         run_id: UUID | None = None,
+        pane_id: str | None = None,
+        operation: str | None = None,
+        intent_summary: str | None = None,
+        input_bytes: int | None = None,
     ) -> ApprovalRequest:
         """Create a pending single-use approval for one write request."""
         if _CANONICAL_HASH_PATTERN.fullmatch(canonical_hash) is None:
@@ -238,7 +255,7 @@ class ApprovalPolicy:
         if expires_at <= self._clock():
             raise ValueError("expires_at must be in the future")
         try:
-            return await self._repositories.approvals.create(
+            approval = await self._repositories.approvals.create(
                 binding_id=binding_id,
                 conversation_id=conversation_id,
                 tool_call_id=tool_call_id,
@@ -247,6 +264,9 @@ class ApprovalPolicy:
                 expires_at=expires_at,
                 run_id=run_id,
                 state=ApprovalState.PENDING.value,
+                pane_id=pane_id,
+                operation=operation,
+                intent_summary=intent_summary,
             )
         except IntegrityError as exc:
             # The unique (conversation_id, tool_call_id) constraint means one
@@ -254,6 +274,12 @@ class ApprovalPolicy:
             # replayed tool call.  FK violations are the caller's contract
             # violation (B always creates approvals for entities it owns).
             raise ApprovalToolCallConflict(conversation_id, tool_call_id) from exc
+        await self._record_event(
+            approval,
+            event_type="created",
+            input_bytes=input_bytes,
+        )
+        return approval
 
     async def decide(
         self,
@@ -296,10 +322,12 @@ class ApprovalPolicy:
                     decided_at=observed_at,
                     decision=decision.value,
                 )
-                .returning(ApprovalRequest.state)
+                .returning(ApprovalRequest)
             )
-            if result.scalar_one_or_none() is not None:
+            approval = result.scalar_one_or_none()
+            if approval is not None:
                 await session.commit()
+                await self._record_event(approval, event_type="decided", actor=actor)
                 return new_state
             approval = await session.get(ApprovalRequest, approval_id)
             await session.commit()
@@ -339,38 +367,55 @@ class ApprovalPolicy:
             new_state=ApprovalState.REVOKED,
             observed_at=observed_at,
             where_states=(ApprovalState.PENDING, ApprovalState.APPROVED),
+            actor=actor,
         )
 
-    async def revoke_for_binding(self, binding_id: UUID, *, now: datetime | None = None) -> int:
+    async def revoke_for_binding(
+        self,
+        binding_id: UUID,
+        *,
+        actor: str = "admin",
+        now: datetime | None = None,
+    ) -> int:
         """Revoke every pending/approved request of a binding; returns the count."""
+        self._require_actor(actor)
         observed_at = now or self._clock()
         async with self._sessions() as session:
-            result = cast(
-                CursorResult[Any],
-                await session.execute(
-                    update(ApprovalRequest)
-                    .where(
-                        ApprovalRequest.binding_id == binding_id,
-                        ApprovalRequest.state.in_(
-                            (ApprovalState.PENDING.value, ApprovalState.APPROVED.value)
-                        ),
-                    )
-                    .values(
-                        state=ApprovalState.REVOKED.value,
-                        decided_at=observed_at,
-                        decision=ApprovalState.REVOKED.value,
-                    )
-                ),
+            result = await session.execute(
+                update(ApprovalRequest)
+                .where(
+                    ApprovalRequest.binding_id == binding_id,
+                    ApprovalRequest.state.in_(
+                        (ApprovalState.PENDING.value, ApprovalState.APPROVED.value)
+                    ),
+                )
+                .values(
+                    state=ApprovalState.REVOKED.value,
+                    decided_at=observed_at,
+                    decision=ApprovalState.REVOKED.value,
+                )
+                .returning(ApprovalRequest)
             )
-            count = int(result.rowcount or 0)
+            rows = list(result.scalars())
             await session.commit()
-            return count
+        for approval in rows:
+            await self._record_event(approval, event_type="revoked", actor=actor)
+        return len(rows)
 
-    async def consume(self, approval_id: UUID, *, now: datetime | None = None) -> ApprovalState:
+    async def consume(
+        self,
+        approval_id: UUID,
+        *,
+        now: datetime | None = None,
+        outcome: str | None = None,
+        error_code: str | None = None,
+        input_bytes: int | None = None,
+    ) -> ApprovalState:
         """Mark a pending or approved request consumed (single use).
 
         Called after a terminal A execution outcome: the approval has
         authorized exactly one write and can never authorize another.
+        ``outcome``/``error_code``/``input_bytes`` are audit metadata only.
         """
         observed_at = now or self._clock()
         return await self._transition(
@@ -378,16 +423,26 @@ class ApprovalPolicy:
             new_state=ApprovalState.CONSUMED,
             observed_at=observed_at,
             where_states=(ApprovalState.PENDING, ApprovalState.APPROVED),
+            outcome=outcome,
+            error_code=error_code,
+            input_bytes=input_bytes,
         )
 
     async def mark_unknown(
-        self, approval_id: UUID, *, now: datetime | None = None
+        self,
+        approval_id: UUID,
+        *,
+        now: datetime | None = None,
+        outcome: str | None = None,
+        error_code: str | None = None,
+        input_bytes: int | None = None,
     ) -> ApprovalState:
         """Mark an approved request ``unknown`` after an uncertain A outcome.
 
         The outcome could not be proven, so the approval is never
         automatically replayed: neither a second decision nor a consume can
-        move it again.
+        move it again.  ``outcome``/``error_code``/``input_bytes`` are audit
+        metadata only.
         """
         observed_at = now or self._clock()
         return await self._transition(
@@ -395,11 +450,48 @@ class ApprovalPolicy:
             new_state=ApprovalState.UNKNOWN,
             observed_at=observed_at,
             where_states=(ApprovalState.APPROVED,),
+            outcome=outcome,
+            error_code=error_code,
+            input_bytes=input_bytes,
         )
 
     async def expire_pending(self, *, now: datetime | None = None) -> int:
-        """Sweep pending requests whose expiry passed; returns the count."""
-        return await self._repositories.approvals.expire_pending(now=now)
+        """Sweep pending AND approved requests whose expiry passed.
+
+        Records one ``expired`` audit event per swept row and returns the
+        count (spec §5: approved zombies are finished by the same sweep).
+        """
+        observed_at = now or self._clock()
+        swept = await self._repositories.approvals.expire_pending(now=observed_at)
+        for approval in swept:
+            await self._record_event(approval, event_type="expired")
+        return len(swept)
+
+    async def recover_orphaned_approvals(
+        self, *, now: datetime | None = None
+    ) -> tuple[int, int]:
+        """B-restart recovery: finish approvals with no living waiter (§5).
+
+        ``pending`` approvals were never decided and have no waiter after a
+        restart -> ``revoked``; ``approved`` (unconsumed) approvals cannot
+        prove whether the write executed -> ``unknown`` (never replayed).
+        Returns ``(revoked_count, unknown_count)``; audit events carry the
+        ``system:restart`` actor.
+        """
+        observed_at = now or self._clock()
+        revoked = await self._transition_many(
+            where_states=(ApprovalState.PENDING,),
+            new_state=ApprovalState.REVOKED,
+            observed_at=observed_at,
+            actor="system:restart",
+        )
+        unknown = await self._transition_many(
+            where_states=(ApprovalState.APPROVED,),
+            new_state=ApprovalState.UNKNOWN,
+            observed_at=observed_at,
+            actor="system:restart",
+        )
+        return revoked, unknown
 
     async def _transition(
         self,
@@ -408,6 +500,10 @@ class ApprovalPolicy:
         new_state: ApprovalState,
         observed_at: datetime,
         where_states: tuple[ApprovalState, ...],
+        actor: str | None = None,
+        outcome: str | None = None,
+        error_code: str | None = None,
+        input_bytes: int | None = None,
     ) -> ApprovalState:
         """Shared CAS core for revoke/consume/mark_unknown with rejection classification."""
         async with self._sessions() as session:
@@ -424,10 +520,19 @@ class ApprovalPolicy:
                     decided_at=observed_at,
                     decision=new_state.value,
                 )
-                .returning(ApprovalRequest.state)
+                .returning(ApprovalRequest)
             )
-            if result.scalar_one_or_none() is not None:
+            approval = result.scalar_one_or_none()
+            if approval is not None:
                 await session.commit()
+                await self._record_event(
+                    approval,
+                    event_type=new_state.value,
+                    actor=actor,
+                    outcome=outcome,
+                    error_code=error_code,
+                    input_bytes=input_bytes,
+                )
                 return new_state
             approval = await session.get(ApprovalRequest, approval_id)
             await session.commit()
@@ -443,6 +548,68 @@ class ApprovalPolicy:
                 approval_id,
                 state=approval.state,
                 decision=approval.decision,
+            )
+
+    async def _transition_many(
+        self,
+        *,
+        where_states: tuple[ApprovalState, ...],
+        new_state: ApprovalState,
+        observed_at: datetime,
+        actor: str,
+    ) -> int:
+        """One bulk CAS for every row in ``where_states``; audits each winner."""
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(ApprovalRequest)
+                .where(
+                    ApprovalRequest.state.in_(
+                        tuple(state.value for state in where_states)
+                    )
+                )
+                .values(
+                    state=new_state.value,
+                    decided_at=observed_at,
+                    decision=new_state.value,
+                )
+                .returning(ApprovalRequest)
+            )
+            rows = list(result.scalars())
+            await session.commit()
+        for approval in rows:
+            await self._record_event(
+                approval, event_type=new_state.value, actor=actor
+            )
+        return len(rows)
+
+    async def _record_event(
+        self,
+        approval: ApprovalRequest,
+        *,
+        event_type: str,
+        actor: str | None = None,
+        outcome: str | None = None,
+        error_code: str | None = None,
+        input_bytes: int | None = None,
+    ) -> None:
+        """Best-effort audit event: a failure is logged, never fatal."""
+        if self._audit is None:
+            return
+        try:
+            await self._audit.record(
+                event_type=event_type,
+                approval=approval,
+                actor=actor,
+                outcome=outcome,
+                error_code=error_code,
+                input_bytes=input_bytes,
+            )
+        except Exception as exc:
+            logger.exception(
+                "approval audit event %s for approval %s failed: %s",
+                event_type,
+                approval.id,
+                exc,
             )
 
     @staticmethod

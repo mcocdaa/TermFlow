@@ -321,7 +321,7 @@ class CommandService:
         tool_call_id: str,
         operation: str,
         expiry: datetime,
-    ) -> object:
+    ) -> ApprovalRequest:
         context = await self._write_context(principal, params, operation, expiry=expiry)
         try:
             return await self.policy.create_approval(
@@ -332,6 +332,10 @@ class CommandService:
                 auth_epoch=await persisted_authentication_epoch(self._repositories),
                 expires_at=expiry,
                 run_id=await self._current_run_id(params.conversation_id),
+                pane_id=params.pane_id,
+                operation=operation,
+                intent_summary=params.intent,
+                input_bytes=context.input_bytes,
             )
         except ApprovalToolCallConflict as exc:
             existing = await self._repositories.approvals.get_by_tool_call(
@@ -441,6 +445,10 @@ class CommandService:
         pane_incarnation: int | None,
     ) -> PaneSendTextResult | PaneSendKeysResult:
         idempotency_key = uuid4()
+        if operation == "send_text":
+            input_bytes = len(params.text.encode("utf-8"))  # type: ignore[union-attr]
+        else:
+            input_bytes = len(canonical_key_bytes(params.keys))  # type: ignore[union-attr]
         try:
             if operation == "send_text":
                 assert isinstance(params, PaneSendTextParams)
@@ -462,16 +470,28 @@ class CommandService:
                     pane_incarnation,
                 )
         except OutcomeUnknownError as exc:
-            await self._settle_mark_unknown(approval.id)
+            await self._settle_mark_unknown(
+                approval.id,
+                outcome="outcome_unknown",
+                error_code="outcome_unknown",
+                input_bytes=input_bytes,
+            )
             raise TermFlowToolError(
                 TermFlowErrorCode.OUTCOME_UNKNOWN,
                 "the write may have been sent but the outcome is unknown",
                 data={"approval_id": str(approval.id)},
             ) from exc
         except TermFlowToolError as exc:
-            await self._settle_consume(approval.id)
+            await self._settle_consume(
+                approval.id,
+                outcome="failed",
+                error_code=exc.error_code.value,
+                input_bytes=input_bytes,
+            )
             raise
-        await self._settle_consume(approval.id)
+        await self._settle_consume(
+            approval.id, outcome="confirmed", input_bytes=input_bytes
+        )
         return self._result(params, operation, approval.id)
 
     def _result(
@@ -492,18 +512,42 @@ class CommandService:
     # settle helpers
     # ------------------------------------------------------------------
 
-    async def _settle_consume(self, approval_id: UUID) -> None:
+    async def _settle_consume(
+        self,
+        approval_id: UUID,
+        *,
+        outcome: str | None = None,
+        error_code: str | None = None,
+        input_bytes: int | None = None,
+    ) -> None:
         try:
-            await self.policy.consume(approval_id)
+            await self.policy.consume(
+                approval_id,
+                outcome=outcome,
+                error_code=error_code,
+                input_bytes=input_bytes,
+            )
         except ApprovalError as exc:
             # A settle CAS that loses (e.g. to a concurrent human revoke)
             # changes nothing; the factual receipt is still returned because
             # the write did happen (spec §4 race disclosure).
             logger.warning("approval %s settle(consume) lost: %s", approval_id, exc)
 
-    async def _settle_mark_unknown(self, approval_id: UUID) -> None:
+    async def _settle_mark_unknown(
+        self,
+        approval_id: UUID,
+        *,
+        outcome: str | None = None,
+        error_code: str | None = None,
+        input_bytes: int | None = None,
+    ) -> None:
         try:
-            await self.policy.mark_unknown(approval_id)
+            await self.policy.mark_unknown(
+                approval_id,
+                outcome=outcome,
+                error_code=error_code,
+                input_bytes=input_bytes,
+            )
         except ApprovalError as exc:
             logger.warning("approval %s settle(mark_unknown) lost: %s", approval_id, exc)
 

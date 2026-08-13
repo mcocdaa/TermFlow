@@ -109,6 +109,7 @@ class TestFeatureRegistryWiring:
         assert [(revision.id, revision.owner) for revision in registry.migrations] == [
             ("0006", "agent_broker"),
             ("0007", "agent_broker"),
+            ("0008", "agent_broker"),
         ]
 
     def test_disabled_plugin_removes_functional_agent_routes(
@@ -175,8 +176,8 @@ class TestFeatureRegistryWiring:
         assert [
             (revision.id, revision.owner)
             for revision in first.state.feature_registry.migrations
-        ] == [("0006", "agent_broker"), ("0007", "agent_broker")]
+        ] == [("0006", "agent_broker"), ("0007", "agent_broker"), ("0008", "agent_broker")]
         assert [
             (revision.id, revision.owner)
             for revision in second.state.feature_registry.migrations
-        ] == [("0006", "agent_broker"), ("0007", "agent_broker")]
+        ] == [("0006", "agent_broker"), ("0007", "agent_broker"), ("0008", "agent_broker")]

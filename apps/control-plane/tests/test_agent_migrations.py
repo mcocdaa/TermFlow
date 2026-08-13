@@ -19,9 +19,9 @@ from termflow_control_plane.persistence.models import Base
 
 # The migration head after this task.  Only tests asserting the GLOBAL head use
 # this constant; upgrade-path fixtures still pin "0005" explicitly.
-HEAD = "0007"
+HEAD = "0008"
 
-# Every Agent Broker table created by migrations 0006 and 0007 (plan §15).
+# Every Agent Broker table created by migrations 0006, 0007, and 0008 (plan §15).
 AGENT_TABLES = (
     "agent_profiles",
     "agent_bindings",
@@ -37,6 +37,7 @@ AGENT_TABLES = (
     "agent_tokens",
     "pane_policies",
     "approval_requests",
+    "approval_audit_events",
     "write_grants",
     "watches",
     "watch_deliveries",
@@ -230,6 +231,115 @@ def test_downgrade_from_head_to_0006_drops_watch_engine_schema(tmp_path) -> None
         assert revision == "0006"
         assert "pane_observation_cursors" not in table_names
         assert "matcher_state" not in watch_columns
+    finally:
+        engine.dispose()
+
+
+def test_upgrade_from_0007_to_head_adds_approval_audit_schema(tmp_path) -> None:
+    """The 0008 delta is additive on an 0007 database (plan §12.1, M5.2)."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'upgrade-0007.db'}")
+    try:
+        with engine.begin() as connection:
+            config = _migration_config(connection)
+            command.upgrade(config, "0007")
+            assert "approval_audit_events" not in _table_names(connection)
+            approval_columns = {
+                column["name"] for column in inspect(connection).get_columns(
+                    "approval_requests"
+                )
+            }
+            assert "pane_id" not in approval_columns
+
+            command.upgrade(config, "head")
+            table_names = _table_names(connection)
+            revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
+            approval_columns = {
+                column["name"] for column in inspect(connection).get_columns(
+                    "approval_requests"
+                )
+            }
+        assert revision == HEAD
+        assert "approval_audit_events" in table_names
+        assert {"pane_id", "operation", "intent_summary"} <= approval_columns
+    finally:
+        engine.dispose()
+
+
+def test_approval_audit_schema_delta_columns_and_indexes(tmp_path) -> None:
+    """The audit table has its exact columns, FKs, and indexes (spec §7)."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'audit-schema.db'}")
+    try:
+        with engine.begin() as connection:
+            command.upgrade(_migration_config(connection), "head")
+        inspector = inspect(engine)
+
+        columns = {
+            column["name"]: column
+            for column in inspector.get_columns("approval_audit_events")
+        }
+        assert set(columns) == {
+            "id",
+            "created_at",
+            "event_type",
+            "approval_id",
+            "binding_id",
+            "instance_id",
+            "runtime_epoch",
+            "conversation_id",
+            "run_id",
+            "tool_call_id",
+            "pane_id",
+            "operation",
+            "input_bytes",
+            "canonical_hash",
+            "auth_epoch",
+            "actor",
+            "outcome",
+            "error_code",
+        }
+        # Metadata-only: no raw text/keys columns exist.
+        assert "text" not in columns
+        assert "keys" not in columns
+
+        foreign_keys = _foreign_key_signatures(inspector, "approval_audit_events")
+        assert (("approval_id",), "approval_requests", ("id",)) in {
+            (fk[0], fk[1], fk[2]) for fk in foreign_keys
+        }
+        assert (("binding_id",), "agent_bindings", ("id",)) in {
+            (fk[0], fk[1], fk[2]) for fk in foreign_keys
+        }
+        assert (("conversation_id",), "agent_conversations", ("id",)) in {
+            (fk[0], fk[1], fk[2]) for fk in foreign_keys
+        }
+
+        indexes = _index_signatures(inspector, "approval_audit_events")
+        assert indexes["ix_approval_audit_events_approval_id"] == (("approval_id",), False)
+        assert indexes["ix_approval_audit_events_created_at"] == (("created_at",), False)
+    finally:
+        engine.dispose()
+
+
+def test_downgrade_from_head_to_0007_drops_approval_audit_schema(tmp_path) -> None:
+    """The 0008 delta downgrades cleanly back to the M3 schema."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'downgrade-0007.db'}")
+    try:
+        with engine.begin() as connection:
+            config = _migration_config(connection)
+            command.upgrade(config, "head")
+            assert "approval_audit_events" in _table_names(connection)
+
+            command.downgrade(config, "0007")
+            table_names = _table_names(connection)
+            revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
+            approval_columns = {
+                column["name"] for column in inspect(connection).get_columns(
+                    "approval_requests"
+                )
+            }
+        assert revision == "0007"
+        assert "approval_audit_events" not in table_names
+        assert "pane_id" not in approval_columns
+        assert "intent_summary" not in approval_columns
     finally:
         engine.dispose()
 

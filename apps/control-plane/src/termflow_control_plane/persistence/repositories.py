@@ -34,6 +34,7 @@ from .models import (
     AgentRuntimeBinding,
     AgentToken,
     AgentToolRequest,
+    ApprovalAuditEvent,
     ApprovalRequest,
     AuditEvent,
     AuthAuditEvent,
@@ -63,6 +64,10 @@ def digest_secret(value: str | bytes) -> str:
 #: for confirmed cleanup tombstones (plan §16.1: the durable timeline and
 #: confirmed tombstones are retained 30 days).
 AGENT_TERMINAL_RETENTION = timedelta(days=30)
+
+#: Retention window for approval audit metadata (spec §7 and the
+#: ``APPROVAL_AUDIT_METADATA`` contract: 90 days, redacted, no raw storage).
+AGENT_APPROVAL_AUDIT_RETENTION = timedelta(days=90)
 
 
 def _encode_scopes(scopes: tuple[str, ...]) -> str:
@@ -3733,6 +3738,9 @@ class ApprovalRepository:
         expires_at: datetime,
         run_id: UUID | None = None,
         state: str = "pending",
+        pane_id: str | None = None,
+        operation: str | None = None,
+        intent_summary: str | None = None,
     ) -> ApprovalRequest:
         async with self._sessions() as session:
             approval = ApprovalRequest(
@@ -3744,6 +3752,9 @@ class ApprovalRepository:
                 state=state,
                 expires_at=expires_at,
                 auth_epoch=auth_epoch,
+                pane_id=pane_id,
+                operation=operation,
+                intent_summary=intent_summary,
             )
             session.add(approval)
             await session.commit()
@@ -3796,18 +3807,97 @@ class ApprovalRepository:
             await session.commit()
             return approval
 
-    async def expire_pending(self, *, now: datetime | None = None) -> int:
+    async def expire_pending(self, *, now: datetime | None = None) -> list[ApprovalRequest]:
+        """Sweep pending AND approved requests whose expiry passed (M5.2).
+
+        Returns the swept rows so the policy can record one ``expired``
+        audit event per row; ``approved`` rows past expiry are the
+        "decided but never executed" zombies the synchronous tool flow can
+        never leave behind, and the sweep finishes them the same way.
+        """
         observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(ApprovalRequest)
+                .where(
+                    ApprovalRequest.state.in_(("pending", "approved")),
+                    ApprovalRequest.expires_at <= observed_at,
+                )
+                .values(state="expired", decided_at=observed_at, decision="expired")
+                .returning(ApprovalRequest)
+            )
+            rows = list(result.scalars())
+            await session.commit()
+            return rows
+
+
+class ApprovalAuditRepository:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def create(
+        self,
+        *,
+        event_type: str,
+        approval_id: UUID,
+        binding_id: UUID,
+        instance_id: UUID | None,
+        runtime_epoch: int | None,
+        conversation_id: UUID,
+        run_id: UUID | None,
+        tool_call_id: str,
+        pane_id: str | None,
+        operation: str | None,
+        input_bytes: int | None,
+        canonical_hash: str,
+        auth_epoch: int,
+        actor: str | None,
+        outcome: str | None,
+        error_code: str | None,
+    ) -> ApprovalAuditEvent:
+        async with self._sessions() as session:
+            event = ApprovalAuditEvent(
+                event_type=event_type,
+                approval_id=approval_id,
+                binding_id=binding_id,
+                instance_id=instance_id,
+                runtime_epoch=runtime_epoch,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                tool_call_id=tool_call_id,
+                pane_id=pane_id,
+                operation=operation,
+                input_bytes=input_bytes,
+                canonical_hash=canonical_hash,
+                auth_epoch=auth_epoch,
+                actor=actor,
+                outcome=outcome,
+                error_code=error_code,
+            )
+            session.add(event)
+            await session.commit()
+            return event
+
+    async def list_for_approval(self, approval_id: UUID) -> list[ApprovalAuditEvent]:
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(ApprovalAuditEvent)
+                .where(ApprovalAuditEvent.approval_id == approval_id)
+                .order_by(ApprovalAuditEvent.created_at)
+            )
+            return list(rows)
+
+    async def purge_expired(
+        self, *, now: datetime | None = None, older_than: timedelta = AGENT_APPROVAL_AUDIT_RETENTION
+    ) -> int:
+        """Delete metadata rows after the 90-day retention window (spec §7)."""
+        observed_at = now or datetime.now(UTC)
+        cutoff = observed_at - older_than
         async with self._sessions() as session:
             result = cast(
                 CursorResult[Any],
                 await session.execute(
-                    update(ApprovalRequest)
-                    .where(
-                        ApprovalRequest.state == "pending",
-                        ApprovalRequest.expires_at <= observed_at,
-                    )
-                    .values(state="expired", decided_at=observed_at, decision="expired")
+                    delete(ApprovalAuditEvent).where(ApprovalAuditEvent.created_at <= cutoff)
                 ),
             )
             count = int(result.rowcount or 0)
@@ -4335,6 +4425,7 @@ class RepositoryBundle:
         self.agent_tokens = AgentTokenRepository(sessions)
         self.pane_policies = PanePolicyRepository(sessions)
         self.approvals = ApprovalRepository(sessions)
+        self.approval_audit = ApprovalAuditRepository(sessions)
         self.watches = WatchRepository(sessions)
         self.agent_watch_deliveries = WatchDeliveryRepository(sessions)
         self.transcript_drafts = TranscriptDraftRepository(sessions)
@@ -4369,7 +4460,8 @@ class RepositoryBundle:
                 counts[name] = int(result.rowcount or 0)
             await session.commit()
         counts["agent_tokens"] = await self.agent_tokens.purge_expired(now=now)
-        counts["approvals"] = await self.approvals.expire_pending(now=now)
+        counts["approvals"] = len(await self.approvals.expire_pending(now=now))
+        counts["approval_audit"] = await self.approval_audit.purge_expired(now=now)
         counts["transcript_drafts"] = await self.transcript_drafts.expire_pending(
             now=now
         )

@@ -66,6 +66,8 @@ class AgentRecoveryReport:
     runs_marked_unknown: int = 0
     cleanup_jobs_retried: int = 0
     cleanup_jobs_completed: int = 0
+    approvals_revoked: int = 0
+    approvals_marked_unknown: int = 0
 
 
 async def run_agent_recovery(
@@ -75,6 +77,7 @@ async def run_agent_recovery(
     inbox_machine: InboxDeliveryStateMachine | None = None,
     run_machine: AgentRunStateMachine | None = None,
     cleanup_handlers: Mapping[str, CleanupJobHandler] | None = None,
+    approval_policy=None,
 ) -> AgentRecoveryReport:
     """Deterministic restart recovery in the plan §17 order.
 
@@ -87,11 +90,17 @@ async def run_agent_recovery(
        and any failure - including a missing handler - records an attempt
        with a retry backoff so the tombstone stays visible as
        ``deletion_pending``.
+    4. Orphaned approvals are finished (M5.2, spec §5): never-decided
+       ``pending`` requests become ``revoked`` and unconsumed ``approved``
+       requests become ``unknown`` - every in-flight tool call died with the
+       restart, so no waiter remains and nothing is ever replayed.  The
+       counts merge into the report.
 
     The sweep is fail-safe: every step and every item is guarded, failures
     are logged, and the process keeps starting.  ``inbox_machine`` and
     ``run_machine`` default to fresh state machines (a restart never carries
-    in-memory submission state across processes).
+    in-memory submission state across processes); ``approval_policy`` is the
+    composition root's shared policy (audit writer included) when provided.
     """
     observed = now or datetime.now(UTC)
     report = AgentRecoveryReport()
@@ -157,6 +166,17 @@ async def run_agent_recovery(
     except Exception as exc:
         logger.exception("Agent cleanup job scan failed: %s", exc)
 
+    # 4) Orphaned approvals: pending -> revoked, approved -> unknown.
+    if approval_policy is not None:
+        try:
+            revoked, unknown = await approval_policy.recover_orphaned_approvals(
+                now=observed
+            )
+            report.approvals_revoked = revoked
+            report.approvals_marked_unknown = unknown
+        except Exception as exc:
+            logger.exception("Agent approval recovery failed: %s", exc)
+
     return report
 
 
@@ -212,6 +232,9 @@ class AgentBrokerPlugin:
         )
         manifest.add_revision(
             MigrationRevision(id="0007", owner="agent_broker", dependencies=("0006",))
+        )
+        manifest.add_revision(
+            MigrationRevision(id="0008", owner="agent_broker", dependencies=("0007",))
         )
 
     async def startup(self, context: BFeatureContext) -> None:

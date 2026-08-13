@@ -12,11 +12,12 @@ callers must capture it from the create response and treat it as a secret.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -30,6 +31,9 @@ from termflow_control_plane.auth.tokens import hash_token, issue_token
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.models import AgentBinding, AgentProfile, AgentToken
 from termflow_control_plane.persistence.repositories import RepositoryBundle, decode_scopes
+from termflow_control_plane.plugins.agent_broker.agent.permissions import ApprovalPolicy
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/v1/agent/admin",
@@ -411,7 +415,9 @@ async def get_agent_binding(
 async def update_agent_binding(
     binding_id: UUID,
     request: AgentBindingUpdateRequest,
+    http_request: Request,
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
+    sessions: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> AgentBindingResponse:
     await _require_binding(binding_id, repositories)
 
@@ -424,6 +430,22 @@ async def update_agent_binding(
                 "Unknown binding status.",
             )
         binding = await repositories.agent_bindings.set_status(binding_id, request.status)
+        if request.status in ("revoked", "disabled"):
+            # A revoked/disabled binding must not keep pending or approved
+            # approvals alive (spec §5): every request of the binding is
+            # revoked so no waiter can ever execute a reviewed write.
+            shared = getattr(http_request.app.state, "approval_policy", None)
+            policy = shared or ApprovalPolicy(repositories, sessions)
+            try:
+                revoked_count = await policy.revoke_for_binding(binding_id, actor="admin")
+            except Exception as exc:
+                raise TermFlowError(
+                    "binding_approval_revoke_failed",
+                    409,
+                    "The binding status changed but its approvals could not be revoked.",
+                ) from exc
+            if revoked_count:
+                logger.info("revoked %s approvals of binding %s", revoked_count, binding_id)
     runtime_fields = {
         request.runtime_ref,
         request.runtime_epoch,

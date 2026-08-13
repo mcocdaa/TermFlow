@@ -658,6 +658,13 @@ class ApprovalRequest(Base):
     decision: Mapped[str | None] = mapped_column(String(32), default=None)
     auth_epoch: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    # M5.2 display metadata: bounded, redacted intent summary for the M6
+    # approval UI.  The exact text/keys are NEVER persisted here - they only
+    # enter the canonical hash - so these columns stay nullable for legacy
+    # rows (history degrades gracefully).
+    pane_id: Mapped[str | None] = mapped_column(String(32), default=None)
+    operation: Mapped[str | None] = mapped_column(String(32), default=None)
+    intent_summary: Mapped[str | None] = mapped_column(Text, default=None)
 
     __table_args__ = (
         Index("ix_approval_requests_state_expires_at", "state", "expires_at"),
@@ -670,6 +677,52 @@ class ApprovalRequest(Base):
             name="uq_approval_requests_conversation_tool_call_id",
         ),
     )
+
+
+class ApprovalAuditEvent(Base):
+    """Metadata-only audit trail of the approval lifecycle (plan §12.1, M5.2).
+
+    One row per successful lifecycle transition (``created``/``decided``/
+    ``revoked``/``consumed``/``unknown``/``expired``).  Agent identity is
+    ``binding_id`` + ``instance_id`` (the Term) + ``runtime_epoch`` +
+    ``run_id``; approval context is ``approval_id`` + ``tool_call_id`` +
+    ``canonical_hash`` + ``auth_epoch`` + pane/operation/input byte count.
+    Raw text/keys never land here (``raw_storage=False``, ``redacted=True``,
+    ``APPROVAL_AUDIT_METADATA`` 90-day retention contract).
+    """
+
+    __tablename__ = "approval_audit_events"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(32))
+    approval_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("approval_requests.id", ondelete="CASCADE"),
+        index=True,
+    )
+    binding_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_bindings.id", ondelete="CASCADE"),
+    )
+    instance_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), default=None)
+    runtime_epoch: Mapped[int | None] = mapped_column(Integer, default=None)
+    conversation_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_conversations.id", ondelete="CASCADE"),
+    )
+    run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), default=None)
+    tool_call_id: Mapped[str] = mapped_column(String(128))
+    pane_id: Mapped[str | None] = mapped_column(String(32), default=None)
+    operation: Mapped[str | None] = mapped_column(String(32), default=None)
+    input_bytes: Mapped[int | None] = mapped_column(Integer, default=None)
+    canonical_hash: Mapped[str] = mapped_column(String(64))
+    auth_epoch: Mapped[int] = mapped_column(Integer)
+    actor: Mapped[str | None] = mapped_column(String(256), default=None)
+    outcome: Mapped[str | None] = mapped_column(String(32), default=None)
+    error_code: Mapped[str | None] = mapped_column(String(64), default=None)
 
 
 class WriteGrant(Base):

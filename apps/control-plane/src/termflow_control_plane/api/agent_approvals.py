@@ -24,7 +24,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -126,6 +126,23 @@ def _approval_response(approval: ApprovalRequest) -> ApprovalResponse:
         auth_epoch=approval.auth_epoch,
         created_at=approval.created_at,
     )
+
+
+def _shared_policy(
+    request: Request,
+    repositories: RepositoryBundle,
+    sessions: async_sessionmaker[AsyncSession],
+) -> ApprovalPolicy:
+    """The composition root's shared policy (audit writer included).
+
+    The M5.2 composition root puts one policy on ``app.state``; API paths
+    fall back to a fresh policy (no audit writer) when the app does not
+    provide one, e.g. in isolated test mounts.
+    """
+    shared = getattr(request.app.state, "approval_policy", None)
+    if shared is not None:
+        return shared
+    return ApprovalPolicy(repositories, sessions)
 
 
 def _binding_info(binding: AgentBinding) -> ApprovalBindingInfo:
@@ -234,10 +251,11 @@ async def get_approval(
 async def decide_approval(
     approval_id: UUID,
     request: ApprovalDecisionRequest,
+    http_request: Request,
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
     sessions: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> ApprovalDetailResponse:
-    policy = ApprovalPolicy(repositories, sessions)
+    policy = _shared_policy(http_request, repositories, sessions)
     epoch = await persisted_authentication_epoch(repositories)
     decision = (
         ApprovalDecision.APPROVED
@@ -259,10 +277,11 @@ async def decide_approval(
 @router.post("/{approval_id}/revoke", response_model=ApprovalDetailResponse)
 async def revoke_approval(
     approval_id: UUID,
+    http_request: Request,
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
     sessions: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> ApprovalDetailResponse:
-    policy = ApprovalPolicy(repositories, sessions)
+    policy = _shared_policy(http_request, repositories, sessions)
     try:
         await policy.revoke(approval_id, actor=_ACTOR)
     except ApprovalError as exc:

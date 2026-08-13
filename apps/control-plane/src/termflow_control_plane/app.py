@@ -67,6 +67,10 @@ from termflow_control_plane.connections.terminal_hub import TerminalHub
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.database import Database
 from termflow_control_plane.persistence.repositories import RepositoryBundle
+from termflow_control_plane.plugins.agent_broker.agent.approval_audit import (
+    ApprovalAuditWriter,
+)
+from termflow_control_plane.plugins.agent_broker.agent.permissions import ApprovalPolicy
 from termflow_control_plane.plugins.agent_broker.agent.stream_hub import (
     AGENT_STREAM_QUEUE_SIZE,
     AgentStreamHub,
@@ -338,6 +342,15 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         )
         app.state.terminal_audit = TerminalAuditWriter(app.state.repositories.audit)
         app.state.terminal_audit.start()
+        # M5.2 approval wiring: one shared audit writer and policy serve the
+        # approval REST API, the binding-status revocation path, and the MCP
+        # CommandService (spec §7: composition root owns the shared instance).
+        app.state.approval_audit = ApprovalAuditWriter(app.state.repositories)
+        app.state.approval_policy = ApprovalPolicy(
+            app.state.repositories,
+            app.state.session_factory,
+            audit=app.state.approval_audit,
+        )
         app.state.terminal_router = TerminalRouter(
             registry=app.state.registry,
             hub=app.state.terminal_hub,
@@ -363,7 +376,10 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         # inbox claims, mark stuck runs unknown, then retry pending cleanup
         # tombstones.  Fail-safe by design: errors are logged, never fatal.
         try:
-            recovered = await run_agent_recovery(app.state.repositories)
+            recovered = await run_agent_recovery(
+                app.state.repositories,
+                approval_policy=app.state.approval_policy,
+            )
             if any(
                 (
                     recovered.inbox_recovered,
@@ -372,6 +388,8 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
                     recovered.runs_marked_unknown,
                     recovered.cleanup_jobs_retried,
                     recovered.cleanup_jobs_completed,
+                    recovered.approvals_revoked,
+                    recovered.approvals_marked_unknown,
                 )
             ):
                 logger.info("Agent restart recovery: %s", recovered)
