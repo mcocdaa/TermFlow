@@ -125,6 +125,37 @@ docker logs termflow-node
 `termflow-node-identity/` 保存 A 的身份，`termflow-node-work/` 保存用户文件。这两个目录由 A
 管理；删除目录会删除对应数据。
 
+## 可选：语音转录（STT，Agent Broker 0.2.0）
+
+STT 是可选部署，默认关闭：语音上传返回 503 `speech_to_text_unavailable`，
+不影响文本 Agent 功能。启用后音频由**部署本地**的 speaches 容器转录
+（OpenAI 兼容 Whisper 服务，MIT），音频只经过 B → 内部网络 `agent_internal`
+上的 STT 容器，不发送到任何外部服务；转录结果以 1 小时 TTL 的 draft 返回
+客户端确认，B 从不自动提交、从不持久化原始音频。模型文件由操作者在首次
+启用前下载到本地卷（见下），因为内部网络没有外网出口。
+
+启用需要三个显式动作（全部满足才生效）：
+
+1. 设置机密与环境：在 `.env` 中设置 `STT_API_KEY`（必填，compose 校验；
+   同时是 B 侧 `TERMFLOW_STT_TOKEN` 的来源），并设置
+   `TERMFLOW_STT_ENABLED=true`；
+2. 预置模型卷（一次性）：模型缓存卷必须先在**有外网**的网络上用同一
+   pinned 镜像预置，`agent_internal` 无外网出口：
+
+   ```bash
+   docker run --rm \
+     -v stt-models:/home/ubuntu/.cache/huggingface/hub \
+     ghcr.io/speaches-ai/speaches:0.8.3-cpu@sha256:21e3df06d842fb7802ab470dd77c25f0e8c0d22950e8d8c6ae886e851af53ef8 \
+     python -c "from huggingface_hub import snapshot_download; snapshot_download('Systran/faster-distil-whisper-small.en')"
+   ```
+
+3. 带 profile 启动：`docker compose --profile stt up -d`。
+
+默认模型 `Systran/faster-distil-whisper-small.en`（英语专用 distil 小模型，
+CPU 友好）；多语言部署可通过 `STT_MODEL` 覆盖，换模型必须重新预置卷。
+镜像 tag+digest 双 pin（`0.8.3-cpu`，禁止 `latest`）；STT 容器契约详见
+`apps/control-plane/tests/fixtures/speaches/speaches-pin.md`。
+
 ## 客户端
 
 正式构建版本的解析顺序固定为
