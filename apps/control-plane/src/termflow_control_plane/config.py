@@ -78,6 +78,16 @@ class Settings(BaseSettings):
     # table, the canonical hash always binds grant_id=None, and this flag is
     # only exposed for C to display (spec §8).
     agent_delegated_write_grants_enabled: bool = False
+    # M4.5 agent pipeline (spec §2): the single-binding reference deployment's
+    # OpenCode runtime endpoint (compose agent_internal network) and workspace
+    # directory.  Multi-binding fleets resolve endpoints through a deployment
+    # endpoint provider injected into AgentRuntimeRegistry; the base_url/
+    # directory defaults keep the reference deployment runnable with no extra
+    # configuration.  reconcile_attempts bounds the SSE disconnect reconcile
+    # retry loop.
+    agent_opencode_base_url: str = "http://opencode-agent:4096"
+    agent_opencode_directory: str = "/workspace"
+    agent_pipeline_reconcile_attempts: int = Field(default=5, ge=1)
     # Optional STT (M7a spec): the pinned speaches container is reached only
     # when explicitly enabled; every default keeps the Null provider (503)
     # path active.  stt_timeout_seconds must stay strictly below the 60s
