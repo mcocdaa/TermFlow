@@ -30,6 +30,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import NamedTuple
 
+from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.models import AgentEvent
 
 #: Bounded canonical payload storage limit (spec §4.2; aligned with
@@ -41,6 +42,21 @@ AGUI_PROTOCOL_VERSION = "0.1.19"
 AGUI_STATE_PATH = "/backend"
 #: ``CUSTOM`` event name for permission-request visibility (spec §4.3).
 AGUI_PERMISSION_CUSTOM = "termflow.permission_requested"
+
+#: Wire formats accepted by the Agent stream and REST replay endpoints
+#: (spec §4.4/§4.5): canonical (default, byte-for-byte pre-M6a behaviour)
+#: and agui (projected through :class:`AgentEventProjector`).
+WIRE_CANONICAL = "canonical"
+WIRE_AGUI = "agui"
+_KNOWN_WIRES = frozenset({WIRE_CANONICAL, WIRE_AGUI})
+
+
+def validate_wire(wire: str) -> None:
+    """Fail closed on unknown wire values (spec §5: 400 ``invalid_wire``)."""
+    if wire not in _KNOWN_WIRES:
+        raise TermFlowError(
+            "invalid_wire", 400, "The Agent stream wire format is invalid."
+        )
 
 
 class ProjectionDropCounts(NamedTuple):

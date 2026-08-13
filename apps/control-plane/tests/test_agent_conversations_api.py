@@ -9,6 +9,7 @@ internals such as ``provider_ref``).
 
 from __future__ import annotations
 
+import hashlib
 import json
 from uuid import UUID, uuid4
 
@@ -271,6 +272,175 @@ class TestEvents:
             headers=admin_headers,
         )
         assert missing.status_code == 404
+
+
+class TestEventsAGUI:
+    """/events?wire=agui REST replay (plan M6a spec §4.5, test matrix §8).
+
+    The envelope is unchanged (``events``/``next_cursor``, cursor semantics
+    stay database_seq); only the event objects are AG-UI projections, and
+    the stateless per-page projection keeps a message chunk+END pair
+    complete across pages.
+    """
+
+    @staticmethod
+    def _chunk_payload(message_id: UUID, text: str = "hello") -> str:
+        return json.dumps(
+            {
+                "message_id": str(message_id),
+                "part_id": "part-1",
+                "assembly_revision": 1,
+                "text": text,
+                "ephemeral": True,
+            },
+            separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _end_payload(message_id: UUID) -> str:
+        return json.dumps(
+            {"message_id": str(message_id), "assembly_revision": 1, "final": True},
+            separators=(",", ":"),
+        )
+
+    def _append(
+        self,
+        client: TestClient,
+        conversation_id: UUID,
+        *,
+        kind: str,
+        payload: str,
+    ) -> None:
+        repositories: RepositoryBundle = client.app.state.repositories
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+        async def _append_event() -> None:
+            await repositories.agent_events.append(
+                conversation_id=conversation_id,
+                event_kind=kind,
+                dedup_key=f"agui-{kind}-{uuid4()}",
+                payload_digest=digest,
+                payload_json=payload,
+            )
+
+        client.portal.call(_append_event)
+
+    def test_unknown_wire_value_is_rejected(self, client, admin_headers) -> None:
+        response = client.get(
+            f"/api/v1/agent/conversations/{uuid4()}/events",
+            headers=admin_headers,
+            params={"wire": "bogus"},
+        )
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "invalid_wire"
+
+    def test_agui_events_are_projected_with_unchanged_next_cursor(
+        self, client, admin_headers, provision_term
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        message_id = uuid4()
+        self._append(client, conversation_id, kind="message_delta",
+                     payload=self._chunk_payload(message_id))
+        self._append(client, conversation_id, kind="message_completed",
+                     payload=self._end_payload(message_id))
+
+        response = client.get(
+            f"/api/v1/agent/conversations/{conversation_id}/events",
+            headers=admin_headers,
+            params={"wire": "agui"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        events = body["events"]
+        # The chunk+END pair is complete for the same messageId.
+        assert events[0]["type"] == "TEXT_MESSAGE_CHUNK"
+        assert events[0]["messageId"] == str(message_id)
+        assert events[0]["role"] == "assistant"
+        assert events[0]["delta"] == "hello"
+        assert isinstance(events[0]["timestamp"], int)
+        assert events[1] == {
+            "type": "TEXT_MESSAGE_END",
+            "messageId": str(message_id),
+            "timestamp": events[1]["timestamp"],
+        }
+        # next_cursor keeps its database_seq semantics.
+        assert body["next_cursor"] == 2
+
+    def test_agui_pagination_projects_each_page_independently(
+        self, client, admin_headers, provision_term
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        message_ids = [uuid4() for _ in range(3)]
+        for index, message_id in enumerate(message_ids):
+            self._append(
+                client, conversation_id, kind="message_delta",
+                payload=self._chunk_payload(message_id, f"chunk-{index}"),
+            )
+
+        page_one = client.get(
+            f"/api/v1/agent/conversations/{conversation_id}/events",
+            headers=admin_headers,
+            params={"wire": "agui", "limit": 2, "offset": 0},
+        )
+        assert page_one.status_code == 200
+        first = page_one.json()
+        assert [event["messageId"] for event in first["events"]] == [
+            str(message_ids[0]),
+            str(message_ids[1]),
+        ]
+        assert first["next_cursor"] == 2
+
+        page_two = client.get(
+            f"/api/v1/agent/conversations/{conversation_id}/events",
+            headers=admin_headers,
+            params={"wire": "agui", "since": 2},
+        )
+        assert page_two.status_code == 200
+        second = page_two.json()
+        assert [event["messageId"] for event in second["events"]] == [
+            str(message_ids[2])
+        ]
+        assert second["next_cursor"] == 3
+
+    def test_agui_drops_unprojectable_events_and_keeps_cursor_semantics(
+        self, client, admin_headers, provision_term
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        repositories: RepositoryBundle = client.app.state.repositories
+
+        # A payload-less event (dropped by the projection) followed by a
+        # projectable chunk.
+        async def _append_payload_less() -> None:
+            await repositories.agent_events.append(
+                conversation_id=conversation_id,
+                event_kind="message_delta",
+                dedup_key="agui-no-payload",
+                payload_digest="digest",
+            )
+
+        client.portal.call(_append_payload_less)
+        message_id = uuid4()
+        self._append(client, conversation_id, kind="message_delta",
+                     payload=self._chunk_payload(message_id, "kept"))
+
+        response = client.get(
+            f"/api/v1/agent/conversations/{conversation_id}/events",
+            headers=admin_headers,
+            params={"wire": "agui"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        # Only the projectable event appears, but the cursor reflects the
+        # last stored database_seq (2), not the number of emitted events.
+        assert len(body["events"]) == 1
+        assert body["events"][0]["messageId"] == str(message_id)
+        assert body["next_cursor"] == 2
 
 
 class TestProviderOpacity:

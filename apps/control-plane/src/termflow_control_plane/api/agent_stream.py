@@ -75,7 +75,10 @@ from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.models import AgentEvent
 from termflow_control_plane.persistence.repositories import RepositoryBundle
 from termflow_control_plane.plugins.agent_broker.agent.agui_projection import (
+    WIRE_AGUI,
+    WIRE_CANONICAL,
     AgentEventProjector,
+    validate_wire,
 )
 from termflow_control_plane.plugins.agent_broker.agent.stream_hub import (
     CLOSE_AUTH_EPOCH,
@@ -101,19 +104,6 @@ _REPLAY_PAGE_SIZE = 200
 SSE_CLOSED = "closed"
 SSE_EVENT = "agent_event"
 SSE_RESET = "reset"
-
-#: Supported stream wire formats (M6a spec §4.4): canonical is the default
-#: byte-for-byte behaviour; agui projects events through AgentEventProjector.
-WIRE_CANONICAL = "canonical"
-WIRE_AGUI = "agui"
-_KNOWN_WIRES = frozenset({WIRE_CANONICAL, WIRE_AGUI})
-
-
-def _validate_wire(wire: str) -> None:
-    if wire not in _KNOWN_WIRES:
-        raise TermFlowError(
-            "invalid_wire", 400, "The Agent stream wire format is invalid."
-        )
 
 
 def _sse_frame(name: str, payload: dict[str, object]) -> str:
@@ -375,7 +365,7 @@ async def stream_agent_events(
     cursor: Annotated[str | None, Query()] = None,
     wire: Annotated[str, Query()] = WIRE_CANONICAL,
 ) -> StreamingResponse:
-    _validate_wire(wire)
+    validate_wire(wire)
     hub = cast(AgentStreamHub, request.app.state.agent_stream_hub)
     sessions = cast(async_sessionmaker[AsyncSession], request.app.state.session_factory)
     state = await repositories.auth_state.get()
