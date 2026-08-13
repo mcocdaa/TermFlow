@@ -19,9 +19,9 @@ from termflow_control_plane.persistence.models import Base
 
 # The migration head after this task.  Only tests asserting the GLOBAL head use
 # this constant; upgrade-path fixtures still pin "0005" explicitly.
-HEAD = "0008"
+HEAD = "0009"
 
-# Every Agent Broker table created by migrations 0006, 0007, and 0008 (plan §15).
+# Every Agent Broker table created by migrations 0006, 0007, 0008, and 0009 (plan §15).
 AGENT_TABLES = (
     "agent_profiles",
     "agent_bindings",
@@ -340,6 +340,37 @@ def test_downgrade_from_head_to_0007_drops_approval_audit_schema(tmp_path) -> No
         assert "approval_audit_events" not in table_names
         assert "pane_id" not in approval_columns
         assert "intent_summary" not in approval_columns
+    finally:
+        engine.dispose()
+
+
+def test_agent_event_payload_column_delta(tmp_path) -> None:
+    """The 0009 delta adds the nullable payload column and drops it cleanly
+    (plan M6a spec §5)."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'payload-delta.db'}")
+    try:
+        with engine.begin() as connection:
+            config = _migration_config(connection)
+            command.upgrade(config, "0007")
+            columns = {
+                column["name"] for column in inspect(connection).get_columns("agent_events")
+            }
+            assert "payload" not in columns
+
+            command.upgrade(config, "head")
+            payload = {
+                column["name"]: column
+                for column in inspect(connection).get_columns("agent_events")
+            }["payload"]
+        assert payload["nullable"] is True
+        assert str(payload["type"]).upper() == "TEXT"
+
+        with engine.begin() as connection:
+            command.downgrade(_migration_config(connection), "0007")
+            columns = {
+                column["name"] for column in inspect(connection).get_columns("agent_events")
+            }
+        assert "payload" not in columns
     finally:
         engine.dispose()
 

@@ -12,6 +12,11 @@ Every frame is ``event: <name>`` + ``data: <json>``:
 
 ``agent_event``
     ``{"type": "event", "event": {AgentEventResponse}, "cursor": "E-S"}``
+    With ``?wire=agui`` the event object is the AG-UI 0.1.19 projection of
+    the canonical event (M6a spec §4.4): the envelope, cursor, dedup,
+    closure, and reset semantics are unchanged, and unprojectable events
+    produce no frame while the cursor bookkeeping still advances.  The
+    default ``?wire=canonical`` is byte-for-byte the pre-M6a envelope.
 
 ``reset``
     ``{"type": "reset", "reason": "cursor_too_old", "cursor": "E-S"}``
@@ -69,6 +74,12 @@ from termflow_control_plane.auth.epoch import persisted_authentication_epoch
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.models import AgentEvent
 from termflow_control_plane.persistence.repositories import RepositoryBundle
+from termflow_control_plane.plugins.agent_broker.agent.agui_projection import (
+    WIRE_AGUI,
+    WIRE_CANONICAL,
+    AgentEventProjector,
+    validate_wire,
+)
 from termflow_control_plane.plugins.agent_broker.agent.stream_hub import (
     CLOSE_AUTH_EPOCH,
     CLOSE_BINDING_REVOKED,
@@ -130,17 +141,49 @@ def _closed_frame(code: int, reason: str) -> str:
     return _sse_frame(SSE_CLOSED, {"type": "closed", "code": code, "reason": reason})
 
 
+def _frame_for_event(
+    event: AgentEvent,
+    cursor: str,
+    *,
+    projector: AgentEventProjector | None,
+) -> str | None:
+    """The ``agent_event`` SSE frame for one event, or None when the wire
+    projection drops it (M6a spec §4.4).
+
+    With ``projector is None`` (canonical wire, the default) the frame is
+    byte-for-byte the pre-M6a envelope.  With a projector the event object is
+    the AG-UI projection while the opaque ``{epoch}-{seq}`` cursor stays in
+    the B SSE envelope; dropped events produce no frame but the caller's
+    cursor bookkeeping still advances.
+    """
+    if projector is None:
+        return _sse_frame(
+            SSE_EVENT,
+            {"type": "event", "event": _event_envelope(event), "cursor": cursor},
+        )
+    projected = projector.project(event)
+    if not projected:
+        return None
+    return _sse_frame(
+        SSE_EVENT,
+        {"type": "event", "event": projected[0], "cursor": cursor},
+    )
+
+
 async def _replay_events(
     *,
     conversation_id: UUID | None,
     cursor: tuple[int, int] | None,
     auth_epoch: int,
     event_cursor: AgentEventCursor,
-) -> AsyncIterator[tuple[str, int]]:
+    projector: AgentEventProjector | None,
+) -> AsyncIterator[tuple[str | None, int]]:
     """Yield ``(frame, last_delivered_seq)`` after the cursor, or a reset first.
 
     A ``reset`` frame carries the fresh cursor and leaves ``last_seq`` at 0:
-    the caller must not replay anything after it.
+    the caller must not replay anything after it.  A ``None`` frame means the
+    wire projection dropped the event: the sequence bookkeeping still
+    advances so later events keep their place.
     """
     if conversation_id is None:
         # Global streams are live-only: there is no cross-conversation commit
@@ -195,13 +238,10 @@ async def _replay_events(
         for event in page:
             last_seq = event.database_seq
             yield (
-                _sse_frame(
-                    SSE_EVENT,
-                    {
-                        "type": "event",
-                        "event": _event_envelope(event),
-                        "cursor": f"{auth_epoch}-{last_seq}",
-                    },
+                _frame_for_event(
+                    event,
+                    f"{auth_epoch}-{last_seq}",
+                    projector=projector,
                 ),
                 last_seq,
             )
@@ -217,6 +257,7 @@ async def _live_loop(
     auth_epoch: int,
     repositories: RepositoryBundle,
     last_seq: int,
+    projector: AgentEventProjector | None,
 ) -> AsyncIterator[str]:
     """Emit live deltas, deduplicating by ``database_seq``.
 
@@ -257,14 +298,10 @@ async def _live_loop(
                 continue
             seen_event_ids.add(event.id)
             cursor = f"{auth_epoch}-0"
-        yield _sse_frame(
-            SSE_EVENT,
-            {
-                "type": "event",
-                "event": _event_envelope(event),
-                "cursor": cursor,
-            },
-        )
+        frame = _frame_for_event(event, cursor, projector=projector)
+        if frame is None:
+            continue  # dropped by the wire projection; bookkeeping advanced
+        yield frame
 
 
 async def stream_events_generator(
@@ -276,12 +313,15 @@ async def stream_events_generator(
     binding_id: UUID | None,
     cursor: tuple[int, int] | None,
     auth_epoch: int,
+    projector: AgentEventProjector | None = None,
 ) -> AsyncIterator[str]:
     """The SSE body: subscribe, replay from the cursor, then live deltas.
 
     Split from the HTTP endpoint so tests can drive the exact generator the
     endpoint serves.  The hub subscription happens before any replay, and
     every frame the subscriber delivers is deduplicated by ``database_seq``.
+    With ``projector`` set the event objects are AG-UI projections (spec
+    §4.4); the default ``None`` keeps the canonical wire byte-for-byte.
     """
     subscriber = await hub.subscribe(
         conversation_id=conversation_id,
@@ -298,9 +338,11 @@ async def stream_events_generator(
             cursor=cursor,
             auth_epoch=auth_epoch,
             event_cursor=event_cursor,
+            projector=projector,
         ):
             last_seq = after_seq
-            yield frame
+            if frame is not None:
+                yield frame
         async for frame in _live_loop(
             subscriber=subscriber,
             conversation_id=conversation_id,
@@ -308,6 +350,7 @@ async def stream_events_generator(
             auth_epoch=auth_epoch,
             repositories=repositories,
             last_seq=last_seq,
+            projector=projector,
         ):
             yield frame
     finally:
@@ -320,7 +363,9 @@ async def stream_agent_events(
     request: Request,
     conversation_id: Annotated[UUID | None, Query()] = None,
     cursor: Annotated[str | None, Query()] = None,
+    wire: Annotated[str, Query()] = WIRE_CANONICAL,
 ) -> StreamingResponse:
+    validate_wire(wire)
     hub = cast(AgentStreamHub, request.app.state.agent_stream_hub)
     sessions = cast(async_sessionmaker[AsyncSession], request.app.state.session_factory)
     state = await repositories.auth_state.get()
@@ -364,6 +409,7 @@ async def stream_agent_events(
             binding_id=binding_id,
             cursor=parsed_cursor,
             auth_epoch=auth_epoch,
+            projector=AgentEventProjector() if wire == WIRE_AGUI else None,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

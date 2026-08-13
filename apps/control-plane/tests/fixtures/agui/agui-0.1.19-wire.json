@@ -1,0 +1,71 @@
+{
+  "run_started": {
+    "type": "RUN_STARTED",
+    "threadId": "11111111-1111-1111-1111-111111111111",
+    "runId": "22222222-2222-2222-2222-222222222222",
+    "timestamp": 1786622400000
+  },
+  "message_delta": {
+    "type": "TEXT_MESSAGE_CHUNK",
+    "messageId": "33333333-3333-3333-3333-333333333333",
+    "role": "assistant",
+    "delta": "Hello, world!",
+    "timestamp": 1786622400000
+  },
+  "message_completed": {
+    "type": "TEXT_MESSAGE_END",
+    "messageId": "33333333-3333-3333-3333-333333333333",
+    "timestamp": 1786622400000
+  },
+  "tool_started": {
+    "type": "TOOL_CALL_START",
+    "toolCallId": "tool-call-123",
+    "toolCallName": "read_file",
+    "timestamp": 1786622400000
+  },
+  "tool_completed": {
+    "type": "TOOL_CALL_RESULT",
+    "messageId": "tool-call-123",
+    "toolCallId": "tool-call-123",
+    "role": "tool",
+    "content": "{\"status\":\"error\",\"input_bytes\":0,\"output_bytes\":0,\"truncated\":false,\"error_code\":\"E_READ\",\"error_message\":\"file not found\"}",
+    "timestamp": 1786622400000
+  },
+  "permission_requested": {
+    "type": "CUSTOM",
+    "name": "termflow.permission_requested",
+    "value": {
+      "approval_request_id": "44444444-4444-4444-4444-444444444444",
+      "tool_name": "write_file",
+      "evidence": "trusted by policy",
+      "expires_at": "2026-08-13T13:00:00+00:00"
+    },
+    "timestamp": 1786622400000
+  },
+  "run_completed": {
+    "type": "RUN_FINISHED",
+    "threadId": "11111111-1111-1111-1111-111111111111",
+    "runId": "22222222-2222-2222-2222-222222222222",
+    "timestamp": 1786622400000
+  },
+  "run_failed": {
+    "type": "RUN_ERROR",
+    "message": "provider failed",
+    "code": "E_RUN",
+    "timestamp": 1786622400000
+  },
+  "backend_state_changed": {
+    "type": "STATE_DELTA",
+    "delta": [
+      {
+        "op": "replace",
+        "path": "/backend",
+        "value": {
+          "state": "running",
+          "epoch": 7
+        }
+      }
+    ],
+    "timestamp": 1786622400000
+  }
+}

@@ -16,6 +16,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from termflow_control_plane.api.dependencies import get_repositories, require_admin
@@ -27,6 +28,12 @@ from termflow_control_plane.persistence.models import (
     AgentMessage,
 )
 from termflow_control_plane.persistence.repositories import RepositoryBundle
+from termflow_control_plane.plugins.agent_broker.agent.agui_projection import (
+    WIRE_AGUI,
+    WIRE_CANONICAL,
+    AgentEventProjector,
+    validate_wire,
+)
 
 router = APIRouter(
     prefix="/api/v1/agent/conversations",
@@ -287,7 +294,17 @@ async def list_agent_events(
     since: Annotated[int | None, Query(ge=0)] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
-) -> AgentEventListResponse:
+    wire: Annotated[str, Query()] = WIRE_CANONICAL,
+) -> AgentEventListResponse | JSONResponse:
+    """Paginated canonical events, or AG-UI projections with ``?wire=agui``.
+
+    The envelope is identical in both modes: ``events`` plus ``next_cursor``
+    with its ``database_seq`` semantics (M6a spec §4.5).  In agui mode the
+    event objects are stateless per-page AG-UI projections (a message
+    chunk+END pair stays complete across pages), and unprojectable events are
+    omitted without shifting the cursor.
+    """
+    validate_wire(wire)
     await _require_conversation(conversation_id, repositories)
     if since is not None:
         events = await repositories.agent_events.list_since_cursor(
@@ -303,6 +320,16 @@ async def list_agent_events(
             offset=offset,
         )
         next_cursor = events[-1].database_seq if events else None
+    if wire == WIRE_AGUI:
+        # A fresh projector per request: projection is stateless and the drop
+        # counters are request-scoped diagnostics only (spec §4.6).
+        projector = AgentEventProjector()
+        agui_events: list[dict[str, object]] = []
+        for event in events:
+            agui_events.extend(projector.project(event))
+        return JSONResponse(
+            content={"events": agui_events, "next_cursor": next_cursor}
+        )
     return AgentEventListResponse(
         events=[_event_response(event) for event in events],
         next_cursor=next_cursor,

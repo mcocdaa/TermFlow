@@ -558,6 +558,13 @@ class AgentMessage(Base):
     )
 
 
+#: Bounded canonical payload JSON limit for ``AgentEvent.payload`` (M6a spec
+#: §4.2; aligned with ``MAX_CONTEXT_BYTES``).  Lives next to the column it
+#: bounds and is shared by ``AgentEventRepository.append`` (which enforces it)
+#: and the AG-UI projection module.
+MAX_AGENT_EVENT_PAYLOAD_BYTES = 64 * 1024
+
+
 class AgentEvent(Base):
     """Canonical product event with a B-assigned database cursor (plan §4.4)."""
 
@@ -579,6 +586,9 @@ class AgentEvent(Base):
     # B-assigned monotonic database sequence: the unique conversation cursor.
     database_seq: Mapped[int] = mapped_column(Integer)
     payload_digest: Mapped[str] = mapped_column(String(64))
+    # Bounded canonical payload JSON (M6a): NULL for pre-migration rows and
+    # callers that append digest-only events.  Its lifecycle is the row's.
+    payload: Mapped[str | None] = mapped_column(Text, default=None)
     ephemeral: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
