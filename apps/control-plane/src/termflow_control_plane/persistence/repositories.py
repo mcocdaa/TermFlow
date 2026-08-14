@@ -2936,6 +2936,50 @@ class AgentInboxRepository:
             )
             return list(rows)
 
+    async def next_pending_for_binding(
+        self,
+        binding_id: UUID,
+        *,
+        limit: int = 10,
+        now: datetime | None = None,
+    ) -> list[AgentInboxItem]:
+        """Return claimable items for one binding's conversations (M4.5 §2).
+
+        The shared inbox is not binding-scoped, so the claim candidates are
+        filtered by joining the conversation's binding (M0 isolation).  This
+        replaces the previous ``list_for_binding`` (default limit 50) scan:
+        the 51st+ conversation's items were silently starved by that page.
+        Claimability mirrors :meth:`next_pending`; the ordering puts the
+        lowest admission sequence first so a batch can never re-order within
+        a conversation.
+        """
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentInboxItem)
+                .join(
+                    AgentConversation,
+                    AgentConversation.id == AgentInboxItem.conversation_id,
+                )
+                .where(
+                    AgentConversation.binding_id == binding_id,
+                    AgentInboxItem.delivery_state.in_(
+                        ("pending", "retry_wait", "claimed")
+                    ),
+                    AgentInboxItem.next_attempt_at <= observed_at,
+                    or_(
+                        AgentInboxItem.claim_expires_at.is_(None),
+                        AgentInboxItem.claim_expires_at <= observed_at,
+                    ),
+                )
+                .order_by(
+                    AgentInboxItem.admission_seq,
+                    AgentInboxItem.conversation_id,
+                )
+                .limit(limit)
+            )
+            return list(rows)
+
     async def claim(
         self,
         item_id: UUID,
@@ -3263,6 +3307,29 @@ class AgentRunRepository:
             rows = await session.scalars(
                 select(AgentRun)
                 .where(AgentRun.run_state == run_state)
+                .order_by(AgentRun.started_at)
+            )
+            return list(rows)
+
+    async def list_active_for_binding(self, binding_id: UUID) -> list[AgentRun]:
+        """Return queued/running runs for one binding's conversations (M4.5 §5).
+
+        The disconnect reconcile loop previously iterated
+        ``AgentConversationRepository.list_for_binding`` (default limit 50),
+        so an active run on the 51st+ conversation was never reconciled.
+        This join is unbounded and binding-scoped instead.
+        """
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentRun)
+                .join(
+                    AgentConversation,
+                    AgentConversation.id == AgentRun.conversation_id,
+                )
+                .where(
+                    AgentConversation.binding_id == binding_id,
+                    AgentRun.run_state.in_(("queued", "running")),
+                )
                 .order_by(AgentRun.started_at)
             )
             return list(rows)

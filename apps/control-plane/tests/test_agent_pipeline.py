@@ -15,11 +15,13 @@ import hashlib
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
 from termflow_control_plane.persistence.database import Database
+from termflow_control_plane.persistence.models import AgentConversation
 from termflow_control_plane.persistence.repositories import RepositoryBundle, digest_secret
 from termflow_control_plane.plugins.agent_broker.agent.backend import (
     AgentBackendCapabilities,
@@ -468,6 +470,113 @@ async def test_backend_conversation_ref_is_reused(
     assert first.provider_ref == "provider-1"
     assert backend.created_sessions == 1
     await pipeline.stop()
+
+
+# ---------------------------------------------------------------------------
+# Binding-scoped claiming (review fix B1): conversations beyond the
+# conversation listing's default page must never starve.
+# ---------------------------------------------------------------------------
+
+
+async def _seed_conversations(
+    repositories: RepositoryBundle, binding_id: UUID, count: int
+) -> list[UUID]:
+    """Create ``count`` conversations with deterministic created_at ordering.
+
+    ``AgentConversationRepository.list_for_binding`` pages by ``created_at``
+    (limit 50): the rows are stamped explicitly so the last conversation is
+    guaranteed to sit beyond the first page.
+    """
+    ids: list[UUID] = []
+    base = datetime.now(UTC) - timedelta(hours=1)
+    async with repositories.session_factory() as session:
+        for index in range(count):
+            conversation = AgentConversation(
+                binding_id=binding_id,
+                title=f"conversation-{index}",
+                status="active",
+                created_at=base + timedelta(seconds=index),
+            )
+            session.add(conversation)
+            await session.flush()
+            ids.append(conversation.id)
+        await session.commit()
+    return ids
+
+
+async def test_claim_covers_conversation_beyond_default_list_page(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    """The 51st+ conversation's inbox item must still be claimed (B1).
+
+    The previous dispatcher iterated ``list_for_binding`` (default limit 50,
+    ordered by created_at): the 55th conversation's items were silently
+    starved.  Claiming must be scoped through the binding join instead.
+    """
+    backend = FakeBackend(repositories=repositories)
+    binding_id = await seed_binding(repositories)
+    conversation_ids = await _seed_conversations(repositories, binding_id, 55)
+    target_conversation_id = conversation_ids[-1]
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    await pipeline.start()
+    try:
+        admission = await pipeline.submit_user_message(
+            target_conversation_id, "unstarved", actor="admin"
+        )
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        call = backend.submit_calls[0]
+        assert call.request.idempotency_key == admission.idempotency_key
+        assert call.request.parts[0].text == "unstarved"
+    finally:
+        await pipeline.stop()
+
+
+async def test_reconcile_covers_active_run_beyond_default_list_page(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    """An active run on the 51st+ conversation must still be reconciled (B1)."""
+    backend = FakeBackend(repositories=repositories)
+    binding_id = await seed_binding(repositories)
+    conversation_ids = await _seed_conversations(repositories, binding_id, 55)
+    target_conversation_id = conversation_ids[-1]
+    run = await repositories.agent_runs.create(conversation_id=target_conversation_id)
+    await repositories.agent_runs.set_state(run.id, "running", expected_state="queued")
+    await repositories.agent_backend_conversations.create(
+        conversation_id=target_conversation_id,
+        backend_kind="fake",
+        backend_version="0.1.0",
+        runtime_id=backend.runtime_id,
+        binding_capability_epoch=backend.epoch,
+        provider_ref="provider-1",
+    )
+    backend.reconcile_results.append(
+        BackendConversationSnapshot(
+            conversation_ref=BackendConversationRef(
+                backend_kind="fake",
+                backend_version="0.1.0",
+                runtime_id=backend.runtime_id,
+                binding_capability_epoch=backend.epoch,
+                provider_ref="provider-1",
+            ),
+            outcome=BackendOutcome.CONTEXT_LOST,
+            state=BackendRuntimeState.CONTEXT_LOST,
+        )
+    )
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    await pipeline.start()
+    try:
+        backend.disconnect()
+        await wait_until(lambda: len(backend.reconcile_calls) == 1)
+
+        async def run_failed() -> bool:
+            runs = await _runs(repositories, target_conversation_id)
+            return bool(runs) and runs[0].run_state == "failed"
+
+        await wait_until(run_failed)
+        runs = await _runs(repositories, target_conversation_id)
+        assert runs[0].error_code == "context_lost"
+    finally:
+        await pipeline.stop()
 
 
 # ---------------------------------------------------------------------------

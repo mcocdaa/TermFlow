@@ -534,15 +534,24 @@ class AgentPipelineService:
     async def _claim_next(self) -> InboxEnvelope | None:
         """Claim the next inbox item for *this binding's* conversations.
 
-        The inbox is shared across bindings, so a claim must be scoped to the
-        conversations of this binding (M0 isolation: a pipeline never routes
-        another binding's input to its own runtime).
+        The inbox is shared across bindings, so claim candidates are scoped
+        through the binding join (M0 isolation: a pipeline never routes
+        another binding's input to its own runtime).  The binding-scoped
+        query replaces the previous ``list_for_binding`` (default limit 50)
+        iteration, which silently starved the 51st+ conversation's items.
+        The inbox machine still owns the CAS claim, the one-in-flight gate,
+        and the parked filter, so a batch of candidate conversations keeps
+        the exact same admission semantics without the N+1 page scan.
         """
-        conversations = await self._repositories.agent_conversations.list_for_binding(
+        rows = await self._repositories.agent_inbox.next_pending_for_binding(
             self.binding_id
         )
-        for conversation in conversations:
-            envelope = await self.inbox_machine.claim_next(conversation_id=conversation.id)
+        conversations: list[UUID] = []
+        for row in rows:
+            if row.conversation_id not in conversations:
+                conversations.append(row.conversation_id)
+        for conversation_id in conversations:
+            envelope = await self.inbox_machine.claim_next(conversation_id=conversation_id)
             if envelope is not None:
                 return envelope
         return None
@@ -1024,15 +1033,15 @@ class AgentPipelineService:
         """Reconcile non-terminal runs, then resubscribe after bounded backoff."""
         self._reconnect_attempts += 1
         self.diagnostics.reconnects += 1
-        conversations = await self._repositories.agent_conversations.list_for_binding(
+        # Active runs are queried through the binding join (M4.5 §5): the
+        # previous conversation-listing iteration (default limit 50) silently
+        # skipped the 51st+ conversation's active runs.
+        runs = await self._repositories.agent_runs.list_active_for_binding(
             self.binding_id
         )
-        for conversation in conversations:
-            run = await self._active_run_for_conversation(conversation.id)
-            if run is None:
-                continue
+        for run in runs:
             ref_row = await self._repositories.agent_backend_conversations.get_by_conversation(
-                conversation.id
+                run.conversation_id
             )
             if ref_row is None:
                 continue
