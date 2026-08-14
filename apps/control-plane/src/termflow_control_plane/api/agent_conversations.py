@@ -12,12 +12,14 @@ sessions stay an opaque mapping owned by the plugin boundary.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from termflow_protocol.agent import MAX_AGENT_TEXT_BYTES
+from termflow_protocol.messages import validate_plain_text
 
 from termflow_control_plane.api.dependencies import get_repositories, require_admin
 from termflow_control_plane.errors import TermFlowError
@@ -34,6 +36,14 @@ from termflow_control_plane.plugins.agent_broker.agent.agui_projection import (
     AgentEventProjector,
     validate_wire,
 )
+from termflow_control_plane.plugins.agent_broker.agent.pipeline import (
+    AgentPipelineService,
+    NoActiveRunError,
+)
+from termflow_control_plane.plugins.agent_broker.agent.runtime_registry import (
+    AgentRuntimeRegistry,
+)
+from termflow_control_plane.plugins.agent_broker.agent.stream_hub import binding_is_closed
 
 router = APIRouter(
     prefix="/api/v1/agent/conversations",
@@ -131,6 +141,45 @@ class AgentEventListResponse(BaseModel):
     next_cursor: int | None
 
 
+class AgentSubmitMessageRequest(BaseModel):
+    """Plain-text user message admission (M4.5 spec §2); no draft_ref yet."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+
+    @field_validator("text")
+    @classmethod
+    def plain_text_only(cls, value: str) -> str:
+        return validate_plain_text(value, max_bytes=MAX_AGENT_TEXT_BYTES)
+
+
+class AgentSubmitMessageResponse(BaseModel):
+    """202 admission receipt: the inbox item identity plus delivery state."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    message_id: UUID
+    conversation_id: UUID
+    admission_seq: int
+    idempotency_key: str
+    delivery_state: str
+    submission_state: str
+
+
+class AgentCancelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = None
+
+
+class AgentCancelResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: str
+    run_state: str
+
+
 def _conversation_response(conversation: AgentConversation) -> AgentConversationResponse:
     return AgentConversationResponse(
         conversation_id=conversation.id,
@@ -181,6 +230,53 @@ async def _require_conversation(
             "The Agent Conversation does not exist.",
         )
     return conversation
+
+
+def get_agent_runtime_registry(request: Request) -> AgentRuntimeRegistry | None:
+    """The per-binding runtime registry, or ``None`` when not wired.
+
+    The lifespan only builds it while the plugin is enabled; a missing
+    registry (or an unmapped binding) must fail closed at the endpoint.
+    """
+    return cast(
+        AgentRuntimeRegistry | None,
+        getattr(request.app.state, "agent_runtime_registry", None),
+    )
+
+
+async def _require_open_binding(
+    conversation: AgentConversation,
+    repositories: RepositoryBundle,
+) -> AgentBinding:
+    """Resolve the conversation's binding, failing closed when revoked/disabled."""
+    binding = await repositories.agent_bindings.get_by_id(conversation.binding_id)
+    if binding is None or binding_is_closed(binding.status):
+        raise TermFlowError(
+            "binding_revoked",
+            403,
+            "The Agent Binding is revoked or disabled.",
+        )
+    return binding
+
+
+def _require_pipeline(
+    binding: AgentBinding,
+    registry: AgentRuntimeRegistry | None,
+) -> AgentPipelineService:
+    """Resolve the binding's pipeline, failing closed with 503 when unmapped.
+
+    An unmapped binding means its runtime was never activated (missing
+    runtime fields or a rejected supervisor gate), so submission must not
+    pretend the backend is reachable (M4.5 spec §2 / plan §17).
+    """
+    pipeline = registry.pipeline_for(binding.id) if registry is not None else None
+    if pipeline is None:
+        raise TermFlowError(
+            "binding_runtime_unavailable",
+            503,
+            "The binding's runtime is not available.",
+        )
+    return pipeline
 
 
 @router.post(
@@ -333,4 +429,76 @@ async def list_agent_events(
     return AgentEventListResponse(
         events=[_event_response(event) for event in events],
         next_cursor=next_cursor,
+    )
+
+
+@router.post(
+    "/{conversation_id}/messages",
+    response_model=AgentSubmitMessageResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def submit_agent_message(
+    conversation_id: UUID,
+    request: AgentSubmitMessageRequest,
+    http_request: Request,
+    repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
+) -> AgentSubmitMessageResponse:
+    """Admit one plain-text user message into the binding's pipeline (M4.5 §2).
+
+    The admission is durably enqueued and the response is ``202 Accepted``;
+    the backend's 204 confirmation stays adapter-internal.  Fail-closed
+    checks run in order: conversation exists (404), binding open (403),
+    runtime pipeline mapped and ready (503); text validation failures are
+    surfaced as ``422 invalid_request`` by the request validator.
+    """
+    conversation = await _require_conversation(conversation_id, repositories)
+    binding = await _require_open_binding(conversation, repositories)
+    pipeline = _require_pipeline(binding, get_agent_runtime_registry(http_request))
+    admission = await pipeline.submit_user_message(
+        conversation_id, request.text, actor="admin"
+    )
+    return AgentSubmitMessageResponse(
+        message_id=admission.message_id,
+        conversation_id=admission.conversation_id,
+        admission_seq=admission.admission_seq,
+        idempotency_key=admission.idempotency_key,
+        delivery_state=admission.delivery_state,
+        submission_state=admission.submission_state,
+    )
+
+
+@router.post(
+    "/{conversation_id}/cancel",
+    response_model=AgentCancelResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def cancel_agent_conversation(
+    conversation_id: UUID,
+    request: AgentCancelRequest,
+    http_request: Request,
+    repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
+) -> AgentCancelResponse:
+    """Cancel the conversation's active run (M4.5 spec §8).
+
+    A conversation without a queued/running run fails with ``409
+    no_active_run``; the outcome reflects what the pipeline could prove
+    (``confirmed`` only when a terminal state was reached or reconciled,
+    ``unknown`` otherwise - never an invented cancellation).
+    """
+    conversation = await _require_conversation(conversation_id, repositories)
+    binding = await _require_open_binding(conversation, repositories)
+    pipeline = _require_pipeline(binding, get_agent_runtime_registry(http_request))
+    try:
+        result = await pipeline.cancel_conversation(
+            conversation_id, reason=request.reason
+        )
+    except NoActiveRunError:
+        raise TermFlowError(
+            "no_active_run",
+            409,
+            "The conversation has no active run to cancel.",
+        ) from None
+    return AgentCancelResponse(
+        outcome=result.outcome.value,
+        run_state=result.run_state,
     )

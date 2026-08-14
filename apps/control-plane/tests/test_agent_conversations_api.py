@@ -2,9 +2,10 @@
 
 Covers the product-facing conversation endpoints under
 ``/api/v1/agent/conversations``: create/list/detail/delete, paginated
-historical messages, paginated canonical events with a ``since`` cursor, and
-the backend-opacity guarantee (product responses never expose backend-conversation
-internals such as ``provider_ref``).
+historical messages, paginated canonical events with a ``since`` cursor, the
+backend-opacity guarantee (product responses never expose backend-conversation
+internals such as ``provider_ref``), and the M4.5 submit/cancel endpoints
+(202 admission / 404 / 403 / 503 / 422 / 409 fail-closed semantics).
 """
 
 from __future__ import annotations
@@ -15,6 +16,12 @@ from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from termflow_control_plane.persistence.repositories import RepositoryBundle
+from termflow_control_plane.plugins.agent_broker.agent.pipeline import (
+    CancelResult,
+    NoActiveRunError,
+    SubmitAdmission,
+)
+from termflow_control_plane.plugins.agent_broker.agent.turns import BackendOutcome
 
 
 def _create_profile(
@@ -79,6 +86,62 @@ def _seed_binding(
         term_id=term.instance_id,
     )
     return UUID(str(binding["binding_id"]))
+
+
+class _StubPipeline:
+    """Recording pipeline double for the submit/cancel endpoints.
+
+    The API only depends on the pipeline's product entries, so the stub
+    records calls and returns scripted results without any backend.
+    """
+
+    def __init__(
+        self,
+        *,
+        cancel_result: CancelResult | None = None,
+        cancel_error: Exception | None = None,
+    ) -> None:
+        self.submitted: list[tuple[UUID, str]] = []
+        self.cancelled: list[tuple[UUID, str | None]] = []
+        self._cancel_result = cancel_result
+        self._cancel_error = cancel_error
+
+    async def submit_user_message(
+        self, conversation_id: UUID, text: str, *, actor: str
+    ) -> SubmitAdmission:
+        self.submitted.append((conversation_id, text))
+        return SubmitAdmission(
+            message_id=uuid4(),
+            conversation_id=conversation_id,
+            admission_seq=1,
+            idempotency_key=str(uuid4()),
+            delivery_state="pending",
+            submission_state="not_started",
+        )
+
+    async def cancel_conversation(
+        self, conversation_id: UUID, *, reason: str | None
+    ) -> CancelResult:
+        self.cancelled.append((conversation_id, reason))
+        if self._cancel_error is not None:
+            raise self._cancel_error
+        if self._cancel_result is not None:
+            return self._cancel_result
+        return CancelResult(
+            outcome=BackendOutcome.CONFIRMED,
+            run_id=uuid4(),
+            run_state="cancelled",
+        )
+
+
+class _StubRegistry:
+    """Registry double handing out a fixed pipeline (or none)."""
+
+    def __init__(self, pipeline: _StubPipeline | None) -> None:
+        self._pipeline = pipeline
+
+    def pipeline_for(self, binding_id: UUID):  # noqa: ANN201 - test double
+        return self._pipeline
 
 
 class TestConversations:
@@ -509,3 +572,227 @@ class TestProviderOpacity:
             assert "opaque-backend-session-xyz" not in body
             assert "runtime_id" not in body
             assert "backend_kind" not in body
+
+
+class TestSubmitMessage:
+    """POST .../messages admission semantics (M4.5 spec §2)."""
+
+    def test_submit_returns_202_with_admission_receipt(
+        self,
+        client,
+        admin_headers,
+        provision_term,
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        pipeline = _StubPipeline()
+        client.app.state.agent_runtime_registry = _StubRegistry(pipeline)
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/messages",
+            headers=admin_headers,
+            json={"text": "部署完成了吗？"},
+        )
+
+        assert response.status_code == 202
+        body = response.json()
+        assert UUID(body["message_id"])
+        assert body["conversation_id"] == str(conversation_id)
+        assert body["admission_seq"] == 1
+        assert body["idempotency_key"]
+        assert body["delivery_state"] == "pending"
+        assert body["submission_state"] == "not_started"
+        # The pipeline received the plain text for the right conversation.
+        assert pipeline.submitted == [(conversation_id, "部署完成了吗？")]
+
+    def test_submit_unknown_conversation_returns_404(
+        self, client, admin_headers
+    ) -> None:
+        response = client.post(
+            f"/api/v1/agent/conversations/{uuid4()}/messages",
+            headers=admin_headers,
+            json={"text": "hello"},
+        )
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "conversation_not_found"
+
+    def test_submit_revoked_binding_returns_403(
+        self, client, admin_headers, provision_term
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        revoked = client.patch(
+            f"/api/v1/agent/admin/bindings/{binding_id}",
+            headers=admin_headers,
+            json={"status": "disabled"},
+        )
+        assert revoked.status_code == 200
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/messages",
+            headers=admin_headers,
+            json={"text": "hello"},
+        )
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "binding_revoked"
+
+    def test_submit_without_pipeline_returns_503(
+        self, client, admin_headers, provision_term
+    ) -> None:
+        # The seeded binding has no runtime fields, so the real registry never
+        # mapped a pipeline for it: submission must fail closed with 503, not
+        # an internal error.
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/messages",
+            headers=admin_headers,
+            json={"text": "hello"},
+        )
+        assert response.status_code == 503
+        assert response.json()["error"]["code"] == "binding_runtime_unavailable"
+
+    def test_submit_invalid_text_returns_422(
+        self, client, admin_headers, provision_term
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        client.app.state.agent_runtime_registry = _StubRegistry(_StubPipeline())
+
+        oversized = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/messages",
+            headers=admin_headers,
+            json={"text": "a" * (64 * 1024 + 1)},
+        )
+        assert oversized.status_code == 422
+        assert oversized.json()["error"]["code"] == "invalid_request"
+
+        control_characters = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/messages",
+            headers=admin_headers,
+            json={"text": "bad\x00text"},
+        )
+        assert control_characters.status_code == 422
+        assert control_characters.json()["error"]["code"] == "invalid_request"
+
+    def test_submit_unknown_field_is_rejected(
+        self, client, admin_headers, provision_term
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/messages",
+            headers=admin_headers,
+            json={"text": "hello", "draft_ref": "draft-1"},
+        )
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "invalid_request"
+
+
+class TestCancelConversation:
+    """POST .../cancel semantics (M4.5 spec §8)."""
+
+    def test_cancel_returns_202_with_confirmed_outcome(
+        self,
+        client,
+        admin_headers,
+        provision_term,
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        pipeline = _StubPipeline(
+            cancel_result=CancelResult(
+                outcome=BackendOutcome.CONFIRMED,
+                run_id=uuid4(),
+                run_state="cancelled",
+            )
+        )
+        client.app.state.agent_runtime_registry = _StubRegistry(pipeline)
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/cancel",
+            headers=admin_headers,
+            json={"reason": "user changed their mind"},
+        )
+
+        assert response.status_code == 202
+        assert response.json() == {"outcome": "confirmed", "run_state": "cancelled"}
+        assert pipeline.cancelled == [(conversation_id, "user changed their mind")]
+
+    def test_cancel_accepts_null_reason(
+        self,
+        client,
+        admin_headers,
+        provision_term,
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        pipeline = _StubPipeline()
+        client.app.state.agent_runtime_registry = _StubRegistry(pipeline)
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/cancel",
+            headers=admin_headers,
+            json={"reason": None},
+        )
+
+        assert response.status_code == 202
+        assert response.json()["outcome"] == "confirmed"
+        assert pipeline.cancelled == [(conversation_id, None)]
+
+    def test_cancel_reports_unknown_outcome(
+        self,
+        client,
+        admin_headers,
+        provision_term,
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        pipeline = _StubPipeline(
+            cancel_result=CancelResult(
+                outcome=BackendOutcome.UNKNOWN,
+                run_id=uuid4(),
+                run_state="unknown",
+            )
+        )
+        client.app.state.agent_runtime_registry = _StubRegistry(pipeline)
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/cancel",
+            headers=admin_headers,
+            json={"reason": None},
+        )
+
+        assert response.status_code == 202
+        assert response.json() == {"outcome": "unknown", "run_state": "unknown"}
+
+    def test_cancel_without_active_run_returns_409(
+        self,
+        client,
+        admin_headers,
+        provision_term,
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        pipeline = _StubPipeline(cancel_error=NoActiveRunError("no run"))
+        client.app.state.agent_runtime_registry = _StubRegistry(pipeline)
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/cancel",
+            headers=admin_headers,
+            json={"reason": None},
+        )
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "no_active_run"
