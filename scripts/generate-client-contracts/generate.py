@@ -28,6 +28,13 @@ from termflow_control_plane.api.agent_admin import (
     AgentTokenListResponse,
     AgentTokenResponse,
 )
+from termflow_control_plane.api.agent_approvals import (
+    ApprovalBindingInfo,
+    ApprovalDecisionRequest,
+    ApprovalDetailResponse,
+    ApprovalListResponse,
+    ApprovalResponse,
+)
 from termflow_control_plane.api.agent_capabilities import AgentCapabilitiesResponse
 from termflow_control_plane.api.agent_conversations import (
     AgentConversationBindingInfo,
@@ -39,6 +46,10 @@ from termflow_control_plane.api.agent_conversations import (
     AgentEventResponse,
     AgentMessageListResponse,
     AgentMessageResponse,
+)
+from termflow_control_plane.api.transcription import (
+    TranscriptionDraftDetailResponse,
+    TranscriptionDraftResponse,
 )
 from termflow_protocol import (
     PROTOCOL_VERSION,
@@ -184,6 +195,13 @@ MODELS: tuple[type[BaseModel], ...] = (
     AgentMessageListResponse,
     AgentEventResponse,
     AgentEventListResponse,
+    ApprovalResponse,
+    ApprovalBindingInfo,
+    ApprovalDetailResponse,
+    ApprovalListResponse,
+    ApprovalDecisionRequest,
+    TranscriptionDraftResponse,
+    TranscriptionDraftDetailResponse,
     AgentProfileCreateRequest,
     AgentProfileUpdateRequest,
     AgentProfileResponse,

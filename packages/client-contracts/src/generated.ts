@@ -302,6 +302,7 @@ export interface TerminalActionResultFrame {
 export interface AgentCapabilitiesResponse {
   agent_broker_enabled: boolean
   delegated_write_grants_enabled: boolean
+  speech_to_text_enabled: boolean
 }
 
 export interface AgentConversationCreateRequest {
@@ -348,6 +349,7 @@ export interface AgentMessageResponse {
   assembly_revision: number
   is_final: boolean
   body_digest: string
+  body: string | null
   created_at: string
 }
 
@@ -369,6 +371,81 @@ export interface AgentEventResponse {
 export interface AgentEventListResponse {
   events: AgentEventResponse[]
   next_cursor: number | null
+}
+
+export interface ApprovalResponse {
+  approval_id: string
+  binding_id: string
+  conversation_id: string
+  run_id: string | null
+  tool_call_id: string
+  canonical_hash: string
+  state: string
+  expires_at: string
+  decided_at: string | null
+  decision: string | null
+  auth_epoch: number
+  created_at: string
+  pane_id: string | null
+  operation: string | null
+  intent_summary: string | null
+}
+
+export interface ApprovalBindingInfo {
+  binding_id: string
+  profile_id: string
+  term_id: string
+  status: string
+}
+
+export interface ApprovalDetailResponse {
+  approval_id: string
+  binding_id: string
+  conversation_id: string
+  run_id: string | null
+  tool_call_id: string
+  canonical_hash: string
+  state: string
+  expires_at: string
+  decided_at: string | null
+  decision: string | null
+  auth_epoch: number
+  created_at: string
+  pane_id: string | null
+  operation: string | null
+  intent_summary: string | null
+  binding: ApprovalBindingInfo
+}
+
+export interface ApprovalListResponse {
+  approvals: ApprovalResponse[]
+}
+
+export interface ApprovalDecisionRequest {
+  decision: "approve" | "deny"
+}
+
+export interface TranscriptionDraftResponse {
+  draft_id: string
+  state: string
+  transcript: string
+  provider: string
+  region: string
+  language: string | null
+  duration_seconds: number | null
+  expires_at: string
+}
+
+export interface TranscriptionDraftDetailResponse {
+  draft_id: string
+  binding_id: string
+  target_conversation_id: string
+  state: string
+  provider: string
+  region: string
+  transcript_hash: string
+  expires_at: string
+  created_at: string
 }
 
 export interface AgentProfileCreateRequest {
