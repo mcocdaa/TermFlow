@@ -24,6 +24,7 @@ Covers the M1.6 verification wave:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -32,6 +33,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 from termflow_control_plane.app import create_app
 from termflow_control_plane.config import Settings
@@ -40,14 +42,42 @@ from termflow_control_plane.persistence.models import AgentCleanupJob, Transcrip
 from termflow_control_plane.persistence.repositories import RepositoryBundle, digest_secret
 from termflow_control_plane.plugins.agent_broker.agent.backend import (
     AgentBackendCapabilities,
+    CancelScope,
+    ConcurrencyMode,
+    ContextMode,
+    ReplayMode,
+    RuntimeIsolation,
+    SubmitMode,
+    ToolCallIdentity,
 )
 from termflow_control_plane.plugins.agent_broker.agent.inbox import (
     InboxDeliveryStateMachine,
     InboxEnvelope,
 )
 from termflow_control_plane.plugins.agent_broker.agent.runs import AgentRunStateMachine
-from termflow_control_plane.plugins.agent_broker.agent.turns import BackendOutcome
-from termflow_control_plane.plugins.agent_broker.plugin import run_agent_recovery
+from termflow_control_plane.plugins.agent_broker.agent.runtime_registry import (
+    AgentRuntimeRegistry,
+)
+from termflow_control_plane.plugins.agent_broker.agent.stream_hub import AgentStreamHub
+from termflow_control_plane.plugins.agent_broker.agent.turns import (
+    BackendConversationRef,
+    BackendConversationSnapshot,
+    BackendOperationResult,
+    BackendOutcome,
+    BackendSubmitResult,
+    TurnPartTrust,
+)
+from termflow_control_plane.plugins.agent_broker.agent.watches import (
+    WatchContract,
+    WatchEngine,
+    encode_watch_contract,
+)
+from termflow_control_plane.plugins.agent_broker.plugin import (
+    run_agent_recovery,
+    run_watch_deadline_tick,
+)
+from termflow_protocol.agent import AgentInputKind
+from termflow_protocol.mcp import WatchCondition, WatchConditionKind
 
 
 def _hash(value: str) -> str:
@@ -1213,3 +1243,319 @@ def test_m1_exit_gate_fake_backend_round_trip_replays_canonical_timeline(
     )
     assert detail.status_code == 200
     assert detail.json()["conversation_id"] == str(conversation.id)
+
+
+# ---------------------------------------------------------------------------
+# M4.5 runtime service assembly (spec §3a/§7): app.state wiring + ordering
+# ---------------------------------------------------------------------------
+
+
+class TestRuntimeServiceAssembly:
+    def test_app_state_exposes_runtime_registry_and_watch_engine(
+        self, client: TestClient
+    ) -> None:
+        registry = client.app.state.agent_runtime_registry
+        watch_engine = client.app.state.agent_watch_engine
+
+        assert isinstance(registry, AgentRuntimeRegistry)
+        assert isinstance(watch_engine, WatchEngine)
+
+    def test_disabled_agent_broker_leaves_runtime_services_unwired(
+        self, tmp_path
+    ) -> None:
+        settings = Settings(
+            admin_token="admin-token-that-is-long-enough-for-tests",
+            database_url=f"sqlite+aiosqlite:///{tmp_path / 'disabled.db'}",
+            allow_insecure_loopback=True,
+            agent_broker_enabled=False,
+        )
+        database = Database(settings.database_url)
+        app = create_app(settings=settings, database=database)
+
+        with TestClient(app) as client:
+            assert getattr(client.app.state, "agent_runtime_registry", None) is None
+            assert getattr(client.app.state, "agent_watch_engine", None) is None
+
+
+@pytest.mark.asyncio
+async def test_app_startup_runs_recovery_before_runtime_activation(
+    tmp_path, monkeypatch
+) -> None:
+    """Spec §7 order: run_agent_recovery fences stale runs before any pipeline activates.
+
+    The watch engine loads first, then per-binding pipelines activate, and
+    shutdown stops them in the exact reverse order.  The registry/watch
+    classes are monkeypatched with recording doubles so the real app lifespan
+    is exercised without any backend networking.
+    """
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'order.db'}")
+    await database.initialize()
+    repositories = RepositoryBundle(database.session_factory)
+    profile_id = await _seed_profile(repositories)
+    term_id = await _seed_term(repositories)
+    binding_id = await _seed_binding(repositories, profile_id=profile_id, term_id=term_id)
+    conversation_id = await _seed_conversation(repositories, binding_id=binding_id)
+    # A run stuck mid-flight when B crashed: recovery must fence it to
+    # unknown BEFORE any pipeline could claim new work for its conversation.
+    stuck_run = await repositories.agent_runs.create(
+        conversation_id=conversation_id, run_state="running"
+    )
+
+    calls: list[str] = []
+
+    original_recovery = run_agent_recovery
+
+    async def recording_recovery(*args: Any, **kwargs: Any) -> Any:
+        calls.append("recovery")
+        return await original_recovery(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "termflow_control_plane.app.run_agent_recovery", recording_recovery
+    )
+
+    class FakeWatchEngine:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        async def rebuild(self) -> None:
+            calls.append("watch_rebuild")
+
+        async def start(self) -> None:
+            calls.append("watch_start")
+
+        async def stop(self) -> None:
+            calls.append("watch_stop")
+
+        async def check_deadlines(self, now: datetime) -> list[Any]:
+            return []
+
+    class FakeRegistry:
+        def __init__(self, **kwargs: Any) -> None:
+            self.activated: list[UUID] = []
+
+        async def start_all(self, bindings: list[Any]) -> None:
+            calls.append("registry_start_all")
+            self.activated = [binding.id for binding in bindings]
+
+        async def stop_all(self) -> None:
+            calls.append("registry_stop_all")
+
+        def pipeline_for(self, binding_id: UUID) -> None:
+            return None
+
+    monkeypatch.setattr("termflow_control_plane.app.WatchEngine", FakeWatchEngine)
+    monkeypatch.setattr("termflow_control_plane.app.AgentRuntimeRegistry", FakeRegistry)
+
+    app = create_app(
+        settings=Settings(
+            admin_token="admin-token-that-is-long-enough-for-tests",
+            database_url=f"sqlite+aiosqlite:///{tmp_path / 'order.db'}",
+            allow_insecure_loopback=True,
+            agent_watch_deadline_tick_seconds=0.05,
+        ),
+        database=database,
+    )
+    async with app.router.lifespan_context(app):
+        # Recovery ran before runtime activation; the stuck run was fenced.
+        assert calls == [
+            "recovery",
+            "watch_rebuild",
+            "watch_start",
+            "registry_start_all",
+        ]
+        assert (await repositories.agent_runs.get_by_id(stuck_run.id)).run_state == "unknown"
+        # The seeded (runtimeless) binding still reached start_all: the
+        # registry itself is what fails it closed, not the plugin.
+        registry = app.state.agent_runtime_registry
+        assert isinstance(registry, FakeRegistry)
+        assert registry.activated == [binding_id]
+        assert isinstance(app.state.agent_watch_engine, FakeWatchEngine)
+
+    # Shutdown stopped the services in the exact reverse order.
+    assert calls[-2:] == ["watch_stop", "registry_stop_all"]
+    await database.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Watch deadline tick wiring (spec §3b): FiredTrigger -> submit_watch_input
+# ---------------------------------------------------------------------------
+
+
+class _TickAdapter:
+    """In-memory AgentBackend double for the deadline tick round trip.
+
+    ``events`` hangs until the pipeline is stopped (its task cancellation
+    unwinds the await), so the SSE consumer idles; ``submit`` records the
+    turn the dispatcher rendered for the fired watch trigger.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_url: str = "http://fake",
+        directory: str = "/workspace",
+        backend_version: str = "0.1.0",
+        runtime_id: str = "runtime-1",
+        binding_capability_epoch: int = 1,
+    ) -> None:
+        self.runtime_id = runtime_id
+        self.directory = directory
+        self.epoch = binding_capability_epoch
+        self.submit_calls: list[tuple[BackendConversationRef, Any]] = []
+        self.closed = False
+
+    async def capabilities(self) -> AgentBackendCapabilities:
+        return AgentBackendCapabilities(
+            context_mode=ContextMode.LOST_ON_RESTART,
+            submit_mode=SubmitMode.NON_IDEMPOTENT,
+            cancel_scope=CancelScope.CONVERSATION,
+            replay_mode=ReplayMode.NONE,
+            concurrency_mode=ConcurrencyMode.SERIALIZED,
+            tool_call_identity=ToolCallIdentity.BINDING,
+            runtime_isolation=RuntimeIsolation.BINDING,
+            explicit_run_boundaries=True,
+        )
+
+    async def create_conversation(self, request: Any) -> BackendConversationRef:
+        return BackendConversationRef(
+            backend_kind="fake",
+            backend_version="0.1.0",
+            runtime_id=self.runtime_id,
+            binding_capability_epoch=self.epoch,
+            provider_ref="provider-1",
+        )
+
+    async def submit(self, ref: BackendConversationRef, request: Any) -> BackendSubmitResult:
+        self.submit_calls.append((ref, request))
+        return BackendSubmitResult(outcome=BackendOutcome.CONFIRMED)
+
+    async def events(self, scope: Any):  # noqa: ANN201 - async generator double
+        # Hanging subscription: only pipeline.stop() (task cancellation) ends it.
+        await asyncio.Event().wait()
+        yield  # pragma: no cover - unreachable in this test
+
+    async def reconcile(self, ref: BackendConversationRef) -> BackendConversationSnapshot:
+        return BackendConversationSnapshot(
+            conversation_ref=ref, outcome=BackendOutcome.CONFIRMED, resumable=False
+        )
+
+    async def cancel(self, request: Any) -> BackendOperationResult:
+        return BackendOperationResult(outcome=BackendOutcome.CONFIRMED)
+
+    async def interact(self, request: Any) -> BackendOperationResult:
+        return BackendOperationResult(outcome=BackendOutcome.CONFIRMED)
+
+    async def delete_conversation(self, ref: BackendConversationRef) -> BackendOperationResult:
+        return BackendOperationResult(outcome=BackendOutcome.CONFIRMED)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+async def _wait_for_submit(adapter: _TickAdapter, *, deadline_seconds: float = 10.0) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + deadline_seconds
+    while loop.time() < deadline:
+        if adapter.submit_calls:
+            return
+        await asyncio.sleep(0.01)
+    pytest.fail("the pipeline never submitted the watch turn")
+
+
+@pytest.mark.asyncio
+async def test_watch_deadline_tick_delivers_fired_trigger_to_binding_pipeline(
+    repositories: RepositoryBundle,
+) -> None:
+    """End-to-end spec §3b wiring: FiredTrigger -> build_input -> submit_watch_input.
+
+    A real WatchEngine fires an idle deadline, ``run_watch_deadline_tick``
+    (the function the lifespan tick task invokes) hands the typed input to
+    the binding's real pipeline, and the dispatcher submits an untrusted
+    WATCH_TRIGGERED turn to the fake adapter.
+    """
+    profile_id = await _seed_profile(repositories)
+    term_id = await _seed_term(repositories)
+    binding = await repositories.agent_bindings.create(
+        profile_id=profile_id,
+        term_id=term_id,
+        status="ready",
+        runtime_ref="runtime-1",
+        runtime_epoch=1,
+        capability_ref="capability-1",
+    )
+    conversation_id = await _seed_conversation(repositories, binding_id=binding.id)
+    stream = uuid4()
+    contract = WatchContract(
+        condition=WatchCondition(
+            kind=WatchConditionKind.OUTPUT_IDLE, idle_after_seconds=60
+        ),
+        start_cursor=None,
+        intent_summary="the deployment went idle",
+        proposed_action=None,
+    )
+    await repositories.watches.create(
+        binding_id=binding.id,
+        conversation_id=conversation_id,
+        pane_id="%0",
+        condition_kind="output_idle",
+        start_cursor=encode_watch_contract(contract),
+        intent_summary="the deployment went idle",
+        one_shot=True,
+    )
+
+    # The pipeline's own clock is real wall time, so the test clock starts in
+    # the past: advancing it past the idle duration still keeps every
+    # persisted timestamp behind "now" (a future-timestamped inbox item would
+    # not be claimable).
+    clock = Clock(datetime.now(UTC) - timedelta(minutes=10))
+    watch_engine = WatchEngine(
+        sessions=repositories.session_factory,
+        watches=repositories.watches,
+        deliveries=repositories.agent_watch_deliveries,
+        inbox=repositories.agent_inbox,
+        clock=clock,
+    )
+    await watch_engine.rebuild()
+    # One observed output chunk anchors the idle deadline's timer.
+    await watch_engine.evaluate_live_event(
+        instance_id=term_id,
+        pane_id="%0",
+        stream_id=stream,
+        seq=1,
+        data=b"build output",
+        observed_at=clock(),
+    )
+
+    adapters: list[_TickAdapter] = []
+
+    def adapter_factory(**kwargs: Any) -> _TickAdapter:
+        adapter = _TickAdapter(**kwargs)
+        adapters.append(adapter)
+        return adapter
+
+    registry = AgentRuntimeRegistry(
+        settings=Settings(admin_token="admin-token-that-is-long-enough-for-tests"),
+        repositories=repositories,
+        sessions=repositories.session_factory,
+        hub=AgentStreamHub(),
+        supervisor=None,
+        adapter_factory=adapter_factory,
+    )
+    await registry.start_all([binding])
+    try:
+        clock.advance(seconds=61)
+        triggers = await run_watch_deadline_tick(watch_engine, registry, now=clock())
+
+        assert len(triggers) == 1
+        assert triggers[0].evidence.source == "idle_deadline"
+
+        await _wait_for_submit(adapters[0])
+        ref, request = adapters[0].submit_calls[0]
+        assert request.parts[0].kind is AgentInputKind.WATCH_TRIGGERED
+        assert request.parts[0].trust is TurnPartTrust.UNTRUSTED
+        assert "the deployment went idle" in request.parts[0].text
+
+        runs = await repositories.agent_runs.list_for_conversation(conversation_id)
+        assert [run.run_state for run in runs] == ["queued"]
+    finally:
+        await registry.stop_all()

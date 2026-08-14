@@ -88,6 +88,11 @@ class Settings(BaseSettings):
     agent_opencode_base_url: str = "http://opencode-agent:4096"
     agent_opencode_directory: str = "/workspace"
     agent_pipeline_reconcile_attempts: int = Field(default=5, ge=1)
+    # M4.5 watch wiring (spec §3a): the lifespan watch deadline task sweeps due
+    # ``output_idle`` deadlines every tick and hands each FiredTrigger to its
+    # binding pipeline.  Tests inject a short period (or drive the tick
+    # manually) to avoid real-time waits.
+    agent_watch_deadline_tick_seconds: float = Field(default=1.0, gt=0)
     # Optional STT (M7a spec): the pinned speaches container is reached only
     # when explicitly enabled; every default keeps the Null provider (503)
     # path active.  stt_timeout_seconds must stay strictly below the 60s

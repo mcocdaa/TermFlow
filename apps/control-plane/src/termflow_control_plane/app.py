@@ -75,6 +75,9 @@ from termflow_control_plane.plugins.agent_broker.agent.command_service import (
     CommandService,
 )
 from termflow_control_plane.plugins.agent_broker.agent.permissions import ApprovalPolicy
+from termflow_control_plane.plugins.agent_broker.agent.runtime_registry import (
+    AgentRuntimeRegistry,
+)
 from termflow_control_plane.plugins.agent_broker.agent.speaches import (
     SpeachesTranscriptionProvider,
 )
@@ -89,7 +92,10 @@ from termflow_control_plane.plugins.agent_broker.agent.terminal_ports import (
 from termflow_control_plane.plugins.agent_broker.agent.transcription import (
     NullTranscriptionProvider,
 )
-from termflow_control_plane.plugins.agent_broker.agent.watches import ObservationCursorStore
+from termflow_control_plane.plugins.agent_broker.agent.watches import (
+    ObservationCursorStore,
+    WatchEngine,
+)
 from termflow_control_plane.plugins.agent_broker.api.mcp_server import (
     MCP_STREAMABLE_HTTP_PATH,
     McpGuardrailConfig,
@@ -429,10 +435,11 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
             runtime=_unimplemented_port(AgentRuntimeSupervisor),  # lands with M4
         )
         app.state.feature_context = feature_context
-        await app.state.feature_registry.startup(feature_context)
         # Deterministic restart recovery (plan §17: B restarts): fence stale
         # inbox claims, mark stuck runs unknown, then retry pending cleanup
         # tombstones.  Fail-safe by design: errors are logged, never fatal.
+        # It runs BEFORE plugin startup so the spec §7 order holds: recovery
+        # fences stale runs before any pipeline can claim new work.
         try:
             recovered = await run_agent_recovery(
                 app.state.repositories,
@@ -453,6 +460,39 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
                 logger.info("Agent restart recovery: %s", recovered)
         except Exception:
             logger.exception("Agent restart recovery failed")
+        # M4.5 runtime wiring (spec §3a/§7): the registry and watch engine
+        # need the lifespan-built repositories, session factory, and hubs, so
+        # the composition root builds them here and exposes them on app.state.
+        # The plugin (registered with enabled=agent_broker_enabled) receives
+        # them and its startup/shutdown hooks drive the lifecycle in the spec
+        # order: watch engine first, then per-binding pipelines, then the
+        # deadline tick task - and the exact reverse at shutdown.
+        if settings.agent_broker_enabled:
+            app.state.agent_runtime_registry = AgentRuntimeRegistry(
+                settings=settings,
+                repositories=app.state.repositories,
+                sessions=app.state.session_factory,
+                hub=app.state.agent_stream_hub,
+                # The deployment-owned SupervisorConnector requires a runtime
+                # manager client; until one is injected the activation gate is
+                # open in-process, while bindings without runtime fields still
+                # fail closed (spec §6).
+                supervisor=None,
+            )
+            app.state.agent_watch_engine = WatchEngine(
+                sessions=app.state.session_factory,
+                watches=app.state.repositories.watches,
+                deliveries=app.state.repositories.agent_watch_deliveries,
+                inbox=app.state.repositories.agent_inbox,
+                hub=app.state.event_hub,
+            )
+            app.state.agent_broker_plugin.bind_runtime_services(
+                watch_engine=app.state.agent_watch_engine,
+                registry=app.state.agent_runtime_registry,
+                sessions=app.state.session_factory,
+                watch_tick_seconds=settings.agent_watch_deadline_tick_seconds,
+            )
+        await app.state.feature_registry.startup(feature_context)
         # The MCP capability surface is built here because the continuation
         # service and token authenticator need the repository bundle; the
         # mounted ASGI wrapper serves it only while the plugin is enabled.
@@ -575,8 +615,14 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
     app.state.transcription_timeout_seconds = TRANSCRIPTION_TIMEOUT_SECONDS
     app.state.transcription_staging_dir = None
     app.state.feature_registry = FeatureRegistry()
+    # The plugin instance is owned by the composition root: the lifespan
+    # attaches the runtime services it builds (registry + watch engine) to
+    # this exact instance before feature startup, so the plugin's
+    # startup/shutdown hooks drive their lifecycle under the
+    # agent_broker_enabled gate.
+    app.state.agent_broker_plugin = AgentBrokerPlugin()
     app.state.feature_registry.register(
-        AgentBrokerPlugin(),
+        app.state.agent_broker_plugin,
         enabled=settings.agent_broker_enabled,
     )
 
