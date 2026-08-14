@@ -218,11 +218,25 @@ def test_rejects_ambiguous_package_or_signer_output() -> None:
     package_line = "package: name='io.termflow.client' versionCode='10065' versionName='0.1.0-rc.5'"
     with pytest.raises(ValueError, match="exactly one package"):
         parse_badging(f"{package_line}\n{package_line}\n")
-    with pytest.raises(ValueError, match="exactly one signer"):
+    with pytest.raises(
+        ValueError,
+        match="found 2 unique certificate fingerprints: AA, BB",
+    ):
         parse_signers(
             "Signer #1 certificate SHA-256 digest: aa\n"
             "Signer #2 certificate SHA-256 digest: bb\n"
         )
+
+
+def test_reports_unparseable_signer_output() -> None:
+    with pytest.raises(
+        ValueError,
+        match=(
+            "found 0 unique certificate fingerprints; signer-related output: "
+            "Signer #1 certificate SHA-256 digest: not-a-digest"
+        ),
+    ):
+        parse_signers("Signer #1 certificate SHA-256 digest: not-a-digest\n")
 
 
 def test_known_template_hash_evidence_is_complete() -> None:

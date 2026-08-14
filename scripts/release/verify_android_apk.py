@@ -75,7 +75,20 @@ def parse_signers(output: str) -> tuple[str, ...]:
         )
     )
     if len(signers) != 1:
-        raise ValueError("apksigner output must contain exactly one signer")
+        detail = f"found {len(signers)} unique certificate fingerprints"
+        if signers:
+            listed = ", ".join(signers[:5])
+            suffix = ", ..." if len(signers) > 5 else ""
+            detail = f"{detail}: {listed}{suffix}"
+        else:
+            related_lines = tuple(
+                " ".join(line.split())
+                for line in output.splitlines()
+                if "signer" in line.lower() or "certificate" in line.lower()
+            )
+            related = " | ".join(related_lines[:5]) or "<none>"
+            detail = f"{detail}; signer-related output: {related}"
+        raise ValueError(f"apksigner output must contain exactly one signer; {detail}")
     return signers
 
 
