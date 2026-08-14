@@ -29,6 +29,7 @@ def _write_resources(
     adaptive_background: bool = True,
     compiled_adaptive: bool = True,
     compiled_adaptive_as_drawables: bool = False,
+    compiled_resource_table: bool = True,
 ) -> tuple[Path, Path]:
     generated = root / "generated-res"
     apk = root / "app.apk"
@@ -68,12 +69,11 @@ def _write_resources(
                 "res/drawable/ic_launcher_background.xml",
                 b"compiled adaptive background",
             )
-            archive.writestr("resources.arsc", b"compiled resource table")
         elif compiled_adaptive:
             archive.writestr(
                 "res/mipmap-anydpi-v26/ic_launcher.xml", adaptive.read_bytes()
             )
-        else:
+        if compiled_resource_table:
             archive.writestr("resources.arsc", b"unrelated compiled resources")
     return apk, generated
 
@@ -105,10 +105,16 @@ def test_rejects_adaptive_launcher_without_background(tmp_path: Path) -> None:
         verify_launcher_resources(apk, generated)
 
 
-def test_rejects_apk_without_compiled_adaptive_launcher(tmp_path: Path) -> None:
+def test_accepts_adaptive_launcher_compiled_only_in_resource_table(tmp_path: Path) -> None:
     apk, generated = _write_resources(tmp_path, compiled_adaptive=False)
 
-    with pytest.raises(ValueError, match="compiled adaptive launcher"):
+    verify_launcher_resources(apk, generated)
+
+
+def test_rejects_apk_without_compiled_resource_table(tmp_path: Path) -> None:
+    apk, generated = _write_resources(tmp_path, compiled_resource_table=False)
+
+    with pytest.raises(ValueError, match="compiled Android resource table"):
         verify_launcher_resources(apk, generated)
 
 

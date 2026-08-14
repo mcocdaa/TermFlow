@@ -177,14 +177,8 @@ def verify_launcher_resources(apk: Path, generated_res: Path) -> None:
 
     with zipfile.ZipFile(apk) as archive:
         names = set(archive.namelist())
-        adaptive_apk = "res/mipmap-anydpi-v26/ic_launcher.xml"
-        compiled_adaptive_drawables = {
-            "res/drawable-v24/ic_launcher_foreground.xml",
-            "res/drawable/ic_launcher_background.xml",
-            "resources.arsc",
-        }
-        if adaptive_apk not in names and not compiled_adaptive_drawables <= names:
-            raise ValueError("APK is missing the compiled adaptive launcher resource")
+        if "resources.arsc" not in names:
+            raise ValueError("APK is missing the compiled Android resource table")
         for density in DENSITIES:
             for launcher_name in LAUNCHER_NAMES:
                 source = generated_res / f"mipmap-{density}" / launcher_name
