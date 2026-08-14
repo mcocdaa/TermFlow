@@ -4,8 +4,7 @@
 Binding's runtime: it owns the dispatcher loop (claim inbox → render typed
 turn → submit), the SSE consumer loop (normalized events → run state machine
 → canonical event cursor → message assembly), and the disconnect
-reconcile/reconnect loop (stubbed with a bounded-backoff resubscribe in this
-task; the reconcile logic lands with the next M4.5 task).
+reconcile/reconnect loop.
 
 Serialization follows plan gate 6:
 
@@ -45,6 +44,7 @@ from termflow_protocol.agent import (
     AgentEventKind,
     AgentInputKind,
     AgentInputSource,
+    BackendRuntimeState,
     UserMessageInput,
     UserMessagePayload,
     WatchTriggeredInput,
@@ -52,6 +52,7 @@ from termflow_protocol.agent import (
 
 from termflow_control_plane.persistence.models import (
     AgentEvent,
+    AgentRun,
 )
 from termflow_control_plane.persistence.models import (
     BackendConversationRef as BackendConversationRefRow,
@@ -78,10 +79,13 @@ from termflow_control_plane.plugins.agent_broker.agent.stream_hub import (
     AgentStreamHub,
 )
 from termflow_control_plane.plugins.agent_broker.agent.turns import (
+    BackendCancelRequest,
     BackendConversationRef,
     BackendEventScope,
+    BackendInteraction,
     BackendModel,
     BackendNotification,
+    BackendOperationResult,
     BackendOutcome,
     BackendTurnPart,
     BackendTurnRequest,
@@ -198,6 +202,18 @@ class SubmitAdmission(BackendModel):
     submission_state: str
 
 
+class CancelResult(BackendModel):
+    """Product-neutral result of cancelling one active Agent run."""
+
+    outcome: BackendOutcome
+    run_id: UUID
+    run_state: str
+
+
+class NoActiveRunError(Exception):
+    """Raised when cancellation is requested without a queued/running run."""
+
+
 def _submit_error_code(outcome: BackendOutcome) -> str:
     """Map a failed submit outcome onto the plan §7 error vocabulary."""
     if outcome is BackendOutcome.UNSUPPORTED:
@@ -236,6 +252,8 @@ class AgentPipelineService:
         active_run_retry_seconds: float = _ACTIVE_RUN_RETRY_SECONDS,
         reconnect_backoff_base: float = _RECONNECT_BACKOFF_BASE_SECONDS,
         reconnect_backoff_cap: float = _RECONNECT_BACKOFF_CAP_SECONDS,
+        reconcile_attempts: int = 5,
+        cancel_wait_timeout: float = 5.0,
     ) -> None:
         self.binding_id = binding_id
         self._adapter = adapter
@@ -259,6 +277,12 @@ class AgentPipelineService:
         self._active_run_retry_seconds = active_run_retry_seconds
         self._reconnect_backoff_base = reconnect_backoff_base
         self._reconnect_backoff_cap = reconnect_backoff_cap
+        if reconcile_attempts < 1:
+            raise ValueError("reconcile_attempts must be at least 1")
+        if cancel_wait_timeout < 0:
+            raise ValueError("cancel_wait_timeout must be non-negative")
+        self._reconcile_attempts = reconcile_attempts
+        self._cancel_wait_timeout = cancel_wait_timeout
 
         self.inbox_machine = InboxDeliveryStateMachine(
             repositories.agent_inbox,
@@ -285,6 +309,11 @@ class AgentPipelineService:
         # waits for the active run's terminal signal (set by the SSE consumer).
         self._active_run_id: UUID | None = None
         self._run_terminal_event: asyncio.Event | None = None
+        # Same-process link from a run to the dispatched inbox envelope.  The
+        # current schema has no run_id on inbox rows; this lets runtime
+        # reconcile park the exact delivery without pretending restart-safe
+        # recovery (restart fencing remains run_agent_recovery's job).
+        self._run_envelopes: dict[UUID, InboxEnvelope] = {}
 
         self._tasks: list[asyncio.Task[None]] = []
         self._started = False
@@ -311,12 +340,8 @@ class AgentPipelineService:
             return
         self._started = True
         self._tasks = [
-            asyncio.create_task(
-                self._dispatch_loop(), name=f"agent-dispatch-{self.binding_id}"
-            ),
-            asyncio.create_task(
-                self._consume_events(), name=f"agent-events-{self.binding_id}"
-            ),
+            asyncio.create_task(self._dispatch_loop(), name=f"agent-dispatch-{self.binding_id}"),
+            asyncio.create_task(self._consume_events(), name=f"agent-events-{self.binding_id}"),
         ]
 
     async def stop(self) -> None:
@@ -390,9 +415,7 @@ class AgentPipelineService:
         this only bridges the typed payload (keyed by the inbox item id) to
         the in-process table and wakes the dispatcher.
         """
-        item = await self._repositories.agent_inbox.get_by_idempotency_key(
-            input.idempotency_key
-        )
+        item = await self._repositories.agent_inbox.get_by_idempotency_key(input.idempotency_key)
         if item is None:
             logger.warning(
                 "Agent pipeline %s: watch input (idempotency_key=%s, conversation=%s) "
@@ -405,6 +428,74 @@ class AgentPipelineService:
             return
         self._pending_payloads[item.id] = input
         self._wake.set()
+
+    async def cancel_conversation(
+        self, conversation_id: UUID, *, reason: str | None
+    ) -> CancelResult:
+        """Cancel the current run, proving a terminal state or marking unknown."""
+        run = await self._active_run_for_conversation(conversation_id)
+        if run is None:
+            raise NoActiveRunError(f"conversation {conversation_id} has no active run")
+        ref = await self._existing_backend_ref(conversation_id)
+        result = await self._adapter.cancel(
+            BackendCancelRequest(
+                conversation_ref=ref,
+                run_id=run.id,
+                correlation_id=str(uuid4()),
+                reason=reason,
+            )
+        )
+        if result.outcome is BackendOutcome.CONFIRMED:
+            terminal = await self._wait_for_terminal_state(
+                run.id, wait_seconds=self._cancel_wait_timeout
+            )
+            if terminal is not None:
+                return CancelResult(
+                    outcome=BackendOutcome.CONFIRMED,
+                    run_id=run.id,
+                    run_state=terminal,
+                )
+            snapshot = await self._adapter.reconcile(ref)
+            if snapshot.outcome is BackendOutcome.CONTEXT_LOST or (
+                snapshot.outcome is BackendOutcome.CONFIRMED
+                and snapshot.state is BackendRuntimeState.CLOSED
+            ):
+                await self._transition_run_terminal(run.id, "cancelled")
+                self._signal_run_terminal(run.id)
+                self._run_envelopes.pop(run.id, None)
+                return CancelResult(
+                    outcome=BackendOutcome.CONFIRMED,
+                    run_id=run.id,
+                    run_state="cancelled",
+                )
+            # The backend confirmed the cancellation request, but the session
+            # is still busy (or the proof itself is uncertain): the run cannot
+            # be proven cancelled, so it is marked unknown (spec §8).
+            await self._transition_run_terminal(run.id, "unknown")
+            self._signal_run_terminal(run.id)
+            self._run_envelopes.pop(run.id, None)
+            return CancelResult(
+                outcome=BackendOutcome.CONFIRMED,
+                run_id=run.id,
+                run_state="unknown",
+            )
+
+        # A non-confirmed cancel outcome (transport failure, rejection, or any
+        # other adapter result) proves nothing: the run is marked unknown and
+        # the product outcome is reported as "unknown" (spec §8 never lets a
+        # non-confirmed adapter outcome masquerade as a cancellation).
+        await self._transition_run_terminal(run.id, "unknown")
+        self._signal_run_terminal(run.id)
+        self._run_envelopes.pop(run.id, None)
+        return CancelResult(
+            outcome=BackendOutcome.UNKNOWN,
+            run_id=run.id,
+            run_state="unknown",
+        )
+
+    async def resolve_permission(self, interaction: BackendInteraction) -> BackendOperationResult:
+        """Forward a normalized one-shot permission decision to the adapter."""
+        return await self._adapter.interact(interaction)
 
     # ------------------------------------------------------------------
     # Dispatcher loop (spec §2)
@@ -451,9 +542,7 @@ class AgentPipelineService:
             self.binding_id
         )
         for conversation in conversations:
-            envelope = await self.inbox_machine.claim_next(
-                conversation_id=conversation.id
-            )
+            envelope = await self.inbox_machine.claim_next(conversation_id=conversation.id)
             if envelope is not None:
                 return envelope
         return None
@@ -515,6 +604,7 @@ class AgentPipelineService:
             owner=cast(str, envelope.claim_owner),
             fencing_token=str(uuid4()),
         )
+        self._run_envelopes[run_id] = started
 
         # 6) Supervisor re-check before submitting (spec §2 step 6): epoch
         #    drift fails closed instead of shipping a stale turn.
@@ -522,9 +612,7 @@ class AgentPipelineService:
             self._runtime_ref, self._runtime_epoch
         ):
             self._pending_payloads.pop(envelope.id, None)
-            await self._fail_run_and_delivery(
-                run_id, started, error_code="runtime_not_ready"
-            )
+            await self._fail_run_and_delivery(run_id, started, error_code="runtime_not_ready")
             return
 
         # 7) Render + submit (spec §2 step 7).
@@ -532,8 +620,7 @@ class AgentPipelineService:
             request = self._render_turn_request(started, payload, ref)
         except ValueError as exc:
             logger.warning(
-                "Agent pipeline %s: inbox item %s cannot be rendered (%s); "
-                "failing closed",
+                "Agent pipeline %s: inbox item %s cannot be rendered (%s); failing closed",
                 self.binding_id,
                 envelope.id,
                 exc,
@@ -553,9 +640,7 @@ class AgentPipelineService:
                 self.binding_id,
                 envelope.id,
             )
-            await self._fail_run_and_delivery(
-                run_id, started, error_code="submit_retryable"
-            )
+            await self._fail_run_and_delivery(run_id, started, error_code="submit_retryable")
             return
 
         if result.outcome in (BackendOutcome.CONFIRMED, BackendOutcome.REQUESTED):
@@ -609,9 +694,7 @@ class AgentPipelineService:
                 await asyncio.sleep(self._payload_grace_delay)
         return None
 
-    async def _resolve_backend_ref(
-        self, conversation_id: UUID
-    ) -> BackendConversationRef:
+    async def _resolve_backend_ref(self, conversation_id: UUID) -> BackendConversationRef:
         """Reuse the persisted backend conversation ref, or create + persist one.
 
         Returns the neutral :class:`~.turns.BackendConversationRef` model
@@ -623,9 +706,7 @@ class AgentPipelineService:
         )
         if existing is not None:
             return self._to_turns_ref(existing)
-        conversation = await self._repositories.agent_conversations.get_by_id(
-            conversation_id
-        )
+        conversation = await self._repositories.agent_conversations.get_by_id(conversation_id)
         title = (
             conversation.title
             if conversation is not None and conversation.title
@@ -646,6 +727,76 @@ class AgentPipelineService:
             backend_version=created.backend_version,
         )
         return self._to_turns_ref(persisted)
+
+    async def _existing_backend_ref(self, conversation_id: UUID) -> BackendConversationRef:
+        row = await self._repositories.agent_backend_conversations.get_by_conversation(
+            conversation_id
+        )
+        if row is None:
+            raise NoActiveRunError(f"conversation {conversation_id} has no backend conversation")
+        return self._to_turns_ref(row)
+
+    async def _active_run_for_conversation(self, conversation_id: UUID) -> AgentRun | None:
+        runs = await self._repositories.agent_runs.list_for_conversation(conversation_id)
+        return next((run for run in runs if run.run_state in _ACTIVE_RUN_STATES), None)
+
+    async def _wait_for_terminal_state(self, run_id: UUID, *, wait_seconds: float) -> str | None:
+        current = await self._repositories.agent_runs.get_by_id(run_id)
+        if current is not None and current.run_state in _TERMINAL_RUN_STATES:
+            return current.run_state
+        event = self._run_terminal_event if self._active_run_id == run_id else None
+        if event is not None and wait_seconds > 0:
+            try:
+                await asyncio.wait_for(event.wait(), timeout=wait_seconds)
+            except TimeoutError:
+                pass
+        current = await self._repositories.agent_runs.get_by_id(run_id)
+        if current is not None and current.run_state in _TERMINAL_RUN_STATES:
+            return current.run_state
+        return None
+
+    async def _transition_run_terminal(
+        self,
+        run_id: UUID,
+        state: str,
+        *,
+        error_code: str | None = None,
+    ) -> None:
+        """Move queued/running work to a terminal state without weakening CAS."""
+        current = await self._repositories.agent_runs.get_by_id(run_id)
+        if current is None or current.run_state in _TERMINAL_RUN_STATES:
+            return
+        if current.run_state == "queued":
+            try:
+                await self.run_machine.start(run_id)
+            except RunStateError:
+                # A concurrent RUN_STARTED may win queued -> running.  Re-read
+                # below and terminate that authoritative state instead of
+                # treating the expected CAS race as cancellation failure.
+                pass
+            current = await self._repositories.agent_runs.get_by_id(run_id)
+            if current is None or current.run_state in _TERMINAL_RUN_STATES:
+                return
+            if current.run_state != "running":
+                return
+        try:
+            if state == "failed":
+                await self.run_machine.fail(run_id, error_code=error_code or "backend_failed")
+            elif state == "cancelled":
+                await self.run_machine.cancel(run_id)
+            elif state == "unknown":
+                await self.run_machine.mark_unknown(run_id)
+            else:  # pragma: no cover - all callers use the closed vocabulary
+                raise ValueError(f"unsupported terminal run state: {state}")
+        except RunStateError:
+            # A boundary event can win the transition race.  Its durable state
+            # is authoritative, so reconciliation never overwrites it.
+            return
+
+    async def _park_run_delivery(self, run_id: UUID) -> None:
+        envelope = self._run_envelopes.pop(run_id, None)
+        if envelope is not None:
+            await self.inbox_machine.mark_delivery_unknown(envelope)
 
     @staticmethod
     def _to_turns_ref(row: BackendConversationRefRow) -> BackendConversationRef:
@@ -726,7 +877,19 @@ class AgentPipelineService:
                     self.binding_id,
                 )
             # The iterator ended cleanly (non-shutdown): reconcile + reconnect.
-            await self._reconcile_and_reconnect()
+            # An operational fault inside reconcile must not kill the
+            # per-binding consumer either (spec §5 keeps retrying until
+            # stop()): pace the retry with the base backoff and loop.
+            try:
+                await self._reconcile_and_reconnect()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "Agent pipeline %s: reconcile/reconnect raised; retrying",
+                    self.binding_id,
+                )
+                await asyncio.sleep(min(self._reconnect_backoff_base, self._reconnect_backoff_cap))
 
     async def _handle_notification(self, notification: BackendNotification) -> None:
         self._reconnect_attempts = 0  # stream is healthy again
@@ -778,8 +941,7 @@ class AgentPipelineService:
                 return
             self.diagnostics.no_active_run_dropped += 1
             logger.warning(
-                "Agent pipeline %s: dropping event %s (%s) for conversation %s "
-                "with no active run",
+                "Agent pipeline %s: dropping event %s (%s) for conversation %s with no active run",
                 self.binding_id,
                 notification.dedup_key,
                 notification.kind.value,
@@ -789,9 +951,7 @@ class AgentPipelineService:
         run_id = active.id
 
         # 4) Run state machine on explicit boundaries (idempotent start).
-        boundary = AgentRunStateMachine.infer_run_boundary(
-            self._capabilities, notification
-        )
+        boundary = AgentRunStateMachine.infer_run_boundary(self._capabilities, notification)
         if boundary is RunBoundary.START:
             try:
                 await self.run_machine.start(
@@ -824,6 +984,7 @@ class AgentPipelineService:
                 )
             else:
                 self._signal_run_terminal(run_id)
+                self._run_envelopes.pop(run_id, None)
 
         # 5) Canonical event persistence (one JSON string for digest + payload).
         payload_json = _canonical_payload_json(notification)
@@ -860,23 +1021,57 @@ class AgentPipelineService:
             )
 
     async def _reconcile_and_reconnect(self) -> None:
-        """Reconnect after an SSE disconnect (M4.5 spec §5).
-
-        TODO(M4.5 next task): reconcile non-terminal conversations through
-        ``adapter.reconcile`` before resubscribing (CONFIRMED keeps the run,
-        CONTEXT_LOST fails it, UNKNOWN backs off and marks unknown).  This
-        stub records a bounded diagnostic and applies the capped exponential
-        backoff; the consumer loop then re-subscribes ``adapter.events``.
-        """
+        """Reconcile non-terminal runs, then resubscribe after bounded backoff."""
         self._reconnect_attempts += 1
         self.diagnostics.reconnects += 1
+        conversations = await self._repositories.agent_conversations.list_for_binding(
+            self.binding_id
+        )
+        for conversation in conversations:
+            run = await self._active_run_for_conversation(conversation.id)
+            if run is None:
+                continue
+            ref_row = await self._repositories.agent_backend_conversations.get_by_conversation(
+                conversation.id
+            )
+            if ref_row is None:
+                continue
+            ref = self._to_turns_ref(ref_row)
+            snapshot = None
+            for attempt in range(self._reconcile_attempts):
+                snapshot = await self._adapter.reconcile(ref)
+                if snapshot.outcome is not BackendOutcome.UNKNOWN:
+                    break
+                if attempt + 1 < self._reconcile_attempts:
+                    await asyncio.sleep(
+                        min(
+                            self._reconnect_backoff_base * (2**attempt),
+                            self._reconnect_backoff_cap,
+                        )
+                    )
+            if snapshot is None or snapshot.outcome is BackendOutcome.CONFIRMED:
+                continue
+            current = await self._repositories.agent_runs.get_by_id(run.id)
+            if current is None or current.run_state in _TERMINAL_RUN_STATES:
+                # A durable boundary event won the race while reconcile was
+                # in flight.  Its state is authoritative; do not overwrite it
+                # or mislabel the already-known delivery as unknown.
+                self._signal_run_terminal(run.id)
+                self._run_envelopes.pop(run.id, None)
+                continue
+            if snapshot.outcome is BackendOutcome.CONTEXT_LOST:
+                await self._transition_run_terminal(run.id, "failed", error_code="context_lost")
+            else:
+                await self._transition_run_terminal(run.id, "unknown")
+            await self._park_run_delivery(run.id)
+            self._signal_run_terminal(run.id)
+
         delay = min(
             self._reconnect_backoff_base * (2 ** (self._reconnect_attempts - 1)),
             self._reconnect_backoff_cap,
         )
         logger.warning(
-            "Agent pipeline %s: SSE stream ended; reconnecting in %.2fs "
-            "(disconnect %d); reconcile lands with the next M4.5 task",
+            "Agent pipeline %s: SSE stream ended; reconnecting in %.2fs (disconnect %d)",
             self.binding_id,
             delay,
             self._reconnect_attempts,

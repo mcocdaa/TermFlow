@@ -33,6 +33,7 @@ from termflow_control_plane.plugins.agent_broker.agent.backend import (
 )
 from termflow_control_plane.plugins.agent_broker.agent.pipeline import (
     AgentPipelineService,
+    NoActiveRunError,
     SubmitAdmission,
 )
 from termflow_control_plane.plugins.agent_broker.agent.stream_hub import AgentStreamHub
@@ -40,6 +41,8 @@ from termflow_control_plane.plugins.agent_broker.agent.turns import (
     BackendConversationRef,
     BackendConversationSnapshot,
     BackendEventScope,
+    BackendInteraction,
+    BackendInteractionKind,
     BackendNotification,
     BackendOperationResult,
     BackendOutcome,
@@ -55,6 +58,8 @@ from termflow_protocol.agent import (
     AgentEventKind,
     AgentInputKind,
     AgentInputSource,
+    ApprovalDecision,
+    BackendRuntimeState,
     WatchTriggeredInput,
     WatchTriggeredPayload,
 )
@@ -118,6 +123,13 @@ class FakeBackend:
         )
         self.submit_exception: Exception | None = None
         self.events_calls = 0
+        self.reconcile_calls: list[BackendConversationRef] = []
+        self.reconcile_results: list[BackendConversationSnapshot] = []
+        self.reconcile_hook: Callable[[], Awaitable[None]] | None = None
+        self.cancel_calls = []
+        self.cancel_result = BackendOperationResult(outcome=BackendOutcome.CONFIRMED)
+        self.interact_calls: list[BackendInteraction] = []
+        self.interact_result = BackendOperationResult(outcome=BackendOutcome.CONFIRMED)
         self._event_queue: asyncio.Queue[BackendNotification | None] = asyncio.Queue()
         self.closed = False
 
@@ -176,18 +188,23 @@ class FakeBackend:
     async def close(self) -> None:
         self.closed = True
 
-    async def reconcile(
-        self, ref: BackendConversationRef
-    ) -> BackendConversationSnapshot:
+    async def reconcile(self, ref: BackendConversationRef) -> BackendConversationSnapshot:
+        self.reconcile_calls.append(ref)
+        if self.reconcile_hook is not None:
+            await self.reconcile_hook()
+        if self.reconcile_results:
+            return self.reconcile_results.pop(0)
         return BackendConversationSnapshot(
             conversation_ref=ref, outcome=BackendOutcome.CONFIRMED, resumable=False
         )
 
     async def cancel(self, request) -> BackendOperationResult:
-        return BackendOperationResult(outcome=BackendOutcome.CONFIRMED)
+        self.cancel_calls.append(request)
+        return self.cancel_result
 
     async def interact(self, request) -> BackendOperationResult:
-        return BackendOperationResult(outcome=BackendOutcome.CONFIRMED)
+        self.interact_calls.append(request)
+        return self.interact_result
 
     async def delete_conversation(self, ref) -> BackendOperationResult:
         return BackendOperationResult(outcome=BackendOutcome.CONFIRMED)
@@ -236,6 +253,7 @@ def make_pipeline(
         "active_run_retry_seconds": 0.01,
         "reconnect_backoff_base": 0.001,
         "reconnect_backoff_cap": 0.005,
+        "cancel_wait_timeout": 0,
     }
     kwargs.update(overrides)
     return AgentPipelineService(
@@ -259,9 +277,7 @@ async def seed_binding(repositories: RepositoryBundle) -> UUID:
         backend_kind="opencode",
         config='{"model": "default"}',
     )
-    installation = await repositories.installations.create(
-        digest_secret(f"computer-{uuid4().hex}")
-    )
+    installation = await repositories.installations.create(digest_secret(f"computer-{uuid4().hex}"))
     display_name = f"term-{uuid4().hex[:8]}"
     term = await repositories.instances.register_or_rotate(
         uuid4(),
@@ -376,15 +392,11 @@ async def test_submit_user_message_admits_enqueues_and_dispatches(
         assert admission.delivery_state == "pending"
         assert admission.submission_state == "not_started"
         # The enqueue is durable with the text digest (no payload column).
-        row = await repositories.agent_inbox.get_by_idempotency_key(
-            admission.idempotency_key
-        )
+        row = await repositories.agent_inbox.get_by_idempotency_key(admission.idempotency_key)
         assert row is not None
         assert row.kind == "user_message"
         assert row.source == "user"
-        assert row.payload_digest == hashlib.sha256(
-            b"please fix the build"
-        ).hexdigest()
+        assert row.payload_digest == hashlib.sha256(b"please fix the build").hexdigest()
 
         await wait_until(lambda: len(backend.submit_calls) == 1)
 
@@ -553,8 +565,7 @@ async def test_sse_events_advance_run_and_persist_canonical_events(
         async def run_started() -> bool:
             runs = await _runs(repositories, conversation_id)
             return bool(runs) and all(
-                run.run_state == "running"
-                and run.backend_run_id == str(backend_run_id)
+                run.run_state == "running" and run.backend_run_id == str(backend_run_id)
                 for run in runs
             )
 
@@ -582,9 +593,7 @@ async def test_sse_events_advance_run_and_persist_canonical_events(
                 dedup_key="evt-completed",
             )
         )
-        await wait_until(
-            lambda: _messages_count(repositories, conversation_id)
-        )
+        await wait_until(lambda: _messages_count(repositories, conversation_id))
 
         # MESSAGE_DELTA is an ephemeral event row only: no message assembly.
         messages = await _messages(repositories, conversation_id)
@@ -592,9 +601,7 @@ async def test_sse_events_advance_run_and_persist_canonical_events(
         assert messages[0].role == "assistant"
         assert messages[0].kind == "text"
         assert messages[0].is_final is True
-        assert messages[0].body_digest == hashlib.sha256(
-            completed_text.encode("utf-8")
-        ).hexdigest()
+        assert messages[0].body_digest == hashlib.sha256(completed_text.encode("utf-8")).hexdigest()
         assert messages[0].run_id == runs[0].id
 
         # Digest invariant (M6a): every persisted payload hashes to its digest.
@@ -604,9 +611,10 @@ async def test_sse_events_advance_run_and_persist_canonical_events(
         delta_row = events[1]
         assert delta_row.ephemeral is True
         assert delta_row.payload is not None
-        assert hashlib.sha256(
-            delta_row.payload.encode("utf-8")
-        ).hexdigest() == delta_row.payload_digest
+        assert (
+            hashlib.sha256(delta_row.payload.encode("utf-8")).hexdigest()
+            == delta_row.payload_digest
+        )
         assert '"text":"streaming chunk"' in delta_row.payload
         completed_row = events[2]
         assert completed_row.ephemeral is False
@@ -674,8 +682,7 @@ async def test_run_failed_event_fails_run_with_error_code(
         async def run_failed() -> bool:
             runs = await _runs(repositories, conversation_id)
             return bool(runs) and all(
-                run.run_state == "failed" and run.error_code == "backend_error_42"
-                for run in runs
+                run.run_state == "failed" and run.error_code == "backend_error_42" for run in runs
             )
 
         await wait_until(run_failed)
@@ -851,32 +858,24 @@ async def test_retryable_submit_fails_run_and_parks_delivery_without_retry(
     repositories: RepositoryBundle, hub: AgentStreamHub
 ) -> None:
     backend = FakeBackend(repositories=repositories)
-    backend.submit_result = BackendSubmitResult(
-        outcome=BackendOutcome.RETRYABLE, retry_safe=False
-    )
+    backend.submit_result = BackendSubmitResult(outcome=BackendOutcome.RETRYABLE, retry_safe=False)
     binding_id, conversation_id = await seed_conversation(repositories)
     pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
     await pipeline.start()
     try:
-        admission = await pipeline.submit_user_message(
-            conversation_id, "risky", actor="admin"
-        )
+        admission = await pipeline.submit_user_message(conversation_id, "risky", actor="admin")
 
         async def run_failed() -> bool:
             runs = await _runs(repositories, conversation_id)
             return bool(runs) and all(
-                run.run_state == "failed" and run.error_code == "submit_retryable"
-                for run in runs
+                run.run_state == "failed" and run.error_code == "submit_retryable" for run in runs
             )
 
         await wait_until(run_failed)
         # Never auto-retried: exactly one submit call, parked delivery_unknown.
         await asyncio.sleep(0.05)
         assert len(backend.submit_calls) == 1
-        assert (
-            pipeline.inbox_machine._parked.get(admission.message_id)
-            == "delivery_unknown"
-        )
+        assert pipeline.inbox_machine._parked.get(admission.message_id) == "delivery_unknown"
         assert pipeline.diagnostics.submits_failed == 1
     finally:
         await pipeline.stop()
@@ -898,17 +897,13 @@ async def test_submit_exception_fails_closed_without_retry(
         async def run_failed() -> bool:
             runs = await _runs(repositories, conversation_id)
             return bool(runs) and all(
-                run.run_state == "failed" and run.error_code == "submit_retryable"
-                for run in runs
+                run.run_state == "failed" and run.error_code == "submit_retryable" for run in runs
             )
 
         await wait_until(run_failed)
         await asyncio.sleep(0.05)
         assert len(backend.submit_calls) == 1
-        assert (
-            pipeline.inbox_machine._parked.get(admission.message_id)
-            == "delivery_unknown"
-        )
+        assert pipeline.inbox_machine._parked.get(admission.message_id) == "delivery_unknown"
     finally:
         await pipeline.stop()
 
@@ -931,17 +926,13 @@ async def test_supervisor_recheck_rejection_fails_closed(
         async def run_failed() -> bool:
             runs = await _runs(repositories, conversation_id)
             return bool(runs) and all(
-                run.run_state == "failed" and run.error_code == "runtime_not_ready"
-                for run in runs
+                run.run_state == "failed" and run.error_code == "runtime_not_ready" for run in runs
             )
 
         await wait_until(run_failed)
         assert len(backend.submit_calls) == 0
         assert supervisor.calls == [(RuntimeRef(backend.runtime_id), backend.epoch)]
-        assert (
-            pipeline.inbox_machine._parked.get(admission.message_id)
-            == "delivery_unknown"
-        )
+        assert pipeline.inbox_machine._parked.get(admission.message_id) == "delivery_unknown"
     finally:
         await pipeline.stop()
 
@@ -971,9 +962,7 @@ async def test_missing_payload_grace_exhaustion_fails_closed(
     )
     await pipeline.start()
     try:
-        await wait_until(
-            lambda: pipeline.inbox_machine._parked.get(item.id) == "delivery_unknown"
-        )
+        await wait_until(lambda: pipeline.inbox_machine._parked.get(item.id) == "delivery_unknown")
         assert len(backend.submit_calls) == 0
         assert pipeline.diagnostics.missing_payload_delivery_unknown == 1
     finally:
@@ -993,12 +982,8 @@ async def test_same_conversation_second_item_waits_at_claim_gate(
     pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
     await pipeline.start()
     try:
-        first = await pipeline.submit_user_message(
-            conversation_id, "first", actor="admin"
-        )
-        second = await pipeline.submit_user_message(
-            conversation_id, "second", actor="admin"
-        )
+        first = await pipeline.submit_user_message(conversation_id, "first", actor="admin")
+        second = await pipeline.submit_user_message(conversation_id, "second", actor="admin")
         await wait_until(lambda: len(backend.submit_calls) == 1)
         assert backend.submit_calls[0].request.idempotency_key == first.idempotency_key
 
@@ -1082,9 +1067,7 @@ async def test_two_conversations_serialize_on_one_binding(
         )
         await wait_until(lambda: len(backend.submit_calls) == 2)
         assert backend.submit_calls[1].request.parts[0].text == "b"
-        assert backend.submit_calls[1].request.conversation_ref.provider_ref == (
-            "provider-2"
-        )
+        assert backend.submit_calls[1].request.conversation_ref.provider_ref == ("provider-2")
     finally:
         await pipeline.stop()
 
@@ -1103,12 +1086,9 @@ async def test_one_active_run_refuses_submission_and_falls_back_to_waiting(
         await pipeline.submit_user_message(conversation_id, "late", actor="admin")
 
         async def item_fell_back() -> bool:
-            rows = await repositories.agent_inbox.list_for_conversation(
-                conversation_id
-            )
+            rows = await repositories.agent_inbox.list_for_conversation(conversation_id)
             return any(
-                row.kind == "user_message"
-                and row.delivery_state in ("retry_wait", "dead_letter")
+                row.kind == "user_message" and row.delivery_state in ("retry_wait", "dead_letter")
                 for row in rows
             )
 
@@ -1121,8 +1101,200 @@ async def test_one_active_run_refuses_submission_and_falls_back_to_waiting(
 
 
 # ---------------------------------------------------------------------------
-# Disconnect/reconnect stub (spec §5; reconcile lands next task).
+# Disconnect/reconcile/reconnect (spec §5).
 # ---------------------------------------------------------------------------
+
+
+async def test_disconnect_reconciles_active_conversation_before_reconnect(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    await pipeline.start()
+    try:
+        await pipeline.submit_user_message(conversation_id, "hi", actor="admin")
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.RUN_STARTED,
+                provider_ref="provider-1",
+            )
+        )
+        await wait_until(
+            lambda: pipeline._active_run_id is not None,
+            message="dispatcher did not begin waiting for the active run",
+        )
+
+        backend.disconnect()
+
+        await wait_until(lambda: len(backend.reconcile_calls) == 1)
+        assert backend.reconcile_calls[0].provider_ref == "provider-1"
+        runs = await _runs(repositories, conversation_id)
+        assert [run.run_state for run in runs] == ["running"]
+        await wait_until(lambda: backend.events_calls >= 2)
+    finally:
+        await pipeline.stop()
+
+
+async def test_context_lost_reconcile_fails_run_and_parks_delivery(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    await pipeline.start()
+    try:
+        admission = await pipeline.submit_user_message(conversation_id, "hi", actor="admin")
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.RUN_STARTED,
+                provider_ref="provider-1",
+            )
+        )
+        await wait_until(
+            lambda: pipeline._active_run_id is not None,
+            message="dispatcher did not begin waiting for the active run",
+        )
+        ref = backend.submit_calls[0].ref
+        backend.reconcile_results.append(
+            BackendConversationSnapshot(
+                conversation_ref=ref,
+                outcome=BackendOutcome.CONTEXT_LOST,
+                state=BackendRuntimeState.CONTEXT_LOST,
+                resumable=False,
+            )
+        )
+
+        backend.disconnect()
+
+        async def run_failed() -> bool:
+            runs = await _runs(repositories, conversation_id)
+            return bool(runs) and runs[0].run_state == "failed"
+
+        await wait_until(run_failed)
+        runs = await _runs(repositories, conversation_id)
+        assert runs[0].error_code == "context_lost"
+        assert pipeline.inbox_machine._parked[admission.message_id] == "delivery_unknown"
+        await wait_until(lambda: pipeline._active_run_id is None)
+    finally:
+        await pipeline.stop()
+
+
+async def test_unknown_reconcile_retries_then_marks_run_unknown(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(
+        repositories,
+        hub,
+        backend,
+        binding_id=binding_id,
+        reconcile_attempts=2,
+    )
+    await pipeline.start()
+    try:
+        admission = await pipeline.submit_user_message(conversation_id, "hi", actor="admin")
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.RUN_STARTED,
+                provider_ref="provider-1",
+            )
+        )
+        await wait_until(
+            lambda: pipeline._active_run_id is not None,
+            message="dispatcher did not begin waiting for the active run",
+        )
+        ref = backend.submit_calls[0].ref
+        backend.reconcile_results.extend(
+            [
+                BackendConversationSnapshot(
+                    conversation_ref=ref,
+                    outcome=BackendOutcome.UNKNOWN,
+                    state=BackendRuntimeState.UNAVAILABLE,
+                ),
+                BackendConversationSnapshot(
+                    conversation_ref=ref,
+                    outcome=BackendOutcome.UNKNOWN,
+                    state=BackendRuntimeState.UNAVAILABLE,
+                ),
+            ]
+        )
+
+        backend.disconnect()
+
+        async def run_unknown() -> bool:
+            runs = await _runs(repositories, conversation_id)
+            return bool(runs) and runs[0].run_state == "unknown"
+
+        await wait_until(run_unknown)
+        assert len(backend.reconcile_calls) == 2
+        assert pipeline.inbox_machine._parked[admission.message_id] == "delivery_unknown"
+        await wait_until(lambda: pipeline._active_run_id is None)
+    finally:
+        await pipeline.stop()
+
+
+async def test_terminal_event_winning_reconcile_race_is_not_parked_unknown(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    await pipeline.start()
+    try:
+        admission = await pipeline.submit_user_message(conversation_id, "hi", actor="admin")
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.RUN_STARTED,
+                provider_ref="provider-1",
+            )
+        )
+        await wait_until(
+            lambda: pipeline._active_run_id is not None,
+            message="dispatcher did not begin waiting for the active run",
+        )
+        ref = backend.submit_calls[0].ref
+        backend.reconcile_results.append(
+            BackendConversationSnapshot(
+                conversation_ref=ref,
+                outcome=BackendOutcome.CONTEXT_LOST,
+                state=BackendRuntimeState.CONTEXT_LOST,
+            )
+        )
+
+        async def complete_before_snapshot_returns() -> None:
+            runs = await _runs(repositories, conversation_id)
+            updated = await repositories.agent_runs.set_state(
+                runs[0].id, "completed", expected_state="running"
+            )
+            assert updated is not None
+
+        backend.reconcile_hook = complete_before_snapshot_returns
+
+        backend.disconnect()
+
+        async def run_completed() -> bool:
+            runs = await _runs(repositories, conversation_id)
+            return bool(runs) and runs[0].run_state == "completed"
+
+        await wait_until(run_completed)
+        await wait_until(lambda: backend.events_calls >= 2)
+        assert admission.message_id not in pipeline.inbox_machine._parked
+    finally:
+        await pipeline.stop()
 
 
 async def test_disconnect_triggers_bounded_backoff_reconnect(
@@ -1176,6 +1348,310 @@ async def test_disconnect_triggers_bounded_backoff_reconnect(
         await pipeline.stop()
 
 
+async def test_replayed_dedup_event_after_reconnect_persists_once(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    await pipeline.start()
+    try:
+        await pipeline.submit_user_message(conversation_id, "hi", actor="admin")
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.RUN_STARTED,
+                provider_ref="provider-1",
+                dedup_key="dup-across-disconnect",
+            )
+        )
+
+        async def event_persisted() -> bool:
+            return len(await _events(repositories, conversation_id)) == 1
+
+        await wait_until(event_persisted)
+
+        backend.disconnect()
+        await wait_until(lambda: backend.events_calls >= 2)
+
+        # The backend re-delivers the event observed during the disconnect
+        # window (ReplayMode.NONE does not replay, but a redelivery of the
+        # same event id may arrive after re-subscription): the canonical row
+        # must stay a single row (repository atomic dedup).
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.RUN_STARTED,
+                provider_ref="provider-1",
+                dedup_key="dup-across-disconnect",
+            )
+        )
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.RUN_COMPLETED,
+                provider_ref="provider-1",
+                dedup_key="completed-after-reconnect",
+            )
+        )
+
+        async def run_completed() -> bool:
+            runs = await _runs(repositories, conversation_id)
+            return bool(runs) and all(run.run_state == "completed" for run in runs)
+
+        await wait_until(run_completed)
+        await wait_until(lambda: pipeline.diagnostics.run_start_idempotent == 1)
+
+        # The canonical cursor settles at exactly two rows: the re-delivered
+        # RUN_STARTED must dedup against the pre-disconnect row and the
+        # RUN_COMPLETED appends its own.  (The run transition happens before
+        # the event row is persisted, so wait for the row set itself.)
+        async def events_settled() -> bool:
+            return [event.dedup_key for event in await _events(repositories, conversation_id)] == [
+                "dup-across-disconnect",
+                "completed-after-reconnect",
+            ]
+
+        await wait_until(events_settled)
+        assert len(await _events(repositories, conversation_id)) == 2
+    finally:
+        await pipeline.stop()
+
+
+# ---------------------------------------------------------------------------
+# Cancel and backend interaction forwarding (spec §8).
+# ---------------------------------------------------------------------------
+
+
+async def test_cancel_conversation_forwards_active_run_and_confirms_terminal_state(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    await pipeline.start()
+    try:
+        await pipeline.submit_user_message(conversation_id, "stop me", actor="admin")
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.RUN_STARTED,
+                provider_ref="provider-1",
+            )
+        )
+        await wait_until(
+            lambda: pipeline._active_run_id is not None,
+            message="dispatcher did not begin waiting for the active run",
+        )
+        backend.reconcile_results.append(
+            BackendConversationSnapshot(
+                conversation_ref=backend.submit_calls[0].ref,
+                outcome=BackendOutcome.CONFIRMED,
+                state=BackendRuntimeState.CLOSED,
+            )
+        )
+
+        result = await pipeline.cancel_conversation(conversation_id, reason="user request")
+
+        assert result.outcome is BackendOutcome.CONFIRMED
+        assert result.run_state == "cancelled"
+        assert len(backend.cancel_calls) == 1
+        request = backend.cancel_calls[0]
+        assert request.conversation_ref.provider_ref == "provider-1"
+        assert request.run_id == result.run_id
+        assert request.reason == "user request"
+        await wait_until(lambda: pipeline._active_run_id is None)
+    finally:
+        await pipeline.stop()
+
+
+async def test_cancel_confirmed_waits_for_terminal_event(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(
+        repositories,
+        hub,
+        backend,
+        binding_id=binding_id,
+        cancel_wait_timeout=5.0,
+    )
+    await pipeline.start()
+    try:
+        await pipeline.submit_user_message(conversation_id, "stop me", actor="admin")
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.RUN_STARTED,
+                provider_ref="provider-1",
+            )
+        )
+        await wait_until(
+            lambda: pipeline._active_run_id is not None,
+            message="dispatcher did not begin waiting for the active run",
+        )
+
+        # The backend aborts the session on confirm and emits RUN_FAILED just
+        # after acknowledging; the bounded wait observes the terminal event
+        # instead of falling through to reconcile.
+        original_cancel = backend.cancel
+
+        async def cancel_then_fail(request) -> BackendOperationResult:
+            result = await original_cancel(request)
+            backend.push_event(
+                make_notification(
+                    backend,
+                    pipeline,
+                    kind=AgentEventKind.RUN_FAILED,
+                    provider_ref="provider-1",
+                    error_code="cancelled_by_user",
+                )
+            )
+            return result
+
+        backend.cancel = cancel_then_fail  # type: ignore[method-assign]
+
+        result = await pipeline.cancel_conversation(conversation_id, reason="user request")
+
+        assert result.outcome is BackendOutcome.CONFIRMED
+        assert result.run_state == "failed"
+        assert backend.reconcile_calls == []
+        runs = await _runs(repositories, conversation_id)
+        assert runs[0].run_state == "failed"
+        assert runs[0].error_code == "cancelled_by_user"
+        await wait_until(lambda: pipeline._active_run_id is None)
+    finally:
+        await pipeline.stop()
+
+
+async def test_cancel_confirmed_but_runtime_still_ready_marks_run_unknown(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    await pipeline.start()
+    try:
+        await pipeline.submit_user_message(conversation_id, "stop me", actor="admin")
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.RUN_STARTED,
+                provider_ref="provider-1",
+            )
+        )
+        await wait_until(
+            lambda: pipeline._active_run_id is not None,
+            message="dispatcher did not begin waiting for the active run",
+        )
+        backend.reconcile_results.append(
+            BackendConversationSnapshot(
+                conversation_ref=backend.submit_calls[0].ref,
+                outcome=BackendOutcome.CONFIRMED,
+                state=BackendRuntimeState.READY,
+            )
+        )
+
+        result = await pipeline.cancel_conversation(conversation_id, reason=None)
+
+        assert result.outcome is BackendOutcome.CONFIRMED
+        assert result.run_state == "unknown"
+        await wait_until(lambda: pipeline._active_run_id is None)
+    finally:
+        await pipeline.stop()
+
+
+async def test_cancel_unknown_marks_run_unknown(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    backend = FakeBackend(repositories=repositories)
+    backend.cancel_result = BackendOperationResult(outcome=BackendOutcome.UNKNOWN)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    await pipeline.start()
+    try:
+        await pipeline.submit_user_message(conversation_id, "stop me", actor="admin")
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.RUN_STARTED,
+                provider_ref="provider-1",
+            )
+        )
+        await wait_until(
+            lambda: pipeline._active_run_id is not None,
+            message="dispatcher did not begin waiting for the active run",
+        )
+
+        result = await pipeline.cancel_conversation(conversation_id, reason=None)
+
+        assert result.outcome is BackendOutcome.UNKNOWN
+        assert result.run_state == "unknown"
+        await wait_until(lambda: pipeline._active_run_id is None)
+    finally:
+        await pipeline.stop()
+
+
+async def test_cancel_without_active_run_raises_no_active_run(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    await pipeline.start()
+    try:
+        with pytest.raises(NoActiveRunError):
+            await pipeline.cancel_conversation(conversation_id, reason="user request")
+        assert backend.cancel_calls == []
+        assert backend.reconcile_calls == []
+    finally:
+        await pipeline.stop()
+
+
+async def test_resolve_permission_forwards_interaction_unchanged(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    ref = await pipeline._resolve_backend_ref(conversation_id)
+    approved = BackendInteraction(
+        conversation_ref=ref,
+        kind=BackendInteractionKind.PERMISSION_RESOLVE,
+        permission_ref="permission-1",
+        decision=ApprovalDecision.APPROVED,
+    )
+    denied = BackendInteraction(
+        conversation_ref=ref,
+        kind=BackendInteractionKind.PERMISSION_RESOLVE,
+        permission_ref="permission-2",
+        decision=ApprovalDecision.DENIED,
+    )
+
+    approved_result = await pipeline.resolve_permission(approved)
+    denied_result = await pipeline.resolve_permission(denied)
+
+    assert approved_result.outcome is BackendOutcome.CONFIRMED
+    assert denied_result.outcome is BackendOutcome.CONFIRMED
+    # The pipeline only forwards: the adapter maps approved→"once" and
+    # denied→"reject" (M4.2), so the decision must arrive unchanged.
+    assert backend.interact_calls == [approved, denied]
+    await pipeline.stop()
+
+
 # ---------------------------------------------------------------------------
 # Canonical payload invariant (unit level).
 # ---------------------------------------------------------------------------
@@ -1206,6 +1682,7 @@ def test_canonical_payload_json_digests_deterministically() -> None:
     assert first == second
     parsed = json.loads(first)
     assert parsed["text"] == "hello"
-    assert hashlib.sha256(first.encode("utf-8")).hexdigest() == hashlib.sha256(
-        second.encode("utf-8")
-    ).hexdigest()
+    assert (
+        hashlib.sha256(first.encode("utf-8")).hexdigest()
+        == hashlib.sha256(second.encode("utf-8")).hexdigest()
+    )

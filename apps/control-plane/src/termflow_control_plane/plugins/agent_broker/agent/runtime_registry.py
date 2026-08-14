@@ -124,6 +124,7 @@ class AgentRuntimeRegistry:
         self._repositories = repositories
         self._sessions = sessions
         self._hub = hub
+        self._reconcile_attempts = settings.agent_pipeline_reconcile_attempts
         self._endpoint_provider = endpoint_provider or _settings_endpoint_provider(settings)
         self._adapter_factory = adapter_factory or _build_opencode_adapter
         self._bindings: dict[UUID, _BoundRuntime] = {}
@@ -174,6 +175,7 @@ class AgentRuntimeRegistry:
             supervisor=self._supervisor,
             runtime_ref=str(runtime_ref),
             runtime_epoch=epoch,
+            reconcile_attempts=self._reconcile_attempts,
         )
         self._bindings[binding.id] = _BoundRuntime(
             pipeline=pipeline,

@@ -208,6 +208,18 @@ async def test_build_pipeline_maps_binding_to_adapter(
     await registry.stop_all()
 
 
+async def test_build_pipeline_applies_configured_reconcile_attempt_limit(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    configured = settings.model_copy(update={"agent_pipeline_reconcile_attempts": 9})
+    registry = make_registry(configured, repositories, hub)
+
+    pipeline = await registry.build_pipeline(make_binding())
+
+    assert pipeline._reconcile_attempts == 9
+    await registry.stop_all()
+
+
 async def test_injected_endpoint_provider_resolves_runtime(
     settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
 ) -> None:
@@ -389,9 +401,7 @@ async def test_stop_all_stops_pipelines_and_closes_every_adapter(
         created.append(adapter)
         return adapter
 
-    registry = make_registry(
-        settings, repositories, hub, adapter_factory=factory
-    )
+    registry = make_registry(settings, repositories, hub, adapter_factory=factory)
     await registry.start_all([make_binding(), make_binding(runtime_ref="runtime-2")])
     assert len(created) == 2
     assert all(not adapter.closed for adapter in created)
