@@ -236,7 +236,7 @@ def _run_tool(command: list[str]) -> str:
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()
         raise ValueError(f"Android build tool failed: {detail}")
-    return result.stdout
+    return "\n".join(part for part in (result.stdout, result.stderr) if part)
 
 
 def read_badging(apk: Path) -> AndroidPackageMetadata:

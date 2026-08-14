@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from scripts.release.verify_android_apk import (
     AndroidPackageMetadata,
     parse_badging,
     parse_signers,
+    read_signers,
     verify_launcher_resources,
 )
 
@@ -180,6 +182,27 @@ def test_parses_indented_signer_digest() -> None:
     signer_output = "  Signer #1 certificate SHA-256 digest: a1:b2:c3\n"
 
     assert parse_signers(signer_output) == ("A1B2C3",)
+
+
+def test_reads_signer_certificate_written_to_stderr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="",
+            stderr="Signer #1 certificate SHA-256 digest: a1:b2:c3\n",
+        )
+
+    monkeypatch.setattr(
+        "scripts.release.verify_android_apk.find_android_tool",
+        lambda _: "apksigner",
+    )
+    monkeypatch.setattr("scripts.release.verify_android_apk.subprocess.run", fake_run)
+
+    assert read_signers(tmp_path / "app.apk") == ("A1B2C3",)
 
 
 def test_rejects_ambiguous_package_or_signer_output() -> None:
