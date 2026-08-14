@@ -433,7 +433,11 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
             commands=_unimplemented_port(TerminalCommandPort),  # lands with M5
             persistence=_unimplemented_port(UnitOfWorkFactory),  # real adapter lands with M1.3+
             lifecycle=_unimplemented_port(LifecyclePort),  # lands with plugin background tasks
-            runtime=_unimplemented_port(AgentRuntimeSupervisor),  # lands with M4
+            # Deviation (M4.5 spec risk 7): the AgentRuntimeSupervisor port is
+            # still a placeholder repository-wide; the supervisor activation
+            # gate lands with it.  M4.5 production therefore runs with the
+            # gate open (see the registry wiring below).
+            runtime=_unimplemented_port(AgentRuntimeSupervisor),  # lands with the supervisor port
         )
         app.state.feature_context = feature_context
         # Deterministic restart recovery (plan §17: B restarts): fence stale
@@ -474,10 +478,13 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
                 repositories=app.state.repositories,
                 sessions=app.state.session_factory,
                 hub=app.state.agent_stream_hub,
-                # The deployment-owned SupervisorConnector requires a runtime
-                # manager client; until one is injected the activation gate is
-                # open in-process, while bindings without runtime fields still
-                # fail closed (spec §6).
+                # Deviation (M4.5 spec risk 7): the supervisor activation
+                # gate lands with the AgentRuntimeSupervisor port (still
+                # _unimplemented_port repository-wide), so M4.5 production
+                # runs with the gate open (accept_activation is a no-op).
+                # Bindings without runtime fields still fail closed (spec
+                # §6).  TODO(supervisor-port): inject the deployment-owned
+                # SupervisorConnector here and remove this deviation.
                 supervisor=None,
             )
             app.state.agent_watch_engine = WatchEngine(

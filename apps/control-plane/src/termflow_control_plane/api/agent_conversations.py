@@ -446,10 +446,11 @@ async def submit_agent_message(
     """Admit one plain-text user message into the binding's pipeline (M4.5 §2).
 
     The admission is durably enqueued and the response is ``202 Accepted``;
-    the backend's 204 confirmation stays adapter-internal.  Fail-closed
-    checks run in order: conversation exists (404), binding open (403),
-    runtime pipeline mapped and ready (503); text validation failures are
-    surfaced as ``422 invalid_request`` by the request validator.
+    the backend's 204 confirmation stays adapter-internal.  Request text
+    validation runs first in the request validator (``422
+    invalid_request``); the fail-closed checks then run in order:
+    conversation exists (404), binding open (403), runtime pipeline mapped
+    and ready (503).
     """
     conversation = await _require_conversation(conversation_id, repositories)
     binding = await _require_open_binding(conversation, repositories)
