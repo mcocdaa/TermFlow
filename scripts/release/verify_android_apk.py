@@ -41,7 +41,7 @@ _PACKAGE = re.compile(
     r"versionName='(?P<version>[^']+)'(?:\s|$)"
 )
 _SIGNER = re.compile(
-    r"^\s*Signer\b.* certificate SHA-256 digest:\s*"
+    r"^\s*(?:V[0-9]+(?:\.[0-9]+)?\s+)?Signer\b.* certificate SHA-256 digest:\s*"
     r"(?P<digest>[0-9A-Fa-f:]+)\s*$"
 )
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
