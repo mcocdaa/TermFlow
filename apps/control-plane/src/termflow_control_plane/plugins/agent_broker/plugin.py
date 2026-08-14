@@ -213,48 +213,80 @@ async def _list_active_bindings(
         return [binding for binding in rows if not binding_is_closed(binding.status)]
 
 
-async def run_watch_deadline_tick(
+async def deliver_fired_trigger(
+    watch_engine: WatchEngine,
+    registry: AgentRuntimeRegistry,
+    trigger: FiredTrigger,
+    *,
+    observed_at: datetime,
+) -> None:
+    """Deliver one fired trigger to its binding's pipeline (M4.5 spec §3b).
+
+    ``fire()`` already committed the inbox row and delivery receipt inside
+    the trigger transaction; this bridge renders the typed
+    ``WatchTriggeredInput`` and registers it in-process so the binding's
+    dispatcher can render the turn.  A trigger whose binding has no
+    pipeline is logged and left in the inbox (the dispatcher keeps such an
+    item visible pending until a payload can be registered).
+    """
+    input = watch_engine.build_input(trigger, observed_at=observed_at)
+    if input is None:
+        logger.warning(
+            "Agent watch trigger %s has no typed input; nothing to deliver",
+            trigger.delivery.delivery_key,
+        )
+        return
+    pipeline = registry.pipeline_for(trigger.watch.binding_id)
+    if pipeline is None:
+        logger.warning(
+            "Agent watch trigger %s: binding %s has no pipeline; "
+            "the inbox item stays pending",
+            trigger.delivery.delivery_key,
+            trigger.watch.binding_id,
+        )
+        return
+    await pipeline.submit_watch_input(input)
+
+
+def build_watch_trigger_sink(
     watch_engine: WatchEngine,
     registry: AgentRuntimeRegistry,
     *,
+    now: Callable[[], datetime] | None = None,
+) -> Callable[[FiredTrigger], Awaitable[None]]:
+    """Build the watch engine's trigger sink port (M4.5 spec §3b wiring).
+
+    Returns the ``on_fired`` callback the composition root attaches to the
+    :class:`WatchEngine` so every fired trigger - live output, deadline,
+    topology, or gap snapshot - is delivered to its binding's pipeline.
+    """
+    clock = now or (lambda: datetime.now(UTC))
+
+    async def on_fired(trigger: FiredTrigger) -> None:
+        await deliver_fired_trigger(
+            watch_engine, registry, trigger, observed_at=clock()
+        )
+
+    return on_fired
+
+
+async def run_watch_deadline_tick(
+    watch_engine: WatchEngine,
+    *,
     now: datetime | None = None,
 ) -> list[FiredTrigger]:
-    """One deadline sweep: fire due watches and hand each trigger to its pipeline.
+    """One deadline sweep (M4.5 spec §3b).
 
-    M4.5 spec §3b wiring: ``check_deadlines`` performs the atomic trigger
-    transaction (``fire()`` already inserted the inbox item and delivery),
-    ``build_input`` renders the typed :class:`WatchTriggeredInput` from the
-    fired trigger, and the binding's pipeline registers it in-process for
-    its dispatcher.  A trigger whose binding has no pipeline is logged and
-    left in the inbox (the dispatcher of a later activation will fail it
-    closed if it can never be rendered).
+    ``check_deadlines`` performs the atomic trigger transaction and the
+    engine's trigger sink (``on_fired``) delivers every fired trigger to
+    its binding's pipeline; the tick only runs the sweep.
     """
     observed_at = now or datetime.now(UTC)
-    triggers = await watch_engine.check_deadlines(observed_at)
-    for trigger in triggers:
-        input = watch_engine.build_input(trigger, observed_at=observed_at)
-        if input is None:
-            logger.warning(
-                "Agent watch trigger %s has no typed input; nothing to deliver",
-                trigger.delivery.delivery_key,
-            )
-            continue
-        pipeline = registry.pipeline_for(trigger.watch.binding_id)
-        if pipeline is None:
-            logger.warning(
-                "Agent watch trigger %s: binding %s has no pipeline; "
-                "the inbox item stays parked",
-                trigger.delivery.delivery_key,
-                trigger.watch.binding_id,
-            )
-            continue
-        await pipeline.submit_watch_input(input)
-    return triggers
+    return await watch_engine.check_deadlines(observed_at)
 
 
 async def watch_deadline_loop(
     watch_engine: WatchEngine,
-    registry: AgentRuntimeRegistry,
     *,
     tick_seconds: float,
     stop: asyncio.Event,
@@ -268,7 +300,7 @@ async def watch_deadline_loop(
     """
     while True:
         try:
-            await run_watch_deadline_tick(watch_engine, registry)
+            await run_watch_deadline_tick(watch_engine)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -392,7 +424,6 @@ class AgentBrokerPlugin:
         self._watch_tick_task = asyncio.create_task(
             watch_deadline_loop(
                 self._watch_engine,
-                self._runtime_registry,
                 tick_seconds=self._watch_tick_seconds,
                 stop=self._watch_tick_stop,
             ),

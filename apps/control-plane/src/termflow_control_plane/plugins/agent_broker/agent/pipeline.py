@@ -23,7 +23,11 @@ Fail-closed rules (M4.5 spec §2/§5/§7): a payload the in-process table cannot
 render (for example after a B restart) exhausts a bounded grace and becomes
 ``delivery_unknown``; a submit outcome other than admission parks the inbox
 item as ``delivery_unknown`` and fails the run — automatic retries are never
-attempted.
+attempted.  Watch-triggered items are the exception (review fix M1): their
+typed payload is registered asynchronously by the watch engine's trigger
+sink after ``fire()`` commits the inbox row, so a payload-less watch item is
+never claimed and never burned — it stays visible pending until the sink
+registers (a B restart leaves it pending, which recovery keeps visible).
 """
 
 from __future__ import annotations
@@ -52,6 +56,7 @@ from termflow_protocol.agent import (
 
 from termflow_control_plane.persistence.models import (
     AgentEvent,
+    AgentInboxItem,
     AgentRun,
 )
 from termflow_control_plane.persistence.models import (
@@ -182,6 +187,7 @@ class PipelineDiagnostics:
     unknown_conversation_dropped: int = 0
     no_active_run_dropped: int = 0
     missing_payload_delivery_unknown: int = 0
+    watch_payload_pending_skipped: int = 0
     run_start_idempotent: int = 0
     submits_failed: int = 0
     reconnects: int = 0
@@ -289,6 +295,10 @@ class AgentPipelineService:
             now=self._now,
             capabilities=capabilities,
             worker_id=f"pipeline:{binding_id}",
+            # Review fix M1: a watch item whose typed payload has not been
+            # registered by the trigger sink yet is never claimed - it stays
+            # visible pending instead of burning the continuation.
+            claim_filter=self._claim_eligible,
         )
         self.run_machine = AgentRunStateMachine(repositories.agent_runs, now=self._now)
         self._cursor = AgentEventCursor(
@@ -546,6 +556,12 @@ class AgentPipelineService:
         rows = await self._repositories.agent_inbox.next_pending_for_binding(
             self.binding_id
         )
+        for row in rows:
+            if not self._claim_eligible(row):
+                # Waiting for the trigger sink to register the typed payload:
+                # the item stays visible pending (review fix M1) instead of
+                # being claimed and burned as delivery_unknown.
+                self.diagnostics.watch_payload_pending_skipped += 1
         conversations: list[UUID] = []
         for row in rows:
             if row.conversation_id not in conversations:
@@ -555,6 +571,19 @@ class AgentPipelineService:
             if envelope is not None:
                 return envelope
         return None
+
+    def _claim_eligible(self, row: AgentInboxItem) -> bool:
+        """Pre-claim gate (review fix M1).
+
+        Watch items whose typed payload has not been registered yet by the
+        trigger sink are skipped: the claim is not consumed and the item
+        stays visible pending (a B restart can never deliver the payload,
+        so a permanently missing payload keeps the item pending rather than
+        burning the continuation as ``delivery_unknown``).
+        """
+        if row.kind != "watch_triggered":
+            return True
+        return row.id in self._pending_payloads
 
     async def _wait_for_work(self) -> None:
         """Idle-wait for new inbox work, bounded by a poll tick."""
@@ -569,6 +598,22 @@ class AgentPipelineService:
         #    window (spec §2 step 2); exhaustion fails closed.
         payload = await self._lookup_payload(envelope)
         if payload is None:
+            if envelope.kind == "watch_triggered":
+                # Review fix M1 (defense in depth): the claim filter normally
+                # keeps payload-less watch items out of the dispatch path.
+                # If one still arrives here, never burn the continuation:
+                # leave the row alone so the claim lease expires and the
+                # item re-enters the claim path once the sink registers.
+                self.diagnostics.watch_payload_pending_skipped += 1
+                logger.warning(
+                    "Agent pipeline %s: watch inbox item %s (conversation %s) "
+                    "has no in-process payload; leaving it pending for the "
+                    "trigger sink",
+                    self.binding_id,
+                    envelope.id,
+                    envelope.conversation_id,
+                )
+                return
             self.diagnostics.missing_payload_delivery_unknown += 1
             logger.warning(
                 "Agent pipeline %s: inbox item %s (conversation %s) has no "

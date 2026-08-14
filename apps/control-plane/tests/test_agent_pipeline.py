@@ -641,6 +641,71 @@ async def test_watch_input_dispatches_untrusted_watch_triggered_part(
         await pipeline.stop()
 
 
+async def test_watch_item_without_payload_stays_pending_until_sink_registers(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    """Review fix M1: a watch item without a typed payload is never burned.
+
+    The trigger sink registers the typed payload asynchronously after
+    ``fire()`` commits the inbox row; a payload that never arrives (B
+    restart) must keep the item visible and claimable instead of failing it
+    closed as ``delivery_unknown`` - and a late registration must still
+    deliver the turn.
+    """
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    watch_id = uuid4()
+    delivery_key = str(uuid4())
+    continuation = '{"watch_id": "...", "intent_summary": "verify", "wake_behavior": "inspect"}'
+    item = await repositories.agent_inbox.enqueue(
+        conversation_id=conversation_id,
+        kind=AgentInputKind.WATCH_TRIGGERED.value,
+        actor_id=str(watch_id),
+        actor_kind=AgentActorKind.WATCH_ENGINE.value,
+        idempotency_key=delivery_key,
+        payload_digest=hashlib.sha256(continuation.encode("utf-8")).hexdigest(),
+        source=AgentInputSource.SYSTEM.value,
+    )
+    await pipeline.start()
+    try:
+        # Well past the payload grace window: the item must still be
+        # pending (never claimed/burned) and never submitted.
+        await asyncio.sleep(0.2)
+        row = await repositories.agent_inbox.get_by_idempotency_key(delivery_key)
+        assert row is not None
+        assert row.delivery_state == "pending"
+        assert pipeline.inbox_machine._parked.get(item.id) is None
+        assert pipeline.diagnostics.missing_payload_delivery_unknown == 0
+        assert len(backend.submit_calls) == 0
+
+        # A late sink registration still delivers the untrusted turn.
+        watch_input = WatchTriggeredInput(
+            kind="watch_triggered",
+            conversation_id=conversation_id,
+            actor_id=str(watch_id),
+            actor_kind=AgentActorKind.WATCH_ENGINE,
+            admission_seq=item.admission_seq,
+            idempotency_key=delivery_key,
+            source=AgentInputSource.SYSTEM,
+            causation_id=str(watch_id),
+            correlation_id=str(uuid4()),
+            payload=WatchTriggeredPayload(
+                watch_id=watch_id,
+                watch_generation=1,
+                trigger_event_id=uuid4(),
+                continuation=continuation,
+            ),
+        )
+        await pipeline.submit_watch_input(watch_input)
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        part = backend.submit_calls[0].request.parts[0]
+        assert part.kind is AgentInputKind.WATCH_TRIGGERED
+        assert part.trust is TurnPartTrust.UNTRUSTED
+    finally:
+        await pipeline.stop()
+
+
 # ---------------------------------------------------------------------------
 # SSE consumption: run state machine + canonical event persistence.
 # ---------------------------------------------------------------------------

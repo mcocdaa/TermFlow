@@ -37,6 +37,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from termflow_control_plane.app import create_app
 from termflow_control_plane.config import Settings
+from termflow_control_plane.connections.event_hub import EventHub
 from termflow_control_plane.persistence.database import Database
 from termflow_control_plane.persistence.models import AgentCleanupJob, TranscriptDraft
 from termflow_control_plane.persistence.repositories import RepositoryBundle, digest_secret
@@ -73,11 +74,14 @@ from termflow_control_plane.plugins.agent_broker.agent.watches import (
     encode_watch_contract,
 )
 from termflow_control_plane.plugins.agent_broker.plugin import (
+    build_watch_trigger_sink,
     run_agent_recovery,
     run_watch_deadline_tick,
 )
 from termflow_protocol.agent import AgentInputKind
+from termflow_protocol.common import MessageType, WireMessage
 from termflow_protocol.mcp import WatchCondition, WatchConditionKind
+from termflow_protocol.messages import PaneOutputPayload
 
 
 def _hash(value: str) -> str:
@@ -1466,12 +1470,12 @@ async def _wait_for_submit(adapter: _TickAdapter, *, deadline_seconds: float = 1
 async def test_watch_deadline_tick_delivers_fired_trigger_to_binding_pipeline(
     repositories: RepositoryBundle,
 ) -> None:
-    """End-to-end spec §3b wiring: FiredTrigger -> build_input -> submit_watch_input.
+    """End-to-end spec §3b wiring: FiredTrigger -> sink -> submit_watch_input.
 
-    A real WatchEngine fires an idle deadline, ``run_watch_deadline_tick``
-    (the function the lifespan tick task invokes) hands the typed input to
-    the binding's real pipeline, and the dispatcher submits an untrusted
-    WATCH_TRIGGERED turn to the fake adapter.
+    A real WatchEngine fires an idle deadline, its trigger sink (the
+    function the lifespan wires) hands the typed input to the binding's
+    real pipeline, and the dispatcher submits an untrusted WATCH_TRIGGERED
+    turn to the fake adapter.  ``run_watch_deadline_tick`` only sweeps.
     """
     profile_id = await _seed_profile(repositories)
     term_id = await _seed_term(repositories)
@@ -1515,6 +1519,25 @@ async def test_watch_deadline_tick_delivers_fired_trigger_to_binding_pipeline(
         inbox=repositories.agent_inbox,
         clock=clock,
     )
+
+    adapters: list[_TickAdapter] = []
+
+    def adapter_factory(**kwargs: Any) -> _TickAdapter:
+        adapter = _TickAdapter(**kwargs)
+        adapters.append(adapter)
+        return adapter
+
+    registry = AgentRuntimeRegistry(
+        settings=Settings(admin_token="admin-token-that-is-long-enough-for-tests"),
+        repositories=repositories,
+        sessions=repositories.session_factory,
+        hub=AgentStreamHub(),
+        supervisor=None,
+        adapter_factory=adapter_factory,
+    )
+    # Review fix M1: the engine's trigger sink is the single delivery port
+    # (live and deadline); it is attached before any trigger can fire.
+    watch_engine.on_fired = build_watch_trigger_sink(watch_engine, registry, now=clock)
     await watch_engine.rebuild()
     # One observed output chunk anchors the idle deadline's timer.
     await watch_engine.evaluate_live_event(
@@ -1524,6 +1547,75 @@ async def test_watch_deadline_tick_delivers_fired_trigger_to_binding_pipeline(
         seq=1,
         data=b"build output",
         observed_at=clock(),
+    )
+    await registry.start_all([binding])
+    try:
+        clock.advance(seconds=61)
+        triggers = await run_watch_deadline_tick(watch_engine, now=clock())
+
+        assert len(triggers) == 1
+        assert triggers[0].evidence.source == "idle_deadline"
+
+        await _wait_for_submit(adapters[0])
+        ref, request = adapters[0].submit_calls[0]
+        assert request.parts[0].kind is AgentInputKind.WATCH_TRIGGERED
+        assert request.parts[0].trust is TurnPartTrust.UNTRUSTED
+        assert "the deployment went idle" in request.parts[0].text
+
+        runs = await repositories.agent_runs.list_for_conversation(conversation_id)
+        assert [run.run_state for run in runs] == ["queued"]
+    finally:
+        await registry.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_live_watch_event_delivers_trigger_to_binding_pipeline(
+    repositories: RepositoryBundle,
+) -> None:
+    """Review fix M1: a live OUTPUT_CONTAINS hub event must reach the pipeline.
+
+    The watch engine consumes the wire message, ``fire()`` commits the inbox
+    row, the trigger sink registers the typed payload with the binding's
+    pipeline, and the dispatcher submits an untrusted WATCH_TRIGGERED turn -
+    the live path previously discarded the fired trigger entirely.
+    """
+    profile_id = await _seed_profile(repositories)
+    term_id = await _seed_term(repositories)
+    binding = await repositories.agent_bindings.create(
+        profile_id=profile_id,
+        term_id=term_id,
+        status="ready",
+        runtime_ref="runtime-1",
+        runtime_epoch=1,
+        capability_ref="capability-1",
+    )
+    conversation_id = await _seed_conversation(repositories, binding_id=binding.id)
+    stream = uuid4()
+    contract = WatchContract(
+        condition=WatchCondition(kind=WatchConditionKind.OUTPUT_CONTAINS, match="go"),
+        start_cursor=None,
+        intent_summary="the deploy banner appeared",
+        proposed_action=None,
+    )
+    await repositories.watches.create(
+        binding_id=binding.id,
+        conversation_id=conversation_id,
+        pane_id="%0",
+        condition_kind="output_contains",
+        start_cursor=encode_watch_contract(contract),
+        intent_summary="the deploy banner appeared",
+        one_shot=True,
+    )
+
+    clock = Clock(datetime.now(UTC) - timedelta(minutes=10))
+    hub = EventHub(queue_size=16)
+    watch_engine = WatchEngine(
+        sessions=repositories.session_factory,
+        watches=repositories.watches,
+        deliveries=repositories.agent_watch_deliveries,
+        inbox=repositories.agent_inbox,
+        hub=hub,
+        clock=clock,
     )
 
     adapters: list[_TickAdapter] = []
@@ -1541,21 +1633,25 @@ async def test_watch_deadline_tick_delivers_fired_trigger_to_binding_pipeline(
         supervisor=None,
         adapter_factory=adapter_factory,
     )
+    watch_engine.on_fired = build_watch_trigger_sink(watch_engine, registry, now=clock)
     await registry.start_all([binding])
     try:
-        clock.advance(seconds=61)
-        triggers = await run_watch_deadline_tick(watch_engine, registry, now=clock())
-
-        assert len(triggers) == 1
-        assert triggers[0].evidence.source == "idle_deadline"
+        await watch_engine.start()
+        await hub.publish(
+            WireMessage(
+                type=MessageType.PANE_OUTPUT,
+                instance_id=term_id,
+                payload=PaneOutputPayload.from_bytes(
+                    "%0", stream, 1, b"build logs... go!"
+                ).model_dump(mode="json"),
+            )
+        )
 
         await _wait_for_submit(adapters[0])
         ref, request = adapters[0].submit_calls[0]
         assert request.parts[0].kind is AgentInputKind.WATCH_TRIGGERED
         assert request.parts[0].trust is TurnPartTrust.UNTRUSTED
-        assert "the deployment went idle" in request.parts[0].text
-
-        runs = await repositories.agent_runs.list_for_conversation(conversation_id)
-        assert [run.run_state for run in runs] == ["queued"]
+        assert "the deploy banner appeared" in request.parts[0].text
     finally:
+        await watch_engine.stop()
         await registry.stop_all()

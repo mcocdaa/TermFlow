@@ -107,6 +107,7 @@ from termflow_control_plane.plugins.agent_broker.api.mcp_server import (
 from termflow_control_plane.plugins.agent_broker.auth import AgentTokenAuthenticator
 from termflow_control_plane.plugins.agent_broker.plugin import (
     AgentBrokerPlugin,
+    build_watch_trigger_sink,
     run_agent_recovery,
 )
 from termflow_control_plane.plugins.context import build_feature_context
@@ -485,6 +486,15 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
                 deliveries=app.state.repositories.agent_watch_deliveries,
                 inbox=app.state.repositories.agent_inbox,
                 hub=app.state.event_hub,
+            )
+            # Review fix M1: the trigger sink is the single delivery port for
+            # every fired trigger (live and deadline).  ``fire()`` committed
+            # the inbox row; the sink renders the typed WatchTriggeredInput
+            # and hands it to the binding's pipeline so the dispatcher can
+            # submit the continuation turn.
+            app.state.agent_watch_engine.on_fired = build_watch_trigger_sink(
+                app.state.agent_watch_engine,
+                app.state.agent_runtime_registry,
             )
             app.state.agent_broker_plugin.bind_runtime_services(
                 watch_engine=app.state.agent_watch_engine,

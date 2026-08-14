@@ -41,6 +41,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -79,6 +80,8 @@ from termflow_control_plane.persistence.repositories import (
     WatchDeliveryRepository,
     WatchRepository,
 )
+
+logger = logging.getLogger(__name__)
 
 #: Hard bound on the observation reference carried inside a
 #: ``WatchTriggered`` payload (mirrors ``MAX_REF_LENGTH`` in the protocol).
@@ -911,6 +914,7 @@ class WatchEngine:
         hub: EventHub | None = None,
         clock: Callable[[], datetime] | None = None,
         capture: GapCapturePort | None = None,
+        on_fired: Callable[[FiredTrigger], Awaitable[None]] | None = None,
     ) -> None:
         self._sessions = sessions
         self._watch_repo = watches
@@ -919,6 +923,12 @@ class WatchEngine:
         self._hub = hub
         self._clock = clock or (lambda: datetime.now(UTC))
         self._capture = capture
+        # Trigger sink (review fix M1): every fired trigger - live output,
+        # deadline, topology, or gap snapshot - is delivered through this
+        # port so the binding's pipeline can register the typed
+        # WatchTriggeredInput after ``fire()`` committed the inbox row.
+        # ``None`` (unit tests) means triggers are only returned.
+        self.on_fired = on_fired
         self._cursor_store = ObservationCursorStore(sessions)
         #: watch_id -> active watcher runtime (rebuilt from the repository).
         self._watches: dict[UUID, WatcherRuntime] = {}
@@ -1087,6 +1097,7 @@ class WatchEngine:
             await session.commit()
         for runtime, fired in fired_pairs:
             self._apply_trigger_state(runtime, fired)
+        await self._deliver(triggers)
         return triggers
 
     async def evaluate_gap_event(
@@ -1148,6 +1159,7 @@ class WatchEngine:
             await session.commit()
         for runtime, fired in fired_pairs:
             self._apply_trigger_state(runtime, fired)
+        await self._deliver(triggers)
         return triggers
 
     async def evaluate_recovered_cursor(
@@ -1216,6 +1228,7 @@ class WatchEngine:
             await session.commit()
         for runtime, fired in fired_pairs:
             self._apply_trigger_state(runtime, fired)
+        await self._deliver(triggers)
         return triggers
 
     async def handle_wire_message(self, message: WireMessage) -> list[FiredTrigger]:
@@ -1278,7 +1291,9 @@ class WatchEngine:
         async with self._sessions() as session:
             fired = await self._fire_in_session(session, runtime, evidence, observed_at)
             await session.commit()
-            return fired
+        if fired is not None:
+            await self._deliver([fired])
+        return fired
 
     async def _fire_in_session(
         self,
@@ -1394,6 +1409,26 @@ class WatchEngine:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    async def _deliver(self, triggers: list[FiredTrigger]) -> None:
+        """Deliver fired triggers through the trigger sink (review fix M1).
+
+        ``fire()`` committed the inbox row; the sink registers the typed
+        payload with the binding's pipeline.  A sink failure never kills the
+        evaluation: the trigger transaction is already durable and the
+        dispatcher keeps the inbox item visible pending.
+        """
+        if self.on_fired is None:
+            return
+        for trigger in triggers:
+            try:
+                await self.on_fired(trigger)
+            except Exception:
+                logger.exception(
+                    "Watch engine: trigger sink delivery failed for "
+                    "delivery key %s",
+                    trigger.delivery.delivery_key,
+                )
 
     def _runtimes_for(
         self,
@@ -1570,6 +1605,7 @@ class WatchEngine:
         await session.commit()
         for runtime, fired in fired_pairs:
             self._apply_trigger_state(runtime, fired)
+        await self._deliver(triggers)
         return triggers
 
     async def _invalidate_incarnation(

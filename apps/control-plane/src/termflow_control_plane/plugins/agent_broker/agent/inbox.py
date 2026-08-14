@@ -168,6 +168,10 @@ class InboxDeliveryStateMachine:
     (default ``1``) enforces the one-in-flight turn rule unless the backend
     capability advertises ``ConcurrencyMode.PARALLEL``.  ``worker_id``
     prefixes the per-claim fencing token so concurrent workers never collide.
+    ``claim_filter`` (optional) is a caller-supplied eligibility predicate
+    applied to every claim candidate: a candidate it rejects is skipped
+    without consuming a claim, so it stays visible in its current state
+    (the M4.5 watch sink uses it to wait for the typed payload).
     """
 
     def __init__(
@@ -180,6 +184,7 @@ class InboxDeliveryStateMachine:
         max_in_flight_per_conversation: int = 1,
         capabilities: AgentBackendCapabilities | None = None,
         worker_id: str = "worker",
+        claim_filter: Callable[[AgentInboxItem], bool] | None = None,
     ) -> None:
         self._agent_inbox = agent_inbox
         self._clock = now or (lambda: datetime.now(UTC))
@@ -188,6 +193,7 @@ class InboxDeliveryStateMachine:
         self._max_in_flight_per_conversation = max_in_flight_per_conversation
         self._capabilities = capabilities
         self._worker_id = worker_id
+        self._claim_filter = claim_filter
         # item_id -> delivery state parked in memory because the repository
         # cannot persist delivery_unknown (or proven-accepted recovery).
         self._parked: dict[UUID, str] = {}
@@ -217,6 +223,7 @@ class InboxDeliveryStateMachine:
                 now=observed,
             )
             if row.id not in self._parked
+            and (self._claim_filter is None or self._claim_filter(row))
         ]
         if not candidates:
             return None
