@@ -40,7 +40,10 @@ _PACKAGE = re.compile(
     r"^package: name='(?P<name>[^']+)' versionCode='(?P<code>[0-9]+)' "
     r"versionName='(?P<version>[^']+)'(?:\s|$)"
 )
-_SIGNER = re.compile(r"^Signer #[0-9]+ certificate SHA-256 digest:\s*(?P<digest>[0-9A-Fa-f:]+)\s*$")
+_SIGNER = re.compile(
+    r"^\s*Signer #[0-9]+ certificate SHA-256 digest:\s*"
+    r"(?P<digest>[0-9A-Fa-f:]+)\s*$"
+)
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -65,9 +68,11 @@ def parse_badging(output: str) -> AndroidPackageMetadata:
 
 def parse_signers(output: str) -> tuple[str, ...]:
     signers = tuple(
-        match.group("digest").replace(":", "").upper()
-        for line in output.splitlines()
-        if (match := _SIGNER.match(line))
+        dict.fromkeys(
+            match.group("digest").replace(":", "").upper()
+            for line in output.splitlines()
+            if (match := _SIGNER.match(line))
+        )
     )
     if len(signers) != 1:
         raise ValueError("apksigner output must contain exactly one signer")

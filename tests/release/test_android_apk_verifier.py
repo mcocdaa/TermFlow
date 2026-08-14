@@ -167,6 +167,21 @@ def test_parses_package_and_signer_contract() -> None:
     assert parse_signers(signer_output) == ("A1B2C3",)
 
 
+def test_deduplicates_repeated_signer_digest() -> None:
+    signer_output = (
+        "Signer #1 certificate SHA-256 digest: a1:b2:c3\n"
+        "Signer #1 certificate SHA-256 digest: a1:b2:c3\n"
+    )
+
+    assert parse_signers(signer_output) == ("A1B2C3",)
+
+
+def test_parses_indented_signer_digest() -> None:
+    signer_output = "  Signer #1 certificate SHA-256 digest: a1:b2:c3\n"
+
+    assert parse_signers(signer_output) == ("A1B2C3",)
+
+
 def test_rejects_ambiguous_package_or_signer_output() -> None:
     package_line = "package: name='io.termflow.client' versionCode='10065' versionName='0.1.0-rc.5'"
     with pytest.raises(ValueError, match="exactly one package"):
