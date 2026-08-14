@@ -179,24 +179,33 @@ def verify_launcher_resources(apk: Path, generated_res: Path) -> None:
         names = set(archive.namelist())
         if "resources.arsc" not in names:
             raise ValueError("APK is missing the compiled Android resource table")
+        archive_pngs = [
+            (name, archive.read(name)) for name in names if name.endswith(".png")
+        ]
+        for apk_name, actual in archive_pngs:
+            digest = hashlib.sha256(actual).hexdigest()
+            if Path(apk_name).name in LAUNCHER_NAMES and digest in KNOWN_TEMPLATE_LAUNCHER_SHA256:
+                raise ValueError(f"APK contains the known template launcher: {apk_name}")
         for density in DENSITIES:
             for launcher_name in LAUNCHER_NAMES:
                 source = generated_res / f"mipmap-{density}" / launcher_name
                 if not source.is_file():
                     raise ValueError(f"missing generated launcher: {source}")
-                apk_name = f"res/mipmap-{density}-v4/{launcher_name}"
-                if apk_name not in names:
-                    raise ValueError(f"APK is missing launcher resource: {apk_name}")
                 expected = source.read_bytes()
-                actual = archive.read(apk_name)
-                digest = hashlib.sha256(actual).hexdigest()
-                if digest in KNOWN_TEMPLATE_LAUNCHER_SHA256:
-                    raise ValueError(f"APK contains the known template launcher: {apk_name}")
-                if not _same_image(expected, actual):
+                match_index = next(
+                    (
+                        index
+                        for index, (_, actual) in enumerate(archive_pngs)
+                        if _same_image(expected, actual)
+                    ),
+                    None,
+                )
+                if match_index is None:
                     raise ValueError(
-                        "APK launcher does not match generated TermFlow resource: "
-                        f"{apk_name}"
+                        "APK is missing generated launcher image: "
+                        f"{density}/{launcher_name}"
                     )
+                archive_pngs.pop(match_index)
 
 
 def _version_key(path: Path) -> tuple[int, ...]:

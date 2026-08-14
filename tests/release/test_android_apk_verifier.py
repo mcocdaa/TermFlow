@@ -30,6 +30,7 @@ def _write_resources(
     compiled_adaptive: bool = True,
     compiled_adaptive_as_drawables: bool = False,
     compiled_resource_table: bool = True,
+    compiler_chosen_launcher_paths: bool = False,
 ) -> tuple[Path, Path]:
     generated = root / "generated-res"
     apk = root / "app.apk"
@@ -42,7 +43,12 @@ def _write_resources(
                 source = generated / f"mipmap-{density}" / name
                 source.parent.mkdir(parents=True, exist_ok=True)
                 source.write_bytes(content)
-                archive.writestr(f"res/mipmap-{density}-v4/{name}", content)
+                archive_name = (
+                    f"res/drawable-nodpi-v4/{density}-{name}"
+                    if compiler_chosen_launcher_paths
+                    else f"res/mipmap-{density}-v4/{name}"
+                )
+                archive.writestr(archive_name, content)
         adaptive = generated / "mipmap-anydpi-v26" / "ic_launcher.xml"
         adaptive.parent.mkdir(parents=True, exist_ok=True)
         background = (
@@ -80,6 +86,12 @@ def _write_resources(
 
 def test_accepts_complete_termflow_launcher_resources(tmp_path: Path) -> None:
     apk, generated = _write_resources(tmp_path)
+
+    verify_launcher_resources(apk, generated)
+
+
+def test_accepts_launcher_images_at_compiler_chosen_paths(tmp_path: Path) -> None:
+    apk, generated = _write_resources(tmp_path, compiler_chosen_launcher_paths=True)
 
     verify_launcher_resources(apk, generated)
 
