@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
 from termflow_control_plane.api.dependencies import get_settings
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/v1/agent", tags=["agent"])
 
 
 class AgentCapabilitiesResponse(BaseModel):
-    """Core capability-discovery payload consumed by C."""
+    """Agent Broker capability-discovery payload consumed by C (M7b adds STT)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -31,13 +31,19 @@ class AgentCapabilitiesResponse(BaseModel):
     #: Delegated Write Grants are design-only in 0.2.0; always False so C can
     #: display the disabled capability (spec §8).
     delegated_write_grants_enabled: bool = False
+    #: Speech-to-text availability (M7b spec §4.9): configuration-derived from
+    #: the assembled transcription provider, no live probing (M7a §5.3).
+    speech_to_text_enabled: bool = False
 
 
 @router.get("/capabilities", response_model=AgentCapabilitiesResponse)
 async def get_agent_capabilities(
+    request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AgentCapabilitiesResponse:
+    provider = getattr(request.app.state, "transcription_provider", None)
     return AgentCapabilitiesResponse(
         agent_broker_enabled=settings.agent_broker_enabled,
         delegated_write_grants_enabled=settings.agent_delegated_write_grants_enabled,
+        speech_to_text_enabled=provider is not None and provider.available(),
     )
