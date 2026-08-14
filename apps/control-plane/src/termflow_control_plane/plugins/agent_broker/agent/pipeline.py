@@ -640,6 +640,11 @@ class AgentPipelineService:
             await self.inbox_machine.mark_retry(
                 envelope, backoff=timedelta(seconds=self._active_run_retry_seconds)
             )
+            if envelope.delivery_state == "dead_letter":
+                # The bounded retry walk ended terminally (review m2): the
+                # in-process payload has served its only purpose and must
+                # not leak.
+                self._pending_payloads.pop(envelope.id, None)
             return
 
         # 3) Backend conversation ref: reuse or create + persist (spec §2 step 3).
@@ -661,13 +666,31 @@ class AgentPipelineService:
         self._run_envelopes[run_id] = started
 
         # 6) Supervisor re-check before submitting (spec §2 step 6): epoch
-        #    drift fails closed instead of shipping a stale turn.
-        if self._supervisor is not None and not self._supervisor.accept_activation(
-            self._runtime_ref, self._runtime_epoch
-        ):
-            self._pending_payloads.pop(envelope.id, None)
-            await self._fail_run_and_delivery(run_id, started, error_code="runtime_not_ready")
-            return
+        #    drift fails closed instead of shipping a stale turn.  A raising
+        #    gate (runtime manager unreachable) fails closed exactly like a
+        #    rejection (review m2) - either way no in-process state leaks.
+        if self._supervisor is not None:
+            try:
+                accepted = self._supervisor.accept_activation(
+                    self._runtime_ref, self._runtime_epoch
+                )
+            except Exception:
+                logger.exception(
+                    "Agent pipeline %s: supervisor activation check raised; "
+                    "failing closed",
+                    self.binding_id,
+                )
+                self._pending_payloads.pop(envelope.id, None)
+                await self._fail_run_and_delivery(
+                    run_id, started, error_code="runtime_not_ready"
+                )
+                return
+            if not accepted:
+                self._pending_payloads.pop(envelope.id, None)
+                await self._fail_run_and_delivery(
+                    run_id, started, error_code="runtime_not_ready"
+                )
+                return
 
         # 7) Render + submit (spec §2 step 7).
         try:
@@ -717,7 +740,10 @@ class AgentPipelineService:
         ``running``, so the run is started first and then failed; the inbox
         item becomes ``delivery_unknown`` (plan §7: uncertain delivery is a
         visible recoverable state, never an automatic duplicate action).
+        The run-to-envelope link is released so the failure path cannot
+        leak it (review m1).
         """
+        self._run_envelopes.pop(run_id, None)
         self.diagnostics.submits_failed += 1
         try:
             await self.run_machine.start(run_id)
@@ -1043,7 +1069,7 @@ class AgentPipelineService:
         # 5) Canonical event persistence (one JSON string for digest + payload).
         payload_json = _canonical_payload_json(notification)
         payload_digest = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
-        await self._cursor.append(
+        _, inserted = await self._cursor.append(
             conversation_id=conversation_id,
             event_kind=notification.kind.value,
             dedup_key=notification.dedup_key,
@@ -1055,7 +1081,13 @@ class AgentPipelineService:
 
         # 6) Message assembly: only the durable completed message lands in
         #    agent_messages (MESSAGE_DELTA stays ephemeral, spec §4 step 6).
+        #    A redelivered dedup key must not re-assemble or re-publish
+        #    (review fix m3): the cursor's inserted flag gates both.
         if notification.kind is AgentEventKind.MESSAGE_COMPLETED:
+            if not inserted:
+                # Dedup hit: the message was already assembled and published
+                # when the row was first inserted.
+                return
             text = notification.payload.text
             if text is None:
                 logger.warning(

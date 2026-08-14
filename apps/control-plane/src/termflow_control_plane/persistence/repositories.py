@@ -3535,6 +3535,35 @@ class AgentEventRepository:
         ephemeral: bool = False,
         payload_json: str | None = None,
     ) -> AgentEvent:
+        event, _inserted = await self.append_checked(
+            conversation_id=conversation_id,
+            event_kind=event_kind,
+            dedup_key=dedup_key,
+            payload_digest=payload_digest,
+            run_id=run_id,
+            ephemeral=ephemeral,
+            payload_json=payload_json,
+        )
+        return event
+
+    async def append_checked(
+        self,
+        *,
+        conversation_id: UUID,
+        event_kind: str,
+        dedup_key: str,
+        payload_digest: str,
+        run_id: UUID | None = None,
+        ephemeral: bool = False,
+        payload_json: str | None = None,
+    ) -> tuple[AgentEvent, bool]:
+        """``append`` plus the dedup verdict (True when the row was inserted).
+
+        Callers that fan out or assemble from the append (the live stream
+        hub and the pipeline's message assembly) gate their work on the
+        flag so a redelivered event is persisted-at-most-once but never
+        re-published or re-assembled.
+        """
         if payload_json is not None:
             payload_bytes = payload_json.encode("utf-8")
             if len(payload_bytes) > MAX_AGENT_EVENT_PAYLOAD_BYTES:
@@ -3605,9 +3634,9 @@ class AgentEventRepository:
                 # The atomic insert observed the row it skipped, so it must
                 # still be visible in this transaction.
                 assert existing is not None
-                return existing
+                return existing, False
             await session.commit()
-            return event
+            return event, True
 
     async def list_since_cursor(
         self,

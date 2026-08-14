@@ -224,6 +224,17 @@ class FakeSupervisor:
         return self.accept
 
 
+class RaisingSupervisor:
+    """Supervisor double whose activation gate raises (runtime manager down)."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[RuntimeRef, int]] = []
+
+    def accept_activation(self, runtime_ref: RuntimeRef, epoch: int) -> bool:
+        self.calls.append((runtime_ref, epoch))
+        raise RuntimeError("runtime manager unavailable")
+
+
 def backend_capabilities() -> AgentBackendCapabilities:
     return AgentBackendCapabilities(
         context_mode=ContextMode.LOST_ON_RESTART,
@@ -901,6 +912,61 @@ async def test_duplicate_dedup_key_persists_single_row_and_start_is_idempotent(
         await pipeline.stop()
 
 
+async def test_replayed_message_completed_assembles_single_message_row(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    """Review fix m3: a redelivered MESSAGE_COMPLETED must not re-assemble.
+
+    The canonical append dedups the event row, but the assembly step ran
+    unconditionally, so a redelivery of the same dedup_key produced a
+    second agent_messages row and a second live fan-out.
+    """
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    await pipeline.start()
+    try:
+        await pipeline.submit_user_message(conversation_id, "hi", actor="admin")
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.RUN_STARTED,
+                provider_ref="provider-1",
+                dedup_key="evt-start",
+            )
+        )
+
+        async def run_running() -> bool:
+            runs = await _runs(repositories, conversation_id)
+            return bool(runs) and all(run.run_state == "running" for run in runs)
+
+        await wait_until(run_running)
+
+        completed = make_notification(
+            backend,
+            pipeline,
+            kind=AgentEventKind.MESSAGE_COMPLETED,
+            provider_ref="provider-1",
+            text="deployment is healthy",
+            dedup_key="evt-completed",
+        )
+        backend.push_event(completed)
+        await wait_until(lambda: _messages_count(repositories, conversation_id))
+
+        # Redeliver the exact same MESSAGE_COMPLETED: the canonical row is
+        # deduped and no second message row may be assembled.
+        backend.push_event(completed)
+        await asyncio.sleep(0.1)
+        messages = await _messages(repositories, conversation_id)
+        assert len(messages) == 1
+        events = await _events(repositories, conversation_id)
+        assert [event.event_kind for event in events].count("message_completed") == 1
+    finally:
+        await pipeline.stop()
+
+
 # ---------------------------------------------------------------------------
 # Ownership and run mapping: drop foreign/unmapped events.
 # ---------------------------------------------------------------------------
@@ -1139,6 +1205,121 @@ async def test_missing_payload_grace_exhaustion_fails_closed(
         await wait_until(lambda: pipeline.inbox_machine._parked.get(item.id) == "delivery_unknown")
         assert len(backend.submit_calls) == 0
         assert pipeline.diagnostics.missing_payload_delivery_unknown == 1
+    finally:
+        await pipeline.stop()
+
+
+# ---------------------------------------------------------------------------
+# Terminal dispatch paths release their in-process state (review m1/m2).
+# ---------------------------------------------------------------------------
+
+
+async def test_failed_dispatch_releases_run_envelope_and_payload(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    """A failed submit must drop the run envelope and the in-process payload."""
+    backend = FakeBackend(repositories=repositories)
+    backend.submit_result = BackendSubmitResult(outcome=BackendOutcome.RETRYABLE, retry_safe=False)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    await pipeline.start()
+    try:
+        admission = await pipeline.submit_user_message(
+            conversation_id, "risky", actor="admin"
+        )
+
+        async def run_failed() -> bool:
+            runs = await _runs(repositories, conversation_id)
+            return bool(runs) and runs[0].run_state == "failed"
+
+        await wait_until(run_failed)
+        assert pipeline._run_envelopes == {}
+        assert admission.message_id not in pipeline._pending_payloads
+    finally:
+        await pipeline.stop()
+
+
+async def test_supervisor_rejection_releases_run_envelope_and_payload(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    """A supervisor rejection must not leak the run envelope or payload."""
+    backend = FakeBackend(repositories=repositories)
+    supervisor = FakeSupervisor(accept=False)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(
+        repositories, hub, backend, supervisor=supervisor, binding_id=binding_id
+    )
+    await pipeline.start()
+    try:
+        admission = await pipeline.submit_user_message(
+            conversation_id, "stale epoch", actor="admin"
+        )
+
+        async def run_failed() -> bool:
+            runs = await _runs(repositories, conversation_id)
+            return bool(runs) and runs[0].run_state == "failed"
+
+        await wait_until(run_failed)
+        assert pipeline._run_envelopes == {}
+        assert admission.message_id not in pipeline._pending_payloads
+    finally:
+        await pipeline.stop()
+
+
+async def test_supervisor_exception_fails_closed_and_releases_state(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    """A raising activation gate fails the run closed without leaking state."""
+    backend = FakeBackend(repositories=repositories)
+    supervisor = RaisingSupervisor()
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(
+        repositories, hub, backend, supervisor=supervisor, binding_id=binding_id
+    )
+    await pipeline.start()
+    try:
+        admission = await pipeline.submit_user_message(
+            conversation_id, "gate down", actor="admin"
+        )
+
+        async def run_failed() -> bool:
+            runs = await _runs(repositories, conversation_id)
+            return bool(runs) and all(
+                run.run_state == "failed" and run.error_code == "runtime_not_ready"
+                for run in runs
+            )
+
+        await wait_until(run_failed)
+        assert len(backend.submit_calls) == 0
+        assert pipeline._run_envelopes == {}
+        assert admission.message_id not in pipeline._pending_payloads
+    finally:
+        await pipeline.stop()
+
+
+async def test_dead_lettered_retry_releases_payload(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    """When the one-active-run fallback dead-letters, the payload must go too."""
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    # Recovery leftover: a run already in running refuses every submission,
+    # so the bounded retry walk ends in dead_letter.
+    run = await repositories.agent_runs.create(conversation_id=conversation_id)
+    await repositories.agent_runs.set_state(run.id, "running", expected_state="queued")
+    admission = await pipeline.submit_user_message(conversation_id, "late", actor="admin")
+    await pipeline.start()
+    try:
+        async def item_dead_lettered() -> bool:
+            rows = await repositories.agent_inbox.list_for_conversation(conversation_id)
+            return any(
+                row.id == admission.message_id and row.delivery_state == "dead_letter"
+                for row in rows
+            )
+
+        await wait_until(item_dead_lettered)
+        assert admission.message_id not in pipeline._pending_payloads
     finally:
         await pipeline.stop()
 
