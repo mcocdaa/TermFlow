@@ -174,13 +174,19 @@ class TestMessages:
         conversation_id = UUID(str(conversation["conversation_id"]))
         repositories: RepositoryBundle = client.app.state.repositories
         for index in range(4):
-            async def _seed_message(index: int = index) -> None:
+            body = f"body-{index}" if index % 2 == 0 else None
+            digest = hashlib.sha256(body.encode("utf-8")).hexdigest() if body else f"digest-{index}"
+
+            async def _seed_message(
+                body: str | None = body, digest: str = digest, index: int = index
+            ) -> None:
                 await repositories.agent_messages.create(
                     conversation_id=conversation_id,
                     role="user" if index % 2 == 0 else "agent",
                     kind="text",
-                    body_digest=f"digest-{index}",
+                    body_digest=digest,
                     is_final=True,
+                    body=body,
                 )
 
             client.portal.call(_seed_message)
@@ -192,12 +198,17 @@ class TestMessages:
         assert full.status_code == 200
         messages = full.json()["messages"]
         assert len(messages) == 4
+        # Digest-only rows keep their plain digest; rows with a body carry the
+        # digest of that body (the repository invariant).
         assert [m["body_digest"] for m in messages] == [
-            "digest-0",
+            hashlib.sha256(b"body-0").hexdigest(),
             "digest-1",
-            "digest-2",
+            hashlib.sha256(b"body-2").hexdigest(),
             "digest-3",
         ]
+        # The M6b §6.6 body field is exposed per message; digest-only rows
+        # (assistant deltas here) degrade to null.
+        assert [m["body"] for m in messages] == ["body-0", None, "body-2", None]
         assert [m["assembly_revision"] for m in messages] == [1, 2, 3, 4]
         assert all(m["conversation_id"] == str(conversation_id) for m in messages)
 
@@ -205,7 +216,11 @@ class TestMessages:
             f"/api/v1/agent/conversations/{conversation_id}/messages?limit=2&offset=2",
             headers=admin_headers,
         )
-        assert [m["body_digest"] for m in page.json()["messages"]] == ["digest-2", "digest-3"]
+        assert [m["body"] for m in page.json()["messages"]] == ["body-2", None]
+        assert [m["body_digest"] for m in page.json()["messages"]] == [
+            hashlib.sha256(b"body-2").hexdigest(),
+            "digest-3",
+        ]
 
     def test_messages_for_unknown_conversation_return_404(
         self,

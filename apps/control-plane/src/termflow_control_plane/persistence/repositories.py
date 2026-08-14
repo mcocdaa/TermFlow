@@ -22,6 +22,7 @@ from termflow_control_plane.auth.secret_box import EncryptedSecret
 
 from .models import (
     MAX_AGENT_EVENT_PAYLOAD_BYTES,
+    MAX_AGENT_MESSAGE_BODY_BYTES,
     AgentBinding,
     AgentCleanupJob,
     AgentConversation,
@@ -3352,7 +3353,23 @@ class AgentMessageRepository:
         run_id: UUID | None = None,
         is_final: bool = False,
         assembly_revision: int | None = None,
+        body: str | None = None,
     ) -> AgentMessage:
+        if body is not None:
+            # Body bounds and digest invariant (M6b spec §6.6): storage and
+            # hash are the same byte string, so the digest stays verifiable
+            # and body/digest drift fails fast instead of silently rendering
+            # the wrong historical user text.
+            body_bytes = body.encode("utf-8")
+            if len(body_bytes) > MAX_AGENT_MESSAGE_BODY_BYTES:
+                raise ValueError(
+                    f"message body must not exceed {MAX_AGENT_MESSAGE_BODY_BYTES} "
+                    "bytes (64 KiB)"
+                )
+            if hashlib.sha256(body_bytes).hexdigest() != body_digest:
+                raise ValueError(
+                    "body_digest must equal sha256(body) when a body is provided"
+                )
         observed_at = datetime.now(UTC)
         if assembly_revision is None:
             # Auto-assign the next revision atomically: the aggregate subquery
@@ -3368,6 +3385,7 @@ class AgentMessageRepository:
                     func.coalesce(func.max(AgentMessage.assembly_revision), 0) + 1,
                     literal(is_final),
                     literal(body_digest),
+                    literal(body),
                     literal(observed_at),
                 )
                 .where(AgentMessage.conversation_id == conversation_id)
@@ -3384,6 +3402,7 @@ class AgentMessageRepository:
                 literal(assembly_revision),
                 literal(is_final),
                 literal(body_digest),
+                literal(body),
                 literal(observed_at),
             )
         async with self._sessions() as session:
@@ -3398,6 +3417,7 @@ class AgentMessageRepository:
                         AgentMessage.assembly_revision,
                         AgentMessage.is_final,
                         AgentMessage.body_digest,
+                        AgentMessage.body,
                         AgentMessage.created_at,
                     ],
                     source,

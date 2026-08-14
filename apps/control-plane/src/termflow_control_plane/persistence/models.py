@@ -522,6 +522,13 @@ class AgentRun(Base):
     )
 
 
+#: Bounded message body limit for ``AgentMessage.body`` (M6b spec §6.6;
+#: aligned with ``MAX_AGENT_EVENT_PAYLOAD_BYTES``).  Lives next to the column
+#: it bounds and is shared by ``AgentMessageRepository.create`` (which enforces
+#: it together with the ``body_digest == sha256(body)`` invariant).
+MAX_AGENT_MESSAGE_BODY_BYTES = 64 * 1024
+
+
 class AgentMessage(Base):
     """A committed message assembly checkpoint on the product timeline (plan §7)."""
 
@@ -546,6 +553,10 @@ class AgentMessage(Base):
     assembly_revision: Mapped[int] = mapped_column(Integer)
     is_final: Mapped[bool] = mapped_column(Boolean, default=False)
     body_digest: Mapped[str] = mapped_column(String(64))
+    # Bounded user message text (M6b spec §6.6): nullable so pre-migration
+    # rows and digest-only messages stay representable; enforcement lives in
+    # ``AgentMessageRepository.create``.
+    body: Mapped[str | None] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     __table_args__ = (

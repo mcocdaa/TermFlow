@@ -933,6 +933,70 @@ async def test_message_explicit_revision_on_empty_conversation(
 
 
 @pytest.mark.asyncio
+async def test_message_body_is_persisted_when_digest_matches(
+    repositories: RepositoryBundle,
+) -> None:
+    """A body is stored and returned when it hashes to the given digest
+    (plan M6b spec §6.6)."""
+    conversation = await _seed_conversation(repositories)
+    message = await repositories.agent_messages.create(
+        conversation_id=conversation.id,
+        role="user",
+        kind="text",
+        body_digest=_hash("hello from voice"),
+        body="hello from voice",
+    )
+    assert message.body == "hello from voice"
+    listed = await repositories.agent_messages.list_for_conversation(conversation.id)
+    assert [item.body for item in listed] == ["hello from voice"]
+
+
+@pytest.mark.asyncio
+async def test_message_body_rejects_digest_mismatch(repositories: RepositoryBundle) -> None:
+    """body_digest must equal sha256(body): drift fails fast (spec §6.6)."""
+    conversation = await _seed_conversation(repositories)
+    with pytest.raises(ValueError, match="body_digest must equal sha256"):
+        await repositories.agent_messages.create(
+            conversation_id=conversation.id,
+            role="user",
+            kind="text",
+            body_digest=_hash("some other text"),
+            body="hello from voice",
+        )
+    assert await repositories.agent_messages.latest_revision(conversation.id) is None
+
+
+@pytest.mark.asyncio
+async def test_message_body_rejects_oversized_body(repositories: RepositoryBundle) -> None:
+    """Bodies above 64 KiB are rejected before any row is written (spec §6.6)."""
+    conversation = await _seed_conversation(repositories)
+    oversized = "x" * (64 * 1024 + 1)
+    with pytest.raises(ValueError, match="must not exceed"):
+        await repositories.agent_messages.create(
+            conversation_id=conversation.id,
+            role="user",
+            kind="text",
+            body_digest=_hash(oversized),
+            body=oversized,
+        )
+    assert await repositories.agent_messages.latest_revision(conversation.id) is None
+
+
+@pytest.mark.asyncio
+async def test_message_body_none_stays_digest_only(repositories: RepositoryBundle) -> None:
+    """body=None keeps the digest-only contract working (pre-0010 rows)."""
+    conversation = await _seed_conversation(repositories)
+    message = await repositories.agent_messages.create(
+        conversation_id=conversation.id,
+        role="user",
+        kind="text",
+        body_digest=_hash("digest-only"),
+    )
+    assert message.body is None
+    assert message.body_digest == _hash("digest-only")
+
+
+@pytest.mark.asyncio
 async def test_event_append_is_monotonic_and_dedupes(repositories: RepositoryBundle) -> None:
     conversation = await _seed_conversation(repositories)
     other = await _seed_conversation(repositories)

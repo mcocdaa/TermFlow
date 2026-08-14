@@ -100,6 +100,10 @@ class AgentMessageResponse(BaseModel):
     assembly_revision: int
     is_final: bool
     body_digest: str
+    #: Bounded message text (M6b spec §6.6); ``None`` for pre-migration rows
+    #: and digest-only messages, which clients render as a degraded
+    #: "content unavailable" placeholder.
+    body: str | None
     created_at: datetime
 
 
@@ -152,6 +156,7 @@ def _message_response(message: AgentMessage) -> AgentMessageResponse:
         assembly_revision=message.assembly_revision,
         is_final=message.is_final,
         body_digest=message.body_digest,
+        body=message.body,
         created_at=message.created_at,
     )
 

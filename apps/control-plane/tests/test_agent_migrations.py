@@ -19,7 +19,7 @@ from termflow_control_plane.persistence.models import Base
 
 # The migration head after this task.  Only tests asserting the GLOBAL head use
 # this constant; upgrade-path fixtures still pin "0005" explicitly.
-HEAD = "0009"
+HEAD = "0010"
 
 # Every Agent Broker table created by migrations 0006, 0007, 0008, and 0009 (plan §15).
 AGENT_TABLES = (
@@ -371,6 +371,37 @@ def test_agent_event_payload_column_delta(tmp_path) -> None:
                 column["name"] for column in inspect(connection).get_columns("agent_events")
             }
         assert "payload" not in columns
+    finally:
+        engine.dispose()
+
+
+def test_agent_message_body_column_delta(tmp_path) -> None:
+    """The 0010 delta adds the nullable body column and drops it cleanly
+    (plan M6b spec §6.6)."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'body-delta.db'}")
+    try:
+        with engine.begin() as connection:
+            config = _migration_config(connection)
+            command.upgrade(config, "0009")
+            columns = {
+                column["name"] for column in inspect(connection).get_columns("agent_messages")
+            }
+            assert "body" not in columns
+
+            command.upgrade(config, "head")
+            body = {
+                column["name"]: column
+                for column in inspect(connection).get_columns("agent_messages")
+            }["body"]
+        assert body["nullable"] is True
+        assert str(body["type"]).upper() == "TEXT"
+
+        with engine.begin() as connection:
+            command.downgrade(_migration_config(connection), "0009")
+            columns = {
+                column["name"] for column in inspect(connection).get_columns("agent_messages")
+            }
+        assert "body" not in columns
     finally:
         engine.dispose()
 
