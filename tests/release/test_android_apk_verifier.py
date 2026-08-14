@@ -184,6 +184,15 @@ def test_parses_indented_signer_digest() -> None:
     assert parse_signers(signer_output) == ("A1B2C3",)
 
 
+def test_parses_v31_signer_digest() -> None:
+    signer_output = (
+        "Signer (minSdkVersion=33, maxSdkVersion=2147483647) "
+        "certificate SHA-256 digest: a1:b2:c3\n"
+    )
+
+    assert parse_signers(signer_output) == ("A1B2C3",)
+
+
 def test_reads_signer_certificate_written_to_stderr(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
