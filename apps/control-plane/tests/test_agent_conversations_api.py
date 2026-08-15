@@ -12,16 +12,32 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from termflow_control_plane.persistence.repositories import RepositoryBundle
+from termflow_control_plane.plugins.agent_broker.agent.backend import (
+    AgentBackendCapabilities,
+    CancelScope,
+    ConcurrencyMode,
+    ContextMode,
+    ReplayMode,
+    RuntimeIsolation,
+    SubmitMode,
+    ToolCallIdentity,
+)
 from termflow_control_plane.plugins.agent_broker.agent.pipeline import (
+    AgentPipelineService,
     CancelResult,
     NoActiveRunError,
     SubmitAdmission,
 )
-from termflow_control_plane.plugins.agent_broker.agent.turns import BackendOutcome
+from termflow_control_plane.plugins.agent_broker.agent.stream_hub import AgentStreamHub
+from termflow_control_plane.plugins.agent_broker.agent.turns import (
+    BackendEventScope,
+    BackendOutcome,
+)
 
 
 def _create_profile(
@@ -102,14 +118,21 @@ class _StubPipeline:
         cancel_error: Exception | None = None,
     ) -> None:
         self.submitted: list[tuple[UUID, str]] = []
+        self.submitted_draft_refs: list[UUID | None] = []
         self.cancelled: list[tuple[UUID, str | None]] = []
         self._cancel_result = cancel_result
         self._cancel_error = cancel_error
 
     async def submit_user_message(
-        self, conversation_id: UUID, text: str, *, actor: str
+        self,
+        conversation_id: UUID,
+        text: str,
+        *,
+        actor: str,
+        draft_ref: UUID | None = None,
     ) -> SubmitAdmission:
         self.submitted.append((conversation_id, text))
+        self.submitted_draft_refs.append(draft_ref)
         return SubmitAdmission(
             message_id=uuid4(),
             conversation_id=conversation_id,
@@ -705,10 +728,413 @@ class TestSubmitMessage:
         response = client.post(
             f"/api/v1/agent/conversations/{conversation_id}/messages",
             headers=admin_headers,
-            json={"text": "hello", "draft_ref": "draft-1"},
+            json={"text": "hello", "unexpected_field": "nope"},
         )
         assert response.status_code == 422
         assert response.json()["error"]["code"] == "invalid_request"
+
+
+def _test_capabilities() -> AgentBackendCapabilities:
+    return AgentBackendCapabilities(
+        context_mode=ContextMode.LOST_ON_RESTART,
+        submit_mode=SubmitMode.NON_IDEMPOTENT,
+        cancel_scope=CancelScope.CONVERSATION,
+        replay_mode=ReplayMode.NONE,
+        concurrency_mode=ConcurrencyMode.SERIALIZED,
+        tool_call_identity=ToolCallIdentity.BINDING,
+        runtime_isolation=RuntimeIsolation.BINDING,
+        explicit_run_boundaries=True,
+    )
+
+
+class _MinimalAdapter:
+    """Adapter-shaped double: the submit draft path never talks to a backend."""
+
+    runtime_id = "test-runtime"
+    directory = "/tmp"
+
+
+class _SinglePipelineRegistry:
+    """Registry double handing out one real pipeline for a known binding."""
+
+    def __init__(self, binding_id: UUID, pipeline: AgentPipelineService) -> None:
+        self._binding_id = binding_id
+        self._pipeline = pipeline
+
+    def pipeline_for(self, binding_id: UUID):  # noqa: ANN201 - test double
+        return self._pipeline if binding_id == self._binding_id else None
+
+
+def _install_real_pipeline(client: TestClient, *, binding_id: UUID) -> None:
+    """Wire a real pipeline for the binding so submit runs the draft CAS path."""
+    repositories: RepositoryBundle = client.app.state.repositories
+    pipeline = AgentPipelineService(
+        binding_id=binding_id,
+        adapter=_MinimalAdapter(),
+        scope=BackendEventScope(binding_id=str(binding_id), runtime_epoch=1),
+        capabilities=_test_capabilities(),
+        repositories=repositories,
+        sessions=client.app.state.session_factory,
+        hub=AgentStreamHub(),
+        supervisor=None,
+        runtime_ref="test-runtime",
+        runtime_epoch=1,
+    )
+    client.app.state.agent_runtime_registry = _SinglePipelineRegistry(binding_id, pipeline)
+
+
+def _create_draft(
+    client: TestClient,
+    *,
+    binding_id: UUID,
+    conversation_id: UUID,
+    owner_actor_id: str = "admin",
+    state: str = "confirmed",
+    expires_at: datetime | None = None,
+) -> UUID:
+    repositories: RepositoryBundle = client.app.state.repositories
+
+    async def _create() -> UUID:
+        draft = await repositories.transcript_drafts.create(
+            binding_id=binding_id,
+            target_conversation_id=conversation_id,
+            owner_actor_id=owner_actor_id,
+            transcript_hash=hashlib.sha256(b"voice transcript").hexdigest(),
+            provider="fake",
+            region="test",
+            expires_at=expires_at or datetime.now(UTC) + timedelta(hours=1),
+            state=state,
+        )
+        return draft.id
+
+    return client.portal.call(_create)
+
+
+def _draft_state(client: TestClient, draft_id: UUID) -> str | None:
+    repositories: RepositoryBundle = client.app.state.repositories
+
+    async def _read() -> str | None:
+        draft = await repositories.transcript_drafts.get_by_id(draft_id)
+        return draft.state if draft is not None else None
+
+    return client.portal.call(_read)
+
+
+def _inbox_count(client: TestClient, conversation_id: UUID) -> int:
+    repositories: RepositoryBundle = client.app.state.repositories
+
+    async def _count() -> int:
+        return len(await repositories.agent_inbox.list_for_conversation(conversation_id))
+
+    return client.portal.call(_count)
+
+
+class TestSubmitMessageDraftRef:
+    """Submit-side ``draft_ref`` CAS semantics (M7b spec §4.8).
+
+    A confirmed, unexpired, owner-matching draft whose target conversation
+    matches the URL is atomically consumed together with the inbox
+    admission; every rejection produces no admission and maps to the
+    client-contract error (410/409/422).
+    """
+
+    def test_submit_with_confirmed_draft_ref_admits_and_consumes(
+        self,
+        client,
+        admin_headers,
+        provision_term,
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        draft_id = _create_draft(
+            client, binding_id=binding_id, conversation_id=conversation_id
+        )
+        _install_real_pipeline(client, binding_id=binding_id)
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/messages",
+            headers=admin_headers,
+            json={"text": "编辑后的文本", "draft_ref": str(draft_id)},
+        )
+
+        assert response.status_code == 202, response.text
+        body = response.json()
+        assert UUID(body["message_id"])
+        assert body["conversation_id"] == str(conversation_id)
+        assert body["delivery_state"] == "pending"
+        assert body["submission_state"] == "not_started"
+        # The draft was consumed exactly once and the admission is durable.
+        assert _draft_state(client, draft_id) == "consumed"
+        assert _inbox_count(client, conversation_id) == 1
+
+    def test_submit_replays_consumed_draft_ref_returns_409_without_second_admission(
+        self,
+        client,
+        admin_headers,
+        provision_term,
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        draft_id = _create_draft(
+            client, binding_id=binding_id, conversation_id=conversation_id
+        )
+        _install_real_pipeline(client, binding_id=binding_id)
+
+        first = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/messages",
+            headers=admin_headers,
+            json={"text": "编辑后的文本", "draft_ref": str(draft_id)},
+        )
+        assert first.status_code == 202, first.text
+
+        replay = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/messages",
+            headers=admin_headers,
+            json={"text": "编辑后的文本", "draft_ref": str(draft_id)},
+        )
+        assert replay.status_code == 409
+        assert replay.json()["error"]["code"] == "draft_not_consumable"
+        assert _inbox_count(client, conversation_id) == 1
+
+    def test_submit_with_unconfirmed_draft_ref_returns_409(
+        self,
+        client,
+        admin_headers,
+        provision_term,
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        draft_id = _create_draft(
+            client,
+            binding_id=binding_id,
+            conversation_id=conversation_id,
+            state="draft",
+        )
+        _install_real_pipeline(client, binding_id=binding_id)
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/messages",
+            headers=admin_headers,
+            json={"text": "编辑后的文本", "draft_ref": str(draft_id)},
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "draft_not_consumable"
+        assert _draft_state(client, draft_id) == "draft"
+        assert _inbox_count(client, conversation_id) == 0
+
+    def test_submit_with_cancelled_draft_ref_returns_409(
+        self,
+        client,
+        admin_headers,
+        provision_term,
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        draft_id = _create_draft(
+            client,
+            binding_id=binding_id,
+            conversation_id=conversation_id,
+            state="cancelled",
+        )
+        _install_real_pipeline(client, binding_id=binding_id)
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/messages",
+            headers=admin_headers,
+            json={"text": "编辑后的文本", "draft_ref": str(draft_id)},
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "draft_not_consumable"
+        assert _draft_state(client, draft_id) == "cancelled"
+        assert _inbox_count(client, conversation_id) == 0
+
+    def test_submit_with_foreign_owned_draft_ref_returns_409(
+        self,
+        client,
+        admin_headers,
+        provision_term,
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        draft_id = _create_draft(
+            client,
+            binding_id=binding_id,
+            conversation_id=conversation_id,
+            owner_actor_id="native:other-client",
+        )
+        _install_real_pipeline(client, binding_id=binding_id)
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/messages",
+            headers=admin_headers,
+            json={"text": "编辑后的文本", "draft_ref": str(draft_id)},
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "draft_not_consumable"
+        assert _draft_state(client, draft_id) == "confirmed"
+        assert _inbox_count(client, conversation_id) == 0
+
+    def test_submit_with_draft_targeting_other_conversation_returns_422(
+        self,
+        client,
+        admin_headers,
+        provision_term,
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        other = _create_conversation(client, admin_headers, binding_id=binding_id)
+        other_conversation_id = UUID(str(other["conversation_id"]))
+        draft_id = _create_draft(
+            client, binding_id=binding_id, conversation_id=conversation_id
+        )
+        _install_real_pipeline(client, binding_id=binding_id)
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{other_conversation_id}/messages",
+            headers=admin_headers,
+            json={"text": "编辑后的文本", "draft_ref": str(draft_id)},
+        )
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "draft_conversation_mismatch"
+        assert _draft_state(client, draft_id) == "confirmed"
+        assert _inbox_count(client, other_conversation_id) == 0
+
+    def test_submit_with_expired_draft_ref_returns_410(
+        self,
+        client,
+        admin_headers,
+        provision_term,
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        draft_id = _create_draft(
+            client,
+            binding_id=binding_id,
+            conversation_id=conversation_id,
+            expires_at=datetime.now(UTC) - timedelta(seconds=1),
+        )
+        _install_real_pipeline(client, binding_id=binding_id)
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/messages",
+            headers=admin_headers,
+            json={"text": "编辑后的文本", "draft_ref": str(draft_id)},
+        )
+        assert response.status_code == 410
+        assert response.json()["error"]["code"] == "draft_expired"
+        assert _draft_state(client, draft_id) == "confirmed"
+        assert _inbox_count(client, conversation_id) == 0
+
+    def test_submit_with_unknown_draft_ref_returns_404(
+        self,
+        client,
+        admin_headers,
+        provision_term,
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        _install_real_pipeline(client, binding_id=binding_id)
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/messages",
+            headers=admin_headers,
+            json={"text": "hello", "draft_ref": str(uuid4())},
+        )
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "draft_not_found"
+        assert _inbox_count(client, conversation_id) == 0
+
+    def test_submit_with_malformed_draft_ref_returns_404(
+        self,
+        client,
+        admin_headers,
+        provision_term,
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        _install_real_pipeline(client, binding_id=binding_id)
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/messages",
+            headers=admin_headers,
+            json={"text": "hello", "draft_ref": "draft-1"},
+        )
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "draft_not_found"
+
+    def test_submit_with_oversized_draft_ref_returns_422(
+        self,
+        client,
+        admin_headers,
+        provision_term,
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/messages",
+            headers=admin_headers,
+            json={"text": "hello", "draft_ref": "a" * 257},
+        )
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "invalid_request"
+
+    def test_submit_with_invalid_text_leaves_draft_unconsumed(
+        self,
+        client,
+        admin_headers,
+        provision_term,
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        draft_id = _create_draft(
+            client, binding_id=binding_id, conversation_id=conversation_id
+        )
+        _install_real_pipeline(client, binding_id=binding_id)
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{conversation_id}/messages",
+            headers=admin_headers,
+            json={"text": "bad\x00text", "draft_ref": str(draft_id)},
+        )
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "invalid_request"
+        assert _draft_state(client, draft_id) == "confirmed"
+        assert _inbox_count(client, conversation_id) == 0
+
+    def test_submit_draft_ref_to_unknown_conversation_returns_404_without_consuming(
+        self,
+        client,
+        admin_headers,
+        provision_term,
+    ) -> None:
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        draft_id = _create_draft(
+            client, binding_id=binding_id, conversation_id=conversation_id
+        )
+        _install_real_pipeline(client, binding_id=binding_id)
+
+        response = client.post(
+            f"/api/v1/agent/conversations/{uuid4()}/messages",
+            headers=admin_headers,
+            json={"text": "hello", "draft_ref": str(draft_id)},
+        )
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "conversation_not_found"
+        assert _draft_state(client, draft_id) == "confirmed"
 
 
 class TestCancelConversation:

@@ -22,6 +22,7 @@ from termflow_protocol.agent import MAX_AGENT_TEXT_BYTES
 from termflow_protocol.messages import validate_plain_text
 
 from termflow_control_plane.api.dependencies import get_repositories, require_admin
+from termflow_control_plane.api.transcription import _actor_id
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.models import (
     AgentBinding,
@@ -38,6 +39,7 @@ from termflow_control_plane.plugins.agent_broker.agent.agui_projection import (
 )
 from termflow_control_plane.plugins.agent_broker.agent.pipeline import (
     AgentPipelineService,
+    DraftRefRejected,
     NoActiveRunError,
 )
 from termflow_control_plane.plugins.agent_broker.agent.runtime_registry import (
@@ -146,11 +148,18 @@ class AgentEventListResponse(BaseModel):
 
 
 class AgentSubmitMessageRequest(BaseModel):
-    """Plain-text user message admission (M4.5 spec §2); no draft_ref yet."""
+    """Plain-text user message admission (M4.5 spec §2).
+
+    ``draft_ref`` (M7b spec §4.8) ties the admission to a confirmed
+    transcript draft that is atomically consumed (``confirmed -> consumed``)
+    in the same transaction as the inbox admission; the text itself remains
+    freely editable (only the existing plain-text validation applies).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     text: str
+    draft_ref: str | None = Field(default=None, min_length=1, max_length=256)
 
     @field_validator("text")
     @classmethod
@@ -282,6 +291,24 @@ def _require_pipeline(
             "The binding's runtime is not available.",
         )
     return pipeline
+
+
+#: Submit-side draft CAS rejections → (status, message) (M7b spec §4.8).
+_DRAFT_REJECTION_ERRORS: dict[str, tuple[int, str]] = {
+    "not_found": (404, "The transcript draft does not exist."),
+    "conversation_mismatch": (
+        422,
+        "The transcript draft targets a different conversation.",
+    ),
+    "expired": (410, "The transcript draft has expired."),
+    "not_consumable": (409, "The transcript draft cannot be consumed."),
+}
+
+
+def _draft_rejection_error(reason: str) -> TermFlowError:
+    """Map a :class:`DraftRefRejected` reason onto the client contract error."""
+    status_code, message = _DRAFT_REJECTION_ERRORS[reason]
+    return TermFlowError(f"draft_{reason}", status_code, message)
 
 
 @router.post(
@@ -456,13 +483,35 @@ async def submit_agent_message(
     invalid_request``); the fail-closed checks then run in order:
     conversation exists (404), binding open (403), runtime pipeline mapped
     and ready (503).
+
+    With ``draft_ref`` (M7b spec §4.8) the confirmed transcript draft is
+    consumed atomically with the admission; a rejected CAS produces no
+    admission and maps to the client contract: 404 draft_not_found, 409
+    draft_not_consumable, 410 draft_expired, or 422
+    draft_conversation_mismatch.
     """
     conversation = await _require_conversation(conversation_id, repositories)
     binding = await _require_open_binding(conversation, repositories)
     pipeline = _require_pipeline(binding, get_agent_runtime_registry(http_request))
-    admission = await pipeline.submit_user_message(
-        conversation_id, request.text, actor="admin"
-    )
+    draft_id: UUID | None = None
+    if request.draft_ref is not None:
+        try:
+            draft_id = UUID(request.draft_ref)
+        except ValueError:
+            raise TermFlowError(
+                "draft_not_found",
+                404,
+                "The transcript draft does not exist.",
+            ) from None
+    try:
+        admission = await pipeline.submit_user_message(
+            conversation_id,
+            request.text,
+            actor=_actor_id(http_request),
+            draft_ref=draft_id,
+        )
+    except DraftRefRejected as exc:
+        raise _draft_rejection_error(exc.reason) from None
     return AgentSubmitMessageResponse(
         message_id=admission.message_id,
         conversation_id=admission.conversation_id,

@@ -2852,53 +2852,158 @@ class AgentInboxRepository:
         observed_at = now or datetime.now(UTC)
         effective_correlation_id = correlation_id or uuid4()
         async with self._sessions() as session:
-            result = await session.execute(
-                insert(AgentInboxItem)
-                .from_select(
-                    [
-                        AgentInboxItem.conversation_id,
-                        AgentInboxItem.kind,
-                        AgentInboxItem.actor_id,
-                        AgentInboxItem.actor_kind,
-                        AgentInboxItem.auth_epoch,
-                        AgentInboxItem.admission_seq,
-                        AgentInboxItem.idempotency_key,
-                        AgentInboxItem.payload_digest,
-                        AgentInboxItem.source,
-                        AgentInboxItem.delivery_state,
-                        AgentInboxItem.attempt_count,
-                        AgentInboxItem.claim_owner,
-                        AgentInboxItem.claim_expires_at,
-                        AgentInboxItem.next_attempt_at,
-                        AgentInboxItem.causation_id,
-                        AgentInboxItem.correlation_id,
-                        AgentInboxItem.created_at,
-                    ],
-                    select(
-                        literal(conversation_id),
-                        literal(kind),
-                        literal(actor_id),
-                        literal(actor_kind),
-                        literal(auth_epoch),
-                        func.coalesce(func.max(AgentInboxItem.admission_seq), 0) + 1,
-                        literal(idempotency_key),
-                        literal(payload_digest),
-                        literal(source),
-                        literal("pending"),
-                        literal(0),
-                        literal(None),
-                        literal(None),
-                        literal(observed_at),
-                        literal(causation_id),
-                        literal(effective_correlation_id),
-                        literal(observed_at),
-                    ).where(AgentInboxItem.conversation_id == conversation_id),
-                )
-                .returning(AgentInboxItem)
+            item = await self._insert_pending(
+                session,
+                conversation_id=conversation_id,
+                kind=kind,
+                actor_id=actor_id,
+                actor_kind=actor_kind,
+                idempotency_key=idempotency_key,
+                payload_digest=payload_digest,
+                source=source,
+                auth_epoch=auth_epoch,
+                causation_id=causation_id,
+                correlation_id=effective_correlation_id,
+                now=observed_at,
             )
-            item = result.scalar_one()
             await session.commit()
             return item
+
+    async def enqueue_consuming_draft(
+        self,
+        *,
+        conversation_id: UUID,
+        kind: str,
+        actor_id: str,
+        actor_kind: str,
+        idempotency_key: str,
+        payload_digest: str,
+        source: str,
+        draft_id: UUID,
+        draft_owner_actor_id: str,
+        auth_epoch: int | None = None,
+        causation_id: UUID | None = None,
+        correlation_id: UUID | None = None,
+        now: datetime | None = None,
+    ) -> tuple[AgentInboxItem, TranscriptDraft] | None:
+        """Admit one inbox item and consume its transcript draft atomically.
+
+        M7b spec §4.8: the draft CAS (``confirmed -> consumed``) and the
+        inbox admission commit in one transaction - an admission failure
+        rolls the consume back, and a failed CAS inserts nothing.  The
+        single ``UPDATE ... WHERE`` carries every precondition (existence,
+        owner, state, target conversation, expiry), so a replay of the same
+        ``draft_ref`` can never admit twice.
+
+        Returns ``(inbox_item, draft)`` on success, or ``None`` when the CAS
+        did not match (nothing was inserted or consumed).
+        """
+        observed_at = now or datetime.now(UTC)
+        effective_correlation_id = correlation_id or uuid4()
+        async with self._sessions() as session:
+            draft = await session.execute(
+                update(TranscriptDraft)
+                .where(
+                    TranscriptDraft.id == draft_id,
+                    TranscriptDraft.owner_actor_id == draft_owner_actor_id,
+                    TranscriptDraft.state == "confirmed",
+                    TranscriptDraft.target_conversation_id == conversation_id,
+                    TranscriptDraft.expires_at > observed_at,
+                )
+                .values(state="consumed")
+                .returning(TranscriptDraft)
+            )
+            consumed = draft.scalar_one_or_none()
+            if consumed is None:
+                await session.rollback()
+                return None
+            item = await self._insert_pending(
+                session,
+                conversation_id=conversation_id,
+                kind=kind,
+                actor_id=actor_id,
+                actor_kind=actor_kind,
+                idempotency_key=idempotency_key,
+                payload_digest=payload_digest,
+                source=source,
+                auth_epoch=auth_epoch,
+                causation_id=causation_id,
+                correlation_id=effective_correlation_id,
+                now=observed_at,
+            )
+            await session.commit()
+            return item, consumed
+
+    @staticmethod
+    async def _insert_pending(
+        session: AsyncSession,
+        *,
+        conversation_id: UUID,
+        kind: str,
+        actor_id: str,
+        actor_kind: str,
+        idempotency_key: str,
+        payload_digest: str,
+        source: str,
+        auth_epoch: int | None = None,
+        causation_id: UUID | None = None,
+        correlation_id: UUID | None = None,
+        now: datetime | None = None,
+    ) -> AgentInboxItem:
+        """Insert one pending inbox item inside the caller's transaction.
+
+        The DB-assigned ``admission_seq`` is computed atomically inside the
+        ``INSERT ... SELECT`` statement (see :meth:`enqueue`); the helper
+        never commits so callers can compose it with other writes (e.g. the
+        draft consumption CAS) in one transaction.
+        """
+        observed_at = now or datetime.now(UTC)
+        effective_correlation_id = correlation_id or uuid4()
+        result = await session.execute(
+            insert(AgentInboxItem)
+            .from_select(
+                [
+                    AgentInboxItem.conversation_id,
+                    AgentInboxItem.kind,
+                    AgentInboxItem.actor_id,
+                    AgentInboxItem.actor_kind,
+                    AgentInboxItem.auth_epoch,
+                    AgentInboxItem.admission_seq,
+                    AgentInboxItem.idempotency_key,
+                    AgentInboxItem.payload_digest,
+                    AgentInboxItem.source,
+                    AgentInboxItem.delivery_state,
+                    AgentInboxItem.attempt_count,
+                    AgentInboxItem.claim_owner,
+                    AgentInboxItem.claim_expires_at,
+                    AgentInboxItem.next_attempt_at,
+                    AgentInboxItem.causation_id,
+                    AgentInboxItem.correlation_id,
+                    AgentInboxItem.created_at,
+                ],
+                select(
+                    literal(conversation_id),
+                    literal(kind),
+                    literal(actor_id),
+                    literal(actor_kind),
+                    literal(auth_epoch),
+                    func.coalesce(func.max(AgentInboxItem.admission_seq), 0) + 1,
+                    literal(idempotency_key),
+                    literal(payload_digest),
+                    literal(source),
+                    literal("pending"),
+                    literal(0),
+                    literal(None),
+                    literal(None),
+                    literal(observed_at),
+                    literal(causation_id),
+                    literal(effective_correlation_id),
+                    literal(observed_at),
+                ).where(AgentInboxItem.conversation_id == conversation_id),
+            )
+            .returning(AgentInboxItem)
+        )
+        return result.scalar_one()
 
     async def next_pending(
         self,
