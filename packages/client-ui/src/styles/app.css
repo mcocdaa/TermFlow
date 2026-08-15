@@ -335,4 +335,21 @@
     .metric-card-has-help:hover, .metric-card-has-help:focus-visible, .term-row-link:hover, .term-row-link:focus-visible { transform: none; }
   }
   @media (prefers-reduced-motion: no-preference) { .skip-link { transition: transform 140ms ease; } }
+
+  /* M6b agent chat — message flow (pure text bubbles, additions-only log) */
+  .agent-chat-region { display: flex; flex-direction: column; min-height: 0; }
+  .agent-message-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: smooth; display: flex; flex-direction: column; gap: var(--space-3); }
+  .agent-message { max-width: min(44rem, 88%); padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+  .agent-message--assistant { align-self: flex-start; background: var(--color-panel); }
+  .agent-message--user { align-self: flex-end; background: var(--color-elevated); }
+  .agent-message__text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+  .agent-message__cursor { display: inline-block; width: 0.5rem; height: 1em; margin-inline-start: 2px; background: currentColor; vertical-align: text-bottom; }
+  @media (prefers-reduced-motion: no-preference) {
+    .agent-message__cursor { animation: agent-cursor-blink 1s steps(1) infinite; }
+  }
+  @keyframes agent-cursor-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .agent-message-list { scroll-behavior: auto; }
+    .agent-message__cursor { animation: none; }
+  }
 }
