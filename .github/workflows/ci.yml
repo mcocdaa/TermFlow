@@ -163,6 +163,8 @@ jobs:
       - run: npm ci
       - name: Generate the Android project from the committed Tauri configuration
         run: npm run tauri --workspace @termflow/tauri-client -- android init --ci
+      - name: Configure Android orientation-aware system bars
+        run: python scripts/release/configure_android_system_bars.py --activity apps/clients/tauri/src-tauri/gen/android/app/src/main/java/io/termflow/client/MainActivity.kt
       - name: Compile Android debug APK without publication signing
         run: npm run tauri --workspace @termflow/tauri-client -- android build --debug --ci --target aarch64 --apk
 

@@ -5,6 +5,7 @@ import yaml
 NODE_WORKFLOW = Path(".github/workflows/package-node.yml")
 CONTROL_PLANE_WORKFLOW = Path(".github/workflows/package-control-plane.yml")
 CLIENT_WORKFLOW = Path(".github/workflows/tauri-packages.yml")
+CI_WORKFLOW = Path(".github/workflows/ci.yml")
 
 
 def _workflow(path: Path) -> dict[object, object]:
@@ -372,6 +373,7 @@ def test_android_release_is_signed_verified_and_iconized() -> None:
     assert job["name"] == "Android arm64 · APK"
     steps = job["steps"]
     init = _step_index(steps, "android init --ci")
+    system_bars = _step_index(steps, "configure_android_system_bars.py")
     icon = _step_index(steps, "icon app-icon.svg")
     signing = _step_index(steps, "configure_android_signing.py")
     release_build = _step_index(
@@ -382,7 +384,7 @@ def test_android_release_is_signed_verified_and_iconized() -> None:
     upload = _step_index_by_action(steps, "actions/upload-artifact@")
     cleanup = _step_index(steps, 'rm -f "$RUNNER_TEMP/termflow-android-release.jks"')
 
-    assert init < icon < signing < release_build < resolve < verify < upload < cleanup
+    assert init < system_bars < icon < signing < release_build < resolve < verify < upload < cleanup
     assert steps[signing]["if"] == (
         "${{ needs.validate-version.outputs.android_release_build == 'true' }}"
     )
@@ -411,6 +413,17 @@ def test_android_release_is_signed_verified_and_iconized() -> None:
         "--expected-cert-sha256",
     ):
         assert required in text
+
+
+def test_unsigned_android_configures_system_bars_after_init_before_build() -> None:
+    workflow = _workflow(CI_WORKFLOW)
+    steps = workflow["jobs"]["tauri-android-unsigned"]["steps"]
+
+    init = _step_index(steps, "android init --ci")
+    system_bars = _step_index(steps, "configure_android_system_bars.py")
+    build = _step_index(steps, "android build --debug --ci")
+
+    assert init < system_bars < build
 
 
 def test_packaging_workflows_do_not_use_unix_null_device_redirection() -> None:
