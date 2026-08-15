@@ -11,13 +11,14 @@
  * Responsibilities:
  * - build the client-core `VoiceDraftController` from the injected runtime
  *   (recorder/uploader from `runtime.voice`, draft API from `runtime.api`,
- *   clock/scheduler from `runtime.clock`, sessionStorage, console logger);
+ *   clock/scheduler from `runtime.clock`, the draft slot from
+ *   `runtime.voice.draftStore` with an in-memory fallback, console logger);
  * - expose the controller state as a Vue ref;
  * - forward controller toasts to the app-level `BottomToast` (errors land in
  *   `role="alert"`, the submit success in `role="status"`);
  * - forward the submit-success signal as `draft-submitted` events;
  * - cancel recording when the app goes to background (`visibilitychange`);
- * - restore a draft left in sessionStorage (M7b spec §4.7.4).
+ * - restore a draft left in the draft store (M7b spec §4.7.4).
  */
 
 import {
@@ -54,7 +55,7 @@ export interface UseVoiceDraftOptions {
   speechToTextEnabled: () => boolean
   /** Test seam — defaults to the runtime's transcription JSON API. */
   draftApi?: VoiceDraftApi
-  /** Test seam — defaults to sessionStorage (M7b spec §4.7.4 single slot). */
+  /** Test seam — defaults to the runtime's draft store, then an in-memory slot. */
   storage?: VoiceStorage
   /** Test seam — defaults to `console.error` (diagnostics only, never text/audio). */
   logger?: VoiceLogger
@@ -79,8 +80,23 @@ export interface VoiceDraftBridge {
   onDraftSubmitted(listener: (draftId: string) => void): () => void
 }
 
-function defaultSessionStorage(): VoiceStorage {
-  return globalThis.sessionStorage
+/**
+ * In-memory fallback for the draft slot (M7b spec §4.7.4). Deliberately
+ * transient: a draft does not survive a page reload. The real platform
+ * adapters are injected through `runtime.voice.draftStore` by
+ * `apps/clients/{web,tauri}` — wiring lands in a follow-up task.
+ */
+function inMemoryVoiceStorage(): VoiceStorage {
+  const slots = new Map<string, string>()
+  return {
+    getItem: (key) => slots.get(key) ?? null,
+    setItem: (key, value) => {
+      slots.set(key, value)
+    },
+    removeItem: (key) => {
+      slots.delete(key)
+    },
+  }
 }
 
 const defaultLogger: VoiceLogger = {
@@ -126,8 +142,13 @@ export function useVoiceDraft(options: UseVoiceDraftOptions): VoiceDraftBridge {
     draftApi,
     submit: options.submit,
     clock: runtime.clock,
-    scheduler: runtime.clock,
-    storage: options.storage ?? defaultSessionStorage(),
+    // VoiceScheduler speaks the codebase `set`/`clear` port shape; adapt the
+    // runtime clock (which mirrors the browser timer names) onto it.
+    scheduler: {
+      set: (fn, ms) => runtime.clock.setTimeout(fn, ms),
+      clear: (handle) => runtime.clock.clearTimeout(handle),
+    },
+    storage: options.storage ?? voice?.draftStore ?? inMemoryVoiceStorage(),
     logger: options.logger ?? defaultLogger,
     bindingId: options.bindingId,
     conversationId: options.conversationId,
@@ -149,7 +170,7 @@ export function useVoiceDraft(options: UseVoiceDraftOptions): VoiceDraftBridge {
     },
   })
 
-  // Session recovery: reopen a draft left in sessionStorage (M7b spec §4.7.4).
+  // Session recovery: reopen a draft left in the draft store (M7b spec §4.7.4).
   controller.restore()
 
   const unsubscribeVisibility = runtime.visibility.subscribe(() => {

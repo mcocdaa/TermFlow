@@ -5,7 +5,7 @@
  * The adapter lives in the Tauri client (`apps/clients/tauri/src/adapters/`):
  * Android uses MediaRecorder (`audio/webm;codecs=opus`), iOS and the shared
  * fallback use PCM capture + a 16 kHz mono 16-bit WAV encoder. client-core
- * only depends on this port, never on `navigator.mediaDevices`.
+ * only depends on this port, never on the browser media capture API directly.
  */
 
 export interface RecordedAudio {

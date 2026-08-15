@@ -136,12 +136,12 @@ function createHarness(options: {
     submit,
     clock: { now },
     scheduler: {
-      setTimeout: (fn, ms) => {
+      set: (fn, ms) => {
         timerId += 1
         timers.set(timerId, { fn, at: nowMs + ms })
         return timerId
       },
-      clearTimeout: (handle) => {
+      clear: (handle) => {
         timers.delete(handle as number)
       },
     },
@@ -816,7 +816,7 @@ describe('voiceDraftController transcript-not-auto-submit (§4.7.2)', () => {
   })
 })
 
-describe('voiceDraftController sessionStorage restore (§4.7.4)', () => {
+describe('voiceDraftController draft-store restore (§4.7.4)', () => {
   const stored = (overrides: Partial<StoredVoiceDraft> = {}): StoredVoiceDraft => ({
     draftId: 'draft-2',
     text: '待确认的转写',

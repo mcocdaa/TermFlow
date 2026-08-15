@@ -3,11 +3,11 @@
  *
  * Pure framework-free logic with every side effect injected:
  * recorder factory, uploader, draft API, message submit, clock, scheduler,
- * session storage and logger. The tauri runtime wires the real adapters;
+ * draft storage and logger. The tauri runtime wires the real adapters;
  * vitest tests wire fakes (§6.1 validation matrix).
  *
  * Invariants (M7b spec §4.1/§4.7.2):
- * - The transcript text lives only in memory / sessionStorage; raw audio
+ * - The transcript text lives only in memory / session storage; raw audio
  *   lives only in memory and is released once the upload settles.
  * - There is exactly one submit path: confirm(204) followed by
  *   submit(202, draft_ref) in the same sequence. No other code path may
@@ -20,7 +20,7 @@ import { PermissionDeniedError, type AudioRecorder, type RecordedAudio } from '.
 // Constants
 // ---------------------------------------------------------------------------
 
-/** sessionStorage single-slot key for the pending draft (M7b spec §4.7.4). */
+/** Single-slot key in the injected draft store for the pending draft (M7b spec §4.7.4). */
 export const VOICE_DRAFT_STORAGE_KEY = 'termflow.voice.draft'
 
 /**
@@ -127,8 +127,8 @@ export interface VoiceClock {
 }
 
 export interface VoiceScheduler {
-  setTimeout(fn: () => void, ms: number): unknown
-  clearTimeout(handle: unknown): void
+  set(fn: () => void, ms: number): unknown
+  clear(handle: unknown): void
 }
 
 export interface VoiceStorage {
@@ -237,7 +237,7 @@ export type SubmitFailureMapping =
  * Map a submit failure per M7b spec §4.8: 409 (including already-consumed)
  * is idempotent success; 410 requires re-recording; 422 is a permanent
  * mismatch (diagnostic log + generic toast); everything else keeps the
- * confirmed draft in sessionStorage for an explicit submit retry.
+ * confirmed draft in the draft store for an explicit submit retry.
  */
 export function classifySubmitError(error: unknown): SubmitFailureMapping {
   const info = voiceErrorInfo(error)
@@ -305,7 +305,7 @@ export type VoiceDraftState =
   | { status: 'abortedByUser' }
 
 // ---------------------------------------------------------------------------
-// sessionStorage payload (M7b spec §4.7.4)
+// Draft store payload (M7b spec §4.7.4)
 // ---------------------------------------------------------------------------
 
 export interface StoredVoiceDraft {
@@ -396,7 +396,7 @@ export interface VoiceDraftControllerLike {
   retrySubmit(): void
   /** Draft sheet [放弃] — best-effort cancel, never submits. */
   discard(): void
-  /** Reload draft chip/sheet from sessionStorage (M7b spec §4.7.4). */
+  /** Reload draft chip/sheet from the draft store (M7b spec §4.7.4). */
   restore(): void
 }
 
@@ -556,7 +556,7 @@ export class VoiceDraftController implements VoiceDraftControllerLike {
     this.startedAtMs = this.clock.now()
     this.cancelPending = false
     this.transition({ status: 'recording', durationSeconds: 0, cancelPending: false })
-    this.autoStopTimer = this.scheduler.setTimeout(() => {
+    this.autoStopTimer = this.scheduler.set(() => {
       if (this.state.status !== 'recording') return
       this.clearAutoStopTimer()
       this.finishRecording(MAX_RECORDING_SECONDS)
@@ -565,7 +565,7 @@ export class VoiceDraftController implements VoiceDraftControllerLike {
 
   private clearAutoStopTimer(): void {
     if (this.autoStopTimer === null) return
-    this.scheduler.clearTimeout(this.autoStopTimer)
+    this.scheduler.clear(this.autoStopTimer)
     this.autoStopTimer = null
   }
 
@@ -628,7 +628,7 @@ export class VoiceDraftController implements VoiceDraftControllerLike {
     const controller = new AbortController()
     this.uploadAbort = controller
     this.uploadAbortReason = null
-    this.uploadTimeoutTimer = this.scheduler.setTimeout(() => {
+    this.uploadTimeoutTimer = this.scheduler.set(() => {
       if (this.uploadAbort !== controller) return
       this.uploadAbortReason = 'timeout'
       controller.abort()
@@ -695,7 +695,7 @@ export class VoiceDraftController implements VoiceDraftControllerLike {
     this.uploadAbort = null
     this.uploadAbortReason = null
     if (this.uploadTimeoutTimer !== null) {
-      this.scheduler.clearTimeout(this.uploadTimeoutTimer)
+      this.scheduler.clear(this.uploadTimeoutTimer)
       this.uploadTimeoutTimer = null
     }
   }
@@ -762,7 +762,7 @@ export class VoiceDraftController implements VoiceDraftControllerLike {
     if (this.state.status !== 'draft' || this.state.draft.submitting) return
     const draftId = this.state.draft.draftId
     this.lastSubmitText = text
-    // Keep sessionStorage in sync with the edited text so a submit retry
+    // Keep the draft store in sync with the edited text so a submit retry
     // after an app kill still carries the user's final wording.
     this.transition({
       status: 'draft',
@@ -825,7 +825,7 @@ export class VoiceDraftController implements VoiceDraftControllerLike {
         conversationId: this.options.conversationId,
       })
     }
-    // Keep the confirmed draft in sessionStorage; retry re-submits only.
+    // Keep the confirmed draft in the draft store; retry re-submits only.
     this.transition({ status: 'draft', draft: { ...this.state.draft, submitting: false, submitFailed: true } })
     this.toast(mapping.message)
   }
@@ -874,7 +874,7 @@ export class VoiceDraftController implements VoiceDraftControllerLike {
       // Another conversation's draft — leave it in place for that composer.
       return
     }
-    // Treat malformed timestamps as expired: sessionStorage is user-writable
+    // Treat malformed timestamps as expired: the draft store is user-writable
     // and must never resurrect an unexpirable draft (M7b spec §4.7.4).
     const expiresAtMs = Date.parse(parsed.expiresAt)
     if (Number.isNaN(expiresAtMs) || this.clock.now() >= expiresAtMs) {

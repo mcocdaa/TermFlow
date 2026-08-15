@@ -1,5 +1,5 @@
 import { PermissionDeniedError, type TranscriptionUploadResponse } from '@termflow/client-core'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import VoiceInputButton from './VoiceInputButton.vue'
 import { createFakeUploadResponse } from '../../test/fakeRuntime'
 import { flushAsync, mountVoiceFlow, type VoiceFlowHarness } from '../../test/voiceTestHarness'
@@ -16,10 +16,6 @@ async function holdThenRelease(h: VoiceFlowHarness, holdMs = 1000) {
 function announcement(h: VoiceFlowHarness): string {
   return h.wrapper.get('[data-voice-announcement]').text()
 }
-
-beforeEach(() => {
-  sessionStorage.clear()
-})
 
 describe('VoiceInputButton', () => {
   it('renders only when all three conditions hold: voice capability ∧ device gate ∧ STT flag', () => {

@@ -1,7 +1,7 @@
 import { VOICE_DRAFT_STORAGE_KEY } from '@termflow/client-core'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import TranscriptDraftSheet from './TranscriptDraftSheet.vue'
-import { createFakeUploadResponse } from '../../test/fakeRuntime'
+import { createFakeUploadResponse, createFakeVoiceStorage } from '../../test/fakeRuntime'
 import { flushAsync, mountVoiceFlow, type VoiceFlowHarness } from '../../test/voiceTestHarness'
 
 /** Drive the fake press/hold flow into the draft state. */
@@ -17,16 +17,13 @@ function sheetEvents(h: VoiceFlowHarness) {
   return h.wrapper.findComponent(TranscriptDraftSheet).emitted()
 }
 
-beforeEach(() => {
-  sessionStorage.clear()
-})
-
 describe('TranscriptDraftSheet', () => {
   it('submits the edited text: confirm 204 → submit 202 with the edited transcript, then closes with 已发送', async () => {
     const confirm = vi.fn(async () => undefined)
     const cancel = vi.fn(async () => undefined)
     const submit = vi.fn(async () => undefined)
-    const h = mountVoiceFlow({ draftApi: { confirm, cancel }, submit })
+    const storage = createFakeVoiceStorage()
+    const h = mountVoiceFlow({ draftApi: { confirm, cancel }, submit, storage })
     await reachDraft(h)
 
     const sheet = h.wrapper.get('[role="dialog"]')
@@ -52,7 +49,7 @@ describe('TranscriptDraftSheet', () => {
     expect(toast.attributes('role')).toBe('status')
     expect(sheetEvents(h).closed?.length).toBe(1)
     expect(sheetEvents(h).submitted?.at(-1)).toEqual(['draft-fake-1'])
-    expect(sessionStorage.getItem(VOICE_DRAFT_STORAGE_KEY)).toBeNull()
+    expect(storage.getItem(VOICE_DRAFT_STORAGE_KEY)).toBeNull()
     h.wrapper.unmount()
   })
 
@@ -60,7 +57,8 @@ describe('TranscriptDraftSheet', () => {
     const confirm = vi.fn(async () => undefined)
     const cancel = vi.fn(async () => undefined)
     const submit = vi.fn(async () => undefined)
-    const h = mountVoiceFlow({ draftApi: { confirm, cancel }, submit })
+    const storage = createFakeVoiceStorage()
+    const h = mountVoiceFlow({ draftApi: { confirm, cancel }, submit, storage })
     await reachDraft(h)
 
     await h.wrapper.get('[data-action="discard-draft"]').trigger('click')
@@ -71,7 +69,7 @@ describe('TranscriptDraftSheet', () => {
     expect(submit).not.toHaveBeenCalled()
     expect(h.wrapper.find('[role="dialog"]').exists()).toBe(false)
     expect(sheetEvents(h).closed?.length).toBe(1)
-    expect(sessionStorage.getItem(VOICE_DRAFT_STORAGE_KEY)).toBeNull()
+    expect(storage.getItem(VOICE_DRAFT_STORAGE_KEY)).toBeNull()
     h.wrapper.unmount()
   })
 
@@ -122,9 +120,6 @@ describe('TranscriptDraftSheet', () => {
     expect(fullDisclosure).toContain('语言 zh')
     expect(fullDisclosure).toContain('时长 3 秒')
     full.wrapper.unmount()
-    // The first mount persisted its draft to sessionStorage; clear it so the
-    // second mount does not restore the old draft instead of uploading anew.
-    sessionStorage.clear()
 
     const sparse = mountVoiceFlow({
       voice: {
@@ -147,7 +142,8 @@ describe('TranscriptDraftSheet', () => {
     })
     const cancel = vi.fn(async () => undefined)
     const submit = vi.fn(async () => undefined)
-    const h = mountVoiceFlow({ draftApi: { confirm, cancel }, submit })
+    const storage = createFakeVoiceStorage()
+    const h = mountVoiceFlow({ draftApi: { confirm, cancel }, submit, storage })
     await reachDraft(h)
 
     await h.wrapper.get('[data-action="confirm-draft"]').trigger('click')
@@ -158,12 +154,13 @@ describe('TranscriptDraftSheet', () => {
     expect(toast.attributes('role')).toBe('alert')
     expect(submit).not.toHaveBeenCalled()
     expect(h.wrapper.find('[role="dialog"]').exists()).toBe(false)
-    expect(sessionStorage.getItem(VOICE_DRAFT_STORAGE_KEY)).toBeNull()
+    expect(storage.getItem(VOICE_DRAFT_STORAGE_KEY)).toBeNull()
     h.wrapper.unmount()
   })
 
-  it('restores a pending draft from sessionStorage on mount and discards it through cancel', async () => {
-    sessionStorage.setItem(
+  it('restores a pending draft from the draft store on mount and discards it through cancel', async () => {
+    const storage = createFakeVoiceStorage()
+    storage.setItem(
       VOICE_DRAFT_STORAGE_KEY,
       JSON.stringify({
         draftId: 'draft-restored',
@@ -177,7 +174,7 @@ describe('TranscriptDraftSheet', () => {
     )
     const cancel = vi.fn(async () => undefined)
     const submit = vi.fn(async () => undefined)
-    const h = mountVoiceFlow({ draftApi: { confirm: vi.fn(async () => undefined), cancel }, submit })
+    const h = mountVoiceFlow({ draftApi: { confirm: vi.fn(async () => undefined), cancel }, submit, storage })
 
     // The sheet opens on mount with the restored transcript.
     const textarea = h.wrapper.get('[data-voice-draft-text]')
@@ -188,12 +185,13 @@ describe('TranscriptDraftSheet', () => {
     await flushAsync()
     expect(cancel).toHaveBeenCalledWith('draft-restored')
     expect(submit).not.toHaveBeenCalled()
-    expect(sessionStorage.getItem(VOICE_DRAFT_STORAGE_KEY)).toBeNull()
+    expect(storage.getItem(VOICE_DRAFT_STORAGE_KEY)).toBeNull()
     h.wrapper.unmount()
   })
 
   it('drops an expired stored draft with the 转写已过期 toast instead of reopening', async () => {
-    sessionStorage.setItem(
+    const storage = createFakeVoiceStorage()
+    storage.setItem(
       VOICE_DRAFT_STORAGE_KEY,
       JSON.stringify({
         draftId: 'draft-expired',
@@ -205,10 +203,10 @@ describe('TranscriptDraftSheet', () => {
         expiresAt: '2020-01-01T00:00:00.000Z',
       }),
     )
-    const h = mountVoiceFlow()
+    const h = mountVoiceFlow({ storage })
     expect(h.wrapper.find('[role="dialog"]').exists()).toBe(false)
     expect(h.wrapper.get('[data-bottom-toast]').text()).toBe('转写已过期，请重新录音')
-    expect(sessionStorage.getItem(VOICE_DRAFT_STORAGE_KEY)).toBeNull()
+    expect(storage.getItem(VOICE_DRAFT_STORAGE_KEY)).toBeNull()
     h.wrapper.unmount()
   })
 

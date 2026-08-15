@@ -4,14 +4,15 @@ import {
   VOICE_MESSAGES,
   type SubmitMessage,
   type VoiceDraftApi,
+  type VoiceStorage,
 } from '@termflow/client-core'
 import { defineComponent, h } from 'vue'
 import { mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createClientUi, type ClientRuntime } from '../runtime'
 import { useVoiceDraft, type VoiceDraftBridge } from './useVoiceDraft'
 import { useBottomToast, type BottomToastController } from './useBottomToast'
-import { createFakeRuntime, createFakeVoice } from '../test/fakeRuntime'
+import { createFakeRuntime, createFakeVoice, createFakeVoiceStorage } from '../test/fakeRuntime'
 import { createControllableClock, flushAsync } from '../test/voiceTestHarness'
 
 interface BridgeOverrides {
@@ -19,6 +20,7 @@ interface BridgeOverrides {
   voice?: Partial<ReturnType<typeof createFakeVoice>>
   submit?: SubmitMessage
   draftApi?: VoiceDraftApi
+  storage?: VoiceStorage
   speechToTextEnabled?: boolean
 }
 
@@ -41,6 +43,7 @@ function mountBridge(overrides: BridgeOverrides = {}) {
           submit: overrides.submit ?? (async () => undefined),
           speechToTextEnabled: () => overrides.speechToTextEnabled ?? true,
           ...(overrides.draftApi !== undefined ? { draftApi: overrides.draftApi } : {}),
+          ...(overrides.storage !== undefined ? { storage: overrides.storage } : {}),
         })
         return () => h('div')
       },
@@ -69,10 +72,6 @@ async function reachDraft(h: ReturnType<typeof mountBridge>) {
   h.bridge.release()
   await flushAsync()
 }
-
-beforeEach(() => {
-  sessionStorage.clear()
-})
 
 describe('useVoiceDraft', () => {
   it('forwards controller toasts to BottomToast: 已发送 as success tone', async () => {
@@ -170,7 +169,8 @@ describe('useVoiceDraft', () => {
   })
 
   it('restores a stored draft on init', async () => {
-    sessionStorage.setItem(
+    const storage = createFakeVoiceStorage()
+    storage.setItem(
       VOICE_DRAFT_STORAGE_KEY,
       JSON.stringify({
         draftId: 'draft-restored',
@@ -182,7 +182,7 @@ describe('useVoiceDraft', () => {
         expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
       }),
     )
-    const h = mountBridge()
+    const h = mountBridge({ storage })
     expect(h.bridge.state.value).toMatchObject({ status: 'draft' })
     if (h.bridge.state.value.status === 'draft') {
       expect(h.bridge.state.value.draft.text).toBe('恢复文本')

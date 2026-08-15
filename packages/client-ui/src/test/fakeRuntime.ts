@@ -1,4 +1,4 @@
-import type { RecordedAudio, TranscriptionUploadResponse } from '@termflow/client-core'
+import type { RecordedAudio, TranscriptionUploadResponse, VoiceStorage } from '@termflow/client-core'
 import type { ClientRuntime, ClientVoiceRuntime } from '../runtime'
 
 /** B side upload 201 body (M7b spec §3.1) — tests tweak fields per scenario. */
@@ -13,6 +13,23 @@ export function createFakeUploadResponse(overrides: Partial<TranscriptionUploadR
     duration_seconds: 2.5,
     expires_at: new Date(Date.now() + 3_600_000).toISOString(),
     ...overrides,
+  }
+}
+
+/**
+ * In-memory draft slot for tests (M7b spec §4.7.4) — mirrors the client-ui
+ * in-memory fallback so tests never touch platform storage.
+ */
+export function createFakeVoiceStorage(): VoiceStorage {
+  const slots = new Map<string, string>()
+  return {
+    getItem: (key) => slots.get(key) ?? null,
+    setItem: (key, value) => {
+      slots.set(key, value)
+    },
+    removeItem: (key) => {
+      slots.delete(key)
+    },
   }
 }
 
@@ -35,6 +52,7 @@ export function createFakeVoice(overrides: Partial<ClientVoiceRuntime> = {}): Cl
       abort: () => undefined,
     }),
     enabled: () => true,
+    draftStore: createFakeVoiceStorage(),
     ...overrides,
   }
 }

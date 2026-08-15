@@ -4,6 +4,7 @@ import type {
   AudioUploader,
   TerminalSessionCallbacks,
   TerminalSessionLike,
+  VoiceStorage,
 } from '@termflow/client-core'
 import { inject, type App } from 'vue'
 import { createSessionActions, type SessionActions } from './composables/useSession'
@@ -50,6 +51,12 @@ export interface ClientVoiceRuntime {
   readonly createRecorder: () => AudioRecorder
   /** platform ∈ {android, ios} ∧ capture pipeline feature-detected. */
   readonly enabled: () => boolean
+  /**
+   * Slot that persists the pending transcript draft (M7b spec §4.7.4).
+   * Injected by the platform runtime; `useVoiceDraft` falls back to an
+   * in-memory store when no adapter is wired.
+   */
+  readonly draftStore: VoiceStorage
 }
 
 export interface ClientRuntime {
