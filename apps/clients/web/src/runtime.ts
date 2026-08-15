@@ -25,7 +25,7 @@ function browserDependencies(): ClientRuntime {
       createId: () => globalThis.crypto.randomUUID(),
     }),
     // Agent ports (M6b spec §4.6): the fetch-stream agui transport and the
-    // localStorage cursor store are the browser composition root's only
+    // browser cursor store are the web composition root's only
     // platform-touching implementations.
     createAgentStream: () => createBrowserAgentStreamTransport({ wire: 'agui' }),
     agentCursorStore: createBrowserAgentCursorStore(),
