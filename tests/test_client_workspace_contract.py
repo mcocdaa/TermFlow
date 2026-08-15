@@ -149,7 +149,10 @@ def test_client_persistence_is_limited_to_browser_theme_preferences() -> None:
             for token in ("localstorage", "sessionstorage", "indexeddb")
         )
     ]
-    assert references == ["apps/clients/web/src/adapters/browserThemePreferences.ts"]
+    assert references == [
+        "apps/clients/web/src/adapters/browserAgentCursorStore.ts",
+        "apps/clients/web/src/adapters/browserThemePreferences.ts",
+    ]
 
 
 def test_shared_client_packages_have_no_direct_network_storage_clipboard_or_native_apis() -> None:
@@ -179,6 +182,8 @@ def test_web_client_is_only_a_browser_composition_root() -> None:
         "main.ts",
         "router.ts",
         "runtime.ts",
+        "adapters/browserAgentCursorStore.ts",
+        "adapters/browserAgentStreamTransport.ts",
         "adapters/browserCanonicalServerUrl.ts",
         "adapters/browserClipboard.ts",
         "adapters/browserClock.ts",
