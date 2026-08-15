@@ -311,8 +311,8 @@ jobs:
         run: npm run tauri --workspace @termflow/tauri-client -- android init --ci
       - name: Configure Android orientation-aware system bars
         run: python scripts/release/configure_android_system_bars.py --activity apps/clients/tauri/src-tauri/gen/android/app/src/main/java/io/termflow/client/MainActivity.kt
-      - name: Generate TermFlow launcher resources
-        run: npm run tauri --workspace @termflow/tauri-client -- icon app-icon.svg
+      - name: Generate TermFlow mobile launcher resources
+        run: npm run tauri --workspace @termflow/tauri-client -- icon app-icon-mobile.svg
       - name: Configure Android release signing
         if: ${{ needs.validate-version.outputs.android_release_build == 'true' }}
         env:

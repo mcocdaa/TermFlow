@@ -374,7 +374,7 @@ def test_android_release_is_signed_verified_and_iconized() -> None:
     steps = job["steps"]
     init = _step_index(steps, "android init --ci")
     system_bars = _step_index(steps, "configure_android_system_bars.py")
-    icon = _step_index(steps, "icon app-icon.svg")
+    icon = _step_index(steps, "icon app-icon-mobile.svg")
     signing = _step_index(steps, "configure_android_signing.py")
     release_build = _step_index(
         steps, "android build --ci --target aarch64 --apk"
