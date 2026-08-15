@@ -165,6 +165,25 @@ CPU 友好）；多语言部署可通过 `STT_MODEL` 覆盖，换模型必须重
 `0.2.0-dev.0`，不会被误认为正式 Release。Web C 已包含在 Control Plane 镜像中。Windows、Linux、macOS、Android 和 iOS Simulator
 客户端从 [GitHub Releases](https://github.com/mcocdaa/TermFlow/releases) 下载。
 
+### 移动端录音权限
+
+按住说话的语音输入需要系统麦克风权限：
+
+- **Android**：`gen/android/` 由 `tauri android init` 每次全新生成且不被 git 跟踪，
+  录音所需 `RECORD_AUDIO` / `MODIFY_AUDIO_SETTINGS` 权限由补丁脚本幂等注入。本地开发在
+  `npm run tauri --workspace @termflow/tauri-client -- android init` 之后运行一次：
+
+  ```bash
+  python3 scripts/patch-mobile-manifests.py
+  ```
+
+  脚本失败（如 manifest 缺失）会以非零退出码阻断构建；CI 在 `android init --ci`
+  之后自动执行同一脚本。
+- **iOS**：`tauri.ios.conf.json` 已配置 `bundle.iOS.infoPlist = Info.ios.plist`
+  （最低系统版本 15.0），构建时自动合并 `NSMicrophoneUsageDescription`
+  「用于按住说话并将语音转写为文字，录音仅上传到您连接的 TermFlow 服务器」，
+  无需手动步骤；CI 在 iOS 构建后断言产物 Info.plist 包含该键。
+
 ## 更新与备份
 
 使用新的精确 tag 重建容器即可升级。升级或回退前备份 B 的 `data/`、`totp-secrets/`，

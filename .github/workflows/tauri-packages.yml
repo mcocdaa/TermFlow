@@ -307,6 +307,8 @@ jobs:
       - run: npm ci
       - name: Generate the Android project
         run: npm run tauri --workspace @termflow/tauri-client -- android init --ci
+      - name: Inject audio recording permissions into the generated Android manifest
+        run: python scripts/patch-mobile-manifests.py
       - name: Generate TermFlow launcher resources
         run: npm run tauri --workspace @termflow/tauri-client -- icon app-icon.svg
       - name: Configure Android release signing
@@ -437,6 +439,20 @@ jobs:
         run: npm run tauri --workspace @termflow/tauri-client -- ios init --ci
       - name: Build the aarch64 simulator debug app without publication signing
         run: npm run tauri --workspace @termflow/tauri-client -- ios build --debug --ci --target aarch64-sim --no-sign
+      - name: Assert the built app declares microphone usage
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -- apps/clients/tauri/src-tauri/gen/apple/build/arm64-sim/*.app
+          if [ "$#" -ne 1 ] || [ ! -d "$1" ]; then
+            echo "Expected exactly one iOS simulator app bundle" >&2
+            exit 1
+          fi
+          description="$(plutil -extract NSMicrophoneUsageDescription raw -o - "$1/Info.plist")"
+          [ -n "$description" ] || {
+            echo "Built app is missing NSMicrophoneUsageDescription" >&2
+            exit 1
+          }
       - name: Preserve the simulator app bundle as a zip
         shell: bash
         run: |
