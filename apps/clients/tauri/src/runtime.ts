@@ -32,6 +32,21 @@ export async function createTauriRuntime(): Promise<ClientRuntime> {
       },
     },
     createTerminal: (termId, callbacks) => new TerminalSession(termId, callbacks, { transport: terminalTransport, scheduler, createId: () => globalThis.crypto.randomUUID() }),
+    // Agent ports (M6b spec §4.6): the Rust-owned Tauri transport lands
+    // with plan 1017; until then the stream factory fails fast and the
+    // cursor store degrades to an in-memory slot (persistence is an
+    // optimization, never a correctness dependency — §4.4).
+    createAgentStream: () => {
+      throw new Error('Agent stream transport is not implemented in the Tauri client yet (plan 1017)')
+    },
+    agentCursorStore: (() => {
+      const entries = new Map<string, { cursor: string, seq: number }>()
+      return {
+        load: (conversationId) => entries.get(conversationId) ?? null,
+        save: (conversationId, cursor, seq) => { entries.set(conversationId, { cursor, seq }) },
+        clear: (conversationId) => { entries.delete(conversationId) },
+      }
+    })(),
     clipboard: { writeText },
     clock: { now: Date.now, setTimeout: (callback, delay) => globalThis.setTimeout(callback, delay), clearTimeout: (handle) => globalThis.clearTimeout(handle as number), setInterval: (callback, delay) => globalThis.setInterval(callback, delay), clearInterval: (handle) => globalThis.clearInterval(handle as number) },
     visibility: { isHidden: () => document.hidden, subscribe: (listener) => { document.addEventListener('visibilitychange', listener); return () => document.removeEventListener('visibilitychange', listener) } },
