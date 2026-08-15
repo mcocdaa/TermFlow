@@ -26,7 +26,7 @@
 //!   owns the at-most-one-terminal-frame guard, mirroring the browser
 //!   transport's `finish`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 
@@ -153,9 +153,16 @@ impl SseFrameSplitter {
 /// registers a `Notify` under its `request_id` and removes it on exit;
 /// `native_agent_stream_cancel` wakes it so the pump loop (and handshake)
 /// drop the connection.
+///
+/// A cancel that arrives before the stream command has registered is
+/// recorded as a tombstone so the (late) registration fails closed instead
+/// of opening a connection that can never be cancelled — the two IPC
+/// commands are scheduled concurrently by tokio, so the ordering is not
+/// guaranteed.
 #[derive(Default)]
 pub struct AgentStreamState {
     streams: Mutex<HashMap<String, Arc<Notify>>>,
+    cancelled: Mutex<HashSet<String>>,
 }
 
 impl AgentStreamState {
@@ -167,6 +174,16 @@ impl AgentStreamState {
         if streams.contains_key(request_id) {
             return Err(safe_error("stream_already_running"));
         }
+        let mut cancelled = self
+            .cancelled
+            .lock()
+            .map_err(|_| safe_error("stream_state_unavailable"))?;
+        if cancelled.remove(request_id) {
+            // A cancel arrived before registration: never open the
+            // connection. The JS adapter's terminal-frame guard already
+            // absorbed the close frame, so this rejection is silent there.
+            return Err(safe_error("stream_cancelled"));
+        }
         streams.insert(request_id.to_owned(), cancel);
         Ok(())
     }
@@ -175,13 +192,21 @@ impl AgentStreamState {
         if let Ok(mut streams) = self.streams.lock() {
             streams.remove(request_id);
         }
+        if let Ok(mut cancelled) = self.cancelled.lock() {
+            cancelled.remove(request_id);
+        }
     }
 
     fn cancel(&self, request_id: &str) {
         if let Ok(streams) = self.streams.lock() {
             if let Some(cancel) = streams.get(request_id) {
                 cancel.notify_one();
+                return;
             }
+        }
+        // Not registered (yet): tombstone so a racing register fails closed.
+        if let Ok(mut cancelled) = self.cancelled.lock() {
+            cancelled.insert(request_id.to_owned());
         }
     }
 }
@@ -364,6 +389,7 @@ pub fn native_agent_stream_cancel(
 mod tests {
     use super::*;
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use futures_util::FutureExt;
     use p256::ecdsa::SigningKey;
 
     #[test]
@@ -483,6 +509,33 @@ mod tests {
             .unwrap(),
             serde_json::json!({"type": "close", "code": 4401, "reason": "authentication_required"})
         );
+    }
+
+    #[test]
+    fn cancel_before_register_tombstones_and_the_late_register_fails_closed() {
+        let state = AgentStreamState::default();
+        // A cancel that races ahead of the stream command is remembered.
+        state.cancel("req-1");
+        // The late registration must fail closed instead of opening an
+        // uncancellable connection.
+        let cancel = Arc::new(Notify::new());
+        assert_eq!(state.register("req-1", cancel), Err("stream_cancelled".to_owned()));
+        // The tombstone is consumed, so a subsequent legit stream with the
+        // same id can register.
+        assert!(state.register("req-1", Arc::new(Notify::new())).is_ok());
+    }
+
+    #[test]
+    fn cancel_notifies_a_registered_stream_and_unregister_clears_it() {
+        let state = AgentStreamState::default();
+        let cancel = Arc::new(Notify::new());
+        state.register("req-2", cancel.clone()).unwrap();
+        state.cancel("req-2");
+        assert_eq!(cancel.notified().now_or_never().is_some(), true);
+        state.unregister("req-2");
+        // After unregister a cancel becomes a tombstone again (id reused).
+        state.cancel("req-2");
+        assert!(state.register("req-2", Arc::new(Notify::new())).is_err());
     }
 
     #[test]
