@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import case, delete, exists, func, insert, literal, or_, select, update
+from sqlalchemy import and_, case, delete, exists, func, insert, literal, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -2905,6 +2905,7 @@ class AgentInboxRepository:
         conversation_id: UUID | None = None,
         limit: int = 10,
         now: datetime | None = None,
+        after: tuple[UUID, int] | None = None,
     ) -> list[AgentInboxItem]:
         """Return claimable items using the composite claims index.
 
@@ -2912,6 +2913,11 @@ class AgentInboxRepository:
         retry deadline has passed, and either it has no claim lease or the
         lease has expired.  An expired ``claimed`` item is intentionally
         returned so a crashed worker's work can be reclaimed.
+
+        ``after`` is a keyset cursor ``(conversation_id, admission_seq)``
+        matching the result order: only rows strictly after the cursor are
+        returned, so callers can page past a window fully blocked by a
+        claim filter instead of starving later rows (review fix major-1).
         """
         observed_at = now or datetime.now(UTC)
         conditions = [
@@ -2924,6 +2930,17 @@ class AgentInboxRepository:
         ]
         if conversation_id is not None:
             conditions.append(AgentInboxItem.conversation_id == conversation_id)
+        if after is not None:
+            after_conversation_id, after_admission_seq = after
+            conditions.append(
+                or_(
+                    AgentInboxItem.conversation_id > after_conversation_id,
+                    and_(
+                        AgentInboxItem.conversation_id == after_conversation_id,
+                        AgentInboxItem.admission_seq > after_admission_seq,
+                    ),
+                )
+            )
         async with self._sessions() as session:
             rows = await session.scalars(
                 select(AgentInboxItem)
@@ -2942,6 +2959,7 @@ class AgentInboxRepository:
         *,
         limit: int = 10,
         now: datetime | None = None,
+        after: tuple[int, UUID] | None = None,
     ) -> list[AgentInboxItem]:
         """Return claimable items for one binding's conversations (M4.5 §2).
 
@@ -2952,8 +2970,33 @@ class AgentInboxRepository:
         Claimability mirrors :meth:`next_pending`; the ordering puts the
         lowest admission sequence first so a batch can never re-order within
         a conversation.
+
+        ``after`` is a keyset cursor ``(admission_seq, conversation_id)``
+        matching the result order: only rows strictly after the cursor are
+        returned, so callers can page past a window fully blocked by the
+        claim filter instead of starving later rows (review fix major-1).
         """
         observed_at = now or datetime.now(UTC)
+        conditions = [
+            AgentConversation.binding_id == binding_id,
+            AgentInboxItem.delivery_state.in_(("pending", "retry_wait", "claimed")),
+            AgentInboxItem.next_attempt_at <= observed_at,
+            or_(
+                AgentInboxItem.claim_expires_at.is_(None),
+                AgentInboxItem.claim_expires_at <= observed_at,
+            ),
+        ]
+        if after is not None:
+            after_admission_seq, after_conversation_id = after
+            conditions.append(
+                or_(
+                    AgentInboxItem.admission_seq > after_admission_seq,
+                    and_(
+                        AgentInboxItem.admission_seq == after_admission_seq,
+                        AgentInboxItem.conversation_id > after_conversation_id,
+                    ),
+                )
+            )
         async with self._sessions() as session:
             rows = await session.scalars(
                 select(AgentInboxItem)
@@ -2961,17 +3004,7 @@ class AgentInboxRepository:
                     AgentConversation,
                     AgentConversation.id == AgentInboxItem.conversation_id,
                 )
-                .where(
-                    AgentConversation.binding_id == binding_id,
-                    AgentInboxItem.delivery_state.in_(
-                        ("pending", "retry_wait", "claimed")
-                    ),
-                    AgentInboxItem.next_attempt_at <= observed_at,
-                    or_(
-                        AgentInboxItem.claim_expires_at.is_(None),
-                        AgentInboxItem.claim_expires_at <= observed_at,
-                    ),
-                )
+                .where(*conditions)
                 .order_by(
                     AgentInboxItem.admission_seq,
                     AgentInboxItem.conversation_id,

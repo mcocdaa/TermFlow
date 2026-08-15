@@ -150,6 +150,20 @@ _TERMINAL_RUN_STATES = frozenset({"completed", "failed", "cancelled", "unknown"}
 #: Run states that can still receive backend events.
 _ACTIVE_RUN_STATES = ("queued", "running")
 
+#: Bounded keyset scan for the dispatcher claim walk (review fix major-1): a
+#: page of claimable candidates may be fully blocked by payload-less watch
+#: rows, so the scan advances past them up to this many pages (10 rows each)
+#: per dispatch poll instead of starving later items.
+_CLAIM_SCAN_MAX_PAGES = 20
+
+#: Payload-less watch rows older than this are alerted: the typed payload may
+#: never arrive (B restart, sink failure), so silence would hide the stall.
+_STALE_WATCH_WARN_SECONDS = 60.0
+
+#: Rate limit for the stale-watch warning log: the alert counter increments
+#: on every observation, but the log fires at most once per interval.
+_STALE_WATCH_LOG_INTERVAL_SECONDS = 30.0
+
 
 def _canonical_payload_json(notification: BackendNotification) -> str:
     """Serialize one normalized notification into the canonical payload JSON.
@@ -188,6 +202,10 @@ class PipelineDiagnostics:
     no_active_run_dropped: int = 0
     missing_payload_delivery_unknown: int = 0
     watch_payload_pending_skipped: int = 0
+    #: Payload-less watch rows observed past the stale-age threshold.
+    watch_payload_stale_alerted: int = 0
+    #: Bounded claim scans that hit the page limit without claiming anything.
+    claim_scan_exhausted: int = 0
     run_start_idempotent: int = 0
     submits_failed: int = 0
     reconnects: int = 0
@@ -260,6 +278,8 @@ class AgentPipelineService:
         reconnect_backoff_cap: float = _RECONNECT_BACKOFF_CAP_SECONDS,
         reconcile_attempts: int = 5,
         cancel_wait_timeout: float = 5.0,
+        claim_scan_max_pages: int = _CLAIM_SCAN_MAX_PAGES,
+        stale_watch_warn_seconds: float = _STALE_WATCH_WARN_SECONDS,
     ) -> None:
         self.binding_id = binding_id
         self._adapter = adapter
@@ -287,8 +307,18 @@ class AgentPipelineService:
             raise ValueError("reconcile_attempts must be at least 1")
         if cancel_wait_timeout < 0:
             raise ValueError("cancel_wait_timeout must be non-negative")
+        if claim_scan_max_pages < 1:
+            raise ValueError("claim_scan_max_pages must be at least 1")
+        if stale_watch_warn_seconds < 0:
+            raise ValueError("stale_watch_warn_seconds must be non-negative")
         self._reconcile_attempts = reconcile_attempts
         self._cancel_wait_timeout = cancel_wait_timeout
+        self._claim_scan_max_pages = claim_scan_max_pages
+        self._stale_watch_warn_seconds = stale_watch_warn_seconds
+        # Throttle bookkeeping for the major-1 warning logs (counters live in
+        # self.diagnostics and increment on every observation).
+        self._last_stale_watch_log_at: datetime = datetime.min.replace(tzinfo=UTC)
+        self._scan_exhaustion_logged = False
 
         self.inbox_machine = InboxDeliveryStateMachine(
             repositories.agent_inbox,
@@ -549,27 +579,59 @@ class AgentPipelineService:
         another binding's input to its own runtime).  The binding-scoped
         query replaces the previous ``list_for_binding`` (default limit 50)
         iteration, which silently starved the 51st+ conversation's items.
-        The inbox machine still owns the CAS claim, the one-in-flight gate,
-        and the parked filter, so a batch of candidate conversations keeps
-        the exact same admission semantics without the N+1 page scan.
+
+        The candidate pages are walked with a bounded keyset scan (review
+        fix major-1): a page fully blocked by payload-less watch rows no
+        longer starves the items behind it, because the scan advances past
+        it up to ``claim_scan_max_pages`` pages.  Aged payload-less watch
+        rows are alerted instead of skipped silently.  The inbox machine
+        still owns the CAS claim, the one-in-flight gate, and the parked
+        filter.
         """
-        rows = await self._repositories.agent_inbox.next_pending_for_binding(
-            self.binding_id
-        )
-        for row in rows:
-            if not self._claim_eligible(row):
-                # Waiting for the trigger sink to register the typed payload:
-                # the item stays visible pending (review fix M1) instead of
-                # being claimed and burned as delivery_unknown.
-                self.diagnostics.watch_payload_pending_skipped += 1
-        conversations: list[UUID] = []
-        for row in rows:
-            if row.conversation_id not in conversations:
-                conversations.append(row.conversation_id)
-        for conversation_id in conversations:
-            envelope = await self.inbox_machine.claim_next(conversation_id=conversation_id)
-            if envelope is not None:
-                return envelope
+        stale: list[AgentInboxItem] = []
+        tried: set[UUID] = set()
+        cursor: tuple[int, UUID] | None = None
+        for _ in range(self._claim_scan_max_pages):
+            rows = await self._repositories.agent_inbox.next_pending_for_binding(
+                self.binding_id, after=cursor
+            )
+            if not rows:
+                # All pending rows for this binding were examined.
+                break
+            cursor = (rows[-1].admission_seq, rows[-1].conversation_id)
+            for row in rows:
+                if not self._claim_eligible(row):
+                    # Waiting for the trigger sink to register the typed
+                    # payload: the item stays visible pending (review fix M1)
+                    # instead of being claimed and burned as delivery_unknown.
+                    self.diagnostics.watch_payload_pending_skipped += 1
+                    if self._watch_row_age_seconds(row) >= self._stale_watch_warn_seconds:
+                        stale.append(row)
+                    continue
+                if row.conversation_id in tried:
+                    continue
+                tried.add(row.conversation_id)
+                envelope = await self.inbox_machine.claim_next(
+                    conversation_id=row.conversation_id
+                )
+                if envelope is not None:
+                    self._alert_stale_watch_rows(stale)
+                    return envelope
+        else:
+            # The bounded scan hit its page limit without claiming anything:
+            # record the exhaustion so a backlog beyond the window is visible
+            # in diagnostics instead of silently spinning.
+            self.diagnostics.claim_scan_exhausted += 1
+            if not self._scan_exhaustion_logged:
+                self._scan_exhaustion_logged = True
+                logger.warning(
+                    "Agent pipeline %s: claim scan exhausted its bound (%d pages) "
+                    "without claiming an item; the inbox backlog exceeds the "
+                    "scan window",
+                    self.binding_id,
+                    self._claim_scan_max_pages,
+                )
+        self._alert_stale_watch_rows(stale)
         return None
 
     def _claim_eligible(self, row: AgentInboxItem) -> bool:
@@ -584,6 +646,44 @@ class AgentPipelineService:
         if row.kind != "watch_triggered":
             return True
         return row.id in self._pending_payloads
+
+    @staticmethod
+    def _aware_utc(value: datetime) -> datetime:
+        """SQLite round-trips datetimes naive; attach UTC for age math."""
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+    def _watch_row_age_seconds(self, row: AgentInboxItem) -> float:
+        return (self._now() - self._aware_utc(row.created_at)).total_seconds()
+
+    def _alert_stale_watch_rows(self, stale: list[AgentInboxItem]) -> None:
+        """Count and (rate-limited) warn about aged payload-less watch rows.
+
+        Review fix major-1: a payload-less watch row stuck pending is a
+        permanent stall unless the sink registers a payload, so age-past-
+        threshold rows must never stay silent.  Identifiers only - the
+        payload is definitionally absent and never logged (spec §6).
+        """
+        if not stale:
+            return
+        self.diagnostics.watch_payload_stale_alerted += len(stale)
+        now = self._now()
+        if (
+            now - self._last_stale_watch_log_at
+        ).total_seconds() < _STALE_WATCH_LOG_INTERVAL_SECONDS:
+            return
+        self._last_stale_watch_log_at = now
+        oldest = stale[0]
+        logger.warning(
+            "Agent pipeline %s: %d payload-less watch inbox row(s) stuck "
+            "pending for longer than %.0fs (no trigger sink payload); oldest "
+            "item %s (conversation %s, age %.0fs)",
+            self.binding_id,
+            len(stale),
+            self._stale_watch_warn_seconds,
+            oldest.id,
+            oldest.conversation_id,
+            self._watch_row_age_seconds(oldest),
+        )
 
     async def _wait_for_work(self) -> None:
         """Idle-wait for new inbox work, bounded by a poll tick."""

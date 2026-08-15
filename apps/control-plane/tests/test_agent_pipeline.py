@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -1320,6 +1321,166 @@ async def test_dead_lettered_retry_releases_payload(
 
         await wait_until(item_dead_lettered)
         assert admission.message_id not in pipeline._pending_payloads
+    finally:
+        await pipeline.stop()
+
+
+# ---------------------------------------------------------------------------
+# Bounded claim scan (review fix major-1): payload-less watch rows must never
+# starve later inbox items (B1 x M1 combination defect).
+# ---------------------------------------------------------------------------
+
+
+async def _enqueue_payload_less_watch_item(
+    repositories: RepositoryBundle, conversation_id: UUID
+) -> None:
+    """Enqueue a watch row whose typed payload never registers in-process.
+
+    The trigger sink is the only registration path; leaving it out models a
+    B restart, a sink exception, or a fire while the pipeline did not exist.
+    """
+    await repositories.agent_inbox.enqueue(
+        conversation_id=conversation_id,
+        kind=AgentInputKind.WATCH_TRIGGERED.value,
+        actor_id=str(uuid4()),
+        actor_kind=AgentActorKind.WATCH_ENGINE.value,
+        idempotency_key=str(uuid4()),
+        payload_digest=hashlib.sha256(b"missing-continuation").hexdigest(),
+        source=AgentInputSource.SYSTEM.value,
+    )
+
+
+async def test_user_message_claim_not_starved_by_watch_backlog(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    """major-1: 11 payload-less watch rows must not starve the 12th item.
+
+    Both candidate windows used to truncate to 10 rows by admission order:
+    the binding-level scan and the per-conversation ``next_pending`` page.
+    A user message behind 11 unclaimable watch rows was therefore never
+    claimed (silent permanent starvation).
+    """
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    for _ in range(11):
+        await _enqueue_payload_less_watch_item(repositories, conversation_id)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    admission = await pipeline.submit_user_message(
+        conversation_id, "behind backlog", actor="admin"
+    )
+    await pipeline.start()
+    try:
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        call = backend.submit_calls[0]
+        assert call.request.idempotency_key == admission.idempotency_key
+        assert call.request.parts[0].text == "behind backlog"
+    finally:
+        await pipeline.stop()
+
+
+async def test_binding_scan_skips_blocked_watch_rows_across_conversations(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    """major-1: a fully blocked first page must not starve a later item.
+
+    Ten conversations each hold one payload-less watch row (admission_seq
+    1): the first binding page is exactly these ten blocked rows.  The
+    target conversation's seq-1 row is dead-lettered first (outside the
+    claim candidate set), so its user message lands at seq 2: strictly
+    after the blocked page regardless of conversation UUID ordering.  The
+    bounded keyset scan must advance past the blocked page and claim it.
+    """
+    backend = FakeBackend(repositories=repositories)
+    binding_id = await seed_binding(repositories)
+    for _ in range(10):
+        _, conversation_id = await seed_conversation(
+            repositories, binding_id=binding_id
+        )
+        await _enqueue_payload_less_watch_item(repositories, conversation_id)
+    _, target_conversation_id = await seed_conversation(
+        repositories, binding_id=binding_id
+    )
+    burned = await repositories.agent_inbox.enqueue(
+        conversation_id=target_conversation_id,
+        kind=AgentInputKind.WATCH_TRIGGERED.value,
+        actor_id=str(uuid4()),
+        actor_kind=AgentActorKind.WATCH_ENGINE.value,
+        idempotency_key=str(uuid4()),
+        payload_digest=hashlib.sha256(b"burned").hexdigest(),
+        source=AgentInputSource.SYSTEM.value,
+    )
+    assert await repositories.agent_inbox.dead_letter(burned.id) is not None
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    admission = await pipeline.submit_user_message(
+        target_conversation_id, "not starved", actor="admin"
+    )
+    await pipeline.start()
+    try:
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        call = backend.submit_calls[0]
+        assert call.request.idempotency_key == admission.idempotency_key
+    finally:
+        await pipeline.stop()
+
+
+async def test_stale_payload_less_watch_row_raises_alert(
+    repositories: RepositoryBundle, hub: AgentStreamHub, caplog
+) -> None:
+    """major-1: an aged payload-less watch row is alerted, not silently skipped."""
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    await _enqueue_payload_less_watch_item(repositories, conversation_id)
+    pipeline = make_pipeline(
+        repositories,
+        hub,
+        backend,
+        binding_id=binding_id,
+        stale_watch_warn_seconds=0.0,
+    )
+    with caplog.at_level(logging.WARNING):
+        await pipeline.start()
+        try:
+            await wait_until(
+                lambda: pipeline.diagnostics.watch_payload_stale_alerted >= 1
+            )
+        finally:
+            await pipeline.stop()
+    assert any("payload-less watch" in record.message for record in caplog.records)
+
+
+async def test_bounded_claim_scan_stays_responsive_with_huge_backlog(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    """major-1: a backlog beyond the scan bound exhausts diagnostics, not the loop.
+
+    With 25 blocked rows and a 2-page scan bound the dispatcher records
+    ``claim_scan_exhausted`` and keeps polling; a new conversation's user
+    message (admission_seq 1, always on the first page) is still dispatched,
+    proving the bounded scan never blocks new work.
+    """
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    for _ in range(25):
+        await _enqueue_payload_less_watch_item(repositories, conversation_id)
+    pipeline = make_pipeline(
+        repositories,
+        hub,
+        backend,
+        binding_id=binding_id,
+        claim_scan_max_pages=2,
+    )
+    await pipeline.start()
+    try:
+        await wait_until(lambda: pipeline.diagnostics.claim_scan_exhausted >= 1)
+        _, new_conversation_id = await seed_conversation(
+            repositories, binding_id=binding_id
+        )
+        admission = await pipeline.submit_user_message(
+            new_conversation_id, "still alive", actor="admin"
+        )
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        call = backend.submit_calls[0]
+        assert call.request.idempotency_key == admission.idempotency_key
     finally:
         await pipeline.stop()
 
