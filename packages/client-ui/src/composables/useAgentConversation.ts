@@ -18,7 +18,7 @@ import {
   type AgentStreamTransport,
   type AguiEvent,
 } from '@termflow/client-core'
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useClientRuntime } from '../runtime'
 import { useSession } from './useSession'
@@ -26,6 +26,12 @@ import { useBottomToast } from './useBottomToast'
 
 export interface UseAgentConversationOptions {
   conversationId: string
+  /**
+   * Capability gate (M6b spec §6.4): while false the historical seed and
+   * the stream connect never run — a disabled broker must not trigger
+   * Agent API requests. Flipping it true starts the lifecycle once.
+   */
+  enabled?: MaybeRefOrGetter<boolean>
 }
 
 export function useAgentConversation(options: UseAgentConversationOptions) {
@@ -65,7 +71,15 @@ export function useAgentConversation(options: UseAgentConversationOptions) {
     }
   }
 
-  onMounted(async () => {
+  onMounted(() => {
+    void start()
+  })
+
+  /** Cold/hot start sequence (M6b spec §4.4); runs once, gated by `enabled`. */
+  let started = false
+  async function start() {
+    if (started || !toValue(options.enabled ?? true)) return
+    started = true
     const stored = runtime.agentCursorStore.load(options.conversationId)
     // Seed historical user messages before the stream connects: the reducer
     // timeline is application-ordered, so user rows must precede replayed
@@ -118,6 +132,12 @@ export function useAgentConversation(options: UseAgentConversationOptions) {
       ...(stored === null ? { seedFromSeq: 0 } : { initialCursor: stored.cursor }),
     })
     void session.connect()
+  }
+
+  // The capability gate usually resolves right after mount; start once it
+  // opens (a disabled broker never triggers a request).
+  watch(() => toValue(options.enabled ?? true), (enabled) => {
+    if (enabled) void start()
   })
 
   onBeforeUnmount(() => {

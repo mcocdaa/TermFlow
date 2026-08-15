@@ -1,4 +1,4 @@
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, ref, type Ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import type {
@@ -57,6 +57,8 @@ function mountConversation(overrides: {
   listMessages?: ReturnType<typeof vi.fn>
   request?: ReturnType<typeof vi.fn>
   clock?: ControllableClock
+  /** Capability gate: while false the seed/connect must not run. */
+  enabled?: Ref<boolean>
 } = {}): ConversationHarness {
   const transport = new ScriptedTransport()
   const cursorStore = overrides.cursorStore ?? createFakeAgentCursorStore()
@@ -97,7 +99,10 @@ function mountConversation(overrides: {
     setup() {
       toast = useBottomToast()
       session = useSession()
-      conversation = useAgentConversation({ conversationId: overrides.conversationId ?? CONVERSATION })
+      conversation = useAgentConversation({
+        conversationId: overrides.conversationId ?? CONVERSATION,
+        ...(overrides.enabled !== undefined ? { enabled: overrides.enabled } : {}),
+      })
       return () => h('div')
     },
   })
@@ -276,6 +281,24 @@ describe('useAgentConversation', () => {
     expect(harness.conversation().bindingRevoked.value).toBe(true)
     expect(harness.conversation().closeReason.value).toBe('conversation_not_found')
     expect(harness.cursorStore.load(CONVERSATION)).toBeNull()
+  })
+
+  it('capability gate: a disabled broker never seeds or connects until enabled', async () => {
+    const enabled = ref(false)
+    const listMessages = vi.fn(async () => ({ messages: [] }))
+    const harness = mountConversation({ enabled, listMessages })
+    await harness.router.push(`/agent/${CONVERSATION}`)
+    await harness.router.isReady()
+    await flushPromises()
+
+    expect(listMessages).not.toHaveBeenCalled()
+    expect(harness.transport.requests).toHaveLength(0)
+
+    enabled.value = true
+    await flushPromises()
+    expect(listMessages).toHaveBeenCalledTimes(1)
+    expect(harness.transport.requests).toHaveLength(1)
+    harness.unmount()
   })
 
   it('seeds user messages before the stream connects', async () => {

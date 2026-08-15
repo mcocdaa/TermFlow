@@ -1,10 +1,32 @@
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
-import { createAgentHistoryState, type AgentHistoryState } from '@termflow/client-core'
+import { ApiError, createAgentHistoryState, type AgentHistoryState } from '@termflow/client-core'
+import { createClientUi, type ClientRuntime } from '../../runtime'
+import { createFakeRuntime } from '../../test/fakeRuntime'
 import AgentMessageList from './AgentMessageList.vue'
+
+/**
+ * The list now hosts approval cards (M6b §4.7 timeline integration), which
+ * lazily fetch the REST detail — the fake request rejects so the card's
+ * 详情不可用 fallback path renders deterministically.
+ */
+function mountList(history: AgentHistoryState) {
+  const runtime = createFakeRuntime({
+    api: {
+      ...createFakeRuntime().api,
+      request: vi.fn(async () => {
+        throw new ApiError('server', { status: 404 })
+      }),
+    } as unknown as ClientRuntime['api'],
+  })
+  return mount(AgentMessageList, {
+    props: { history },
+    global: { plugins: [createClientUi(runtime)] },
+  })
+}
 
 function historyWith(
   messages: Array<{ id: string; text: string; status?: 'streaming' | 'complete' }> = [],
@@ -52,7 +74,7 @@ function mockScroll(el: HTMLElement, layout: { scrollHeight: number; clientHeigh
 
 describe('AgentMessageList', () => {
   it('exposes the log live region with additions-only announcements', () => {
-    const wrapper = mount(AgentMessageList, { props: { history: historyWith([]) } })
+    const wrapper = mountList(historyWith([]))
     const log = wrapper.get('[data-agent-message-list]')
     expect(log.attributes('role')).toBe('log')
     expect(log.attributes('aria-live')).toBe('polite')
@@ -61,7 +83,7 @@ describe('AgentMessageList', () => {
   })
 
   it('keeps a visually hidden coarse-grained status region (never per chunk)', () => {
-    const wrapper = mount(AgentMessageList, { props: { history: historyWith([]) } })
+    const wrapper = mountList(historyWith([]))
     const status = wrapper.get('[data-agent-status]')
     expect(status.attributes('role')).toBe('status')
     expect(status.attributes('aria-live')).toBe('polite')
@@ -74,7 +96,7 @@ describe('AgentMessageList', () => {
     const state = historyWith([{ id: 'a1', text: '第一条' }, { id: 'a2', text: '第二条' }])
     state.timeline.push({ type: 'message', refId: 'missing', at: 0 })
     withUser(state, 'u1', '用户消息')
-    const wrapper = mount(AgentMessageList, { props: { history: state } })
+    const wrapper = mountList(state)
     const bubbles = wrapper.findAll('.agent-message')
     expect(bubbles.length).toBe(3)
     expect(bubbles.map((b) => b.text())).toEqual(['第一条', '第二条', '用户消息'])
@@ -82,8 +104,40 @@ describe('AgentMessageList', () => {
     wrapper.unmount()
   })
 
+  it('interleaves tool rows and approval cards into the flow in timeline order', async () => {
+    const state = historyWith([{ id: 'a1', text: '开始' }])
+    state.toolCalls.set('t1', { toolCallId: 't1', toolName: 'ls', status: 'completed', summary: '{"ok":true}', startedAt: 0, endedAt: 1 })
+    state.timeline.push({ type: 'tool', refId: 't1', at: 0 })
+    state.messages.set('a2', { messageId: 'a2', role: 'assistant', text: '结束', status: 'complete', createdAt: 0 })
+    state.timeline.push({ type: 'message', refId: 'a2', at: 0 })
+    state.permissions.set('p1', { approvalId: 'p1', toolName: 'rm', evidence: null, expiresAt: null, state: 'pending', decidedAt: null })
+    state.timeline.push({ type: 'permission', refId: 'p1', at: 0 })
+
+    const wrapper = mountList(state)
+    await flushPromises()
+
+    const rendered = [...wrapper.get('[data-agent-message-list]').element.children]
+      .map((el) => (el.className as string).split(' ')[0])
+    expect(rendered).toEqual(['agent-message', 'agent-tool-activity', 'agent-message', 'agent-approval-card'])
+    expect(wrapper.get('[data-agent-tool-status-label]').text()).toBe('已完成')
+    expect(wrapper.get('[data-agent-approval-card]').attributes('data-agent-approval-id')).toBe('p1')
+    wrapper.unmount()
+  })
+
+  it('forwards the approval card focus request for the panel handoff', async () => {
+    const state = historyWith([])
+    state.permissions.set('p1', { approvalId: 'p1', toolName: 'rm', evidence: null, expiresAt: null, state: 'pending', decidedAt: null })
+    state.timeline.push({ type: 'permission', refId: 'p1', at: 0 })
+    const wrapper = mountList(state)
+    await flushPromises()
+
+    await wrapper.get('[data-action="focus-approval"]').trigger('click')
+    expect(wrapper.emitted('focus-approval')).toEqual([['p1']])
+    wrapper.unmount()
+  })
+
   it('announces only new bubbles: streaming updates patch the existing node in place', async () => {
-    const wrapper = mount(AgentMessageList, { props: { history: historyWith([{ id: 'a1', text: '初始', status: 'streaming' }]) } })
+    const wrapper = mountList(historyWith([{ id: 'a1', text: '初始', status: 'streaming' }]))
     const textNode = wrapper.get('.agent-message__text').element
 
     await wrapper.setProps({ history: historyWith([{ id: 'a1', text: '初始增量', status: 'streaming' }]) })
@@ -101,7 +155,7 @@ describe('AgentMessageList', () => {
   it('broadcasts a tool completion in the status region, then clears on chunk-only updates', async () => {
     const s1 = historyWith([{ id: 'a1', text: 'hello' }])
     withRunningTool(s1, 't1', 'ls')
-    const wrapper = mount(AgentMessageList, { props: { history: s1 } })
+    const wrapper = mountList(s1)
     expect(wrapper.get('[data-agent-status]').text()).toBe('')
 
     const s2 = historyWith([{ id: 'a1', text: 'hello' }])
@@ -121,7 +175,7 @@ describe('AgentMessageList', () => {
   })
 
   it('announces approval arrivals and backend state changes once', async () => {
-    const wrapper = mount(AgentMessageList, { props: { history: historyWith([]) } })
+    const wrapper = mountList(historyWith([]))
 
     const s2 = historyWith([])
     s2.permissions.set('p1', { approvalId: 'p1', toolName: 'rm', evidence: null, expiresAt: null, state: 'pending', decidedAt: null })
@@ -145,7 +199,7 @@ describe('AgentMessageList', () => {
   })
 
   it('auto-scrolls only while the user stays pinned to the bottom', async () => {
-    const wrapper = mount(AgentMessageList, { props: { history: historyWith([{ id: 'a1', text: '一' }]) } })
+    const wrapper = mountList(historyWith([{ id: 'a1', text: '一' }]))
     const el = wrapper.get('[data-agent-message-list]').element as HTMLElement
     const layout = { scrollHeight: 400, clientHeight: 100 }
     const scroll = mockScroll(el, layout)

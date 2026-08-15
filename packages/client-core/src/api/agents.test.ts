@@ -11,12 +11,14 @@ describe('agents API', () => {
     const agents = createAgentsApi(request)
 
     await agents.capabilities()
+    await agents.listBindings()
     await agents.listConversations()
     await agents.createConversation({ binding_id: 'b', title: null })
     await agents.getConversation(`${CONVERSATION} /1`)
 
     expect(request.mock.calls).toEqual([
       ['/api/v1/agent/capabilities', {}],
+      ['/api/v1/agent/admin/bindings', {}],
       ['/api/v1/agent/conversations', {}],
       ['/api/v1/agent/conversations', { method: 'POST', body: { binding_id: 'b', title: null } }],
       [`/api/v1/agent/conversations/${encodeURIComponent(`${CONVERSATION} /1`)}`, {}],

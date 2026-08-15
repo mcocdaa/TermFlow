@@ -1,4 +1,4 @@
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, ref, type Ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import type { AgentConversationResponse, ApprovalResponse } from '@termflow/client-contracts'
 import { describe, expect, it, vi } from 'vitest'
@@ -47,10 +47,13 @@ interface ConversationsHarness {
   createConversation: ReturnType<typeof vi.fn>
   deleteConversation: ReturnType<typeof vi.fn>
   request: ReturnType<typeof vi.fn>
+  unmount(): void
 }
 
 function mountConversations(overrides: {
   bindingId?: string
+  /** Reactive binding source: the AgentView selector switches this ref. */
+  bindingRef?: Ref<string | undefined>
   listConversations?: ReturnType<typeof vi.fn>
   createConversation?: ReturnType<typeof vi.fn>
   deleteConversation?: ReturnType<typeof vi.fn>
@@ -85,7 +88,7 @@ function mountConversations(overrides: {
   const wrapper = mount(defineComponent({
     setup() {
       toast = useBottomToast()
-      state = useAgentConversations(overrides.bindingId)
+      state = useAgentConversations(overrides.bindingRef ?? overrides.bindingId)
       return () => h('div')
     },
   }), { global: { plugins: [createClientUi(runtime)] } })
@@ -103,6 +106,7 @@ function mountConversations(overrides: {
     createConversation,
     deleteConversation,
     request,
+    unmount: () => wrapper.unmount(),
   }
 }
 
@@ -148,7 +152,7 @@ describe('useAgentConversations', () => {
     const listConversations = vi.fn(async () => ({ conversations: [conversation('conv-1'), conversation('conv-2')] }))
     const cursorStore = createFakeAgentCursorStore()
     cursorStore.save('conv-1', '7-9', 9)
-    const harness = await mounted({ listConversations, cursorStore })
+    const harness = await mounted({ bindingId: 'binding-1', listConversations, cursorStore })
 
     await harness.conversations().remove('conv-1')
     expect(harness.deleteConversation).toHaveBeenCalledWith('conv-1', expect.any(AbortSignal))
@@ -158,10 +162,42 @@ describe('useAgentConversations', () => {
   })
 
   it('toasts when the list fails to load', async () => {
-    const harness = await mounted({ listConversations: vi.fn(async () => {
+    const harness = await mounted({ bindingId: 'binding-1', listConversations: vi.fn(async () => {
       throw new Error('boom')
     }) })
     expect(harness.conversations().loading.value).toBe(false)
     expect(harness.toast().current.value?.text).toBe('无法加载会话列表。')
+  })
+
+  it('re-scopes the list and badges when the reactive binding switches', async () => {
+    const bindingRef = ref<string | undefined>(undefined)
+    const listConversations = vi.fn()
+      .mockResolvedValueOnce({ conversations: [conversation('conv-a')] })
+      .mockResolvedValueOnce({ conversations: [conversation('conv-b')] })
+    const request = vi.fn()
+      .mockResolvedValueOnce({ approvals: [pendingApproval('conv-a', 'a1')] })
+      .mockResolvedValueOnce({ approvals: [] })
+    const harness = mountConversations({ bindingRef, listConversations, request })
+    await flushPromises()
+
+    // No binding selected yet: the fetch is skipped entirely.
+    expect(listConversations).not.toHaveBeenCalled()
+    expect(harness.conversations().loading.value).toBe(false)
+    expect(harness.conversations().conversations.value).toEqual([])
+
+    bindingRef.value = 'binding-1'
+    await flushPromises()
+    expect(listConversations).toHaveBeenCalledTimes(1)
+    expect(listConversations).toHaveBeenLastCalledWith(expect.objectContaining({ bindingId: 'binding-1' }))
+    expect(harness.conversations().conversations.value.map((entry) => entry.conversation_id)).toEqual(['conv-a'])
+    expect(harness.conversations().pendingCount('conv-a')).toBe(1)
+
+    bindingRef.value = 'binding-2'
+    await flushPromises()
+    expect(listConversations).toHaveBeenCalledTimes(2)
+    expect(listConversations).toHaveBeenLastCalledWith(expect.objectContaining({ bindingId: 'binding-2' }))
+    expect(harness.conversations().conversations.value.map((entry) => entry.conversation_id)).toEqual(['conv-b'])
+    expect(harness.conversations().pendingCount('conv-a')).toBe(0)
+    harness.unmount()
   })
 })

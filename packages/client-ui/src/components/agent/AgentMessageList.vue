@@ -9,7 +9,11 @@
       data-agent-message-list
       @scroll="onScroll"
     >
-      <AgentMessageBubble v-for="item in items" :key="item.key" :message="item.message" />
+      <template v-for="item in items" :key="item.key">
+        <AgentMessageBubble v-if="item.kind === 'message' || item.kind === 'user'" :message="item.message" />
+        <AgentToolActivity v-else-if="item.kind === 'tool'" :call="item.call" />
+        <AgentApprovalCard v-else-if="item.kind === 'permission'" :permission="item.permission" @focus="onFocusApproval" />
+      </template>
     </div>
     <div class="sr-only" role="status" aria-live="polite" data-agent-status>{{ statusText }}</div>
   </div>
@@ -21,21 +25,35 @@
 //: streaming text updates inside an existing bubble stay silent. Coarse
 //: fine-grained events (tool done/failed, run finished/error, approval
 //: arrival, backend state change) are announced through the visually
-//: hidden `role="status"` region — never per chunk. Auto-scroll only while
-//: the user is pinned to the bottom (scroll anchoring); smooth scrolling
-//: is disabled under prefers-reduced-motion (app.css).
+//: hidden `role="status"` region — never per chunk. Tool activity rows and
+//: approval cards are rendered inline in timeline order (arrival = server
+//: seq order), so the whole flow stays inside the single live region;
+//: the approval card's 在审批面板处理 action bubbles up as
+//: `focus-approval` for the parent to focus the matching panel entry.
+//: Auto-scroll only while the user is pinned to the bottom (scroll
+//: anchoring); smooth scrolling is disabled under prefers-reduced-motion
+//: (app.css).
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import type { AgentHistoryState, AgentMessageState, AgentUserMessageState } from '@termflow/client-core'
+import type { AgentHistoryState, AgentMessageState, AgentPermissionState, AgentToolCallState, AgentUserMessageState } from '@termflow/client-core'
+import AgentApprovalCard from './AgentApprovalCard.vue'
 import AgentMessageBubble from './AgentMessageBubble.vue'
+import AgentToolActivity from './AgentToolActivity.vue'
 
 const props = defineProps<{
   /** Whole reducer state, exactly as returned by the M6b conversation composable. */
   history: AgentHistoryState
 }>()
 
+const emit = defineEmits<{
+  /** The approval card asked to handle its request in the approval panel. */
+  'focus-approval': [approvalId: string]
+}>()
+
 type DisplayItem =
   | { kind: 'message'; key: string; message: AgentMessageState }
   | { kind: 'user'; key: string; message: AgentUserMessageState }
+  | { kind: 'tool'; key: string; call: AgentToolCallState }
+  | { kind: 'permission'; key: string; permission: AgentPermissionState }
 
 // Timeline order = arrival order = server seq order; refs without a state
 // record (dangling timeline entries) are skipped defensively.
@@ -48,10 +66,20 @@ const items = computed<DisplayItem[]>(() => {
     } else if (entry.type === 'user') {
       const message = props.history.userMessages.get(entry.refId)
       if (message !== undefined) out.push({ kind: 'user', key: `user:${entry.refId}`, message })
+    } else if (entry.type === 'tool') {
+      const call = props.history.toolCalls.get(entry.refId)
+      if (call !== undefined) out.push({ kind: 'tool', key: `tool:${entry.refId}`, call })
+    } else if (entry.type === 'permission') {
+      const permission = props.history.permissions.get(entry.refId)
+      if (permission !== undefined) out.push({ kind: 'permission', key: `permission:${entry.refId}`, permission })
     }
   }
   return out
 })
+
+function onFocusApproval(approvalId: string) {
+  emit('focus-approval', approvalId)
+}
 
 const listEl = ref<HTMLElement | null>(null)
 const statusText = ref('')

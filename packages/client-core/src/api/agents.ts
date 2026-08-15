@@ -1,4 +1,5 @@
 import type {
+  AgentBindingListResponse,
   AgentCapabilitiesResponse,
   AgentConversationCreateRequest,
   AgentConversationDetailResponse,
@@ -51,6 +52,10 @@ export function createAgentsApi(request: ApiRequest) {
   return {
     capabilities: (signal?: AbortSignal) =>
       request<AgentCapabilitiesResponse>('/api/v1/agent/capabilities', withSignal({}, signal)),
+
+    /** Agent admin bindings (M6b spec §4.7): the AgentView binding selector source. */
+    listBindings: (signal?: AbortSignal) =>
+      request<AgentBindingListResponse>('/api/v1/agent/admin/bindings', withSignal({}, signal)),
 
     listConversations: (options: { bindingId?: string, signal?: AbortSignal } = {}) => {
       const query = new URLSearchParams()
