@@ -1,3 +1,4 @@
+mod agent_stream;
 mod audio_upload;
 mod auth;
 mod diagnostics;
@@ -7,9 +8,13 @@ use auth::NativeAuthState;
 use tauri::Manager;
 
 /// Public seams for the integration contract tests under `tests/`
-/// (audio_upload_contract.rs). These are not IPC commands; the runtime
-/// invoke surface is the `invoke_handler` list below.
+/// (agent_stream_contract.rs, audio_upload_contract.rs). These are not IPC
+/// commands; the runtime invoke surface is the `invoke_handler` list below.
 pub mod contract_testing {
+    pub use crate::agent_stream::{
+        build_stream_request, build_stream_url, close_for_status, AgentStreamParams,
+        AGENT_STREAM_PATH,
+    };
     pub use crate::audio_upload::{
         build_multipart, build_upload_request, DRAFT_UPLOAD_PATH, MAX_AUDIO_BYTES,
     };
@@ -68,6 +73,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(NativeAuthState::default())
+        .manage(agent_stream::AgentStreamState::default())
         .manage(terminal_socket::TerminalSocketState::default())
         .setup(|app| {
             #[cfg(target_os = "android")]
@@ -94,6 +100,8 @@ pub fn run() {
             auth::native_remember_dpop_nonce,
             auth::native_http_request,
             audio_upload::native_upload_audio,
+            agent_stream::native_agent_stream,
+            agent_stream::native_agent_stream_cancel,
             terminal_socket::native_terminal_connect,
             terminal_socket::native_terminal_send,
             terminal_socket::native_terminal_close,
