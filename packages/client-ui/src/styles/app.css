@@ -352,4 +352,33 @@
     .agent-message-list { scroll-behavior: auto; }
     .agent-message__cursor { animation: none; }
   }
+
+  /* M6b agent chat — tool activity rows (pure-text collapsible summaries) */
+  .agent-tool-activity { display: flex; flex-direction: column; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-panel); }
+  .agent-tool-activity__toggle { display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: var(--space-2) var(--space-3); border: 0; background: transparent; color: inherit; font: inherit; text-align: start; cursor: pointer; }
+  .agent-tool-activity__toggle:hover, .agent-tool-activity__toggle:focus-visible { background: var(--color-elevated); }
+  .agent-tool-activity__toggle:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+  .agent-tool-activity__row { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); }
+  .agent-tool-activity__name { font-weight: 600; overflow-wrap: anywhere; }
+  .agent-tool-activity__status { margin-inline-start: auto; flex: none; font-size: var(--text-sm); color: var(--color-text-muted); }
+  .agent-tool-activity--completed .agent-tool-activity__status { color: var(--color-online); }
+  .agent-tool-activity--failed .agent-tool-activity__status { color: var(--color-danger); }
+  .agent-tool-activity__chevron { color: var(--color-text-muted); }
+  .agent-tool-activity__summary { border-block-start: 1px solid var(--color-border); padding: var(--space-2) var(--space-3); background: var(--color-elevated); }
+  .agent-tool-activity__summary-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.5; }
+
+  /* M6b agent chat — backend runtime status badge */
+  .agent-backend-status { display: inline-flex; align-items: center; gap: var(--space-1); padding: 0.1rem var(--space-2); border: 1px solid var(--color-border); border-radius: 999px; font-size: var(--text-sm); color: var(--color-text-secondary); background: var(--color-panel); }
+  .agent-backend-status--ready { color: var(--color-online); border-color: var(--color-online); }
+  .agent-backend-status--unavailable, .agent-backend-status--context_lost, .agent-backend-status--closed { color: var(--color-warning); border-color: var(--color-warning); }
+  .agent-backend-status--connecting, .agent-backend-status--reconciling { color: var(--color-accent); border-color: var(--color-accent); }
+
+  /* M6b agent chat — composer (textarea + send + cancel, fail-closed states) */
+  .agent-composer { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border-block-start: 1px solid var(--color-border); background: var(--color-panel); }
+  .agent-composer--disabled { opacity: 0.6; }
+  .agent-composer__row { display: flex; align-items: flex-end; gap: var(--space-2); }
+  .agent-composer__input { flex: 1; min-height: 3.5rem; resize: vertical; font: inherit; line-height: 1.5; }
+  .agent-composer__send, .agent-composer__cancel { flex: none; }
+  .agent-composer__hint { margin: 0; }
+  .agent-composer__unavailable { margin: 0; color: var(--color-warning); }
 }
