@@ -11,11 +11,13 @@ import type {
 import { parseAguiEvent, type AguiEvent, type AguiReplayBatch } from '../agent/agui'
 import type { ApiRequest, ApiRequestOptions } from '../http/types'
 
-//: Hand-written M4.5 admission models (termflow_control_plane.api.
-//: agent_conversations). They move to generated.ts with the contracts
-//: regeneration task; this module must not depend on their presence there.
+//: M4.5 admission models (termflow_control_plane.api.agent_conversations).
+//: The raw wire shapes now also exist in generated.ts, but this module keeps
+//: caller-friendly variants: ``draft_ref``/``reason`` are optional here while
+//: the generator renders B-side defaults as required ``| null`` fields.
 export interface AgentSubmitMessageRequest {
   text: string
+  draft_ref?: string | null
 }
 
 export interface AgentSubmitMessageResponse {

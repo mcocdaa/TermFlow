@@ -357,6 +357,29 @@ export interface AgentMessageListResponse {
   messages: AgentMessageResponse[]
 }
 
+export interface AgentSubmitMessageRequest {
+  text: string
+  draft_ref: string | null
+}
+
+export interface AgentSubmitMessageResponse {
+  message_id: string
+  conversation_id: string
+  admission_seq: number
+  idempotency_key: string
+  delivery_state: string
+  submission_state: string
+}
+
+export interface AgentCancelRequest {
+  reason: string | null
+}
+
+export interface AgentCancelResponse {
+  outcome: string
+  run_state: string
+}
+
 export interface AgentEventResponse {
   event_id: string
   conversation_id: string
