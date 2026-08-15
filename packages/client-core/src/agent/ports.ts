@@ -13,9 +13,15 @@ export interface AgentStreamConnectRequest {
   cursor?: string
 }
 
-export type AgentStreamTransportEvent =
+/**
+ * Semantic transport event emitted by an Agent stream transport. The event
+ * payload is generic: canonical transports carry ``AgentEventResponse``
+ * (default), agui transports carry hand-written AG-UI events (M6b spec
+ * §4.3). ``reset``/``closed`` are wire-independent B semantics.
+ */
+export type AgentStreamTransportEvent<TEvent = AgentEventResponse> =
   | { type: 'open' }
-  | { type: 'event', event: AgentEventResponse, cursor: string }
+  | { type: 'event', event: TEvent, cursor: string }
   | { type: 'reset', cursor: string }
   | { type: 'close', code: number, reason: string }
 
@@ -23,10 +29,10 @@ export interface AgentStreamConnection {
   close(code: number, reason: string): Promise<void>
 }
 
-export interface AgentStreamTransport {
+export interface AgentStreamTransport<TEvent = AgentEventResponse> {
   connect(
     request: AgentStreamConnectRequest,
-    emit: (event: AgentStreamTransportEvent) => void,
+    emit: (event: AgentStreamTransportEvent<TEvent>) => void,
   ): Promise<AgentStreamConnection>
 }
 

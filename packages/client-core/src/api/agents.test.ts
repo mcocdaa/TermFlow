@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createAgentsApi, fetchEventsSince } from './agents'
+import { createAgentsApi, fetchEventsSince, fetchEventsSinceAgui } from './agents'
+import { ApiError } from '../http/apiError'
 import type { AgentEventListResponse } from '@termflow/client-contracts'
 
 const CONVERSATION = '11111111-1111-4111-8111-111111111111'
@@ -86,5 +87,93 @@ describe('fetchEventsSince', () => {
     const events = await fetchEventsSince(request, CONVERSATION, 7)
     expect(events).toEqual([])
     expect(request).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('submitMessage and cancelRun', () => {
+  it('posts admission and cancel bodies to the conversation endpoints', async () => {
+    const request = vi.fn().mockResolvedValue(undefined)
+    const agents = createAgentsApi(request)
+
+    await agents.submitMessage(CONVERSATION, { text: 'hello' })
+    await agents.cancelRun(CONVERSATION, { reason: 'user_cancelled' })
+
+    expect(request.mock.calls).toEqual([
+      [`/api/v1/agent/conversations/${CONVERSATION}/messages`, { method: 'POST', body: { text: 'hello' } }],
+      [`/api/v1/agent/conversations/${CONVERSATION}/cancel`, { method: 'POST', body: { reason: 'user_cancelled' } }],
+    ])
+  })
+
+  it('propagates ApiError details for the UI error mapping (503/409/422/403)', async () => {
+    const cases: Array<{ call: () => Promise<unknown>, expected: Partial<ApiError> }> = [
+      {
+        call: () => createAgentsApi(vi.fn().mockRejectedValue(new ApiError('server', { status: 503, code: 'binding_runtime_unavailable' }))).submitMessage(CONVERSATION, { text: 'x' }),
+        expected: { kind: 'server', status: 503, code: 'binding_runtime_unavailable' },
+      },
+      {
+        call: () => createAgentsApi(vi.fn().mockRejectedValue(new ApiError('validation', { status: 409, code: 'no_active_run' }))).cancelRun(CONVERSATION, { reason: null }),
+        expected: { kind: 'validation', status: 409, code: 'no_active_run' },
+      },
+      {
+        call: () => createAgentsApi(vi.fn().mockRejectedValue(new ApiError('validation', { status: 422, code: 'invalid_request' }))).submitMessage(CONVERSATION, { text: '' }),
+        expected: { kind: 'validation', status: 422, code: 'invalid_request' },
+      },
+      {
+        call: () => createAgentsApi(vi.fn().mockRejectedValue(new ApiError('authentication', { status: 403, code: 'binding_revoked' }))).submitMessage(CONVERSATION, { text: 'x' }),
+        expected: { kind: 'authentication', status: 403, code: 'binding_revoked' },
+      },
+    ]
+    for (const testCase of cases) {
+      await expect(testCase.call()).rejects.toMatchObject(testCase.expected)
+    }
+  })
+})
+
+describe('fetchEventsSinceAgui', () => {
+  const chunk = (n: number) => ({ type: 'TEXT_MESSAGE_CHUNK', messageId: `m-${n}`, delta: `d-${n}` })
+
+  it('pages while next_cursor advances and returns the watermark at termination', async () => {
+    const page = (events: unknown[], next: number | null) => ({ events, next_cursor: next })
+    const request = vi.fn()
+      .mockResolvedValueOnce(page([chunk(3), chunk(4)], 4))
+      .mockResolvedValueOnce(page([chunk(5)], 5))
+      .mockResolvedValueOnce(page([], 5))
+
+    const batch = await fetchEventsSinceAgui(request, CONVERSATION, 2)
+
+    expect(batch.events).toEqual([chunk(3), chunk(4), chunk(5)])
+    expect(batch.coveredThrough).toBe(5)
+    expect(request.mock.calls.map(([path]) => path)).toEqual([
+      `/api/v1/agent/conversations/${CONVERSATION}/events?wire=agui&since=2&limit=200`,
+      `/api/v1/agent/conversations/${CONVERSATION}/events?wire=agui&since=4&limit=200`,
+      `/api/v1/agent/conversations/${CONVERSATION}/events?wire=agui&since=5&limit=200`,
+    ])
+  })
+
+  it('stops when next_cursor stops advancing even with a non-empty page', async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce({ events: [chunk(3)], next_cursor: 4 })
+      .mockResolvedValueOnce({ events: [chunk(4)], next_cursor: 4 })
+
+    const batch = await fetchEventsSinceAgui(request, CONVERSATION, 3)
+    expect(batch).toEqual({ events: [chunk(3), chunk(4)], coveredThrough: 4 })
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns an empty batch with coveredThrough = since when nothing follows', async () => {
+    const request = vi.fn().mockResolvedValueOnce({ events: [], next_cursor: 7 })
+    const batch = await fetchEventsSinceAgui(request, CONVERSATION, 7)
+    expect(batch).toEqual({ events: [], coveredThrough: 7 })
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+
+  it('discards malformed or unknown event objects instead of throwing', async () => {
+    const request = vi.fn().mockResolvedValueOnce({
+      events: [chunk(3), { type: 'NOPE' }, null, { type: 'TEXT_MESSAGE_CHUNK', messageId: '', delta: '' }],
+      next_cursor: 3,
+    })
+    const batch = await fetchEventsSinceAgui(request, CONVERSATION, 3)
+    expect(batch.events).toEqual([chunk(3)])
+    expect(batch.coveredThrough).toBe(3)
   })
 })
