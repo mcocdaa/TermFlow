@@ -7,6 +7,8 @@ describe('browser runtime composition', () => {
     const dependencies: ClientRuntime = {
       api: {} as ClientRuntime['api'],
       createTerminal: () => ({ async connect() {}, async sendInput() {}, async sendAction() {}, async dispose() {} }),
+      createAgentStream: () => ({ connect: async () => ({ close: async () => undefined }) }),
+      agentCursorStore: { load: () => null, save: () => undefined, clear: () => undefined },
       clipboard: { writeText: async () => undefined },
       clock: { now: () => 1, setTimeout: () => 2, clearTimeout: () => undefined, setInterval: () => 3, clearInterval: () => undefined },
       visibility: { isHidden: () => false, subscribe: () => () => undefined },

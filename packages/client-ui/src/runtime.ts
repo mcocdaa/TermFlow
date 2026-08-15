@@ -1,4 +1,7 @@
 import type {
+  AgentCursorStore,
+  AgentStreamTransport,
+  AguiEvent,
   ApiClient,
   AudioRecorder,
   AudioUploader,
@@ -62,6 +65,14 @@ export interface ClientVoiceRuntime {
 export interface ClientRuntime {
   readonly api: ApiClient
   readonly createTerminal: (termId: string, callbacks: TerminalSessionCallbacks) => TerminalSessionLike
+  /**
+   * Agent live-stream transport factory (M6b spec §4.6). The web composition
+   * root injects the fetch-stream agui adapter; Tauri will inject a
+   * Rust-owned transport later — the shared UI depends only on this port.
+   */
+  readonly createAgentStream: () => AgentStreamTransport<AguiEvent>
+  /** Agent cursor persistence port (M6b spec §4.4); platform-owned storage. */
+  readonly agentCursorStore: AgentCursorStore
   readonly clipboard: ClipboardPort
   readonly clock: ClockPort
   readonly visibility: VisibilityPort

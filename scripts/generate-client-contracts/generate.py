@@ -37,6 +37,8 @@ from termflow_control_plane.api.agent_approvals import (
 )
 from termflow_control_plane.api.agent_capabilities import AgentCapabilitiesResponse
 from termflow_control_plane.api.agent_conversations import (
+    AgentCancelRequest,
+    AgentCancelResponse,
     AgentConversationBindingInfo,
     AgentConversationCreateRequest,
     AgentConversationDetailResponse,
@@ -46,6 +48,8 @@ from termflow_control_plane.api.agent_conversations import (
     AgentEventResponse,
     AgentMessageListResponse,
     AgentMessageResponse,
+    AgentSubmitMessageRequest,
+    AgentSubmitMessageResponse,
 )
 from termflow_control_plane.api.transcription import (
     TranscriptionDraftDetailResponse,
@@ -193,6 +197,10 @@ MODELS: tuple[type[BaseModel], ...] = (
     AgentConversationDetailResponse,
     AgentMessageResponse,
     AgentMessageListResponse,
+    AgentSubmitMessageRequest,
+    AgentSubmitMessageResponse,
+    AgentCancelRequest,
+    AgentCancelResponse,
     AgentEventResponse,
     AgentEventListResponse,
     ApprovalResponse,

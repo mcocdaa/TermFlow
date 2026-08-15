@@ -11,11 +11,13 @@ import type {
 import { parseAguiEvent, type AguiEvent, type AguiReplayBatch } from '../agent/agui'
 import type { ApiRequest, ApiRequestOptions } from '../http/types'
 
-//: Hand-written M4.5 admission models (termflow_control_plane.api.
-//: agent_conversations). They move to generated.ts with the contracts
-//: regeneration task; this module must not depend on their presence there.
+//: M4.5 admission models (termflow_control_plane.api.agent_conversations).
+//: The raw wire shapes now also exist in generated.ts, but this module keeps
+//: caller-friendly variants: ``draft_ref``/``reason`` are optional here while
+//: the generator renders B-side defaults as required ``| null`` fields.
 export interface AgentSubmitMessageRequest {
   text: string
+  draft_ref?: string | null
 }
 
 export interface AgentSubmitMessageResponse {
@@ -50,13 +52,29 @@ export function createAgentsApi(request: ApiRequest) {
     capabilities: (signal?: AbortSignal) =>
       request<AgentCapabilitiesResponse>('/api/v1/agent/capabilities', withSignal({}, signal)),
 
-    listConversations: (signal?: AbortSignal) =>
-      request<AgentConversationListResponse>('/api/v1/agent/conversations', withSignal({}, signal)),
+    listConversations: (options: { bindingId?: string, signal?: AbortSignal } = {}) => {
+      const query = new URLSearchParams()
+      // B requires the binding scope (M6b spec §5); a missing binding is a
+      // caller error surfaced as the endpoint's 422.
+      if (options.bindingId !== undefined) query.set('binding_id', options.bindingId)
+      const suffix = query.size === 0 ? '' : `?${query.toString()}`
+      return request<AgentConversationListResponse>(
+        `/api/v1/agent/conversations${suffix}`,
+        withSignal({}, options.signal),
+      )
+    },
 
     createConversation: (body: AgentConversationCreateRequest, signal?: AbortSignal) =>
       request<AgentConversationResponse>(
         '/api/v1/agent/conversations',
         withSignal({ method: 'POST', body }, signal),
+      ),
+
+    /** Delete a conversation (M6b spec §5): 204 on success. */
+    deleteConversation: (conversationId: string, signal?: AbortSignal) =>
+      request<void>(
+        conversationPath(conversationId, ''),
+        withSignal({ method: 'DELETE' }, signal),
       ),
 
     getConversation: (conversationId: string, signal?: AbortSignal) =>
