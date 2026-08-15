@@ -1,9 +1,20 @@
+mod audio_upload;
 mod auth;
 mod diagnostics;
 mod terminal_socket;
 
 use auth::NativeAuthState;
 use tauri::Manager;
+
+/// Public seams for the integration contract tests under `tests/`
+/// (audio_upload_contract.rs). These are not IPC commands; the runtime
+/// invoke surface is the `invoke_handler` list below.
+pub mod contract_testing {
+    pub use crate::audio_upload::{
+        build_multipart, build_upload_request, DRAFT_UPLOAD_PATH, MAX_AUDIO_BYTES,
+    };
+    pub use crate::auth::assert_http_target;
+}
 
 #[cfg(target_os = "android")]
 fn initialize_android_context() {
@@ -82,6 +93,7 @@ pub fn run() {
             auth::native_request_headers,
             auth::native_remember_dpop_nonce,
             auth::native_http_request,
+            audio_upload::native_upload_audio,
             terminal_socket::native_terminal_connect,
             terminal_socket::native_terminal_send,
             terminal_socket::native_terminal_close,

@@ -64,7 +64,7 @@ pub struct NativeAuthState {
     nonces: Mutex<HashMap<String, String>>,
     callback_listeners: Mutex<HashMap<String, PendingCallbackListener>>,
     refresh_gate: tokio::sync::Mutex<()>,
-    http: Client,
+    pub(crate) http: Client,
 }
 
 /// A bound loopback callback listener waiting for the browser handoff. The
@@ -214,7 +214,11 @@ fn keyring_entry(issuer: &str, kind: &str) -> Result<KeyringEntry, String> {
         .map_err(|_| safe_error("secure_store_unavailable"))
 }
 
-fn remember_dpop_nonce(state: &NativeAuthState, issuer: &str, nonce: &str) -> Result<(), String> {
+pub(crate) fn remember_dpop_nonce(
+    state: &NativeAuthState,
+    issuer: &str,
+    nonce: &str,
+) -> Result<(), String> {
     if nonce.is_empty() || nonce.len() > 1024 || nonce.chars().any(char::is_whitespace) {
         return Err(safe_error("dpop_nonce_invalid"));
     }
@@ -226,7 +230,10 @@ fn remember_dpop_nonce(state: &NativeAuthState, issuer: &str, nonce: &str) -> Re
     Ok(())
 }
 
-fn remembered_dpop_nonce(state: &NativeAuthState, issuer: &str) -> Result<Option<String>, String> {
+pub(crate) fn remembered_dpop_nonce(
+    state: &NativeAuthState,
+    issuer: &str,
+) -> Result<Option<String>, String> {
     Ok(state
         .nonces
         .lock()
@@ -272,7 +279,7 @@ fn clear_native_credentials(state: &NativeAuthState, issuer: &str) -> Result<(),
     }
 }
 
-fn signing_key(issuer: &str) -> Result<SigningKey, String> {
+pub(crate) fn signing_key(issuer: &str) -> Result<SigningKey, String> {
     let entry = keyring_entry(issuer, "p256")?;
     match entry.get_secret() {
         Ok(bytes) => {
@@ -315,7 +322,7 @@ fn jwt_segment(value: &Value) -> Result<String, String> {
         .map(|bytes| URL_SAFE_NO_PAD.encode(bytes))
         .map_err(|_| safe_error("dpop_encoding_failed"))
 }
-fn dpop_proof(
+pub(crate) fn dpop_proof(
     key: &SigningKey,
     method: &str,
     target: &str,
@@ -477,6 +484,15 @@ async fn current_access(state: &NativeAuthState, issuer: &str) -> Result<AccessS
         .get(issuer)
         .cloned()
         .ok_or_else(|| safe_error("authorization_required"))
+}
+
+/// Token-only view of `current_access` for sibling modules that must not see
+/// the internal `AccessState` bookkeeping (e.g. `audio_upload`).
+pub(crate) async fn current_access_token(
+    state: &NativeAuthState,
+    issuer: &str,
+) -> Result<String, String> {
+    Ok(current_access(state, issuer).await?.access_token)
 }
 
 #[tauri::command]
@@ -838,7 +854,11 @@ fn is_public_api_path(path: &str) -> bool {
     )
 }
 
-fn assert_http_target(issuer: &str, path: &str) -> Result<Url, String> {
+/// Pins a WebView-supplied path to the issuer origin. `pub` so the upload
+/// contract tests under `tests/` can assert the exact semantics the
+/// `native_upload_audio` command relies on (same origin, `/api/` prefix,
+/// no absolute URLs or backslashes).
+pub fn assert_http_target(issuer: &str, path: &str) -> Result<Url, String> {
     if !path.starts_with('/')
         || path.starts_with("//")
         || path.contains("://")
@@ -881,9 +901,9 @@ pub(crate) async fn request_auth_headers(
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeHttpResponse {
-    status: u16,
-    headers: HashMap<String, String>,
-    body: Option<Value>,
+    pub(crate) status: u16,
+    pub(crate) headers: HashMap<String, String>,
+    pub(crate) body: Option<Value>,
 }
 
 /// The only WebView-visible HTTP channel. The Rust side pins the target to
