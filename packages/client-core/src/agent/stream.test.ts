@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, type Mock } from 'vitest'
 import type { AgentEventResponse } from '@termflow/client-contracts'
+import type { AguiEvent, AguiReplayBatch } from './agui'
 import { AgentStreamSession, type AgentStreamCallbacks } from './stream'
 import type {
   AgentStreamConnectRequest,
@@ -279,5 +280,193 @@ describe('AgentStreamSession', () => {
     scheduler.runNext()
     await tick()
     expect(transport.requests).toHaveLength(1)
+  })
+})
+
+describe('AgentStreamSession agui wire (M6b spec §4.3/§4.4, plan 1019 client-core matrix)', () => {
+  const aguiChunk = (n: number): AguiEvent => ({ type: 'TEXT_MESSAGE_CHUNK', messageId: `m-${n}`, delta: `d-${n}` })
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((res) => { resolve = res })
+    return { promise, resolve }
+  }
+
+  class GenericTransport<T> implements AgentStreamTransport<T> {
+    readonly requests: AgentStreamConnectRequest[] = []
+    readonly connections: FakeConnection[] = []
+    readonly emitters: Array<(event: AgentStreamTransportEvent<T>) => void> = []
+    async connect(request: AgentStreamConnectRequest, emit: (event: AgentStreamTransportEvent<T>) => void): Promise<AgentStreamConnection> {
+      const connection = new FakeConnection()
+      this.requests.push(request)
+      this.connections.push(connection)
+      this.emitters.push(emit)
+      return connection
+    }
+    emit(event: AgentStreamTransportEvent<T>, index = this.emitters.length - 1) { this.emitters[index]?.(event) }
+  }
+
+  type AguiCallbackSpies = AgentStreamCallbacks<AguiEvent> & { onEvent: Mock<(event: AguiEvent) => void> }
+
+  function aguiSpies(): AguiCallbackSpies {
+    return {
+      onStatus: vi.fn(), onEvent: vi.fn(), onReset: vi.fn(), onClosed: vi.fn(), onError: vi.fn(), onAuthenticationRequired: vi.fn(),
+    }
+  }
+
+  async function setupAgui(overrides: {
+    seedFromSeq?: number
+    initialCursor?: string
+    replayAgui?: (conversationId: string, sinceSeq: number) => Promise<AguiReplayBatch>
+  } = {}) {
+    const transport = new GenericTransport<AguiEvent>()
+    const scheduler = new FakeScheduler()
+    const callbacks = aguiSpies()
+    const replayAgui = overrides.replayAgui ?? vi.fn(async () => ({ events: [], coveredThrough: 0 }))
+    const session = new AgentStreamSession<AguiEvent>(
+      CONVERSATION,
+      callbacks,
+      {
+        transport,
+        scheduler,
+        replayAgui,
+        reconnectDelayMs: 25,
+        ...(overrides.seedFromSeq === undefined ? {} : { seedFromSeq: overrides.seedFromSeq }),
+        ...(overrides.initialCursor === undefined ? {} : { initialCursor: overrides.initialCursor }),
+      },
+    )
+    await session.connect()
+    return { session, transport, scheduler, callbacks, replayAgui }
+  }
+
+  it('deduplicates live agui frames by envelope cursor seq (duplicate deltas)', async () => {
+    const { session, transport, callbacks } = await setupAgui()
+    transport.emit({ type: 'event', event: aguiChunk(2), cursor: '7-2' })
+    transport.emit({ type: 'event', event: aguiChunk(2), cursor: '7-2' })
+    transport.emit({ type: 'event', event: aguiChunk(1), cursor: '7-1' })
+    transport.emit({ type: 'event', event: aguiChunk(3), cursor: '7-3' })
+    expect(callbacks.onEvent).toHaveBeenCalledTimes(2)
+    expect(callbacks.onEvent.mock.calls.map(([ev]) => ev)).toEqual([aguiChunk(2), aguiChunk(3)])
+    await session.dispose()
+  })
+
+  it('cold start seed: batch replay from 0 with live frames buffered and merged by watermark', async () => {
+    const batch = deferred<AguiReplayBatch>()
+    const replayAgui = vi.fn(() => batch.promise)
+    const { session, transport, callbacks } = await setupAgui({ seedFromSeq: 0, replayAgui })
+    transport.emit({ type: 'open' })
+    await tick()
+    expect(replayAgui).toHaveBeenCalledWith(CONVERSATION, 0)
+    // Live frames arriving during the seed replay are buffered, not delivered.
+    transport.emit({ type: 'event', event: aguiChunk(2), cursor: '7-2' })
+    transport.emit({ type: 'event', event: aguiChunk(6), cursor: '7-6' })
+    expect(callbacks.onEvent).not.toHaveBeenCalled()
+    // The batch covers through seq 5: the buffered seq-2 frame is dropped,
+    // the seq-6 frame survives and lands after the batch, in order.
+    batch.resolve({ events: [aguiChunk(3), aguiChunk(4)], coveredThrough: 5 })
+    await tick()
+    expect(callbacks.onEvent.mock.calls.map(([ev]) => ev)).toEqual([aguiChunk(3), aguiChunk(4), aguiChunk(6)])
+    // Seed happens once; subsequent live keeps flowing normally.
+    transport.emit({ type: 'event', event: aguiChunk(7), cursor: '7-7' })
+    expect(callbacks.onEvent).toHaveBeenCalledTimes(4)
+    expect(replayAgui).toHaveBeenCalledTimes(1)
+    await session.dispose()
+  })
+
+  it('reset: onReset surfaces and a batch replay advances the watermark from lastSeq', async () => {
+    const replayAgui = vi.fn(async (_id: string, sinceSeq: number) => ({ events: [aguiChunk(sinceSeq + 1)], coveredThrough: 9 }))
+    const { session, transport, callbacks } = await setupAgui({ replayAgui })
+    transport.emit({ type: 'event', event: aguiChunk(1), cursor: '7-1' })
+    transport.emit({ type: 'event', event: aguiChunk(2), cursor: '7-2' })
+    transport.emit({ type: 'reset', cursor: '7-9' })
+    await tick()
+    expect(callbacks.onReset).toHaveBeenCalledWith('7-9')
+    expect(replayAgui).toHaveBeenCalledWith(CONVERSATION, 2)
+    // Live frames covered by the replay watermark are dropped; later ones flow.
+    transport.emit({ type: 'event', event: aguiChunk(9), cursor: '7-9' })
+    transport.emit({ type: 'event', event: aguiChunk(10), cursor: '7-10' })
+    expect(callbacks.onEvent.mock.calls.map(([ev]) => ev)).toEqual([aguiChunk(1), aguiChunk(2), aguiChunk(3), aguiChunk(10)])
+    await session.dispose()
+  })
+
+  it('slow client (4410): batch recovery then reconnect with the old cursor drops the server overlap', async () => {
+    const replayAgui = vi.fn(async () => ({ events: [aguiChunk(3), aguiChunk(4)], coveredThrough: 5 }))
+    const { session, transport, scheduler, callbacks } = await setupAgui({ replayAgui })
+    transport.emit({ type: 'event', event: aguiChunk(1), cursor: '7-1' })
+    transport.emit({ type: 'event', event: aguiChunk(2), cursor: '7-2' })
+    transport.emit({ type: 'close', code: 4410, reason: 'stream_too_slow' })
+    await tick()
+    expect(callbacks.onError).toHaveBeenCalledWith({ code: 'stream_too_slow' })
+    expect(replayAgui).toHaveBeenCalledWith(CONVERSATION, 2)
+    // Reconnect resumes with the old opaque cursor after the REST watermark.
+    scheduler.runNext()
+    await tick()
+    expect(transport.requests[1]).toEqual({ conversationId: CONVERSATION, cursor: '7-2' })
+    transport.emit({ type: 'event', event: aguiChunk(2), cursor: '7-2' }, 1)
+    transport.emit({ type: 'event', event: aguiChunk(5), cursor: '7-5' }, 1)
+    transport.emit({ type: 'event', event: aguiChunk(6), cursor: '7-6' }, 1)
+    expect(callbacks.onEvent.mock.calls.map(([ev]) => ev)).toEqual([
+      aguiChunk(1), aguiChunk(2), aguiChunk(3), aguiChunk(4), aguiChunk(6),
+    ])
+    await session.dispose()
+  })
+
+  it('still reconnects when the agui recovery replay fails', async () => {
+    const { session, transport, scheduler, callbacks } = await setupAgui({
+      replayAgui: vi.fn(async () => { throw new Error('offline') }),
+    })
+    transport.emit({ type: 'close', code: 4410, reason: 'stream_too_slow' })
+    await tick()
+    expect(callbacks.onError).toHaveBeenCalledWith({ code: 'replay_failed' })
+    scheduler.runNext()
+    await tick()
+    expect(transport.requests).toHaveLength(2)
+    await session.dispose()
+  })
+
+  it('closes 4401/4412 as terminal states in agui mode (no reconnect)', async () => {
+    const auth = await setupAgui()
+    auth.transport.emit({ type: 'close', code: 4401, reason: 'authentication_epoch_changed' })
+    expect(auth.callbacks.onAuthenticationRequired).toHaveBeenCalledTimes(1)
+    expect(auth.scheduler.pending).toHaveLength(0)
+    await auth.session.dispose()
+
+    const revoked = await setupAgui()
+    revoked.transport.emit({ type: 'close', code: 4412, reason: 'binding_revoked' })
+    expect(revoked.callbacks.onClosed).toHaveBeenCalledWith({ code: 4412, reason: 'binding_revoked' })
+    expect(revoked.scheduler.pending).toHaveLength(0)
+    await revoked.session.dispose()
+  })
+
+  it('subscribes with the persisted initial cursor (cursor resume)', async () => {
+    const { session, transport, callbacks } = await setupAgui({ initialCursor: '7-9' })
+    expect(transport.requests[0]).toEqual({ conversationId: CONVERSATION, cursor: '7-9' })
+    // Server gap replay frames below the resumed seq are dropped.
+    transport.emit({ type: 'event', event: aguiChunk(8), cursor: '7-8' })
+    transport.emit({ type: 'event', event: aguiChunk(10), cursor: '7-10' })
+    expect(callbacks.onEvent.mock.calls.map(([ev]) => ev)).toEqual([aguiChunk(10)])
+    await session.dispose()
+  })
+
+  it('treats an invalid initial cursor as a cold start', async () => {
+    const { transport } = await setupAgui({ initialCursor: 'nope' })
+    expect(transport.requests[0]).toEqual({ conversationId: CONVERSATION })
+  })
+
+  it('rejects an agui global stream (no id to deduplicate)', () => {
+    expect(() => new AgentStreamSession<AguiEvent>(
+      null,
+      aguiSpies(),
+      { transport: new GenericTransport<AguiEvent>(), scheduler: new FakeScheduler(), replayAgui: vi.fn() },
+    )).toThrow()
+  })
+
+  it('cross-checks canonical envelope seq against database_seq (duplicate deltas)', async () => {
+    const { transport, callbacks } = await setup()
+    // Mismatched cursor/database_seq is a duplicate projection: dropped.
+    transport.emit({ type: 'event', event: event(3), cursor: '7-4' })
+    expect(callbacks.onEvent).not.toHaveBeenCalled()
+    transport.emit({ type: 'event', event: event(3), cursor: '7-3' })
+    expect(deliveredSeqs(callbacks)).toEqual([3])
   })
 })
