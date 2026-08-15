@@ -381,4 +381,45 @@
   .agent-composer__send, .agent-composer__cancel { flex: none; }
   .agent-composer__hint { margin: 0; }
   .agent-composer__unavailable { margin: 0; color: var(--color-warning); }
+
+  /* M6b agent chat — pending approval panel (native buttons, countdown, confirm dialog) */
+  .agent-approval-panel { display: flex; flex-direction: column; gap: var(--space-3); }
+  .agent-approval-panel__state { margin: 0; color: var(--color-text-muted); }
+  .agent-approval-panel__list { display: flex; flex-direction: column; gap: var(--space-3); }
+  .agent-approval-item { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-panel); }
+  .agent-approval-item__meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); }
+  .agent-approval-item__pane { font-family: var(--font-mono); font-size: var(--text-sm); overflow-wrap: anywhere; }
+  .agent-approval-item__operation { font-size: var(--text-sm); color: var(--color-text-secondary); overflow-wrap: anywhere; }
+  .agent-approval-item__countdown { margin-inline-start: auto; font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--color-accent); }
+  .agent-approval-item__summary { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+  .agent-approval-item__footer { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+  .agent-approval-item__hash { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--color-text-muted); overflow-wrap: anywhere; }
+  .agent-approval-item__actions { display: inline-flex; gap: var(--space-2); margin-inline-start: auto; }
+  .agent-approval-button { min-height: 2.25rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-1) var(--space-3); background: var(--color-elevated); color: inherit; font: inherit; cursor: pointer; }
+  .agent-approval-button:hover:not(:disabled), .agent-approval-button:focus-visible { border-color: var(--color-accent); color: var(--color-accent); }
+  .agent-approval-button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  .agent-approval-button:disabled { opacity: 0.55; cursor: default; }
+  .agent-approval-button--approve { border-color: var(--color-accent); background: var(--color-accent); color: var(--color-accent-contrast); font-weight: 700; }
+  .agent-approval-button--approve:hover:not(:disabled) { filter: brightness(1.08); color: var(--color-accent-contrast); }
+  .agent-approval-button--deny { border-color: var(--color-danger); color: var(--color-danger); }
+  .agent-approval-button--deny:hover:not(:disabled), .agent-approval-button--deny:focus-visible { border-color: var(--color-danger); color: var(--color-danger); background: var(--color-elevated); }
+  .agent-approval-dialog__summary { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--text-sm); color: var(--color-text-secondary); }
+
+  /* M6b agent chat — timeline inline approval card (read-only, lazy REST detail) */
+  .agent-approval-card { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-panel); }
+  .agent-approval-card__header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+  .agent-approval-card__tool { overflow-wrap: anywhere; }
+  .agent-approval-card__state { display: inline-flex; padding: 0.1rem var(--space-2); border: 1px solid var(--color-border); border-radius: 999px; font-size: var(--text-sm); color: var(--color-text-secondary); }
+  .agent-approval-card__evidence { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--text-sm); }
+  .agent-approval-card__detail { display: flex; flex-direction: column; gap: var(--space-1); }
+  .agent-approval-card__field { margin: 0; display: flex; gap: var(--space-2); overflow-wrap: anywhere; }
+  .agent-approval-card__label { flex: none; color: var(--color-text-muted); }
+  .agent-approval-card__summary { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .agent-approval-card__hash { margin: 0; font-family: var(--font-mono); font-size: var(--text-sm); color: var(--color-text-muted); }
+  .agent-approval-card__fallback { margin: 0; color: var(--color-text-muted); }
+  .agent-approval-card__footer { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+  .agent-approval-card__expires { font-size: var(--text-sm); color: var(--color-text-muted); }
+  .agent-approval-card__action { margin-inline-start: auto; min-height: 2.25rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-1) var(--space-3); background: var(--color-elevated); color: inherit; font: inherit; cursor: pointer; }
+  .agent-approval-card__action:hover:not(:disabled), .agent-approval-card__action:focus-visible { border-color: var(--color-accent); color: var(--color-accent); }
+  .agent-approval-card__action:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 }
