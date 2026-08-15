@@ -304,6 +304,33 @@
     .logout-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   }
   .locked-indicator { display: inline-block; width: 0.35rem; height: 0.35rem; margin-inline-start: var(--space-1); border-radius: 50%; background: currentColor; vertical-align: middle; }
+
+  /* M7b mobile voice input (press/hold) */
+  .voice-input { display: grid; justify-items: center; gap: var(--space-2); }
+  .voice-input-button { min-width: 3.5rem; min-height: 3.5rem; display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); border: 1px solid var(--color-border); border-radius: 50%; padding: var(--space-2); background: var(--color-elevated); color: var(--color-text-primary); touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+  .voice-input-button.recording { border-color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 12%, var(--color-elevated)); }
+  .voice-input-button.cancel-pending { border-color: var(--color-danger); background: var(--color-danger); color: var(--color-panel); }
+  .voice-recording-dot { display: inline-block; width: 0.55rem; height: 0.55rem; border-radius: 50%; background: currentColor; }
+  .voice-input-button.cancel-pending .voice-recording-dot { background: var(--color-panel); }
+  .voice-recording-indicator { display: inline-flex; align-items: center; gap: var(--space-2); font-variant-numeric: tabular-nums; }
+  .voice-hint { margin: 0; color: var(--color-text-muted); font-size: 0.78rem; }
+  .voice-uploading { display: inline-flex; align-items: center; gap: var(--space-3); min-height: 2.75rem; color: var(--color-text-secondary); }
+  /* Touch targets ≥ 44px (WCAG 2.5.5) — the shared compact/text buttons are
+     smaller by default, so the voice scope raises them. */
+  .voice-uploading .text-button { min-height: 2.75rem; }
+  .voice-failure .compact-secondary-button { min-height: 2.75rem; }
+  .voice-spinner { width: 1rem; height: 1rem; border: 2px solid var(--color-border); border-block-start-color: var(--color-accent); border-radius: 50%; }
+  .voice-failure { display: inline-flex; gap: var(--space-2); }
+  .voice-draft-sheet { display: grid; gap: var(--space-3); }
+  .voice-draft-sheet textarea { width: 100%; min-height: 8rem; resize: vertical; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-page); color: var(--color-text-primary); font: inherit; line-height: 1.6; }
+  .voice-disclosure { margin: 0; color: var(--color-text-secondary); font-size: 0.8rem; }
+  .voice-exit-confirm { width: min(100%, 26rem); display: grid; gap: var(--space-3); }
+  @media (prefers-reduced-motion: no-preference) {
+    .voice-spinner { animation: voice-spin 0.9s linear infinite; }
+    .voice-input-button.recording .voice-recording-dot { animation: voice-dot-pulse 1.2s ease-in-out infinite; }
+  }
+  @keyframes voice-spin { to { transform: rotate(360deg); } }
+  @keyframes voice-dot-pulse { 0%, 100% { opacity: 0.35; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1.15); } }
   @media (prefers-reduced-motion: reduce) { .metric-card, .metric-help, .term-row-link, .menu-chevron, .primary-button, .text-button, .icon-button, .theme-option, .titlebar-button, .terminal-back { transition: none; }
     .metric-card-has-help:hover, .metric-card-has-help:focus-visible, .term-row-link:hover, .term-row-link:focus-visible { transform: none; }
   }
