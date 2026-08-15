@@ -1,5 +1,7 @@
 import { createApiClient, parseNativeAuthorizationCallback, TerminalSession, type TerminalScheduler } from '@termflow/client-core'
 import type { ClientRuntime } from '@termflow/client-ui'
+import { createBrowserAgentCursorStore } from './adapters/browserAgentCursorStore'
+import { createBrowserAgentStreamTransport } from './adapters/browserAgentStreamTransport'
 import { createBrowserClipboard } from './adapters/browserClipboard'
 import { createBrowserClock } from './adapters/browserClock'
 import { browserCanonicalServerUrl } from './adapters/browserCanonicalServerUrl'
@@ -22,6 +24,11 @@ function browserDependencies(): ClientRuntime {
       scheduler,
       createId: () => globalThis.crypto.randomUUID(),
     }),
+    // Agent ports (M6b spec §4.6): the fetch-stream agui transport and the
+    // localStorage cursor store are the browser composition root's only
+    // platform-touching implementations.
+    createAgentStream: () => createBrowserAgentStreamTransport({ wire: 'agui' }),
+    agentCursorStore: createBrowserAgentCursorStore(),
     clipboard: createBrowserClipboard(),
     clock,
     visibility: createBrowserVisibility(),
