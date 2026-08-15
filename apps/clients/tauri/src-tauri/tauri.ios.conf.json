@@ -2,7 +2,9 @@
   "version": "0.2.0",
   "bundle": {
     "iOS": {
-      "bundleVersion": "0.2.0"
+      "bundleVersion": "0.2.0",
+      "minimumSystemVersion": "15.0",
+      "infoPlist": "Info.ios.plist"
     }
   }
 }
