@@ -1,4 +1,5 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { ApiError } from '@termflow/client-core'
 import type { AgentBindingResponse, AgentConversationResponse, ApprovalResponse } from '@termflow/client-contracts'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -251,6 +252,15 @@ describe('AgentView', () => {
 
     expect(harness.wrapper.get('[data-agent-bindings-failed]').text()).toContain('无法加载 Binding 列表')
     expect(harness.toast().text).toBe('无法加载 Binding 列表。')
+  })
+
+  it('does not surface a navigation-abort as a binding failure or toast', async () => {
+    const harness = await mounted({ listBindings: vi.fn(async () => {
+      throw new ApiError('aborted')
+    }) })
+
+    expect(harness.wrapper.find('[data-agent-bindings-failed]').exists()).toBe(false)
+    expect(harness.toast().text).toBeNull()
   })
 
   it('shows an empty state when no bindings exist', async () => {

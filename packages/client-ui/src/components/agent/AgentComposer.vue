@@ -71,7 +71,12 @@ const props = defineProps<{
   disabled?: boolean
   /** Raw backend runtime state from the history reducer (STATE_DELTA). */
   backendState?: string | null
-  /** An active run exists → show the cancel button. */
+  /**
+   * An active run exists → show the cancel button. AgentChatView keeps its
+   * cancel control in the detail header (single control per screen), so
+   * this optional prop and the ``cancelled`` emit are currently unused
+   * there; they stay for hosts that want the cancel inside the composer.
+   */
   hasActiveRun?: boolean
 }>()
 

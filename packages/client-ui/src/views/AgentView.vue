@@ -122,6 +122,7 @@
 //: restored); every rendered text is pure interpolation. A disabled broker
 //: renders the 占位 instead of the management UI (spec §6.4).
 import type { AgentBindingResponse, AgentConversationResponse } from '@termflow/client-contracts'
+import { ApiError } from '@termflow/client-core'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useAgentBroker } from '../composables/useAgentBroker'
@@ -148,7 +149,10 @@ async function loadBindings() {
   bindingsFailed.value = false
   try {
     bindings.value = (await runtime.api.agents.listBindings(controller?.signal)).bindings
-  } catch {
+  } catch (error) {
+    // A navigation-abort must not surface as a failure toast on the next
+    // page (mirrors useAgentConversations' aborted filter).
+    if (error instanceof ApiError && error.kind === 'aborted') return
     bindingsFailed.value = true
     toast.show({ text: '无法加载 Binding 列表。', tone: 'error' })
   } finally {

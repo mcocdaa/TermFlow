@@ -154,8 +154,19 @@ async function cancelRun() {
   try {
     await runtime.api.agents.cancelRun(conversationId.value, {}, controller?.signal)
   } catch (error) {
-    // 409 no_active_run: the UI was already stale — not an error.
-    if (!(error instanceof ApiError && error.status === 409)) {
+    // 409 no_active_run: the local run state was already stale — settle the
+    // active runs locally so the cancel button disappears instead of
+    // lingering on a run the server no longer knows (no toast: not an
+    // error).
+    if (error instanceof ApiError && error.status === 409) {
+      const now = runtime.clock.now()
+      const base = conversation.history.value
+      const runs = new Map(base.runs)
+      for (const [runId, run] of runs) {
+        if (run.status === 'active') runs.set(runId, { ...run, status: 'finished', endedAt: now })
+      }
+      conversation.history.value = { ...base, runs }
+    } else {
       toast.show({ text: error instanceof Error ? error.message : '取消失败，请稍后重试。', tone: 'error' })
     }
   } finally {
@@ -163,10 +174,21 @@ async function cancelRun() {
   }
 }
 
+/**
+ * Escape a value for a double-quoted CSS attribute selector value.
+ * Only `"` and `\` need escaping there; B-generated ids are safe, this is
+ * defensive (kept local because `CSS.escape` is not available in jsdom).
+ */
+function escapeCssAttr(value: string): string {
+  return value.replace(/["\\]/g, (char) => `\\${char}`)
+}
+
 /** The approval card asked to handle its request: focus the panel entry. */
 function focusApproval(approvalId: string) {
   void nextTick(() => {
-    const entry = document.querySelector(`[data-agent-approval-item][data-agent-approval-id="${approvalId}"]`)
+    const entry = document.querySelector(
+      `[data-agent-approval-item][data-agent-approval-id="${escapeCssAttr(approvalId)}"]`,
+    )
     const firstButton = entry?.querySelector('button')
     if (firstButton instanceof HTMLElement) firstButton.focus()
   })

@@ -312,4 +312,26 @@ describe('AgentChatView', () => {
     expect(harness.cancelRun).toHaveBeenCalledWith(CONVERSATION, {}, expect.any(AbortSignal))
     harness.unmount()
   })
+
+  it('409 no_active_run: settles the stale active run locally without a toast', async () => {
+    const harness = await mounted({
+      cancelRun: vi.fn(async () => {
+        throw new ApiError('server', { status: 409, code: 'no_active_run' })
+      }),
+    })
+
+    harness.transport.emit({ type: 'open' })
+    harness.transport.emit({ type: 'event', event: { type: 'RUN_STARTED', threadId: 'th-1', runId: 'r1' }, cursor: '7-1' })
+    await flushPromises()
+    expect(harness.wrapper.find('[data-action="cancel-run"]').exists()).toBe(true)
+
+    await harness.wrapper.get('[data-action="cancel-run"]').trigger('click')
+    await flushPromises()
+
+    // The stale active run is settled locally: the cancel button disappears
+    // and no error toast is shown (the 409 is not an error).
+    expect(harness.wrapper.find('[data-action="cancel-run"]').exists()).toBe(false)
+    expect(harness.toast().text).toBeNull()
+    harness.unmount()
+  })
 })
