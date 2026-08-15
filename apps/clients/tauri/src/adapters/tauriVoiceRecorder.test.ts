@@ -33,6 +33,8 @@ class FakeMediaRecorder {
   onerror: (() => void) | null = null
   onstop: (() => void) | null = null
   chunks: Blob[] = []
+  /** When true, stop() only flips the state — the test fires the events. */
+  manualStop = false
   constructor(
     public readonly stream: MediaStream,
     public readonly options: MediaRecorderOptions,
@@ -44,6 +46,7 @@ class FakeMediaRecorder {
   }
   stop(): void {
     this.state = 'inactive'
+    if (this.manualStop) return
     for (const chunk of this.chunks) this.ondataavailable?.({ data: chunk })
     this.onstop?.()
   }
@@ -358,6 +361,43 @@ describe('createTauriVoiceRecorder lifecycle (§4.3.1)', () => {
     harness.recorder.abort()
 
     expect(harness.trackStop).toHaveBeenCalledTimes(1)
+    await expect(harness.recorder.stop()).rejects.toBeInstanceOf(RecorderUnavailableError)
+  })
+
+  it('releases all tracks when stop fails mid-capture', async () => {
+    FakeMediaRecorder.isTypeSupported.mockReturnValue(true)
+    const harness = createHarness('android')
+    await harness.recorder.start()
+    const instance = FakeMediaRecorder.instances[0]
+    if (instance === undefined) throw new Error('no MediaRecorder instance created')
+    instance.manualStop = true
+
+    const pending = harness.recorder.stop()
+    instance.onerror?.()
+
+    await expect(pending).rejects.toBeInstanceOf(RecorderUnavailableError)
+    expect(harness.trackStop).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the captured chunks when abort races an in-flight stop', async () => {
+    FakeMediaRecorder.isTypeSupported.mockReturnValue(true)
+    const harness = createHarness('android')
+    await harness.recorder.start()
+    const instance = FakeMediaRecorder.instances[0]
+    if (instance === undefined) throw new Error('no MediaRecorder instance created')
+    instance.ondataavailable?.({ data: new Blob(['a']) }) // timeslice delivery during recording
+    instance.manualStop = true
+
+    const pending = harness.recorder.stop()
+    harness.recorder.abort()
+    instance.ondataavailable?.({ data: new Blob(['b']) }) // final dataavailable on stop
+    instance.onstop?.()
+
+    // The in-flight stop settles with the full capture; the wrapper then
+    // discards it because the abort won the race.
+    const result = await pending
+    expect(result).toMatchObject({ mimeType: 'audio/webm' })
+    expect(result.blob.size).toBe(2)
     await expect(harness.recorder.stop()).rejects.toBeInstanceOf(RecorderUnavailableError)
   })
 

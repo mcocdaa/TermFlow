@@ -178,12 +178,33 @@ function parseDraftResponse(body: unknown): TranscriptionUploadResponse {
   }
 }
 
-export function createTauriAudioUpload(): AudioUploader {
+export interface TauriAudioUploadOptions {
+  /** Test seam — defaults to `blobToBase64` (browser FileReader). */
+  encodeBase64?: (blob: Blob) => Promise<string>
+}
+
+export function createTauriAudioUpload(options: TauriAudioUploadOptions = {}): AudioUploader {
+  const encodeBase64 = options.encodeBase64 ?? blobToBase64
   return async (audio: RecordedAudio, params: AudioUploadParams): Promise<TranscriptionUploadResponse> => {
     if (!ALLOWED_UPLOAD_MIME_TYPES.includes(audio.mimeType)) {
       throw uploadError({ status: 415, code: 'unsupported_audio_format' })
     }
-    const audioBase64 = await blobToBase64(audio.blob)
+    let audioBase64: string
+    try {
+      audioBase64 = await encodeBase64(audio.blob)
+    } catch {
+      // Encoding the in-memory blob failed — a client-side defect, not a
+      // network condition. Map it onto the B side 422 discard semantics
+      // ("re-record") and log a diagnostic so it never masquerades as the
+      // §4.6 "offline" message.
+      void logNativeEvent({
+        event: 'audio_upload_failed',
+        issuer: serverConfig.current,
+        level: 'error',
+        errorCode: 'base64_encode_failed',
+      })
+      throw uploadError({ status: 422, code: 'invalid_audio' })
+    }
     const send = (nonce?: string) => invoke<NativeHttpResponse>(UPLOAD_COMMAND, {
       issuer: serverConfig.current,
       audioBase64,

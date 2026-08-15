@@ -188,9 +188,14 @@ class MediaRecorderEngine implements CaptureEngine {
   }
 
   abort(): void {
-    // A stop already in flight must keep its handlers so the pending promise
-    // can settle; only an actively recording engine is torn down silently.
-    if (this.pendingStop === null && this.recorder.state !== 'inactive') {
+    // A stop already in flight must keep its handlers and chunks so the
+    // pending promise settles with the captured audio; the recorder wrapper
+    // observes the abort and discards that result. Only a recording without
+    // a pending stop is torn down silently here.
+    if (this.pendingStop !== null) return
+    this.chunks.length = 0
+    if (this.recorder.state !== 'inactive') {
+      this.recorder.ondataavailable = null
       this.recorder.onstop = null
       this.recorder.onerror = null
       try {
@@ -199,7 +204,6 @@ class MediaRecorderEngine implements CaptureEngine {
         // Already inactive — nothing to tear down.
       }
     }
-    this.chunks.length = 0
   }
 }
 
@@ -423,11 +427,19 @@ export function createTauriVoiceRecorder(options: TauriVoiceRecorderOptions): Au
     if (settled !== null) return settled // idempotent
     const current = engine
     if (current === null) throw new RecorderUnavailableError('recorder_not_started')
-    const result = await current.stop()
-    if (engine === current) engine = null
-    settled = result
-    releaseStream()
-    return result
+    try {
+      const result = await current.stop()
+      // A concurrent abort() nulls `engine` and discards the capture — only
+      // record the result while this stop still owns the engine.
+      if (engine === current) settled = result
+      return result
+    } finally {
+      // Release the mic even when the capture pipeline fails mid-stop
+      // (onerror / permission revoked / device disconnect): the system
+      // "recording" indicator must never linger (spec §4.3.2).
+      if (engine === current) engine = null
+      releaseStream()
+    }
   }
 
   function abort(): void {

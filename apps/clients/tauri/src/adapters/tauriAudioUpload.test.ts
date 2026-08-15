@@ -177,6 +177,16 @@ describe('createTauriAudioUpload (§4.5/§4.6)', () => {
     await expect(createTauriAudioUpload()(webmAudio(), uploadParams(controller.signal))).rejects.toEqual({ kind: 'aborted' })
     expect(invoke).not.toHaveBeenCalled()
   })
+
+  it('maps a base64 encoding failure to a contract-shaped discard error instead of a raw error', async () => {
+    const upload = createTauriAudioUpload({ encodeBase64: () => Promise.reject(new Error('encode failed')) })
+
+    await expect(upload(webmAudio(), uploadParams())).rejects.toEqual({ status: 422, code: 'invalid_audio' })
+    expect(invoke).not.toHaveBeenCalled()
+    expect(logNativeEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'audio_upload_failed', errorCode: 'base64_encode_failed', level: 'error' }),
+    )
+  })
 })
 
 describe('blobToBase64', () => {
