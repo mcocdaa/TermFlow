@@ -113,6 +113,37 @@ describe('shared application routes', () => {
     dashboard.unmount()
   })
 
+  it('shows the Agent navigation only when the broker capability is enabled', async () => {
+    const router = createRouter({ history: createMemoryHistory(), routes: clientRoutes })
+    await router.push('/')
+    await router.isReady()
+    const capabilities = vi.fn().mockResolvedValue({
+      agent_broker_enabled: true,
+      delegated_write_grants_enabled: false,
+      speech_to_text_enabled: false,
+    })
+    const enabled = mount(App, {
+      global: {
+        plugins: [router, createClientUi(createFakeRuntime({
+          api: { agents: { capabilities } } as unknown as ReturnType<typeof createFakeRuntime>['api'],
+        }))],
+      },
+    })
+    await flushPromises()
+    expect(enabled.get('.side-nav a[href="/agent"]').text()).toContain('Agent 控制台')
+    expect(enabled.find('.mobile-nav a[href="/agent"]').exists()).toBe(true)
+    expect(capabilities).toHaveBeenCalledTimes(1)
+    enabled.unmount()
+
+    const disabled = mount(App, {
+      global: { plugins: [router, createClientUi(createFakeRuntime())] },
+    })
+    await flushPromises()
+    expect(disabled.find('.side-nav a[href="/agent"]').exists()).toBe(false)
+    expect(disabled.find('.mobile-nav a[href="/agent"]').exists()).toBe(false)
+    disabled.unmount()
+  })
+
   it('restores an existing runtime session when the application starts', async () => {
     const status = vi.fn().mockResolvedValue({ authenticated: true, expires_at: '2026-08-05T12:00:00Z' })
     const router = createRouter({ history: createMemoryHistory(), routes: clientRoutes })

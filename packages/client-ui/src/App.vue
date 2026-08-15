@@ -22,29 +22,35 @@
       <RouterLink to="/"><LayoutDashboard :size="18" aria-hidden="true" />控制中心</RouterLink>
       <RouterLink to="/computers"><MonitorCog :size="18" aria-hidden="true" />电脑管理</RouterLink>
       <RouterLink to="/settings"><Settings :size="18" aria-hidden="true" />设置</RouterLink>
+      <RouterLink v-if="agentBrokerEnabled" to="/agent"><Bot :size="18" aria-hidden="true" />Agent 控制台</RouterLink>
     </aside>
     <main id="main-content" tabindex="-1"><RouterView :key="routeViewKey" /></main>
     <nav v-if="!terminalLayout && !bareLayout" class="mobile-nav" aria-label="移动端导航">
       <RouterLink to="/"><LayoutDashboard :size="18" aria-hidden="true" />控制中心</RouterLink>
       <RouterLink to="/computers"><MonitorCog :size="18" aria-hidden="true" />电脑管理</RouterLink>
       <RouterLink to="/settings"><Settings :size="18" aria-hidden="true" />设置</RouterLink>
+      <RouterLink v-if="agentBrokerEnabled" to="/agent"><Bot :size="18" aria-hidden="true" />Agent 控制台</RouterLink>
     </nav>
     <BottomToast />
   </div>
 </template>
 
 <script setup lang="ts">
-import { LayoutDashboard, LogOut, MonitorCog, Settings } from '@lucide/vue'
+import { Bot, LayoutDashboard, LogOut, MonitorCog, Settings } from '@lucide/vue'
 import { computed, onMounted, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import ThemePicker from './components/settings/ThemePicker.vue'
 import BottomToast from './components/common/BottomToast.vue'
+import { useAgentBroker } from './composables/useAgentBroker'
 import { useSession } from './composables/useSession'
 import { useTerminalPageLock } from './composables/useTerminalPageLock'
 
 const router = useRouter()
 const route = useRoute()
 const { logoutSession, refreshSession, sessionState } = useSession()
+// The Agent navigation entry is capability-gated (M6b spec §4.7); the
+// composable fails closed so the link stays hidden until the flag is known.
+const { agentBrokerEnabled } = useAgentBroker()
 const terminalLayout = computed(() => route.meta.terminal === true)
 const bareLayout = computed(() => route.meta.bare === true)
 useTerminalPageLock(terminalLayout)

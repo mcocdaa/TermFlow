@@ -118,6 +118,11 @@ export function createFakeRuntime(overrides: FakeRuntimeOverrides = {}): ClientR
       // Draft lifecycle endpoints (confirm/cancel) ride this request helper
       // when `useVoiceDraft` builds its default draft API.
       request: async () => undefined,
+      // App.vue gates the Agent navigation on this capability; disabled by
+      // default so unrelated suites keep the fail-closed shell.
+      agents: {
+        capabilities: async () => ({ agent_broker_enabled: false, delegated_write_grants_enabled: false, speech_to_text_enabled: false }),
+      },
     } as unknown as ClientRuntime['api'],
     createTerminal: () => ({ async connect() {}, async sendInput() {}, async sendAction() {}, async dispose() {} }),
     createAgentStream: createFakeAgentStreamTransport,
