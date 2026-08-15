@@ -1,4 +1,4 @@
-import type { RecordedAudio, TranscriptionUploadResponse, VoiceStorage } from '@termflow/client-core'
+import type { AgentCursorStore, AgentStreamTransport, AguiEvent, RecordedAudio, TranscriptionUploadResponse, VoiceStorage } from '@termflow/client-core'
 import type { ClientRuntime, ClientVoiceRuntime } from '../runtime'
 
 /** B side upload 201 body (M7b spec §3.1) — tests tweak fields per scenario. */
@@ -57,6 +57,43 @@ export function createFakeVoice(overrides: Partial<ClientVoiceRuntime> = {}): Cl
   }
 }
 
+/**
+ * In-memory Agent cursor store for tests (M6b spec §4.4) — mirrors the web
+ * localStorage adapter so composable tests never touch platform storage.
+ */
+export function createFakeAgentCursorStore(): AgentCursorStore {
+  const entries = new Map<string, { cursor: string, seq: number }>()
+  return {
+    load: (conversationId) => entries.get(conversationId) ?? null,
+    save: (conversationId, cursor, seq) => {
+      entries.set(conversationId, { cursor, seq })
+    },
+    clear: (conversationId) => {
+      entries.delete(conversationId)
+    },
+  }
+}
+
+/**
+ * Quiet no-op Agent stream transport stub (M6b spec §4.6). Composable tests
+ * replace it with a scripted fake to drive connect requests and frame
+ * emissions; the default keeps runtime construction cheap for unrelated
+ * suites.
+ */
+export function createFakeAgentStreamTransport(): AgentStreamTransport<AguiEvent> {
+  return {
+    connect: async (_request, emit) => {
+      const closed = { value: false }
+      emit({ type: 'open' })
+      return {
+        close: async (_code, _reason) => {
+          closed.value = true
+        },
+      }
+    },
+  }
+}
+
 export type FakeRuntimeOverrides = Partial<Omit<ClientRuntime, 'voice'>> & {
   /** Tests pass `voice: undefined` to simulate a runtime without the capability. */
   voice?: ClientVoiceRuntime | undefined
@@ -83,6 +120,8 @@ export function createFakeRuntime(overrides: FakeRuntimeOverrides = {}): ClientR
       request: async () => undefined,
     } as unknown as ClientRuntime['api'],
     createTerminal: () => ({ async connect() {}, async sendInput() {}, async sendAction() {}, async dispose() {} }),
+    createAgentStream: createFakeAgentStreamTransport,
+    agentCursorStore: createFakeAgentCursorStore(),
     clipboard: { writeText: async () => undefined },
     clock: {
       now: () => 0,
