@@ -1,7 +1,52 @@
-import type { ClientRuntime } from '../runtime'
+import type { RecordedAudio, TranscriptionUploadResponse } from '@termflow/client-core'
+import type { ClientRuntime, ClientVoiceRuntime } from '../runtime'
 
-export function createFakeRuntime(overrides: Partial<ClientRuntime> = {}): ClientRuntime {
+/** B side upload 201 body (M7b spec §3.1) — tests tweak fields per scenario. */
+export function createFakeUploadResponse(overrides: Partial<TranscriptionUploadResponse> = {}): TranscriptionUploadResponse {
   return {
+    draft_id: 'draft-fake-1',
+    state: 'pending_confirm',
+    transcript: '测试转写文本',
+    provider: 'fake-speeches',
+    region: 'cn-beijing',
+    language: 'zh',
+    duration_seconds: 2.5,
+    expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+    ...overrides,
+  }
+}
+
+/**
+ * Voice capability stub (M7b spec §4.2). Tests override `enabled`, the
+ * recorder, or the uploader per scenario; the defaults complete a happy-path
+ * press → upload → draft flow.
+ */
+export function createFakeVoice(overrides: Partial<ClientVoiceRuntime> = {}): ClientVoiceRuntime {
+  return {
+    uploadAudio: async (_audio: RecordedAudio): Promise<TranscriptionUploadResponse> =>
+      createFakeUploadResponse(),
+    createRecorder: () => ({
+      start: async () => undefined,
+      stop: async () => ({
+        blob: new Blob(['fake-audio'], { type: 'audio/webm' }),
+        mimeType: 'audio/webm',
+        durationSeconds: 1.2,
+      }),
+      abort: () => undefined,
+    }),
+    enabled: () => true,
+    ...overrides,
+  }
+}
+
+export type FakeRuntimeOverrides = Partial<Omit<ClientRuntime, 'voice'>> & {
+  /** Tests pass `voice: undefined` to simulate a runtime without the capability. */
+  voice?: ClientVoiceRuntime | undefined
+}
+
+export function createFakeRuntime(overrides: FakeRuntimeOverrides = {}): ClientRuntime {
+  const { voice, ...rest } = overrides
+  const base = {
     api: {
       sessions: {
         status: async () => ({ authenticated: true, expires_at: null }),
@@ -15,6 +60,9 @@ export function createFakeRuntime(overrides: Partial<ClientRuntime> = {}): Clien
         rename: async (id: string, name: string) => ({ instance_id: id, name, online: true, window_count: 0, pane_count: 0, active_pane_count: 0, current_command: null, last_seen_at: null }),
         remove: async () => undefined,
       },
+      // Draft lifecycle endpoints (confirm/cancel) ride this request helper
+      // when `useVoiceDraft` builds its default draft API.
+      request: async () => undefined,
     } as unknown as ClientRuntime['api'],
     createTerminal: () => ({ async connect() {}, async sendInput() {}, async sendAction() {}, async dispose() {} }),
     clipboard: { writeText: async () => undefined },
@@ -30,6 +78,9 @@ export function createFakeRuntime(overrides: Partial<ClientRuntime> = {}): Clien
     authorizationCompletion: { navigate: () => undefined },
     canonicalServerUrl: 'https://control.example',
     platform: 'Linux x86_64',
-    ...overrides,
+    ...rest,
   }
+  // Re-attach the voice capability only when explicitly provided; the
+  // undefined form must yield a runtime without the property (exactOptional).
+  return voice === undefined ? base : { ...base, voice }
 }
