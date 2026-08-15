@@ -100,6 +100,12 @@ _ALLOWED_FOR_DEAD_LETTER = ("pending", "claimed", "retry_wait")
 _ALLOWED_FOR_DISPATCH = ("claimed",)
 _ALLOWED_FOR_DELIVERY_UNKNOWN = ("claimed", "dispatched")
 
+# Bounded keyset scan for per-conversation claiming (review fix major-1): a
+# page of ``next_pending`` candidates fully blocked by the claim filter must
+# not starve later rows, so the scan advances past it - up to this many
+# pages (10 rows each) per claim attempt.
+_CLAIM_SCAN_MAX_PAGES = 10
+
 
 class InboxStateError(Exception):
     """Raised when a state-machine transition is illegal or rejected.
@@ -168,6 +174,13 @@ class InboxDeliveryStateMachine:
     (default ``1``) enforces the one-in-flight turn rule unless the backend
     capability advertises ``ConcurrencyMode.PARALLEL``.  ``worker_id``
     prefixes the per-claim fencing token so concurrent workers never collide.
+    ``claim_filter`` (optional) is a caller-supplied eligibility predicate
+    applied to every claim candidate: a candidate it rejects is skipped
+    without consuming a claim, so it stays visible in its current state
+    (the M4.5 watch sink uses it to wait for the typed payload).
+    ``claim_scan_max_pages`` bounds the keyset candidate scan (review fix
+    major-1) so a window fully blocked by the filter can never hang the
+    claim attempt on an unbounded walk.
     """
 
     def __init__(
@@ -180,7 +193,11 @@ class InboxDeliveryStateMachine:
         max_in_flight_per_conversation: int = 1,
         capabilities: AgentBackendCapabilities | None = None,
         worker_id: str = "worker",
+        claim_filter: Callable[[AgentInboxItem], bool] | None = None,
+        claim_scan_max_pages: int = _CLAIM_SCAN_MAX_PAGES,
     ) -> None:
+        if claim_scan_max_pages < 1:
+            raise ValueError("claim_scan_max_pages must be at least 1")
         self._agent_inbox = agent_inbox
         self._clock = now or (lambda: datetime.now(UTC))
         self._lease_seconds = lease_seconds
@@ -188,6 +205,8 @@ class InboxDeliveryStateMachine:
         self._max_in_flight_per_conversation = max_in_flight_per_conversation
         self._capabilities = capabilities
         self._worker_id = worker_id
+        self._claim_filter = claim_filter
+        self._claim_scan_max_pages = claim_scan_max_pages
         # item_id -> delivery state parked in memory because the repository
         # cannot persist delivery_unknown (or proven-accepted recovery).
         self._parked: dict[UUID, str] = {}
@@ -208,45 +227,67 @@ class InboxDeliveryStateMachine:
         Enforces at most one in-flight turn per conversation (unless the
         backend capability allows concurrency) and never re-claims an item
         parked as ``delivery_unknown`` or proven accepted.
+
+        Candidates are scanned in bounded keyset pages (review fix
+        major-1): a page fully rejected by the parked/claim filters no
+        longer starves later rows, because the scan advances past it up to
+        ``claim_scan_max_pages`` pages.
         """
         observed = self._now()
-        candidates = [
-            row
-            for row in await self._agent_inbox.next_pending(
+        cursor: tuple[UUID, int] | None = None
+        for _ in range(self._claim_scan_max_pages):
+            rows = await self._agent_inbox.next_pending(
                 conversation_id=conversation_id,
                 now=observed,
+                after=cursor,
             )
-            if row.id not in self._parked
-        ]
-        if not candidates:
-            return None
-
-        limit = self._in_flight_limit()
-        if limit is not None:
-            counts: dict[UUID, int] = {}
-            eligible: list[AgentInboxItem] = []
-            for row in candidates:
-                if row.conversation_id not in counts:
-                    counts[row.conversation_id] = await self._in_flight_count(
-                        row.conversation_id,
-                        now=observed,
-                    )
-                if counts[row.conversation_id] < limit:
-                    eligible.append(row)
-            candidates = eligible
-
-        for row in candidates:
-            owner = f"{self._worker_id}:{row.admission_seq}:{uuid4().hex[:8]}"
-            claimed = await self._agent_inbox.claim(
-                row.id,
-                owner,
-                lease_seconds=self._lease_seconds,
-                now=observed,
-            )
-            if claimed is None:
-                # Lost the CAS race to another worker; try the next candidate.
+            if not rows:
+                return None
+            cursor = (rows[-1].conversation_id, rows[-1].admission_seq)
+            candidates = [
+                row
+                for row in rows
+                if row.id not in self._parked
+                and (self._claim_filter is None or self._claim_filter(row))
+            ]
+            if not candidates:
+                # The page is fully blocked by the parked/claim filters:
+                # advance past it instead of starving the rows behind it.
                 continue
-            return self._envelope(claimed)
+
+            limit = self._in_flight_limit()
+            if limit is not None:
+                counts: dict[UUID, int] = {}
+                eligible: list[AgentInboxItem] = []
+                for row in candidates:
+                    if row.conversation_id not in counts:
+                        counts[row.conversation_id] = await self._in_flight_count(
+                            row.conversation_id,
+                            now=observed,
+                        )
+                    if counts[row.conversation_id] < limit:
+                        eligible.append(row)
+                candidates = eligible
+            if not candidates:
+                # Every page candidate exceeds the in-flight gate; scanning
+                # further pages cannot lift it.
+                return None
+
+            for row in candidates:
+                owner = f"{self._worker_id}:{row.admission_seq}:{uuid4().hex[:8]}"
+                claimed = await self._agent_inbox.claim(
+                    row.id,
+                    owner,
+                    lease_seconds=self._lease_seconds,
+                    now=observed,
+                )
+                if claimed is None:
+                    # Lost the CAS race to another worker; try the next candidate.
+                    continue
+                return self._envelope(claimed)
+            # Every candidate lost the CAS race; the next poll picks up the
+            # rest of the page.
+            return None
         return None
 
     def _in_flight_limit(self) -> int | None:

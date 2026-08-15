@@ -22,8 +22,10 @@ Components
     The canonical event timeline accessor with the live publish hook.
     Writers append events through :meth:`AgentEventCursor.append`, which
     delegates to the authoritative :class:`AgentEventRepository` and then
-    publishes the committed event to the hub, so the durable insert and the
-    live fan-out stay exactly-once.  ``current_seq`` mints reset cursors.
+    publishes the committed event to the hub only when the row was actually
+    inserted, so the durable insert and the live fan-out stay exactly-once
+    (a redelivered dedup key returns the original row without re-publishing,
+    review fix m3).  ``current_seq`` mints reset cursors.
 
 Close codes
 ===========
@@ -194,9 +196,11 @@ class AgentEventCursor:
     Wraps the authoritative :class:`AgentEventRepository` (which remains the
     single writer) and adds the M6.2 live path:
 
-    - :meth:`append` publishes the committed event to the hub after the
-      durable insert, so live subscribers see exactly the events the database
-      records, in commit order, with no EventHub involvement.
+    - :meth:`append` returns ``(event, inserted)``: the inserted flag is the
+      repository's dedup verdict.  The committed event is published to the
+      hub only when it was actually inserted, so live subscribers see
+      exactly the events the database records, in commit order, and a
+      redelivered dedup key never fans out twice (review fix m3).
     - :meth:`current_seq` returns the conversation's maximum
       ``database_seq``, used to mint the ``reset`` cursor after a
       ``cursor_too_old``.
@@ -223,8 +227,14 @@ class AgentEventCursor:
         run_id: UUID | None = None,
         ephemeral: bool = False,
         payload_json: str | None = None,
-    ) -> AgentEvent:
-        event = await self._repository.append(
+    ) -> tuple[AgentEvent, bool]:
+        """Append one canonical event; return ``(event, inserted)``.
+
+        ``inserted`` is False when the ``dedup_key`` was already persisted
+        for the conversation: the row is returned unchanged and the live
+        hub is not re-published.
+        """
+        event, inserted = await self._repository.append_checked(
             conversation_id=conversation_id,
             event_kind=event_kind,
             dedup_key=dedup_key,
@@ -233,9 +243,9 @@ class AgentEventCursor:
             ephemeral=ephemeral,
             payload_json=payload_json,
         )
-        if self._publisher is not None:
+        if inserted and self._publisher is not None:
             await self._publisher(event)
-        return event
+        return event, inserted
 
     async def current_seq(self, conversation_id: UUID) -> int:
         """The conversation's maximum committed ``database_seq`` (0 if none)."""

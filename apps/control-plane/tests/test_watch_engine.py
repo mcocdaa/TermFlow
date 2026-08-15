@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -53,6 +54,7 @@ from termflow_control_plane.persistence.repositories import (
 )
 from termflow_control_plane.plugins.agent_broker.agent.watches import (
     CursorAcceptance,
+    FiredTrigger,
     GapReconciliation,
     IdleDeadline,
     LiteralMatcher,
@@ -1439,6 +1441,111 @@ async def test_engine_subscribes_to_event_hub_and_consumes_live_events(
         assert item.kind == "watch_triggered"
     finally:
         await engine.stop()
+
+
+# ---------------------------------------------------------------------------
+# Trigger sink (review fix M1): every fired trigger - live and deadline -
+# must be delivered through the ``on_fired`` port so the binding's pipeline
+# can register the typed WatchTriggeredInput after ``fire()`` committed the
+# inbox row.
+# ---------------------------------------------------------------------------
+
+
+def _engine_with_sink(
+    repositories: RepositoryBundle,
+    *,
+    clock: Clock,
+    sink: Callable[[FiredTrigger], Awaitable[None]],
+    hub: EventHub | None = None,
+) -> WatchEngine:
+    return WatchEngine(
+        sessions=repositories.session_factory,
+        watches=repositories.watches,
+        deliveries=repositories.agent_watch_deliveries,
+        inbox=repositories.agent_inbox,
+        hub=hub,
+        clock=clock,
+        on_fired=sink,
+    )
+
+
+@pytest.mark.asyncio
+async def test_live_fired_trigger_is_delivered_through_sink(
+    repositories: RepositoryBundle,
+) -> None:
+    """A live OUTPUT_CONTAINS trigger must reach the sink (review fix M1).
+
+    Before the sink existed the live path discarded the ``FiredTrigger``
+    list returned by ``handle_wire_message``, so the dispatcher's grace
+    window always exhausted and burned the continuation.
+    """
+    binding, conversation_id = await _seed_binding_and_conversation(repositories)
+    stream = uuid4()
+    start = _cursor(binding.term_id, seq=5, stream_id=stream)
+    await _seed_watch(
+        repositories,
+        binding,
+        conversation_id,
+        condition=_condition(WatchConditionKind.OUTPUT_CONTAINS, match="go"),
+        start_cursor=start,
+    )
+    clock = Clock()
+    delivered: list[FiredTrigger] = []
+
+    async def on_fired(trigger: FiredTrigger) -> None:
+        delivered.append(trigger)
+
+    engine = _engine_with_sink(repositories, clock=clock, sink=on_fired)
+    await engine.rebuild()
+    triggers = await engine.evaluate_live_event(
+        instance_id=binding.term_id,
+        pane_id="%0",
+        stream_id=stream,
+        seq=6,
+        data=b"go!",
+        observed_at=clock(),
+    )
+    assert len(triggers) == 1
+    assert delivered == triggers
+    assert delivered[0].evidence.source == "live_output"
+    assert delivered[0].inbox_item is not None
+
+
+@pytest.mark.asyncio
+async def test_deadline_fired_trigger_is_delivered_through_sink(
+    repositories: RepositoryBundle,
+) -> None:
+    """An idle-deadline trigger must reach the sink (review fix M1)."""
+    binding, conversation_id = await _seed_binding_and_conversation(repositories)
+    stream = uuid4()
+    await _seed_watch(
+        repositories,
+        binding,
+        conversation_id,
+        condition=_condition(WatchConditionKind.OUTPUT_IDLE, idle_after_seconds=60),
+    )
+    clock = Clock(datetime.now(UTC) - timedelta(minutes=10))
+    delivered: list[FiredTrigger] = []
+
+    async def on_fired(trigger: FiredTrigger) -> None:
+        delivered.append(trigger)
+
+    engine = _engine_with_sink(repositories, clock=clock, sink=on_fired)
+    await engine.rebuild()
+    # Anchor the idle deadline timer with one observed output chunk.
+    await engine.evaluate_live_event(
+        instance_id=binding.term_id,
+        pane_id="%0",
+        stream_id=stream,
+        seq=1,
+        data=b"build output",
+        observed_at=clock(),
+    )
+    clock.advance(seconds=61)
+    triggers = await engine.check_deadlines(clock())
+    assert len(triggers) == 1
+    assert delivered == triggers
+    assert delivered[0].evidence.source == "idle_deadline"
 
 
 # ---------------------------------------------------------------------------

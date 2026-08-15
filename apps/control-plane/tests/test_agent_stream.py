@@ -139,7 +139,7 @@ def _append_event(
         payload_digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     else:
         payload_digest = "test-digest"
-    event = client.portal.call(
+    event, _inserted = client.portal.call(
         lambda: cursor.append(
             conversation_id=conversation_id,
             event_kind=kind,
@@ -535,8 +535,10 @@ class TestAgentStreamReplay:
         conversation_id = UUID(str(conversation["conversation_id"]))
 
         with _GeneratorStream(client, conversation_id=conversation_id) as stream:
-            # The repository dedupes by dedup_key: both appends return the same
-            # event/database_seq, so the publish hook fires twice with seq 1.
+            # The repository dedupes by dedup_key: both appends return the
+            # same event/database_seq, and the publish hook fires only for
+            # the inserted row (review fix m3), so the endpoint's own
+            # database_seq dedup is the second line of defense.
             _append_event(client, conversation_id, dedup_key="same-key")
             _append_event(client, conversation_id, dedup_key="same-key")
             stream.wait_for(
@@ -550,6 +552,32 @@ class TestAgentStreamReplay:
             if name == "agent_event"
         ]
         assert [event["database_seq"] for event in events] == [1]
+
+    def test_dedup_hit_does_not_republish(
+        self, client, admin_headers, provision_term
+    ) -> None:
+        """Review fix m3: a deduped append must not fan out a second time."""
+        binding_id = _seed_binding(client, admin_headers, provision_term)
+        conversation = _create_conversation(
+            client, admin_headers, binding_id=binding_id
+        )
+        conversation_id = UUID(str(conversation["conversation_id"]))
+        hub = client.app.state.agent_stream_hub
+        subscriber = client.portal.call(
+            lambda: hub.subscribe(
+                conversation_id=conversation_id, binding_id=binding_id
+            )
+        )
+        try:
+            _append_event(client, conversation_id, dedup_key="same-key")
+            # The inserted event is published exactly once.
+            event = client.portal.call(subscriber.queue.get)
+            assert event.database_seq == 1
+            # A dedup replay of the same key must not re-publish.
+            _append_event(client, conversation_id, dedup_key="same-key")
+            assert subscriber.queue.empty() is True
+        finally:
+            client.portal.call(lambda: hub.unsubscribe(subscriber))
 
 
 class TestAgentStreamCursorTooOld:

@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import case, delete, exists, func, insert, literal, or_, select, update
+from sqlalchemy import and_, case, delete, exists, func, insert, literal, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -2906,6 +2906,7 @@ class AgentInboxRepository:
         conversation_id: UUID | None = None,
         limit: int = 10,
         now: datetime | None = None,
+        after: tuple[UUID, int] | None = None,
     ) -> list[AgentInboxItem]:
         """Return claimable items using the composite claims index.
 
@@ -2913,6 +2914,11 @@ class AgentInboxRepository:
         retry deadline has passed, and either it has no claim lease or the
         lease has expired.  An expired ``claimed`` item is intentionally
         returned so a crashed worker's work can be reclaimed.
+
+        ``after`` is a keyset cursor ``(conversation_id, admission_seq)``
+        matching the result order: only rows strictly after the cursor are
+        returned, so callers can page past a window fully blocked by a
+        claim filter instead of starving later rows (review fix major-1).
         """
         observed_at = now or datetime.now(UTC)
         conditions = [
@@ -2925,6 +2931,17 @@ class AgentInboxRepository:
         ]
         if conversation_id is not None:
             conditions.append(AgentInboxItem.conversation_id == conversation_id)
+        if after is not None:
+            after_conversation_id, after_admission_seq = after
+            conditions.append(
+                or_(
+                    AgentInboxItem.conversation_id > after_conversation_id,
+                    and_(
+                        AgentInboxItem.conversation_id == after_conversation_id,
+                        AgentInboxItem.admission_seq > after_admission_seq,
+                    ),
+                )
+            )
         async with self._sessions() as session:
             rows = await session.scalars(
                 select(AgentInboxItem)
@@ -2932,6 +2949,66 @@ class AgentInboxRepository:
                 .order_by(
                     AgentInboxItem.conversation_id,
                     AgentInboxItem.admission_seq,
+                )
+                .limit(limit)
+            )
+            return list(rows)
+
+    async def next_pending_for_binding(
+        self,
+        binding_id: UUID,
+        *,
+        limit: int = 10,
+        now: datetime | None = None,
+        after: tuple[int, UUID] | None = None,
+    ) -> list[AgentInboxItem]:
+        """Return claimable items for one binding's conversations (M4.5 §2).
+
+        The shared inbox is not binding-scoped, so the claim candidates are
+        filtered by joining the conversation's binding (M0 isolation).  This
+        replaces the previous ``list_for_binding`` (default limit 50) scan:
+        the 51st+ conversation's items were silently starved by that page.
+        Claimability mirrors :meth:`next_pending`; the ordering puts the
+        lowest admission sequence first so a batch can never re-order within
+        a conversation.
+
+        ``after`` is a keyset cursor ``(admission_seq, conversation_id)``
+        matching the result order: only rows strictly after the cursor are
+        returned, so callers can page past a window fully blocked by the
+        claim filter instead of starving later rows (review fix major-1).
+        """
+        observed_at = now or datetime.now(UTC)
+        conditions = [
+            AgentConversation.binding_id == binding_id,
+            AgentInboxItem.delivery_state.in_(("pending", "retry_wait", "claimed")),
+            AgentInboxItem.next_attempt_at <= observed_at,
+            or_(
+                AgentInboxItem.claim_expires_at.is_(None),
+                AgentInboxItem.claim_expires_at <= observed_at,
+            ),
+        ]
+        if after is not None:
+            after_admission_seq, after_conversation_id = after
+            conditions.append(
+                or_(
+                    AgentInboxItem.admission_seq > after_admission_seq,
+                    and_(
+                        AgentInboxItem.admission_seq == after_admission_seq,
+                        AgentInboxItem.conversation_id > after_conversation_id,
+                    ),
+                )
+            )
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentInboxItem)
+                .join(
+                    AgentConversation,
+                    AgentConversation.id == AgentInboxItem.conversation_id,
+                )
+                .where(*conditions)
+                .order_by(
+                    AgentInboxItem.admission_seq,
+                    AgentInboxItem.conversation_id,
                 )
                 .limit(limit)
             )
@@ -3268,6 +3345,29 @@ class AgentRunRepository:
             )
             return list(rows)
 
+    async def list_active_for_binding(self, binding_id: UUID) -> list[AgentRun]:
+        """Return queued/running runs for one binding's conversations (M4.5 §5).
+
+        The disconnect reconcile loop previously iterated
+        ``AgentConversationRepository.list_for_binding`` (default limit 50),
+        so an active run on the 51st+ conversation was never reconciled.
+        This join is unbounded and binding-scoped instead.
+        """
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentRun)
+                .join(
+                    AgentConversation,
+                    AgentConversation.id == AgentRun.conversation_id,
+                )
+                .where(
+                    AgentConversation.binding_id == binding_id,
+                    AgentRun.run_state.in_(("queued", "running")),
+                )
+                .order_by(AgentRun.started_at)
+            )
+            return list(rows)
+
     async def purge_terminal(
         self,
         *,
@@ -3488,6 +3588,35 @@ class AgentEventRepository:
         ephemeral: bool = False,
         payload_json: str | None = None,
     ) -> AgentEvent:
+        event, _inserted = await self.append_checked(
+            conversation_id=conversation_id,
+            event_kind=event_kind,
+            dedup_key=dedup_key,
+            payload_digest=payload_digest,
+            run_id=run_id,
+            ephemeral=ephemeral,
+            payload_json=payload_json,
+        )
+        return event
+
+    async def append_checked(
+        self,
+        *,
+        conversation_id: UUID,
+        event_kind: str,
+        dedup_key: str,
+        payload_digest: str,
+        run_id: UUID | None = None,
+        ephemeral: bool = False,
+        payload_json: str | None = None,
+    ) -> tuple[AgentEvent, bool]:
+        """``append`` plus the dedup verdict (True when the row was inserted).
+
+        Callers that fan out or assemble from the append (the live stream
+        hub and the pipeline's message assembly) gate their work on the
+        flag so a redelivered event is persisted-at-most-once but never
+        re-published or re-assembled.
+        """
         if payload_json is not None:
             payload_bytes = payload_json.encode("utf-8")
             if len(payload_bytes) > MAX_AGENT_EVENT_PAYLOAD_BYTES:
@@ -3558,9 +3687,9 @@ class AgentEventRepository:
                 # The atomic insert observed the row it skipped, so it must
                 # still be visible in this transaction.
                 assert existing is not None
-                return existing
+                return existing, False
             await session.commit()
-            return event
+            return event, True
 
     async def list_since_cursor(
         self,
