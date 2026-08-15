@@ -36,6 +36,19 @@ describe('agents API', () => {
     ])
   })
 
+  it('scopes the conversation list by binding and deletes with 204 semantics', async () => {
+    const request = vi.fn().mockResolvedValue(undefined)
+    const agents = createAgentsApi(request)
+
+    await agents.listConversations({ bindingId: 'binding-1' })
+    await agents.deleteConversation(CONVERSATION)
+
+    expect(request.mock.calls).toEqual([
+      ['/api/v1/agent/conversations?binding_id=binding-1', {}],
+      [`/api/v1/agent/conversations/${CONVERSATION}`, { method: 'DELETE' }],
+    ])
+  })
+
   it('omits query parameters that are not provided', async () => {
     const request = vi.fn().mockResolvedValue(undefined)
     const agents = createAgentsApi(request)
