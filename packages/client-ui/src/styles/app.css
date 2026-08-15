@@ -303,6 +303,20 @@
     .logout-button { width: 2.75rem; padding: 0; }
     .logout-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   }
+  @media (pointer: coarse) {
+    html { --termflow-top-content-inset: env(safe-area-inset-top); }
+    .app-header {
+      padding-block-start: max(var(--space-3), var(--termflow-top-content-inset));
+      padding-inline: max(var(--space-4), env(safe-area-inset-left)) max(var(--space-4), env(safe-area-inset-right));
+    }
+    .app-shell.is-bare main {
+      padding-block-start: max(clamp(var(--space-4), 3vw, 2.5rem), var(--termflow-top-content-inset));
+      padding-inline: max(clamp(var(--space-4), 3vw, 2.5rem), env(safe-area-inset-left)) max(clamp(var(--space-4), 3vw, 2.5rem), env(safe-area-inset-right));
+    }
+  }
+  @media (pointer: coarse) and (orientation: landscape) {
+    html[data-tauri-platform='android'] { --termflow-top-content-inset: 0px; }
+  }
   .locked-indicator { display: inline-block; width: 0.35rem; height: 0.35rem; margin-inline-start: var(--space-1); border-radius: 50%; background: currentColor; vertical-align: middle; }
   @media (prefers-reduced-motion: reduce) { .metric-card, .metric-help, .term-row-link, .menu-chevron, .primary-button, .text-button, .icon-button, .theme-option, .titlebar-button, .terminal-back { transition: none; }
     .metric-card-has-help:hover, .metric-card-has-help:focus-visible, .term-row-link:hover, .term-row-link:focus-visible { transform: none; }

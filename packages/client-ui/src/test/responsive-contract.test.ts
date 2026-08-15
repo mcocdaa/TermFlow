@@ -55,6 +55,15 @@ describe('responsive shell contract', () => {
     expect(css).not.toContain('overscroll-behavior-inline: contain;')
     expect(css).not.toContain('overscroll-behavior-block: none;')
     expect(css).not.toMatch(/\.mobile-keybar-shell\s*\{[^}]*position: fixed/s)
+    expect(appCss).toMatch(/@media \(pointer: coarse\)[\s\S]*\.app-header\s*\{[^}]*var\(--termflow-top-content-inset\)/)
+    expect(appCss).toMatch(/\.app-shell\.is-bare main\s*\{[^}]*var\(--termflow-top-content-inset\)/)
+    expect(css).toMatch(/\.terminal-titlebar\s*\{[^}]*var\(--termflow-top-content-inset\)/)
+    const androidLandscape = appCss.match(
+      /@media \(pointer: coarse\) and \(orientation: landscape\)\s*\{\s*html\[data-tauri-platform='android'\]\s*\{(?<rule>[^}]*)\}/s,
+    )?.groups?.rule
+    expect(androidLandscape).toContain('--termflow-top-content-inset: 0px;')
+    expect(androidLandscape).not.toContain('safe-area-inset-top')
+    expect(appCss).toMatch(/\.app-header\s*\{[^}]*safe-area-inset-left[^}]*safe-area-inset-right/s)
 
     expect(appCss).toMatch(/\.computer-table-head,\s*\.computer-table-row\s*\{[^}]*grid-template-columns: repeat\(5, minmax\(0, 1fr\)\);/s)
     expect(appCss).toMatch(/\.computer-table-head > :not\(:first-child\)\s*\{[^}]*justify-self: center;[^}]*text-align: center;/s)

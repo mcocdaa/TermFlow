@@ -1,7 +1,7 @@
 @layer app {
   @media (max-width: 47.99rem), (pointer: coarse) {
     .terminal-view { height: 100dvh; grid-template-rows: auto minmax(0, 1fr) auto; }
-    .terminal-titlebar { z-index: 50; gap: var(--space-1); padding-inline: max(var(--space-2), env(safe-area-inset-left)) max(var(--space-2), env(safe-area-inset-right)); }
+    .terminal-titlebar { z-index: 50; gap: var(--space-1); padding-block-start: max(var(--space-1), var(--termflow-top-content-inset)); padding-inline: max(var(--space-2), env(safe-area-inset-left)) max(var(--space-2), env(safe-area-inset-right)); }
     .terminal-frame { grid-row: 2; min-height: 0; touch-action: none; }
     .terminal-frame,
     .mobile-keybar { scrollbar-width: none; }
