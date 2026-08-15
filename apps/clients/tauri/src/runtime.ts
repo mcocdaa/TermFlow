@@ -2,6 +2,7 @@ import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { arch, platform } from '@tauri-apps/plugin-os'
 import { createApiClient, TerminalSession, type TerminalScheduler } from '@termflow/client-core'
 import type { ClientRuntime } from '@termflow/client-ui'
+import { createTauriAgentStreamTransport } from './adapters/tauriAgentStreamTransport'
 import { createTauriHttpTransport } from './adapters/tauriHttpTransport'
 import { createTauriTerminalTransport } from './adapters/tauriTerminalTransport'
 import { clearNativeCredentials } from './adapters/tauriCredentialVault'
@@ -32,13 +33,11 @@ export async function createTauriRuntime(): Promise<ClientRuntime> {
       },
     },
     createTerminal: (termId, callbacks) => new TerminalSession(termId, callbacks, { transport: terminalTransport, scheduler, createId: () => globalThis.crypto.randomUUID() }),
-    // Agent ports (M6b spec §4.6): the Rust-owned Tauri transport lands
-    // with plan 1017; until then the stream factory fails fast and the
+    // Agent ports (M6b spec §4.6): the Rust-owned stream transport (plan
+    // 1017) owns the SSE connection — no WebView network authority; the
     // cursor store degrades to an in-memory slot (persistence is an
     // optimization, never a correctness dependency — §4.4).
-    createAgentStream: () => {
-      throw new Error('Agent stream transport is not implemented in the Tauri client yet (plan 1017)')
-    },
+    createAgentStream: () => createTauriAgentStreamTransport({ wire: 'agui' }),
     agentCursorStore: (() => {
       const entries = new Map<string, { cursor: string, seq: number }>()
       return {
