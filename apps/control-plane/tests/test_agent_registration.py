@@ -39,9 +39,6 @@ class TestCapabilityDiscovery:
             "agent_broker_enabled": True,
             # Delegated Write Grants stay disabled in 0.2.0 (spec §8).
             "delegated_write_grants_enabled": False,
-            # No STT container configured: the Null provider reports
-            # unavailable (M7b spec §4.9).
-            "speech_to_text_enabled": False,
         }
 
     def test_reports_disabled_when_plugin_disabled(self, tmp_path) -> None:
@@ -52,7 +49,6 @@ class TestCapabilityDiscovery:
             assert response.json() == {
                 "agent_broker_enabled": False,
                 "delegated_write_grants_enabled": False,
-                "speech_to_text_enabled": False,
             }
 
     def test_reports_disabled_via_environment_override(self, tmp_path, monkeypatch) -> None:
@@ -72,31 +68,20 @@ class TestCapabilityDiscovery:
             assert response.json() == {
                 "agent_broker_enabled": False,
                 "delegated_write_grants_enabled": False,
-                "speech_to_text_enabled": False,
             }
 
-    def test_speech_to_text_enabled_reflects_assembled_provider(self, tmp_path) -> None:
-        """stt_enabled=True assembles the Speaches provider, whose
-        configuration-derived availability lifts the STT flag (M7b §4.9)."""
-        settings = Settings(
-            admin_token=ADMIN_TOKEN,
-            database_url=f"sqlite+aiosqlite:///{tmp_path / 'stt-capabilities.db'}",
-            allow_insecure_loopback=True,
-            stt_enabled=True,
-            stt_url="http://stt-speaches:8000",
-        )
-        database = Database(settings.database_url)
-        app = create_app(settings=settings, database=database)
-
-        with TestClient(app) as client:
-            response = client.get("/api/v1/agent/capabilities")
-
-            assert response.status_code == 200
-            assert response.json() == {
-                "agent_broker_enabled": True,
-                "delegated_write_grants_enabled": False,
-                "speech_to_text_enabled": True,
-            }
+    def test_agent_surface_has_no_transcription_route_or_setting(
+        self,
+        client: TestClient,
+    ) -> None:
+        paths: set[str] = set()
+        for route in client.app.routes:
+            if path := getattr(route, "path", None):
+                paths.add(path)
+            if original := getattr(route, "original_router", None):
+                paths.update(child.path for child in original.routes)
+        assert not any(path.startswith("/api/v1/agent/transcription") for path in paths)
+        assert not any(name.startswith("stt_") for name in Settings.model_fields)
 
     def test_setting_defaults_to_enabled(self) -> None:
         settings = Settings(admin_token=ADMIN_TOKEN)

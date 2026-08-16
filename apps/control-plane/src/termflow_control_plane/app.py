@@ -46,13 +46,6 @@ from termflow_control_plane.api.security import router as security_router
 from termflow_control_plane.api.sessions import router as sessions_router
 from termflow_control_plane.api.terminal import router as terminal_router_api
 from termflow_control_plane.api.terms import router as terms_router
-from termflow_control_plane.api.transcription import (
-    MAX_CONCURRENT_TRANSCRIPTIONS,
-    TRANSCRIPTION_TIMEOUT_SECONDS,
-)
-from termflow_control_plane.api.transcription import (
-    router as transcription_router,
-)
 from termflow_control_plane.auth.audit import AuthenticationAudit
 from termflow_control_plane.auth.dpop import DpopVerifier
 from termflow_control_plane.auth.master_key import resolve_totp_master_key
@@ -78,9 +71,6 @@ from termflow_control_plane.plugins.agent_broker.agent.permissions import Approv
 from termflow_control_plane.plugins.agent_broker.agent.runtime_registry import (
     AgentRuntimeRegistry,
 )
-from termflow_control_plane.plugins.agent_broker.agent.speaches import (
-    SpeachesTranscriptionProvider,
-)
 from termflow_control_plane.plugins.agent_broker.agent.stream_hub import (
     AGENT_STREAM_QUEUE_SIZE,
     AgentStreamHub,
@@ -88,9 +78,6 @@ from termflow_control_plane.plugins.agent_broker.agent.stream_hub import (
 from termflow_control_plane.plugins.agent_broker.agent.terminal_ports import (
     ObservationService,
     WatchContinuationService,
-)
-from termflow_control_plane.plugins.agent_broker.agent.transcription import (
-    NullTranscriptionProvider,
 )
 from termflow_control_plane.plugins.agent_broker.agent.watches import (
     ObservationCursorStore,
@@ -326,20 +313,6 @@ async def _authentication_epoch_loop(
             logger.exception("Authentication epoch poll failed; retrying")
 
 
-async def _close_transcription_provider(app: FastAPI) -> None:
-    """Release a provider-owned HTTP client at shutdown (M7a).
-
-    The transcription provider is a process-lifetime singleton.  Only a
-    :class:`SpeachesTranscriptionProvider` that lazily created its own httpx
-    client defines ``close()`` (``agent/opencode.py`` precedent); the Null
-    provider and test-injected providers have no such hook and are skipped.
-    """
-    provider = getattr(app.state, "transcription_provider", None)
-    close = getattr(provider, "close", None)
-    if close is not None:
-        await close()
-
-
 async def _verify_oauth_totp(service: AuthenticationService, code: str) -> bool:
     """Convert unavailable or invalid TOTP state into a closed authorization denial."""
 
@@ -566,10 +539,7 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
                     try:
                         await app.state.feature_registry.shutdown()
                     finally:
-                        try:
-                            await _close_transcription_provider(app)
-                        finally:
-                            await active_database.dispose()
+                        await active_database.dispose()
 
     app = FastAPI(
         title="TermFlow Control Plane",
@@ -610,27 +580,6 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         },
     )
     app.state.dpop_verifier = DpopVerifier()
-    # Voice/STT plumbing (plan §14, task M7.1): the Null provider keeps text
-    # chat fully functional until an optional STT container implements the
-    # TranscriptionProvider port; the remaining bounds mirror the documented
-    # constants in api.transcription and stay overridable per-app for tests.
-    # M7a: explicit TERMFLOW_STT_ENABLED switches to the pinned speaches
-    # container; the config combination validation guarantees stt_url is set
-    # whenever stt_enabled is true (spec §4.5/§4.6).
-    if settings.stt_enabled:
-        stt_url = settings.stt_url
-        assert stt_url is not None
-        app.state.transcription_provider = SpeachesTranscriptionProvider(
-            stt_url,
-            model=settings.stt_model,
-            token=settings.stt_token.get_secret_value() if settings.stt_token else None,
-            timeout_seconds=settings.stt_timeout_seconds,
-        )
-    else:
-        app.state.transcription_provider = NullTranscriptionProvider()
-    app.state.transcription_semaphore = asyncio.Semaphore(MAX_CONCURRENT_TRANSCRIPTIONS)
-    app.state.transcription_timeout_seconds = TRANSCRIPTION_TIMEOUT_SECONDS
-    app.state.transcription_staging_dir = None
     app.state.feature_registry = FeatureRegistry()
     # The plugin instance is owned by the composition root: the lifespan
     # attaches the runtime services it builds (registry + watch engine) to
@@ -718,7 +667,6 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         app.include_router(agent_conversations_router)
         app.include_router(agent_stream_router)
         app.include_router(agent_approvals_router)
-        app.include_router(transcription_router)
         # MCP Streamable HTTP is never exposed to a browser (plan §10); the
         # endpoint is only mounted while the plugin is enabled (plan §3.4).
         app.state.agent_mcp_app = None

@@ -98,16 +98,6 @@ class Settings(BaseSettings):
     # binding pipeline.  Tests inject a short period (or drive the tick
     # manually) to avoid real-time waits.
     agent_watch_deadline_tick_seconds: float = Field(default=1.0, gt=0)
-    # Optional STT (M7a spec): the pinned speaches container is reached only
-    # when explicitly enabled; every default keeps the Null provider (503)
-    # path active.  stt_timeout_seconds must stay strictly below the 60s
-    # B-side wall clock in api/transcription.py (TRANSCRIPTION_TIMEOUT_SECONDS)
-    # so a slow provider yields 502 before the B-side 504 race can invert.
-    stt_enabled: bool = False
-    stt_url: str | None = None
-    stt_token: SecretStr | None = None
-    stt_model: str = Field(default="Systran/faster-distil-whisper-small.en", min_length=1)
-    stt_timeout_seconds: float = Field(default=55.0, ge=1.0, le=59.0)
     browser_session_ttl_seconds: int = Field(default=8 * 60 * 60, ge=60)
     browser_session_capacity: int = Field(default=4096, ge=1)
     totp_master_key: SecretStr | None = None
@@ -192,28 +182,6 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("stt_url")
-    @classmethod
-    def validate_stt_url(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        parsed = urlsplit(value)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise ValueError("stt_url must be an absolute HTTP(S) URL")
-        if parsed.username or parsed.password or parsed.query or parsed.fragment:
-            raise ValueError("stt_url cannot contain credentials, query, or fragment")
-        return value
-
-    @field_validator("stt_token", mode="before")
-    @classmethod
-    def normalize_empty_stt_token(cls, value: object) -> object:
-        # compose passes ${STT_API_KEY:-}, which expands to "" when the STT
-        # profile is not enabled; an empty string must not be mistaken for a
-        # configured credential.
-        if isinstance(value, str) and value == "":
-            return None
-        return value
-
     @field_validator("trusted_web_origins")
     @classmethod
     def validate_trusted_origins(cls, value: tuple[str, ...]) -> tuple[str, ...]:
@@ -226,8 +194,6 @@ class Settings(BaseSettings):
     def validate_combined_settings(self) -> "Settings":
         if self.offline_after_seconds <= self.heartbeat_interval_seconds:
             raise ValueError("offline_after_seconds must exceed heartbeat_interval_seconds")
-        if self.stt_enabled and self.stt_url is None:
-            raise ValueError("stt_enabled requires stt_url (point it at the STT container)")
         if (self.agent_opencode_username is None) != (self.agent_opencode_password is None):
             raise ValueError(
                 "agent_opencode_username and agent_opencode_password must be set together"

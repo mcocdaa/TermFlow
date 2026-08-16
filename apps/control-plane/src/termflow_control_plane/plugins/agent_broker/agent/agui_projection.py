@@ -77,7 +77,7 @@ class ProjectionDropCounts(NamedTuple):
 def _epoch_ms(created_at: datetime) -> int:
     # SQLite round-trips DateTime(timezone=True) values as naive datetimes:
     # interpret them as UTC so the wire timestamp is host-timezone agnostic
-    # (same pattern as api/dashboard.py `_as_utc` and api/transcription.py).
+    # (same pattern as api/dashboard.py `_as_utc`).
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=UTC)
     return int(created_at.timestamp() * 1000)
