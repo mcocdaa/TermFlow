@@ -46,7 +46,6 @@ class TermFlowPort(StrEnum):
     TERMINAL_OBSERVATION_PORT = "TerminalObservationPort"
     TERMINAL_COMMAND_PORT = "TerminalCommandPort"
     CONTINUATION_PORT = "ContinuationPort"
-    TRANSCRIPTION_PROVIDER = "TranscriptionProvider"
 
 
 _ADOPT_LIKE_DECISIONS: frozenset[ReuseDecisionKind] = frozenset(
@@ -246,28 +245,6 @@ REUSE_DECISIONS: tuple[ReuseDecision, ...] = (
         ),
     ),
     ReuseDecision(
-        candidate="OpenAI Whisper / faster-whisper",
-        decision=ReuseDecisionKind.ADOPT_NARROWLY,
-        reuse_boundary=(
-            "Optional STT provider implementation behind TranscriptionProvider"
-        ),
-        required_port=TermFlowPort.TRANSCRIPTION_PROVIDER,
-        license="MIT",
-        sbom_owner="termflow-control-plane",
-        notes=(
-            "STT provider plugin only, not B logic; B owns upload limits, raw-audio "
-            "deletion, draft confirmation, provider disclosure, and no-auto-submit; "
-            "faster-whisper 1.2.1 (MIT) is the CTranslate2 implementation for a "
-            "pinned CPU/GPU container but is in a maintenance lull; reference "
-            "container is speaches-ai/speaches (MIT, active); the former "
-            "fedirz/faster-whisper-server image is retired; first optional plugin "
-            "in M7. Pinned at M7a: ghcr.io/speaches-ai/speaches:0.8.3-cpu@"
-            "sha256:21e3df06d842fb7802ab470dd77c25f0e8c0d22950e8d8c6ae886e851af53ef8 "
-            "(digest re-captured 2026-08-13, no drift; 0.8.3-cuda recorded in "
-            "tests/fixtures/speaches/speaches-pin.md as a deployment follow-up)."
-        ),
-    ),
-    ReuseDecision(
         candidate="Temporal / Restate",
         decision=ReuseDecisionKind.FUTURE_OPTION,
         reuse_boundary=(
@@ -316,13 +293,12 @@ def reuse_invariants() -> list[str]:
         (
             "Port hiding: every reused component is hidden behind a TermFlow port "
             "(BFeatureContext, AgentBackend, BackendToolConnector, "
-            "TerminalObservationPort, TerminalCommandPort, ContinuationPort, or "
-            "TranscriptionProvider)."
+            "TerminalObservationPort, TerminalCommandPort, or ContinuationPort)."
         ),
         (
             "No provider types in protocol/domain: provider-only types, MCP parts, "
-            "AG-UI events, tmux wrapper objects, and STT model objects do not enter "
-            "packages/protocol or the canonical B/C domain models."
+            "AG-UI events, and tmux wrapper objects do not enter packages/protocol "
+            "or the canonical B/C domain models."
         ),
         (
             "Direct adoption contract: direct adoption requires pinned "

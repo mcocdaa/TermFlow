@@ -1,5 +1,10 @@
 # M7b：移动端 press/hold 录音 + 转写 draft UI 设计
 
+> **已废弃（2026-08-16）：** 本文仅保留被撤销方案的历史记录，不属于
+> TermFlow 0.2.0 实现或发布范围。现行边界见
+> [`2026-08-16-m7-stt-scope-correction-design.md`](2026-08-16-m7-stt-scope-correction-design.md)：
+> C 只向 B 提交普通文本，音频不跨越 C→B，B 不提供 STT 能力。
+
 **日期：** 2026-08-13
 **状态：** 设计 spec（M7 第四、五项，计划 §14）
 **范围：** Tauri 移动客户端（Android/iOS）、client-core、client-ui、最小 B 侧能力暴露

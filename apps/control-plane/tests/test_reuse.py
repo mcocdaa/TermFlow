@@ -40,7 +40,6 @@ EXPECTED_SECTION_22_DECISIONS: dict[str, ReuseDecisionKind] = {
     "sse-starlette": ReuseDecisionKind.ADOPT_NARROWLY,
     "pyte": ReuseDecisionKind.EVALUATE,
     "libtmux": ReuseDecisionKind.PARTIAL_REUSE,
-    "openai whisper / faster-whisper": ReuseDecisionKind.ADOPT_NARROWLY,
     "temporal / restate": ReuseDecisionKind.FUTURE_OPTION,
     "nats jetstream / redis streams": ReuseDecisionKind.FUTURE_OPTION,
     "a2a / acp": ReuseDecisionKind.DO_NOT_USE,
@@ -57,8 +56,8 @@ def _decision(candidate: str) -> ReuseDecision:
 
 class TestSection22Decisions:
     def test_all_section_22_candidates_present_with_correct_decisions(self) -> None:
-        assert len(REUSE_DECISIONS) == 11
-        assert len({entry.candidate for entry in REUSE_DECISIONS}) == 11
+        assert len(REUSE_DECISIONS) == 10
+        assert len({entry.candidate for entry in REUSE_DECISIONS}) == 10
         assert {entry.candidate.lower() for entry in REUSE_DECISIONS} == set(
             EXPECTED_SECTION_22_DECISIONS
         )
@@ -120,14 +119,6 @@ class TestSection22Decisions:
         assert sse_starlette.notes is not None
         assert "mcp==2.0.0" in sse_starlette.notes
         assert "zero marginal dependency" in sse_starlette.notes
-
-    def test_faster_whisper_notes_speaches_container(self) -> None:
-        faster_whisper = _decision("OpenAI Whisper / faster-whisper")
-        assert faster_whisper.decision is ReuseDecisionKind.ADOPT_NARROWLY
-        assert faster_whisper.notes is not None
-        assert "ghcr.io/speaches-ai/speaches" in faster_whisper.notes
-        assert "maintenance lull" in faster_whisper.notes
-        assert "fedirz/faster-whisper-server" in faster_whisper.notes
 
     def test_mcp_sdk_notes_dual_era_and_token_verifier(self) -> None:
         mcp_sdk = _decision("Official MCP Python SDK")

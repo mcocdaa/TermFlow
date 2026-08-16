@@ -87,16 +87,12 @@ OPENCODE_REQUIRED_VARS = (
     "OPENCODE_MODEL_API_KEY",
 )
 
-#: Values the compose parse check needs; never real secrets.  Compose
-#: interpolates every `${VAR:?}` in the whole file (profile services
-#: included), so STT_API_KEY must be present even though the stt profile is
-#: never activated here (M7a).
+#: Values the compose parse check needs; never real secrets.
 COMPOSE_ENV = {
     "TERMFLOW_ADMIN_TOKEN": "test-admin-token-for-compose-config",
     "OPENCODE_SERVER_USERNAME": "test-opencode-user",
     "OPENCODE_SERVER_PASSWORD": "test-opencode-password",
     "OPENCODE_MODEL_API_KEY": "test-opencode-model-key",
-    "STT_API_KEY": "test-stt-api-key",
 }
 
 RUNTIME_REF = RuntimeRef("runtime-1")

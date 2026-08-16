@@ -1,5 +1,10 @@
 # M7a：可选 pinned STT 容器 profile + 第一个 Whisper provider 设计
 
+> **已废弃（2026-08-16）：** 本文仅保留被撤销方案的历史记录，不属于
+> TermFlow 0.2.0 实现或发布范围。现行边界见
+> [`2026-08-16-m7-stt-scope-correction-design.md`](2026-08-16-m7-stt-scope-correction-design.md)：
+> C 只向 B 提交普通文本，音频不跨越 C→B，B 不提供 STT 能力。
+
 **日期：** 2026-08-13
 **状态：** 设计 spec（M7 第二、三项，计划 §14/§16）
 **范围：** B Control Plane、deploy compose、测试与验证
