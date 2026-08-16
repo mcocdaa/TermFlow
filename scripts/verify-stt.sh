@@ -32,6 +32,12 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPOSITORY_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPOSITORY_ROOT}"
 
+# The host-side curl probes must bypass any ambient HTTP proxy (a proxied
+# localhost request can 502); the compose services talk over internal
+# networks and are unaffected.
+export no_proxy="localhost,127.0.0.1"
+export NO_PROXY="localhost,127.0.0.1"
+
 #: Pinned image and digest (spec §4.2; tests/fixtures/speaches/speaches-pin.md).
 STT_IMAGE="ghcr.io/speaches-ai/speaches:0.8.3-cpu@sha256:21e3df06d842fb7802ab470dd77c25f0e8c0d22950e8d8c6ae886e851af53ef8"
 STT_DIGEST="sha256:21e3df06d842fb7802ab470dd77c25f0e8c0d22950e8d8c6ae886e851af53ef8"
@@ -40,17 +46,21 @@ STT_MODEL="${STT_MODEL:-Systran/faster-distil-whisper-small.en}"
 # from the process environment (${STT_API_KEY:?} applies to the whole
 # compose file), so a plain shell assignment would never reach them.
 export STT_API_KEY="${STT_API_KEY:-verify-stt-api-key}"
-STT_MODELS_VOLUME="${STT_MODELS_VOLUME:-termflow-verify-stt-models}"
+# The pre-seed/hardened containers use the exact volume name that compose
+# resolves for its `stt-models` declaration (project prefix + reference),
+# so the model cache lands on the same volume the compose service mounts.
+COMPOSE_PROJECT="termflow-verify-stt"
+STT_MODELS_VOLUME="stt-models"
+STT_MODELS_VOLUME_REAL="${COMPOSE_PROJECT}_${STT_MODELS_VOLUME}"
 STT_NETWORK="termflow-verify-stt-net"
 STT_CONTAINER="termflow-verify-stt-$$"
 STT_HOST_PORT="${STT_HOST_PORT:-18765}"
-COMPOSE_PROJECT="termflow-verify-stt"
 
 verify_tmp="$(mktemp -d)"
 cleanup() {
   docker rm --force "${STT_CONTAINER}" >/dev/null 2>&1 || true
   docker network rm "${STT_NETWORK}" >/dev/null 2>&1 || true
-  docker volume rm "${STT_MODELS_VOLUME}" >/dev/null 2>&1 || true
+  docker volume rm "${STT_MODELS_VOLUME_REAL}" >/dev/null 2>&1 || true
   rm -rf "${verify_tmp}"
 }
 trap cleanup EXIT
@@ -70,9 +80,9 @@ grep -Fq "${STT_DIGEST}" "${REPOSITORY_ROOT}/apps/control-plane/tests/fixtures/s
 docker pull "${STT_IMAGE}"
 
 echo "== verify-stt: pre-seeding the model volume (frozen command, spec §4.4)"
-docker volume create "${STT_MODELS_VOLUME}" >/dev/null
+docker volume create "${STT_MODELS_VOLUME_REAL}" >/dev/null
 docker run --rm \
-  --volume "${STT_MODELS_VOLUME}:/home/ubuntu/.cache/huggingface/hub" \
+  --volume "${STT_MODELS_VOLUME_REAL}:/home/ubuntu/.cache/huggingface/hub" \
   "${STT_IMAGE}" \
   python -c "from huggingface_hub import snapshot_download; snapshot_download('${STT_MODEL}')"
 
@@ -88,7 +98,7 @@ docker run --detach \
   --security-opt no-new-privileges:true \
   --read-only \
   --tmpfs /tmp:size=64m,mode=1777,noexec,nosuid \
-  --volume "${STT_MODELS_VOLUME}:/home/ubuntu/.cache/huggingface/hub" \
+  --volume "${STT_MODELS_VOLUME_REAL}:/home/ubuntu/.cache/huggingface/hub" \
   --env UVICORN_PORT=8000 \
   --env ENABLE_UI=false \
   --env LOG_LEVEL=warning \
@@ -96,7 +106,7 @@ docker run --detach \
   --env PRELOAD_MODELS="[\"${STT_MODEL}\"]" \
   --env WHISPER__COMPUTE_TYPE=int8 \
   --env API_KEY="${STT_API_KEY}" \
-  --health-cmd "curl -fsS http://127.0.0.1:8000/health" \
+  --health-cmd "curl -fsS -H \"Authorization: Bearer \$API_KEY\" http://127.0.0.1:8000/health" \
   --health-interval 10s \
   --health-timeout 3s \
   --health-retries 3 \
@@ -120,7 +130,7 @@ test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "${STT_CONTAINE
   || { echo "verify-stt: rootfs is not read-only" >&2; exit 1; }
 test -z "$(docker port "${STT_CONTAINER}")" \
   || { echo "verify-stt: container published a host port" >&2; exit 1; }
-docker exec "${STT_CONTAINER}" curl -fsS http://127.0.0.1:8000/health >/dev/null \
+docker exec "${STT_CONTAINER}" curl -fsS -H "Authorization: Bearer ${STT_API_KEY}" http://127.0.0.1:8000/health >/dev/null \
   || { echo "verify-stt: /health did not answer inside the container" >&2; exit 1; }
 
 docker rm --force "${STT_CONTAINER}" >/dev/null
@@ -128,11 +138,15 @@ docker network rm "${STT_NETWORK}" >/dev/null
 
 echo "== verify-stt: E2E — compose --profile stt, real WAV upload -> 201 draft"
 export TERMFLOW_ADMIN_TOKEN="${TERMFLOW_ADMIN_TOKEN:-verify-admin-token-that-is-long-enough}"
-export OPENCODE_BASIC_AUTH_USERNAME="verify-opencode-user"
-export OPENCODE_BASIC_AUTH_PASSWORD="verify-opencode-password"
+export OPENCODE_SERVER_USERNAME="verify-opencode-user"
+export OPENCODE_SERVER_PASSWORD="verify-opencode-password"
 export OPENCODE_MODEL_API_KEY="verify-opencode-key"
 export STT_MODELS_VOLUME
 export TERMFLOW_HOST_PORT="${STT_HOST_PORT}"
+# Docker Desktop (WSL2) resets WSL-side connections to loopback-bound port
+# mappings; bind 0.0.0.0 for the verification deployment (deployments keep
+# the compose loopback default).
+export TERMFLOW_HOST_BIND="${TERMFLOW_HOST_BIND:-0.0.0.0}"
 
 wav_file="${verify_tmp}/speech.wav"
 if [[ -n "${STT_VERIFY_WAV:-}" ]]; then
@@ -173,7 +187,7 @@ fi
 # image is built by compose on first use.
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT}" \
   TERMFLOW_STT_ENABLED=true \
-  docker compose --profile stt up -d control-plane stt-speaches >/dev/null
+  docker compose -f deploy/compose.yaml --profile stt up -d --build control-plane stt-speaches >/dev/null
 
 for attempt in $(seq 1 150); do
   curl -fsS "http://127.0.0.1:${STT_HOST_PORT}/healthz" >/dev/null 2>&1 && break
@@ -224,7 +238,7 @@ test "$(json_field state < "${verify_tmp}/upload.json")" = "draft" \
   || { echo "verify-stt: draft state is not 'draft'" >&2; exit 1; }
 
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT}" \
-  docker compose --profile stt down --volumes >/dev/null
+  docker compose -f deploy/compose.yaml --profile stt down --volumes >/dev/null
 
 echo "== verify-stt: E2E — no-profile deployment upload -> 503"
 # TERMFLOW_STT_ENABLED is deliberately unset: the stt profile is absent, the
@@ -233,7 +247,7 @@ echo "== verify-stt: E2E — no-profile deployment upload -> 503"
 # reused as form values.
 env -u TERMFLOW_STT_ENABLED \
   COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT}" \
-  docker compose up -d control-plane >/dev/null
+  docker compose -f deploy/compose.yaml up -d --build control-plane >/dev/null
 
 for attempt in $(seq 1 150); do
   curl -fsS "http://127.0.0.1:${STT_HOST_PORT}/healthz" >/dev/null 2>&1 && break
@@ -255,6 +269,6 @@ grep -Fq "speech_to_text_unavailable" "${verify_tmp}/upload-503.json" \
 
 env -u TERMFLOW_STT_ENABLED \
   COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT}" \
-  docker compose down --volumes >/dev/null
+  docker compose -f deploy/compose.yaml down --volumes >/dev/null
 
 echo "verify-stt: OK — pinned digest verified, hardening proved, E2E 201/503 as designed"

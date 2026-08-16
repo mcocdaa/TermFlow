@@ -38,7 +38,9 @@ integration tests.
   pinned image only.
 - **License:** MIT (speaches-ai/speaches, active upstream).
 - **Runtime posture:** non-root `ubuntu` user (UID 1000), `EXPOSE 8000`,
-  `/health` public, image ships `curl` and `ffmpeg` (webm/wav/mpeg all
+  `/health` requires the Bearer token (M7 exit re-capture: 403 without it,
+  200 with `Authorization: Bearer <API_KEY>` — the earlier "public" note
+  was wrong), image ships `curl` and `ffmpeg` (webm/wav/mpeg all
   supported).
 
 ## 2. Endpoint contract (OpenAI-compatible)
@@ -51,9 +53,11 @@ integration tests.
   - `response_format=json` — explicit; the response is the OpenAI default
     JSON shape `{"text": "<transcript>"}`.
   - `Authorization: Bearer <token>` — only when a token is configured (the
-    container's `API_KEY` env); `/health` stays public.
-- `GET /health` — liveness used by the compose healthcheck; not used by B
-  for per-request probing (availability is configuration-derived, spec §5.3).
+    container's `API_KEY` env); `/health` also requires the Bearer token
+    (M7 exit re-capture).
+- `GET /health` — liveness used by the compose healthcheck (must send
+  `Authorization: Bearer <API_KEY>`); not used by B for per-request probing
+  (availability is configuration-derived, spec §5.3).
 
 ## 3. Container environment table
 
@@ -137,7 +141,7 @@ integration tests.
   },
   "endpoints": {
     "transcriptions": "POST /v1/audio/transcriptions (multipart file/model/response_format=json)",
-    "health": "GET /health (public, used by compose healthcheck only)",
+    "health": "GET /health (requires Authorization: Bearer <API_KEY>; used by compose healthcheck only)",
     "auth": "Authorization: Bearer <token> when API_KEY is configured; optional for B"
   },
   "environment": {
@@ -147,7 +151,7 @@ integration tests.
     "STT_MODEL_TTL": "-1",
     "PRELOAD_MODELS": "JSON array of model ids (pydantic-settings complex env); bare string fails startup",
     "WHISPER__COMPUTE_TYPE": "int8",
-    "API_KEY": "required deployment secret (compose ${STT_API_KEY:?}); /health stays public"
+    "API_KEY": "required deployment secret (compose ${STT_API_KEY:?}); /health requires the Bearer token"
   },
   "model": {
     "default": "Systran/faster-distil-whisper-small.en",
