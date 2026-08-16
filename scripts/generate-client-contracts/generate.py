@@ -51,10 +51,6 @@ from termflow_control_plane.api.agent_conversations import (
     AgentSubmitMessageRequest,
     AgentSubmitMessageResponse,
 )
-from termflow_control_plane.api.transcription import (
-    TranscriptionDraftDetailResponse,
-    TranscriptionDraftResponse,
-)
 from termflow_protocol import (
     PROTOCOL_VERSION,
     AgentEvent,
@@ -208,8 +204,6 @@ MODELS: tuple[type[BaseModel], ...] = (
     ApprovalDetailResponse,
     ApprovalListResponse,
     ApprovalDecisionRequest,
-    TranscriptionDraftResponse,
-    TranscriptionDraftDetailResponse,
     AgentProfileCreateRequest,
     AgentProfileUpdateRequest,
     AgentProfileResponse,

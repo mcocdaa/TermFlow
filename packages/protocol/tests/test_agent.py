@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
+import termflow_protocol
 from pydantic import TypeAdapter, ValidationError
 from termflow_protocol import (
     AgentEvent,
@@ -13,16 +14,22 @@ from termflow_protocol import (
     RunFailedEvent,
     RunStartedEvent,
     UserMessageInput,
+    UserMessagePayload,
     parse_agent_event,
     parse_agent_input,
 )
+
+
+def test_public_agent_message_contract_is_text_only() -> None:
+    assert "TranscriptDraftState" not in termflow_protocol.__all__
+    assert "draft_ref" not in UserMessagePayload.model_fields
 
 _INPUT_VARIANTS: list[tuple[str, str, str, dict[str, object]]] = [
     (
         "user_message",
         "user_session",
         "user",
-        {"text": "hello agent", "draft_ref": "draft-7"},
+        {"text": "hello agent"},
     ),
     (
         "watch_triggered",

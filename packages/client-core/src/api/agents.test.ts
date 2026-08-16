@@ -117,6 +117,9 @@ describe('submitMessage and cancelRun', () => {
       [`/api/v1/agent/conversations/${CONVERSATION}/messages`, { method: 'POST', body: { text: 'hello' } }],
       [`/api/v1/agent/conversations/${CONVERSATION}/cancel`, { method: 'POST', body: { reason: 'user_cancelled' } }],
     ])
+    const submitOptions = request.mock.calls[0]?.[1] as { body: Record<string, unknown> }
+    expect(submitOptions.body).toEqual({ text: 'hello' })
+    expect(submitOptions.body).not.toHaveProperty('draft_ref')
   })
 
   it('propagates ApiError details for the UI error mapping (503/409/422/403)', async () => {

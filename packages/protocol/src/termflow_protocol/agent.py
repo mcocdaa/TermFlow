@@ -113,7 +113,6 @@ class AgentInputBase(PayloadModel):
 
 class UserMessagePayload(PayloadModel):
     text: str
-    draft_ref: str | None = Field(default=None, min_length=1, max_length=256)
 
     @field_validator("text")
     @classmethod

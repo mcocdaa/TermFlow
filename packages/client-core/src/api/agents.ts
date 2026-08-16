@@ -13,12 +13,10 @@ import { parseAguiEvent, type AguiEvent, type AguiReplayBatch } from '../agent/a
 import type { ApiRequest, ApiRequestOptions } from '../http/types'
 
 //: M4.5 admission models (termflow_control_plane.api.agent_conversations).
-//: The raw wire shapes now also exist in generated.ts, but this module keeps
-//: caller-friendly variants: ``draft_ref``/``reason`` are optional here while
-//: the generator renders B-side defaults as required ``| null`` fields.
+//: The raw wire shapes also exist in generated.ts; this module keeps the
+//: caller-friendly optional cancel reason.
 export interface AgentSubmitMessageRequest {
   text: string
-  draft_ref?: string | null
 }
 
 export interface AgentSubmitMessageResponse {

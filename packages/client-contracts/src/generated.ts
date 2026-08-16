@@ -302,7 +302,6 @@ export interface TerminalActionResultFrame {
 export interface AgentCapabilitiesResponse {
   agent_broker_enabled: boolean
   delegated_write_grants_enabled: boolean
-  speech_to_text_enabled: boolean
 }
 
 export interface AgentConversationCreateRequest {
@@ -359,7 +358,6 @@ export interface AgentMessageListResponse {
 
 export interface AgentSubmitMessageRequest {
   text: string
-  draft_ref: string | null
 }
 
 export interface AgentSubmitMessageResponse {
@@ -448,29 +446,6 @@ export interface ApprovalDecisionRequest {
   decision: "approve" | "deny"
 }
 
-export interface TranscriptionDraftResponse {
-  draft_id: string
-  state: string
-  transcript: string
-  provider: string
-  region: string
-  language: string | null
-  duration_seconds: number | null
-  expires_at: string
-}
-
-export interface TranscriptionDraftDetailResponse {
-  draft_id: string
-  binding_id: string
-  target_conversation_id: string
-  state: string
-  provider: string
-  region: string
-  transcript_hash: string
-  expires_at: string
-  created_at: string
-}
-
 export interface AgentProfileCreateRequest {
   display_name: string
   backend_kind: string
@@ -553,7 +528,6 @@ export interface AgentTokenListResponse {
 
 export interface UserMessagePayload {
   text: string
-  draft_ref: string | null
 }
 
 export interface WatchTriggeredPayload {
