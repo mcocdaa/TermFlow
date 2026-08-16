@@ -3,10 +3,10 @@
 Covers the M1.6 verification wave:
 
 * startup purge/rebuild integration: ``purge_expired`` sweeps every Agent
-  persistence class except approvals (tokens, transcript drafts,
-  diagnostics, watches, terminal inbox/run rows, confirmed cleanup
-  tombstones); expired approvals sweep through ``ApprovalPolicy`` at the
-  composition root so each swept row records an ``expired`` audit event.
+  persistence class except approvals (tokens, diagnostics, watches, terminal
+  inbox/run rows, confirmed cleanup tombstones); expired approvals sweep
+  through ``ApprovalPolicy`` at the composition root so each swept row
+  records an ``expired`` audit event.
 * deterministic restart recovery order
   (``run_agent_recovery``: inbox claims -> stuck runs -> cleanup jobs)
   including fail-safe error handling.
@@ -34,12 +34,11 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
-from sqlalchemy import select
 from termflow_control_plane.app import create_app
 from termflow_control_plane.config import Settings
 from termflow_control_plane.connections.event_hub import EventHub
 from termflow_control_plane.persistence.database import Database
-from termflow_control_plane.persistence.models import AgentCleanupJob, TranscriptDraft
+from termflow_control_plane.persistence.models import AgentCleanupJob
 from termflow_control_plane.persistence.repositories import RepositoryBundle, digest_secret
 from termflow_control_plane.plugins.agent_broker.agent.backend import (
     AgentBackendCapabilities,
@@ -133,12 +132,6 @@ async def _get_cleanup_job(
 ) -> AgentCleanupJob | None:
     async with repos.session_factory() as session:  # type: ignore[attr-defined]
         return await session.get(AgentCleanupJob, job_id)
-
-
-async def _list_draft_states(repos: RepositoryBundle) -> set[str]:
-    async with repos.session_factory() as session:  # type: ignore[attr-defined]
-        rows = await session.scalars(select(TranscriptDraft))
-        return {draft.state for draft in rows}
 
 
 async def _seed_profile(repos: RepositoryBundle, name: str | None = None) -> UUID:
@@ -266,25 +259,6 @@ async def test_purge_expired_sweeps_every_agent_expiry_class(
         auth_epoch=1,
         expires_at=observed + timedelta(minutes=5),
     )
-    # Expired transcript draft + one still pending.
-    await repositories.transcript_drafts.create(
-        binding_id=binding_id,
-        target_conversation_id=conversation_id,
-        owner_actor_id="actor-1",
-        transcript_hash=_hash("expired"),
-        provider="whisper",
-        region="us-east-1",
-        expires_at=observed - timedelta(minutes=5),
-    )
-    await repositories.transcript_drafts.create(
-        binding_id=binding_id,
-        target_conversation_id=conversation_id,
-        owner_actor_id="actor-1",
-        transcript_hash=_hash("valid"),
-        provider="whisper",
-        region="us-east-1",
-        expires_at=observed + timedelta(minutes=5),
-    )
     # Expired diagnostic + one still live.
     await repositories.diagnostics.append(
         conversation_id=conversation_id,
@@ -321,7 +295,6 @@ async def test_purge_expired_sweeps_every_agent_expiry_class(
     counts = await repositories.purge_expired(now=observed)
 
     assert counts["agent_tokens"] == 1
-    assert counts["transcript_drafts"] == 1
     assert counts["diagnostics"] == 1
     assert counts["watches"] == 1
     assert counts["agent_inbox"] == 0
@@ -341,8 +314,6 @@ async def test_purge_expired_sweeps_every_agent_expiry_class(
     assert (
         await repositories.approvals.get_by_tool_call(conversation_id, "valid-call")
     ).state == "pending"
-    # The expired draft is expired in place; the valid one stays pending.
-    assert await _list_draft_states(repositories) == {"expired", "pending"}
     active_watches = await repositories.watches.list_active(now=observed)
     assert [watch.intent_summary for watch in active_watches] == ["valid"]
 

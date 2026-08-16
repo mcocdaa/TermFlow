@@ -865,35 +865,6 @@ class WatchDelivery(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
-class TranscriptDraft(Base):
-    """Short-lived STT transcript awaiting user confirmation (plan §14)."""
-
-    __tablename__ = "transcript_drafts"
-
-    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
-    binding_id: Mapped[UUID] = mapped_column(
-        Uuid(as_uuid=True),
-        ForeignKey("agent_bindings.id", ondelete="CASCADE"),
-        index=True,
-    )
-    target_conversation_id: Mapped[UUID] = mapped_column(
-        Uuid(as_uuid=True),
-        ForeignKey("agent_conversations.id", ondelete="CASCADE"),
-        index=True,
-    )
-    owner_actor_id: Mapped[str] = mapped_column(String(128))
-    transcript_hash: Mapped[str] = mapped_column(String(64))
-    state: Mapped[str] = mapped_column(String(32))
-    provider: Mapped[str] = mapped_column(String(64))
-    region: Mapped[str] = mapped_column(String(64))
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-
-    __table_args__ = (
-        Index("ix_transcript_drafts_state_expires_at", "state", "expires_at"),
-    )
-
-
 class AgentCleanupJob(Base):
     """Durable deletion tombstone that retries backend/volume cleanup (plan §17)."""
 

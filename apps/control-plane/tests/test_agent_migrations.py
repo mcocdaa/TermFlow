@@ -41,7 +41,6 @@ AGENT_TABLES = (
     "write_grants",
     "watches",
     "watch_deliveries",
-    "transcript_drafts",
     "agent_cleanup_jobs",
     "agent_diagnostics",
     "pane_observation_cursors",
@@ -111,6 +110,22 @@ def test_fresh_database_migrates_to_agent_broker_head(tmp_path) -> None:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
         assert revision == HEAD
         assert AGENT_TABLE_SET <= table_names
+    finally:
+        engine.dispose()
+
+
+def test_final_agent_schema_has_no_transcription_artifacts(tmp_path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'text-only-agent.db'}")
+    try:
+        with engine.begin() as connection:
+            config = _migration_config(connection)
+            command.upgrade(config, "head")
+            inspector = inspect(connection)
+            assert "transcript_drafts" not in inspector.get_table_names()
+            message_columns = {
+                column["name"] for column in inspector.get_columns("agent_messages")
+            }
+            assert "draft_ref" not in message_columns
     finally:
         engine.dispose()
 

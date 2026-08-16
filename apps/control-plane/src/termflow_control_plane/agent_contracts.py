@@ -7,8 +7,8 @@ This module freezes the acceptance contracts behind milestone M0.4:
   default retention/limit, redaction, and raw-storage rules.
 - §4.3 unknown-backend-event diagnostic restrictions: metadata-only persistence,
   no raw parts/tool results/headers/SSE bodies/reasoning/terminal excerpts.
-- §20 privacy matrix: no raw token, provider credential, unbounded terminal
-  content, or raw audio in logs/database; external provider disclosure and
+- §20 privacy matrix: no raw token, provider credential, or unbounded terminal
+  content in logs/database; external provider disclosure and
   enablement confirmation (``ExternalProviderDisclosure`` fails closed).
 - §17 B-restart fencing order (``StartupFencingOrder``), the DB-assigned
   per-conversation admission sequence (``AgentAdmissionSequence``), opaque Agent
@@ -40,8 +40,6 @@ class DataClass(StrEnum):
     MEMORY_FACTS = "memory_facts"
     APPROVAL_AUDIT_METADATA = "approval_audit_metadata"
     DEBUG_DIAGNOSTICS = "debug_diagnostics"
-    TRANSCRIPT_DRAFT = "transcript_draft"
-    TRANSCRIPT_RAW_AUDIO = "transcript_raw_audio"
     OPENCODE_VOLUME = "opencode_volume"
     CONTAINER_LOGS = "container_logs"
     CLEANUP_TOMBSTONE = "cleanup_tombstone"
@@ -54,7 +52,7 @@ class RetentionPolicy:
     ``retention`` is ``None`` only when the ceiling is governed by an explicit
     product policy (the OpenCode volume follows the conversation policy rather
     than a fixed B default). ``raw_storage`` is ``False`` wherever the raw form
-    of the data class is never persisted (raw pane streams, raw audio, metadata
+    of the data class is never persisted (raw pane streams, metadata
     only, or hash/redacted text); ``redacted`` marks classes whose content must
     be redacted or hashed before persistence.
     """
@@ -113,20 +111,6 @@ RETENTION_MATRIX: dict[DataClass, RetentionPolicy] = {
     DataClass.DEBUG_DIAGNOSTICS: RetentionPolicy(
         data_class=DataClass.DEBUG_DIAGNOSTICS,
         retention=timedelta(hours=24),
-        redacted=True,
-        raw_storage=False,
-    ),
-    # §16.1: transcript draft, 1 hour.
-    DataClass.TRANSCRIPT_DRAFT: RetentionPolicy(
-        data_class=DataClass.TRANSCRIPT_DRAFT,
-        retention=timedelta(hours=1),
-        redacted=True,
-        raw_storage=False,
-    ),
-    # §16.1: raw audio is deleted immediately after transcription or failure.
-    DataClass.TRANSCRIPT_RAW_AUDIO: RetentionPolicy(
-        data_class=DataClass.TRANSCRIPT_RAW_AUDIO,
-        retention=timedelta(0),
         redacted=True,
         raw_storage=False,
     ),

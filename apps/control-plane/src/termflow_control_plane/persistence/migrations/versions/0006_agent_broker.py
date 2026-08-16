@@ -440,39 +440,6 @@ def upgrade() -> None:
         ["next_attempt_at"],
     )
     op.create_table(
-        "transcript_drafts",
-        sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column("binding_id", sa.Uuid(), nullable=False),
-        sa.Column("target_conversation_id", sa.Uuid(), nullable=False),
-        sa.Column("owner_actor_id", sa.String(128), nullable=False),
-        sa.Column("transcript_hash", sa.String(64), nullable=False),
-        sa.Column("state", sa.String(32), nullable=False),
-        sa.Column("provider", sa.String(64), nullable=False),
-        sa.Column("region", sa.String(64), nullable=False),
-        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["binding_id"], ["agent_bindings.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(
-            ["target_conversation_id"], ["agent_conversations.id"], ondelete="CASCADE"
-        ),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(
-        "ix_transcript_drafts_binding_id",
-        "transcript_drafts",
-        ["binding_id"],
-    )
-    op.create_index(
-        "ix_transcript_drafts_target_conversation_id",
-        "transcript_drafts",
-        ["target_conversation_id"],
-    )
-    op.create_index(
-        "ix_transcript_drafts_state_expires_at",
-        "transcript_drafts",
-        ["state", "expires_at"],
-    )
-    op.create_table(
         "agent_cleanup_jobs",
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("term_id", sa.Uuid(), nullable=True),
@@ -535,7 +502,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table("agent_diagnostics")
     op.drop_table("agent_cleanup_jobs")
-    op.drop_table("transcript_drafts")
     op.drop_table("watch_deliveries")
     op.drop_table("watches")
     op.drop_table("write_grants")

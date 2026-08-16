@@ -51,7 +51,6 @@ from .models import (
     OAuthAuthorization,
     PanePolicy,
     TotpSetup,
-    TranscriptDraft,
     Watch,
     WatchDelivery,
 )
@@ -2869,71 +2868,6 @@ class AgentInboxRepository:
             await session.commit()
             return item
 
-    async def enqueue_consuming_draft(
-        self,
-        *,
-        conversation_id: UUID,
-        kind: str,
-        actor_id: str,
-        actor_kind: str,
-        idempotency_key: str,
-        payload_digest: str,
-        source: str,
-        draft_id: UUID,
-        draft_owner_actor_id: str,
-        auth_epoch: int | None = None,
-        causation_id: UUID | None = None,
-        correlation_id: UUID | None = None,
-        now: datetime | None = None,
-    ) -> tuple[AgentInboxItem, TranscriptDraft] | None:
-        """Admit one inbox item and consume its transcript draft atomically.
-
-        M7b spec §4.8: the draft CAS (``confirmed -> consumed``) and the
-        inbox admission commit in one transaction - an admission failure
-        rolls the consume back, and a failed CAS inserts nothing.  The
-        single ``UPDATE ... WHERE`` carries every precondition (existence,
-        owner, state, target conversation, expiry), so a replay of the same
-        ``draft_ref`` can never admit twice.
-
-        Returns ``(inbox_item, draft)`` on success, or ``None`` when the CAS
-        did not match (nothing was inserted or consumed).
-        """
-        observed_at = now or datetime.now(UTC)
-        effective_correlation_id = correlation_id or uuid4()
-        async with self._sessions() as session:
-            draft = await session.execute(
-                update(TranscriptDraft)
-                .where(
-                    TranscriptDraft.id == draft_id,
-                    TranscriptDraft.owner_actor_id == draft_owner_actor_id,
-                    TranscriptDraft.state == "confirmed",
-                    TranscriptDraft.target_conversation_id == conversation_id,
-                    TranscriptDraft.expires_at > observed_at,
-                )
-                .values(state="consumed")
-                .returning(TranscriptDraft)
-            )
-            consumed = draft.scalar_one_or_none()
-            if consumed is None:
-                await session.rollback()
-                return None
-            item = await self._insert_pending(
-                session,
-                conversation_id=conversation_id,
-                kind=kind,
-                actor_id=actor_id,
-                actor_kind=actor_kind,
-                idempotency_key=idempotency_key,
-                payload_digest=payload_digest,
-                source=source,
-                auth_epoch=auth_epoch,
-                causation_id=causation_id,
-                correlation_id=effective_correlation_id,
-                now=observed_at,
-            )
-            await session.commit()
-            return item, consumed
-
     @staticmethod
     async def _insert_pending(
         session: AsyncSession,
@@ -4369,108 +4303,6 @@ class WatchDeliveryRepository:
             return delivery
 
 
-class TranscriptDraftRepository:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
-        self._sessions = sessions
-
-    async def create(
-        self,
-        *,
-        binding_id: UUID,
-        target_conversation_id: UUID,
-        owner_actor_id: str,
-        transcript_hash: str,
-        provider: str,
-        region: str,
-        expires_at: datetime,
-        state: str = "pending",
-    ) -> TranscriptDraft:
-        async with self._sessions() as session:
-            draft = TranscriptDraft(
-                binding_id=binding_id,
-                target_conversation_id=target_conversation_id,
-                owner_actor_id=owner_actor_id,
-                transcript_hash=transcript_hash,
-                state=state,
-                provider=provider,
-                region=region,
-                expires_at=expires_at,
-            )
-            session.add(draft)
-            await session.commit()
-            return draft
-
-    async def get_by_id(self, draft_id: UUID) -> TranscriptDraft | None:
-        async with self._sessions() as session:
-            return await session.get(TranscriptDraft, draft_id)
-
-    async def set_state(
-        self,
-        draft_id: UUID,
-        new_state: str,
-        *,
-        expected_state: str = "pending",
-    ) -> TranscriptDraft | None:
-        async with self._sessions() as session:
-            result = await session.execute(
-                update(TranscriptDraft)
-                .where(
-                    TranscriptDraft.id == draft_id,
-                    TranscriptDraft.state == expected_state,
-                )
-                .values(state=new_state)
-                .returning(TranscriptDraft)
-            )
-            draft = result.scalar_one_or_none()
-            await session.commit()
-            return draft
-
-    async def expire_pending(self, *, now: datetime | None = None) -> int:
-        """Expire overdue transcripts in the awaiting-confirmation states.
-
-        Both ``"pending"`` (repository default) and ``"draft"`` (upload API)
-        rows are swept to ``"expired"``; terminal states are untouched.
-        """
-        observed_at = now or datetime.now(UTC)
-        async with self._sessions() as session:
-            result = cast(
-                CursorResult[Any],
-                await session.execute(
-                    update(TranscriptDraft)
-                    .where(
-                        TranscriptDraft.state.in_(["pending", "draft"]),
-                        TranscriptDraft.expires_at <= observed_at,
-                    )
-                    .values(state="expired")
-                ),
-            )
-            count = int(result.rowcount or 0)
-            await session.commit()
-            return count
-
-    async def delete(
-        self,
-        draft_id: UUID,
-        *,
-        raw_audio_cleanup: bool = True,
-    ) -> bool:
-        """Delete the draft row and commit to out-of-band raw-audio cleanup.
-
-        The database row holds only a transcript hash, never raw audio; the
-        caller uses ``raw_audio_cleanup`` to signal that the associated
-        short-lived audio blob (stored outside the database) must be deleted.
-        """
-        async with self._sessions() as session:
-            result = await session.execute(
-                delete(TranscriptDraft)
-                .where(TranscriptDraft.id == draft_id)
-                .returning(TranscriptDraft.id)
-            )
-            deleted = result.scalar_one_or_none() is not None
-            await session.commit()
-            return deleted
-
-
 class CleanupJobRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
@@ -4701,7 +4533,6 @@ class RepositoryBundle:
         self.approval_audit = ApprovalAuditRepository(sessions)
         self.watches = WatchRepository(sessions)
         self.agent_watch_deliveries = WatchDeliveryRepository(sessions)
-        self.transcript_drafts = TranscriptDraftRepository(sessions)
         self.cleanup_jobs = CleanupJobRepository(sessions)
         self.diagnostics = DiagnosticsRepository(sessions)
 
@@ -4709,8 +4540,8 @@ class RepositoryBundle:
         """Delete rows past their expiry; native clients are retained forever.
 
         The same startup sweep covers the Agent Broker classes (plan §15):
-        expired tokens are deleted, transcript drafts are expired in place,
-        diagnostics are pruned, expired watches are deleted, and inbox/run
+        expired tokens are deleted, diagnostics are pruned, expired watches
+        are deleted, and inbox/run
         rows and cleanup tombstones in terminal states older than the
         retention window are removed.  Expired approvals are NOT swept here:
         the composition root sweeps them through ``ApprovalPolicy`` so every
@@ -4736,9 +4567,6 @@ class RepositoryBundle:
             await session.commit()
         counts["agent_tokens"] = await self.agent_tokens.purge_expired(now=now)
         counts["approval_audit"] = await self.approval_audit.purge_expired(now=now)
-        counts["transcript_drafts"] = await self.transcript_drafts.expire_pending(
-            now=now
-        )
         counts["diagnostics"] = await self.diagnostics.prune_expired(now=now)
         counts["watches"] = await self.watches.purge_expired(now=now)
         counts["agent_inbox"] = await self.agent_inbox.purge_terminal(now=now)

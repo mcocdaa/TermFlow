@@ -238,20 +238,6 @@ class NoActiveRunError(Exception):
     """Raised when cancellation is requested without a queued/running run."""
 
 
-class DraftRefRejected(Exception):
-    """Submit-side ``draft_ref`` CAS rejection (M7b spec §4.8).
-
-    The CAS failure already guarantees no admission was created; ``reason``
-    discriminates the client-mapped error so the API layer can surface the
-    contract status: ``not_found``, ``conversation_mismatch``, ``expired``,
-    or ``not_consumable`` (consumed, wrong state, or wrong owner).
-    """
-
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
-        self.reason = reason
-
-
 def _submit_error_code(outcome: BackendOutcome) -> str:
     """Map a failed submit outcome onto the plan §7 error vocabulary."""
     if outcome is BackendOutcome.UNSUPPORTED:
@@ -418,12 +404,7 @@ class AgentPipelineService:
     # ------------------------------------------------------------------
 
     async def submit_user_message(
-        self,
-        conversation_id: UUID,
-        text: str,
-        *,
-        actor: str,
-        draft_ref: UUID | None = None,
+        self, conversation_id: UUID, text: str, *, actor: str
     ) -> SubmitAdmission:
         """Admit one user message: durable enqueue + in-process payload (spec §2).
 
@@ -431,44 +412,20 @@ class AgentPipelineService:
         adapter-internal); the typed payload is registered for the dispatcher
         in-process so the turn can be rendered without a payload column.
 
-        With ``draft_ref`` (M7b spec §4.8) the transcript draft is consumed
-        in the same transaction as the admission: the confirmed→consumed CAS
-        and the inbox insert commit atomically, and a rejected CAS raises
-        :class:`DraftRefRejected` without creating any admission.
         """
         idempotency_key = str(uuid4())
         correlation_id = uuid4()
         payload_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        if draft_ref is None:
-            item = await self._repositories.agent_inbox.enqueue(
-                conversation_id=conversation_id,
-                kind=AgentInputKind.USER_MESSAGE.value,
-                actor_id=actor,
-                actor_kind=AgentActorKind.USER_SESSION.value,
-                idempotency_key=idempotency_key,
-                payload_digest=payload_digest,
-                source=AgentInputSource.USER.value,
-                correlation_id=correlation_id,
-            )
-        else:
-            admitted = await self._repositories.agent_inbox.enqueue_consuming_draft(
-                conversation_id=conversation_id,
-                kind=AgentInputKind.USER_MESSAGE.value,
-                actor_id=actor,
-                actor_kind=AgentActorKind.USER_SESSION.value,
-                idempotency_key=idempotency_key,
-                payload_digest=payload_digest,
-                source=AgentInputSource.USER.value,
-                draft_id=draft_ref,
-                draft_owner_actor_id=actor,
-                correlation_id=correlation_id,
-            )
-            if admitted is None:
-                rejection = await self._classify_draft_rejection(
-                    draft_ref, conversation_id
-                )
-                raise rejection
-            item, _consumed = admitted
+        item = await self._repositories.agent_inbox.enqueue(
+            conversation_id=conversation_id,
+            kind=AgentInputKind.USER_MESSAGE.value,
+            actor_id=actor,
+            actor_kind=AgentActorKind.USER_SESSION.value,
+            idempotency_key=idempotency_key,
+            payload_digest=payload_digest,
+            source=AgentInputSource.USER.value,
+            correlation_id=correlation_id,
+        )
         self._pending_payloads[item.id] = UserMessageInput(
             kind="user_message",
             input_id=item.id,
@@ -480,10 +437,7 @@ class AgentPipelineService:
             source=AgentInputSource.USER,
             causation_id=str(uuid4()),
             correlation_id=str(correlation_id),
-            payload=UserMessagePayload(
-                text=text,
-                draft_ref=str(draft_ref) if draft_ref is not None else None,
-            ),
+            payload=UserMessagePayload(text=text),
         )
         self._wake.set()
         return SubmitAdmission(
@@ -494,25 +448,6 @@ class AgentPipelineService:
             delivery_state="pending",
             submission_state="not_started",
         )
-
-    async def _classify_draft_rejection(
-        self, draft_id: UUID, conversation_id: UUID
-    ) -> DraftRefRejected:
-        """Best-effort diagnosis for a failed submit-side draft CAS (M7b §4.8).
-
-        The CAS failure already guarantees no admission was created; this
-        read only picks the client-mapped error code.  A race between the
-        CAS and this read can only change which code is reported, never the
-        one-shot consumption guarantee.
-        """
-        draft = await self._repositories.transcript_drafts.get_by_id(draft_id)
-        if draft is None:
-            return DraftRefRejected("not_found")
-        if draft.target_conversation_id != conversation_id:
-            return DraftRefRejected("conversation_mismatch")
-        if self._aware_utc(draft.expires_at) <= self._now():
-            return DraftRefRejected("expired")
-        return DraftRefRejected("not_consumable")
 
     async def submit_watch_input(self, input: WatchTriggeredInput) -> None:
         """Register a fired watch's typed input for the dispatcher (spec §3).

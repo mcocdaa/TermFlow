@@ -34,7 +34,6 @@ from termflow_control_plane.persistence.models import (
     Installation,
     Instance,
     PanePolicy,
-    TranscriptDraft,
     Watch,
     WatchDelivery,
     WriteGrant,
@@ -60,7 +59,6 @@ MODEL_TABLE_PAIRS = [
     (WriteGrant, "write_grants"),
     (Watch, "watches"),
     (WatchDelivery, "watch_deliveries"),
-    (TranscriptDraft, "transcript_drafts"),
     (AgentCleanupJob, "agent_cleanup_jobs"),
     (AgentDiagnostic, "agent_diagnostics"),
 ]
@@ -77,7 +75,6 @@ STATE_COLUMNS = {
     ("approval_requests", "state"),
     ("write_grants", "state"),
     ("watches", "state"),
-    ("transcript_drafts", "state"),
     ("agent_cleanup_jobs", "state"),
 }
 
@@ -114,10 +111,6 @@ ON_DELETE_CASCADE = {
     "write_grants": {("binding_id", "agent_bindings")},
     "watches": {("binding_id", "agent_bindings"), ("conversation_id", "agent_conversations")},
     "watch_deliveries": {("watch_id", "watches")},
-    "transcript_drafts": {
-        ("binding_id", "agent_bindings"),
-        ("target_conversation_id", "agent_conversations"),
-    },
     "agent_diagnostics": {("conversation_id", "agent_conversations")},
 }
 
@@ -289,7 +282,6 @@ def test_required_indexes_exist(engine: Engine) -> None:
         ("watches", ("binding_id", "state")),
         ("watches", ("expiry_at",)),
         ("watch_deliveries", ("next_attempt_at",)),
-        ("transcript_drafts", ("state", "expires_at")),
         ("agent_cleanup_jobs", ("state", "next_attempt_at")),
         ("agent_diagnostics", ("ttl_expires_at",)),
     ]

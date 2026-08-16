@@ -37,13 +37,10 @@ def test_retention_matrix_matches_plan_16_1_defaults() -> None:
     assert RETENTION_MATRIX[DataClass.MEMORY_FACTS].retention == timedelta(days=90)
     assert RETENTION_MATRIX[DataClass.APPROVAL_AUDIT_METADATA].retention == timedelta(days=90)
     assert RETENTION_MATRIX[DataClass.DEBUG_DIAGNOSTICS].retention == timedelta(hours=24)
-    assert RETENTION_MATRIX[DataClass.TRANSCRIPT_DRAFT].retention == timedelta(hours=1)
     assert RETENTION_MATRIX[DataClass.CONTAINER_LOGS].retention == timedelta(days=7)
     assert RETENTION_MATRIX[DataClass.CLEANUP_TOMBSTONE].retention == timedelta(days=30)
     # The OpenCode volume is governed by the conversation policy, not a fixed B ceiling.
     assert RETENTION_MATRIX[DataClass.OPENCODE_VOLUME].retention is None
-    # Raw audio is deleted immediately after transcription or failure.
-    assert RETENTION_MATRIX[DataClass.TRANSCRIPT_RAW_AUDIO].retention == timedelta(0)
 
 
 def test_terminal_watch_excerpts_are_capped_at_64_kib() -> None:
@@ -55,10 +52,9 @@ def test_matrix_covers_every_declared_data_class() -> None:
 
 
 def test_raw_storage_and_redaction_flags() -> None:
-    """Raw terminal/watch content and raw audio are never persisted."""
+    """Raw terminal/watch content is never persisted."""
     assert RETENTION_MATRIX[DataClass.TERMINAL_WATCH_EXCERPTS].raw_storage is False
     assert RETENTION_MATRIX[DataClass.TERMINAL_WATCH_EXCERPTS].redacted is True
-    assert RETENTION_MATRIX[DataClass.TRANSCRIPT_RAW_AUDIO].raw_storage is False
     assert RETENTION_MATRIX[DataClass.APPROVAL_AUDIT_METADATA].raw_storage is False
     assert RETENTION_MATRIX[DataClass.APPROVAL_AUDIT_METADATA].redacted is True
     assert RETENTION_MATRIX[DataClass.DEBUG_DIAGNOSTICS].raw_storage is False
@@ -74,13 +70,8 @@ def test_retention_policy_rejects_negative_retention_and_non_positive_byte_caps(
         RetentionPolicy(data_class=DataClass.FINAL_MESSAGES, max_bytes=-64 * KIB)
 
 
-def test_retention_policy_accepts_immediate_deletion_and_unbounded_retention() -> None:
-    immediate = RetentionPolicy(
-        data_class=DataClass.TRANSCRIPT_RAW_AUDIO,
-        retention=timedelta(0),
-    )
+def test_retention_policy_accepts_policy_governed_unbounded_retention() -> None:
     policy_governed = RetentionPolicy(data_class=DataClass.OPENCODE_VOLUME, retention=None)
-    assert immediate.retention == timedelta(0)
     assert policy_governed.retention is None
 
 
