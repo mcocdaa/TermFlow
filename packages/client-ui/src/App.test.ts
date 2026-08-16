@@ -120,7 +120,6 @@ describe('shared application routes', () => {
     const capabilities = vi.fn().mockResolvedValue({
       agent_broker_enabled: true,
       delegated_write_grants_enabled: false,
-      speech_to_text_enabled: false,
     })
     const enabled = mount(App, {
       global: {

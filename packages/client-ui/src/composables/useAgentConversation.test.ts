@@ -10,13 +10,41 @@ import type {
 import { describe, expect, it, vi } from 'vitest'
 import { createClientUi, type ClientRuntime } from '../runtime'
 import { createFakeAgentCursorStore, createFakeRuntime } from '../test/fakeRuntime'
-import { createControllableClock, type ControllableClock } from '../test/voiceTestHarness'
 import { useAgentConversation } from './useAgentConversation'
 import { useBottomToast, type BottomToastController } from './useBottomToast'
 import { useSession, type SessionActions } from './useSession'
 
 const CONVERSATION = 'conv-1'
 const CHUNK = (delta: string): AguiEvent => ({ type: 'TEXT_MESSAGE_CHUNK', messageId: 'm1', delta })
+
+interface ControllableClock {
+  clock: ClientRuntime['clock']
+  advance(ms: number): void
+  fireTimeouts(): void
+  pendingTimeoutCount(): number
+}
+
+function createControllableClock(startMs = Date.now()): ControllableClock {
+  let now = startMs
+  let nextId = 0
+  const timeouts = new Map<unknown, () => void>()
+  return {
+    clock: {
+      now: () => now,
+      setTimeout: (callback) => {
+        const id = ++nextId
+        timeouts.set(id, callback)
+        return id
+      },
+      clearTimeout: (handle) => { timeouts.delete(handle) },
+      setInterval: () => ++nextId,
+      clearInterval: () => undefined,
+    },
+    advance: (ms) => { now += ms },
+    fireTimeouts: () => { for (const callback of [...timeouts.values()]) callback() },
+    pendingTimeoutCount: () => timeouts.size,
+  }
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -73,7 +101,7 @@ function mountConversation(overrides: {
       ...createFakeRuntime().api,
       agents: {
         listMessages,
-        capabilities: vi.fn(async () => ({ agent_broker_enabled: true, delegated_write_grants_enabled: false, speech_to_text_enabled: false })),
+        capabilities: vi.fn(async () => ({ agent_broker_enabled: true, delegated_write_grants_enabled: false })),
         listConversations: vi.fn(async () => ({ conversations: [] })),
         createConversation: vi.fn(async () => ({})) as never,
         getConversation: vi.fn(async () => ({})) as never,

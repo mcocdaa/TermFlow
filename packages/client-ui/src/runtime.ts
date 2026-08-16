@@ -3,11 +3,8 @@ import type {
   AgentStreamTransport,
   AguiEvent,
   ApiClient,
-  AudioRecorder,
-  AudioUploader,
   TerminalSessionCallbacks,
   TerminalSessionLike,
-  VoiceStorage,
 } from '@termflow/client-core'
 import { inject, type App } from 'vue'
 import { createSessionActions, type SessionActions } from './composables/useSession'
@@ -41,27 +38,6 @@ export interface AuthorizationCompletionPort {
   navigate(callbackUri: string): void
 }
 
-/**
- * Optional voice capability injected only by the Tauri mobile clients
- * (M7b spec §4.2). Web/desktop runtimes omit it, so the voice UI disappears
- * naturally: `VoiceInputButton` renders only when `voice` exists ∧
- * `voice.enabled()` ∧ the B side STT capability flag.
- */
-export interface ClientVoiceRuntime {
-  /** Multipart upload through the Rust-held command (base64 + invoke). */
-  readonly uploadAudio: AudioUploader
-  /** Fresh recorder per press; tracks are released on stop/abort. */
-  readonly createRecorder: () => AudioRecorder
-  /** platform ∈ {android, ios} ∧ capture pipeline feature-detected. */
-  readonly enabled: () => boolean
-  /**
-   * Slot that persists the pending transcript draft (M7b spec §4.7.4).
-   * Injected by the platform runtime; `useVoiceDraft` falls back to an
-   * in-memory store when no adapter is wired.
-   */
-  readonly draftStore: VoiceStorage
-}
-
 export interface ClientRuntime {
   readonly api: ApiClient
   readonly createTerminal: (termId: string, callbacks: TerminalSessionCallbacks) => TerminalSessionLike
@@ -80,7 +56,6 @@ export interface ClientRuntime {
   readonly authorizationCompletion: AuthorizationCompletionPort
   readonly canonicalServerUrl: string
   readonly platform: string
-  readonly voice?: ClientVoiceRuntime
 }
 
 export interface ClientUiOptions {

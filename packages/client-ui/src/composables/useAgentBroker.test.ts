@@ -48,7 +48,7 @@ async function mounted(capabilities: ReturnType<typeof vi.fn>) {
 
 describe('useAgentBroker', () => {
   it('exposes the capability gate from a single fetch', async () => {
-    const capabilities = vi.fn(async () => ({ agent_broker_enabled: true, delegated_write_grants_enabled: false, speech_to_text_enabled: false }))
+    const capabilities = vi.fn(async () => ({ agent_broker_enabled: true, delegated_write_grants_enabled: false }))
     const harness = await mounted(capabilities)
 
     expect(capabilities).toHaveBeenCalledTimes(1)
@@ -59,7 +59,7 @@ describe('useAgentBroker', () => {
   })
 
   it('keeps the gate closed when the broker is disabled', async () => {
-    const harness = await mounted(vi.fn(async () => ({ agent_broker_enabled: false, delegated_write_grants_enabled: false, speech_to_text_enabled: false })))
+    const harness = await mounted(vi.fn(async () => ({ agent_broker_enabled: false, delegated_write_grants_enabled: false })))
     expect(harness.broker().agentBrokerEnabled.value).toBe(false)
   })
 
@@ -74,8 +74,8 @@ describe('useAgentBroker', () => {
 
   it('reloads the capability on demand', async () => {
     const capabilities = vi.fn()
-      .mockResolvedValueOnce({ agent_broker_enabled: false, delegated_write_grants_enabled: false, speech_to_text_enabled: false })
-      .mockResolvedValueOnce({ agent_broker_enabled: true, delegated_write_grants_enabled: false, speech_to_text_enabled: false })
+      .mockResolvedValueOnce({ agent_broker_enabled: false, delegated_write_grants_enabled: false })
+      .mockResolvedValueOnce({ agent_broker_enabled: true, delegated_write_grants_enabled: false })
     const harness = await mounted(capabilities)
     expect(harness.broker().agentBrokerEnabled.value).toBe(false)
 

@@ -24,7 +24,6 @@ describe('createTauriRuntime', () => {
     mocks.clearNativeCredentials.mockReset().mockResolvedValue(undefined)
     mocks.load.mockReset().mockResolvedValue(undefined)
     mocks.platformValue = 'windows'
-    sessionStorage.clear()
   })
 
   it('restores native access through dashboard and clears the keyring on logout', async () => {
@@ -38,50 +37,4 @@ describe('createTauriRuntime', () => {
     expect(mocks.request).not.toHaveBeenCalledWith('/api/v1/admin/session', expect.anything())
   })
 
-  it('injects the voice capability gated by mobile platform and capture support', async () => {
-    mocks.platformValue = 'android'
-    Object.defineProperty(navigator, 'mediaDevices', { value: { getUserMedia: () => undefined }, configurable: true })
-    try {
-      const runtime = await createTauriRuntime()
-
-      expect(runtime.voice).toBeDefined()
-      expect(runtime.voice?.enabled()).toBe(true)
-      expect(typeof runtime.voice?.uploadAudio).toBe('function')
-      expect(runtime.voice?.createRecorder()).toMatchObject({
-        start: expect.any(Function),
-        stop: expect.any(Function),
-        abort: expect.any(Function),
-      })
-    } finally {
-      delete (navigator as { mediaDevices?: unknown }).mediaDevices
-    }
-  })
-
-  it('keeps the injected voice capability hidden on desktop platforms', async () => {
-    mocks.platformValue = 'windows'
-    const runtime = await createTauriRuntime()
-
-    expect(runtime.voice).toBeDefined()
-    expect(runtime.voice?.enabled()).toBe(false)
-  })
-
-  it('keeps the voice gate false without a capture pipeline even on mobile', async () => {
-    mocks.platformValue = 'ios'
-    // jsdom ships no navigator.mediaDevices — enabled() must stay false.
-    const runtime = await createTauriRuntime()
-
-    expect(runtime.voice?.enabled()).toBe(false)
-  })
-
-  it('round-trips the pending voice draft through the injected session store', async () => {
-    const runtime = await createTauriRuntime()
-    const payload = JSON.stringify({ draftId: 'draft-1', text: '待确认的转写' })
-
-    runtime.voice?.draftStore.setItem('termflow.voice.draft', payload)
-    expect(runtime.voice?.draftStore.getItem('termflow.voice.draft')).toBe(payload)
-    expect(sessionStorage.getItem('termflow.voice.draft')).toBe(payload)
-    runtime.voice?.draftStore.removeItem('termflow.voice.draft')
-    expect(runtime.voice?.draftStore.getItem('termflow.voice.draft')).toBeNull()
-    expect(sessionStorage.getItem('termflow.voice.draft')).toBeNull()
-  })
 })

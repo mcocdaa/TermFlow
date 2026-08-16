@@ -163,8 +163,6 @@ jobs:
       - run: npm ci
       - name: Generate the Android project from the committed Tauri configuration
         run: npm run tauri --workspace @termflow/tauri-client -- android init --ci
-      - name: Inject audio recording permissions into the generated Android manifest
-        run: python3 scripts/patch-mobile-manifests.py
       - name: Compile Android debug APK without publication signing
         run: npm run tauri --workspace @termflow/tauri-client -- android build --debug --ci --target aarch64 --apk
 

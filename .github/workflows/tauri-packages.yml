@@ -307,8 +307,6 @@ jobs:
       - run: npm ci
       - name: Generate the Android project
         run: npm run tauri --workspace @termflow/tauri-client -- android init --ci
-      - name: Inject audio recording permissions into the generated Android manifest
-        run: python scripts/patch-mobile-manifests.py
       - name: Generate TermFlow launcher resources
         run: npm run tauri --workspace @termflow/tauri-client -- icon app-icon.svg
       - name: Configure Android release signing

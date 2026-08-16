@@ -3,7 +3,7 @@
 //! surface, the URL always forces the `wire=agui` projection, and the
 //! outgoing request always carries DPoP authorization with an event-stream
 //! accept header. Mirrors the file-based style of
-//! `tests/audio_upload_contract.rs` where a source pin is the right tool.
+//! source pin where that is the right tool.
 
 use std::{fs, path::PathBuf};
 

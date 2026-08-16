@@ -487,7 +487,7 @@ async fn current_access(state: &NativeAuthState, issuer: &str) -> Result<AccessS
 }
 
 /// Token-only view of `current_access` for sibling modules that must not see
-/// the internal `AccessState` bookkeeping (e.g. `audio_upload`).
+/// the internal `AccessState` bookkeeping (for example `agent_stream`).
 pub(crate) async fn current_access_token(
     state: &NativeAuthState,
     issuer: &str,
@@ -854,10 +854,9 @@ fn is_public_api_path(path: &str) -> bool {
     )
 }
 
-/// Pins a WebView-supplied path to the issuer origin. `pub` so the upload
-/// contract tests under `tests/` can assert the exact semantics the
-/// `native_upload_audio` command relies on (same origin, `/api/` prefix,
-/// no absolute URLs or backslashes).
+/// Pins a WebView-supplied path to the issuer origin. `pub` so the native
+/// transport contract tests can assert the same-origin and `/api/` prefix
+/// rules (no absolute URLs or backslashes).
 pub fn assert_http_target(issuer: &str, path: &str) -> Result<Url, String> {
     if !path.starts_with('/')
         || path.starts_with("//")

@@ -73,7 +73,7 @@ function mountConversations(overrides: {
         listConversations,
         createConversation,
         deleteConversation,
-        capabilities: vi.fn(async () => ({ agent_broker_enabled: true, delegated_write_grants_enabled: false, speech_to_text_enabled: false })),
+        capabilities: vi.fn(async () => ({ agent_broker_enabled: true, delegated_write_grants_enabled: false })),
         listMessages: vi.fn(async () => ({ messages: [] })),
         getConversation: vi.fn(async () => ({})) as never,
         listEvents: vi.fn(async () => ({ events: [] })) as never,

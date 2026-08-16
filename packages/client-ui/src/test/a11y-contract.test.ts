@@ -165,7 +165,6 @@ async function mountChatView() {
         capabilities: vi.fn(async () => ({
           agent_broker_enabled: true,
           delegated_write_grants_enabled: false,
-          speech_to_text_enabled: false,
         })),
         listMessages: vi.fn(async () => ({ messages: [] })),
         submitMessage: vi.fn(async () => ({})),

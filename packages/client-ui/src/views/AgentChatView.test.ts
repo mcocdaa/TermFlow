@@ -97,7 +97,6 @@ async function mounted(overrides: {
   const capabilities = overrides.capabilities ?? vi.fn(async () => ({
     agent_broker_enabled: true,
     delegated_write_grants_enabled: false,
-    speech_to_text_enabled: false,
   }))
   const listMessages = overrides.listMessages ?? vi.fn(async () => ({ messages: [] }))
   const submitMessage = overrides.submitMessage ?? vi.fn(async () => ({
@@ -213,7 +212,7 @@ describe('AgentChatView', () => {
     harness.unmount()
   })
 
-  it('echoes the submitted text as a user bubble and clears the composer', async () => {
+  it('submits composer text through the ordinary message path', async () => {
     const harness = await mounted()
 
     await harness.wrapper.get('[data-agent-composer-input]').setValue('你好 Agent')
@@ -221,6 +220,8 @@ describe('AgentChatView', () => {
     await flushPromises()
 
     expect(harness.submitMessage).toHaveBeenCalledWith(CONVERSATION, { text: '你好 Agent' })
+    const [, payload] = harness.submitMessage.mock.calls[0] as [string, Record<string, unknown>]
+    expect(Object.keys(payload)).toEqual(['text'])
     expect(harness.wrapper.findAll('.agent-message--user')).toHaveLength(1)
     expect(harness.wrapper.get('.agent-message--user').text()).toContain('你好 Agent')
     expect((harness.wrapper.get('[data-agent-composer-input]').element as HTMLTextAreaElement).value).toBe('')
@@ -289,7 +290,7 @@ describe('AgentChatView', () => {
 
   it('capability disabled: placeholder rendered and no seed or stream requests fire', async () => {
     const harness = await mounted({
-      capabilities: vi.fn(async () => ({ agent_broker_enabled: false, delegated_write_grants_enabled: false, speech_to_text_enabled: false })),
+      capabilities: vi.fn(async () => ({ agent_broker_enabled: false, delegated_write_grants_enabled: false })),
     })
 
     expect(harness.wrapper.get('[data-agent-disabled]').text()).toContain('Agent Broker 未启用')

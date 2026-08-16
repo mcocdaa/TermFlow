@@ -1,5 +1,4 @@
 mod agent_stream;
-mod audio_upload;
 mod auth;
 mod diagnostics;
 mod terminal_socket;
@@ -8,15 +7,12 @@ use auth::NativeAuthState;
 use tauri::Manager;
 
 /// Public seams for the integration contract tests under `tests/`
-/// (agent_stream_contract.rs, audio_upload_contract.rs). These are not IPC
+/// (`agent_stream_contract.rs`). These are not IPC
 /// commands; the runtime invoke surface is the `invoke_handler` list below.
 pub mod contract_testing {
     pub use crate::agent_stream::{
         build_stream_request, build_stream_url, close_for_status, AgentStreamParams,
         AGENT_STREAM_PATH,
-    };
-    pub use crate::audio_upload::{
-        build_multipart, build_upload_request, DRAFT_UPLOAD_PATH, MAX_AUDIO_BYTES,
     };
     pub use crate::auth::assert_http_target;
 }
@@ -99,7 +95,6 @@ pub fn run() {
             auth::native_request_headers,
             auth::native_remember_dpop_nonce,
             auth::native_http_request,
-            audio_upload::native_upload_audio,
             agent_stream::native_agent_stream,
             agent_stream::native_agent_stream_cancel,
             terminal_socket::native_terminal_connect,
