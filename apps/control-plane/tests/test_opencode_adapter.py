@@ -6,7 +6,7 @@ The adapter under test implements the non-streaming parts of
 the same fixture directory).  These tests drive the adapter through an
 ``httpx.MockTransport`` and freeze the pinned endpoint paths, the ``directory``
 persistence rule (pin §3), the outcome mapping, and the no-exactly-once stance
-(pin §5/§6.1).  httpx is a dev-group dependency and is imported here only.
+(pin §5/§6.1).  httpx is a runtime dependency and is imported here directly.
 """
 
 from __future__ import annotations
@@ -158,6 +158,38 @@ class TestCapabilities:
     async def test_adapter_satisfies_backend_protocol(self) -> None:
         adapter, _ = _adapter(lambda request: httpx.Response(204))
         assert isinstance(adapter, AgentBackend)
+
+
+async def test_owned_client_applies_basic_auth_to_every_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[httpx.Request] = []
+    real_async_client = httpx.AsyncClient
+
+    def build_client(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        def record(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, json={"healthy": True, "version": "1.18.18"})
+
+        return real_async_client(
+            *args,
+            transport=httpx.MockTransport(record),
+            **kwargs,
+        )
+
+    monkeypatch.setattr(httpx, "AsyncClient", build_client)
+    adapter = OpenCodeAdapter(
+        base_url=BASE_URL,
+        directory=DIRECTORY,
+        backend_version=BACKEND_VERSION,
+        username="termflow",
+        password="secret",
+    )
+    response = await adapter._client.get(f"{BASE_URL}/global/health")
+
+    assert response.status_code == 200
+    assert requests[0].headers["Authorization"] == "Basic dGVybWZsb3c6c2VjcmV0"
+    await adapter.close()
 
 
 class TestCreateConversation:

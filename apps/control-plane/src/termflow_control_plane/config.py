@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     # retry loop.
     agent_opencode_base_url: str = "http://opencode-agent:4096"
     agent_opencode_directory: str = "/workspace"
+    # HTTP Basic auth pair for the internal B-to-OpenCode connection
+    # (compose OPENCODE_SERVER_*; M4 exit verified both the container side
+    # and the adapter client-level auth). Both or neither must be set.
+    agent_opencode_username: str | None = None
+    agent_opencode_password: SecretStr | None = None
     agent_pipeline_reconcile_attempts: int = Field(default=5, ge=1)
     # M4.5 watch wiring (spec §3a): the lifespan watch deadline task sweeps due
     # ``output_idle`` deadlines every tick and hands each FiredTrigger to its
@@ -173,6 +178,20 @@ class Settings(BaseSettings):
             return tuple(part.strip() for part in value.split(",") if part.strip())
         return value
 
+    @field_validator(
+        "agent_opencode_username",
+        "agent_opencode_password",
+        mode="before",
+    )
+    @classmethod
+    def normalize_empty_opencode_basic_auth(cls, value: object) -> object:
+        # Compose passes the unset pair as empty strings. Treat each empty
+        # value as absent so a partial/blank pair fails the combined validator
+        # and a fully empty pair becomes unconfigured.
+        if isinstance(value, str) and value == "":
+            return None
+        return value
+
     @field_validator("stt_url")
     @classmethod
     def validate_stt_url(cls, value: str | None) -> str | None:
@@ -209,6 +228,10 @@ class Settings(BaseSettings):
             raise ValueError("offline_after_seconds must exceed heartbeat_interval_seconds")
         if self.stt_enabled and self.stt_url is None:
             raise ValueError("stt_enabled requires stt_url (point it at the STT container)")
+        if (self.agent_opencode_username is None) != (self.agent_opencode_password is None):
+            raise ValueError(
+                "agent_opencode_username and agent_opencode_password must be set together"
+            )
         if self.totp_master_key is not None and self.totp_master_key_file is not None:
             raise ValueError("configure only one TOTP master key source")
         if self.totp_master_key is not None:

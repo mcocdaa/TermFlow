@@ -49,6 +49,52 @@ def test_admin_token_requires_at_least_32_utf8_bytes_without_echoing_value() -> 
     assert raw not in str(captured.value)
 
 
+def test_opencode_basic_auth_password_is_secret_and_pair_is_preserved() -> None:
+    raw_password = "opencode-password-that-must-not-appear-in-settings-repr"
+    settings = Settings(
+        admin_token=ADMIN_TOKEN,
+        agent_opencode_username="termflow",
+        agent_opencode_password=raw_password,
+    )
+
+    assert settings.agent_opencode_username == "termflow"
+    assert settings.agent_opencode_password is not None
+    assert settings.agent_opencode_password.get_secret_value() == raw_password
+    assert raw_password not in repr(settings)
+
+
+@pytest.mark.parametrize(
+    ("username", "password"),
+    [
+        ("termflow", None),
+        (None, "secret"),
+        ("termflow", ""),
+        ("", "secret"),
+    ],
+)
+def test_opencode_basic_auth_rejects_partial_or_empty_pairs(
+    username: str | None,
+    password: str | None,
+) -> None:
+    with pytest.raises(ValidationError, match="must be set together"):
+        Settings(
+            admin_token=ADMIN_TOKEN,
+            agent_opencode_username=username,
+            agent_opencode_password=password,
+        )
+
+
+def test_opencode_empty_basic_auth_pair_normalizes_to_unconfigured() -> None:
+    settings = Settings(
+        admin_token=ADMIN_TOKEN,
+        agent_opencode_username="",
+        agent_opencode_password="",
+    )
+
+    assert settings.agent_opencode_username is None
+    assert settings.agent_opencode_password is None
+
+
 def test_totp_master_key_accepts_unpadded_base64url_for_exactly_32_bytes() -> None:
     raw = b"k" * 32
     encoded = base64.urlsafe_b64encode(raw).decode().rstrip("=")

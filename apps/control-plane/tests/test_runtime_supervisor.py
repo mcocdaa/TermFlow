@@ -82,8 +82,8 @@ TERMFLOW_TOOLS = {
 #: Every required variable the compose deployment interpolates must be
 #: documented with a placeholder in the committed .env.example.
 OPENCODE_REQUIRED_VARS = (
-    "OPENCODE_BASIC_AUTH_USERNAME",
-    "OPENCODE_BASIC_AUTH_PASSWORD",
+    "OPENCODE_SERVER_USERNAME",
+    "OPENCODE_SERVER_PASSWORD",
     "OPENCODE_MODEL_API_KEY",
 )
 
@@ -93,8 +93,8 @@ OPENCODE_REQUIRED_VARS = (
 #: never activated here (M7a).
 COMPOSE_ENV = {
     "TERMFLOW_ADMIN_TOKEN": "test-admin-token-for-compose-config",
-    "OPENCODE_BASIC_AUTH_USERNAME": "test-opencode-user",
-    "OPENCODE_BASIC_AUTH_PASSWORD": "test-opencode-password",
+    "OPENCODE_SERVER_USERNAME": "test-opencode-user",
+    "OPENCODE_SERVER_PASSWORD": "test-opencode-password",
     "OPENCODE_MODEL_API_KEY": "test-opencode-model-key",
     "STT_API_KEY": "test-stt-api-key",
 }
@@ -634,7 +634,7 @@ class TestComposeDeployment:
         assert "mem_limit" in text
         assert "cpus" in text
         assert "pids_limit" in text
-        assert "user:" in text and "10001" in text
+        assert "user:" in text and "405:100" in text
         assert "healthcheck" in text
         # Pinned image with digest placeholder (M8 pins the exact digest) and
         # the frozen deny-by-default config mounted read-only.

@@ -159,11 +159,15 @@ class OpenCodeAdapter:
         client: object | None = None,
         runtime_id: str | None = None,
         binding_capability_epoch: int = 0,
+        username: str | None = None,
+        password: str | None = None,
     ) -> None:
         if not base_url or not directory or not backend_version:
             raise ValueError("base_url, directory, and backend_version must be non-empty")
         if binding_capability_epoch < 0:
             raise ValueError("binding_capability_epoch must not be negative")
+        if (username is None) != (password is None):
+            raise ValueError("username and password must be provided together")
         self.base_url = base_url.rstrip("/")
         self.directory = directory
         self.backend_version = backend_version
@@ -172,15 +176,21 @@ class OpenCodeAdapter:
         self.runtime_id = runtime_id or self.base_url
         self.binding_capability_epoch = binding_capability_epoch
         self._owns_client = client is None
+        # Basic auth (OPENCODE_SERVER_* pair, M4 exit verified): applied at
+        # the client level so every request carries it; an injected client
+        # keeps whatever auth the injector configured (tests).
+        basic_auth = None
+        if username is not None:
+            basic_auth = (username, password)
         if client is None:
             try:
-                import httpx  # dev-group dependency: lazy import, never module-level
+                import httpx  # runtime dependency: lazy import, never module-level
             except ImportError as exc:  # pragma: no cover - dev env always has httpx
                 raise ImportError(
                     "httpx is required to create an owned HTTP client; "
                     "inject an async client instead"
                 ) from exc
-            client = httpx.AsyncClient(timeout=30.0)
+            client = httpx.AsyncClient(timeout=30.0, auth=basic_auth)
         self._client: Any = client
         self.stats = OpenCodeSseStats()
         self.diagnostics: list[OpenCodeSseDiagnostic] = []

@@ -1365,6 +1365,7 @@ dependencies = [
     { name = "alembic" },
     { name = "cryptography" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "mcp" },
     { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
@@ -1378,7 +1379,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -1391,6 +1391,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.14,<2" },
     { name = "cryptography", specifier = ">=50,<60" },
     { name = "fastapi", specifier = ">=0.115,<1" },
+    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "mcp", specifier = ">=2.0,<3" },
     { name = "pydantic-settings", specifier = ">=2.7,<3" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10,<3" },
@@ -1404,7 +1405,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "mypy", specifier = ">=1.14,<2" },
     { name = "pytest", specifier = ">=8,<10" },
     { name = "pytest-asyncio", specifier = ">=0.24,<2" },

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -75,6 +76,8 @@ def _build_opencode_adapter(
     backend_version: str,
     runtime_id: str | None = None,
     binding_capability_epoch: int = 0,
+    username: str | None = None,
+    password: str | None = None,
 ) -> AgentBackend:
     return OpenCodeAdapter(
         base_url=base_url,
@@ -82,6 +85,8 @@ def _build_opencode_adapter(
         backend_version=backend_version,
         runtime_id=runtime_id,
         binding_capability_epoch=binding_capability_epoch,
+        username=username,
+        password=password,
     )
 
 
@@ -124,6 +129,7 @@ class AgentRuntimeRegistry:
         self._repositories = repositories
         self._sessions = sessions
         self._hub = hub
+        self._settings = settings
         self._reconcile_attempts = settings.agent_pipeline_reconcile_attempts
         self._endpoint_provider = endpoint_provider or _settings_endpoint_provider(settings)
         self._adapter_factory = adapter_factory or _build_opencode_adapter
@@ -142,13 +148,21 @@ class AgentRuntimeRegistry:
         """
         runtime_ref, epoch = self._resolve_binding_runtime(binding)
         base_url, directory = self._endpoint_provider(runtime_ref)
-        adapter = self._adapter_factory(
-            base_url=base_url,
-            directory=directory,
-            backend_version=PINNED_OPENCODE_BACKEND_VERSION,
-            runtime_id=str(runtime_ref),
-            binding_capability_epoch=epoch,
-        )
+        adapter_kwargs: dict[str, Any] = {
+            "base_url": base_url,
+            "directory": directory,
+            "backend_version": PINNED_OPENCODE_BACKEND_VERSION,
+            "runtime_id": str(runtime_ref),
+            "binding_capability_epoch": epoch,
+        }
+        # Only forward the basic-auth pair when configured: injected adapter
+        # factories (tests) keep their exact constructor signatures.
+        if self._settings.agent_opencode_username is not None:
+            password = self._settings.agent_opencode_password
+            assert password is not None
+            adapter_kwargs["username"] = self._settings.agent_opencode_username
+            adapter_kwargs["password"] = password.get_secret_value()
+        adapter = self._adapter_factory(**adapter_kwargs)
         try:
             capabilities = await adapter.capabilities()
             scope = BackendEventScope(binding_id=str(binding.id), runtime_epoch=epoch)

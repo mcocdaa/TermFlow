@@ -8,6 +8,9 @@ dependencies = [
   "alembic>=1.14,<2",
   "cryptography>=50,<60",
   "fastapi>=0.115,<1",
+  # The OpenCode adapter owns its async HTTP client (M4 exit: the compose
+  # image must ship it or the first runtime activation crashes on import).
+  "httpx>=0.28,<1",
   "mcp>=2.0,<3",
   "pyjwt[crypto]>=2.10,<3",
   "pyotp>=2.9,<3",
@@ -34,7 +37,6 @@ termflow-protocol = { workspace = true }
 
 [dependency-groups]
 dev = [
-  "httpx>=0.28,<1",
   "mypy>=1.14,<2",
   "pytest>=8,<10",
   "pytest-asyncio>=0.24,<2",

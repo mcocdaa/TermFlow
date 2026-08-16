@@ -183,6 +183,22 @@ remote ACP.
 
 ## 7. Pinned versioning and wire alignment
 
+- **M4 exit image pin (2026-08-16, live):** `ghcr.io/anomalyco/opencode:1.18.18`
+  digest `sha256:f3e00f8e25500150373c817e24b13f2f08e2ccd4cafd53dc3ad4827d47863b6f`
+  (the official image — the upstream GitHub org is anomalyco/opencode).
+  Live probes: `GET /global/health` → 200
+  `{"healthy":true,"version":"1.18.18"}`; `POST /session` → 200 with
+  `{id, slug, projectID:"global", directory:"/", version:"1.18.18", ...}`;
+  `POST /session/:id/prompt_async` → 204; `POST /session/:id/abort` → 200;
+  `DELETE /session/:id` → 200 `true`; `GET /global/event` SSE first frame
+  `server.connected`; `GET /doc` OpenAPI paths **identical** to the pinned
+  fixture (162/162, no additions/removals). The image ships the fixed
+  `guest` UID **405** (no UID 1000/10001 user), busybox `wget`/`grep`
+  (no node/curl), and requires `OPENCODE_SERVER_USERNAME`/
+  `OPENCODE_SERVER_PASSWORD` basic auth on every endpoint when set (401
+  otherwise). The `serve` subcommand starts the headless server
+  (`opencode serve --hostname 0.0.0.0 --port 4096`).
+
 - Image vs npm versioning: the OpenCode container images
   (`ghcr.io/anomalyco/opencode`) version as `1.0.<n>` plus `latest`; the
   `opencode-ai` npm package follows a DIFFERENT versioning sequence (`1.18.x`).

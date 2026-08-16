@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from pydantic import SecretStr
 from termflow_control_plane.config import Settings
 from termflow_control_plane.persistence.database import Database
 from termflow_control_plane.persistence.models import AgentBinding
@@ -431,4 +432,27 @@ async def test_fake_adapter_receives_expected_constructor_kwargs(
     assert received["backend_version"] == PINNED_OPENCODE_BACKEND_VERSION
     assert received["runtime_id"] == RUNTIME_REF
     assert received["binding_capability_epoch"] == 7
+    await registry.stop_all()
+
+
+async def test_configured_basic_auth_is_forwarded_to_adapter_factory(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    received: dict[str, Any] = {}
+
+    def factory(**kwargs: Any) -> FakeAdapter:
+        received.update(kwargs)
+        return FakeAdapter(**kwargs)
+
+    configured = settings.model_copy(
+        update={
+            "agent_opencode_username": "termflow",
+            "agent_opencode_password": SecretStr("secret"),
+        }
+    )
+    registry = make_registry(configured, repositories, hub, adapter_factory=factory)
+    await registry.build_pipeline(make_binding())
+
+    assert received["username"] == "termflow"
+    assert received["password"] == "secret"
     await registry.stop_all()
