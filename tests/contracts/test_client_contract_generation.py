@@ -19,7 +19,9 @@ def _run_generator(*arguments: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_checked_in_client_contracts_match_python_models(tmp_path: Path) -> None:
+def test_checked_in_client_contracts_match_python_models_and_render_enums(
+    tmp_path: Path,
+) -> None:
     rendered_path = tmp_path / "generated.ts"
     result = _run_generator("--output", str(rendered_path))
     assert result.returncode == 0, result.stderr
@@ -131,8 +133,6 @@ def test_checked_in_client_contracts_match_python_models(tmp_path: Path) -> None
     checked = _run_generator("--check")
     assert checked.returncode == 0, checked.stderr
 
-
-def test_annotation_renderer_supports_string_and_number_enums() -> None:
     render_type = run_path(str(GENERATOR))["_render_type"]
 
     class ExampleString(Enum):

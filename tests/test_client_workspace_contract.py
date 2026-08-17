@@ -10,7 +10,24 @@ def _manifest(relative: str) -> dict[str, Any]:
     return json.loads((ROOT / relative).read_text())
 
 
-def test_python_lock_uses_portable_public_pypi_sources() -> None:
+def _client_production_files() -> list[Path]:
+    roots = (
+        ROOT / "apps/clients/web/src",
+        ROOT / "packages/client-contracts/src",
+        ROOT / "packages/client-core/src",
+        ROOT / "packages/client-ui/src",
+    )
+    return [
+        path
+        for root in roots
+        for path in root.rglob("*")
+        if path.suffix in {".ts", ".vue"}
+        and not path.name.endswith(".test.ts")
+        and "test" not in path.relative_to(root).parts
+    ]
+
+
+def test_python_dependencies_come_from_portable_public_pypi_only() -> None:
     lock = tomllib.loads((ROOT / "uv.lock").read_text())
     packages = lock["package"]
     registries = {
@@ -24,33 +41,26 @@ def test_python_lock_uses_portable_public_pypi_sources() -> None:
         for artifact in ([package["sdist"]] if "sdist" in package else [])
         + package.get("wheels", [])
     ]
-
     assert registries == {"https://pypi.org/simple"}
     assert artifact_urls
     assert all(url.startswith("https://files.pythonhosted.org/") for url in artifact_urls)
 
-
-def test_python_dependency_configuration_pins_the_official_pypi_index() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     uv = pyproject.get("tool", {}).get("uv", {})
-
     assert uv.get("default-index") or uv.get("index-url") == "https://pypi.org/simple"
     for index in uv.get("index", []):
         assert index.get("url") == "https://pypi.org/simple"
 
-
-def test_repository_verification_never_relocks_with_a_local_index() -> None:
     commands = [
         line.strip()
         for line in (ROOT / "scripts/verify.sh").read_text().splitlines()
         if line.strip().startswith("uv run ")
     ]
-
     assert commands
     assert all(" --frozen " in command for command in commands)
 
 
-def test_client_workspace_has_one_lock_and_fixed_dependency_direction() -> None:
+def test_client_workspace_boundaries_and_platform_abstraction() -> None:
     root = _manifest("package.json")
     workspace_version = root["version"]
     assert workspace_version == "0.2.0"
@@ -71,9 +81,7 @@ def test_client_workspace_has_one_lock_and_fixed_dependency_direction() -> None:
     ui = _manifest("packages/client-ui/package.json")
     web = _manifest("apps/clients/web/package.json")
     assert contracts.get("dependencies", {}) == {}
-    assert core["dependencies"] == {
-        "@termflow/client-contracts": workspace_version,
-    }
+    assert core["dependencies"] == {"@termflow/client-contracts": workspace_version}
     assert set(ui["dependencies"]) >= {
         "@termflow/client-contracts",
         "@termflow/client-core",
@@ -89,8 +97,6 @@ def test_client_workspace_has_one_lock_and_fixed_dependency_direction() -> None:
     }
     assert ui["exports"]["./styles"] == "./src/styles/index.css"
 
-
-def test_registry_packages_are_pinned_with_integrity() -> None:
     lock = _manifest("package-lock.json")
     workspace_paths = {
         "apps/clients/tauri",
@@ -112,9 +118,7 @@ def test_registry_packages_are_pinned_with_integrity() -> None:
     ]
     assert missing == []
 
-
-def test_client_core_has_no_platform_runtime_dependencies() -> None:
-    source = "\n".join(
+    core_source = "\n".join(
         path.read_text()
         for path in (ROOT / "packages/client-core/src").rglob("*.ts")
         if not path.name.endswith(".test.ts")
@@ -131,28 +135,9 @@ def test_client_core_has_no_platform_runtime_dependencies() -> None:
         "crypto.",
         "setTimeout(",
     ):
-        assert forbidden not in source
+        assert forbidden not in core_source
 
-
-def _client_production_files() -> list[Path]:
-    roots = (
-        ROOT / "apps/clients/web/src",
-        ROOT / "packages/client-contracts/src",
-        ROOT / "packages/client-core/src",
-        ROOT / "packages/client-ui/src",
-    )
-    return [
-        path
-        for root in roots
-        for path in root.rglob("*")
-        if path.suffix in {".ts", ".vue"}
-        and not path.name.endswith(".test.ts")
-        and "test" not in path.relative_to(root).parts
-    ]
-
-
-def test_client_persistence_is_limited_to_browser_theme_preferences() -> None:
-    references = [
+    storage_references = [
         path.relative_to(ROOT).as_posix()
         for path in _client_production_files()
         if any(
@@ -160,13 +145,11 @@ def test_client_persistence_is_limited_to_browser_theme_preferences() -> None:
             for token in ("localstorage", "sessionstorage", "indexeddb")
         )
     ]
-    assert references == [
+    assert storage_references == [
         "apps/clients/web/src/adapters/browserAgentCursorStore.ts",
         "apps/clients/web/src/adapters/browserThemePreferences.ts",
     ]
 
-
-def test_shared_client_packages_have_no_direct_network_storage_clipboard_or_native_apis() -> None:
     forbidden = (
         "navigator.",
         "localstorage",
@@ -176,17 +159,12 @@ def test_shared_client_packages_have_no_direct_network_storage_clipboard_or_nati
         "websocket",
         "@tauri",
     )
-    violations: list[str] = []
     for path in _client_production_files():
         if "packages/client-" not in path.relative_to(ROOT).as_posix():
             continue
         source = path.read_text().lower()
-        if any(token in source for token in forbidden):
-            violations.append(path.relative_to(ROOT).as_posix())
-    assert violations == []
+        assert not any(token in source for token in forbidden), path
 
-
-def test_web_client_is_only_a_browser_composition_root() -> None:
     web_source = ROOT / "apps/clients/web/src"
     allowed = {
         "env.d.ts",

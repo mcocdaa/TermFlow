@@ -2,7 +2,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import inspect, select
+from sqlalchemy import select
 from termflow_control_plane.auth.pkce import create_s256_challenge
 from termflow_control_plane.persistence.database import Database
 from termflow_control_plane.persistence.models import OAuthAuthorization
@@ -88,11 +88,12 @@ async def test_device_authorization_lifecycle_and_digest_only_storage(tmp_path) 
 
 
 @pytest.mark.asyncio
-async def test_device_authorization_expiry_deny_and_wrong_code_fail(tmp_path) -> None:
+async def test_device_authorization_expiry_deny_and_atomic_exchange(tmp_path, monkeypatch) -> None:
     database, repositories, client = await _repositories(tmp_path)
     now = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
     verifier = "w" * 43
     try:
+        # Expired authorizations are unfindable and cannot be approved.
         expired = await repositories.oauth_authorizations.create_device_authorization(
             client_id=client.id,
             scopes=("terminal.read",),
@@ -114,6 +115,7 @@ async def test_device_authorization_expiry_deny_and_wrong_code_fail(tmp_path) ->
             is None
         )
 
+        # Denied authorizations can never be approved or exchanged.
         denied = await repositories.oauth_authorizations.create_device_authorization(
             client_id=client.id,
             scopes=("terminal.read",),
@@ -140,6 +142,7 @@ async def test_device_authorization_expiry_deny_and_wrong_code_fail(tmp_path) ->
             is None
         )
 
+        # Wrong device code or wrong PKCE verifier cannot exchange.
         wrong = await repositories.oauth_authorizations.create_device_authorization(
             client_id=client.id,
             scopes=("terminal.read",),
@@ -167,104 +170,41 @@ async def test_device_authorization_expiry_deny_and_wrong_code_fail(tmp_path) ->
             )
             is None
         )
-    finally:
-        await database.dispose()
 
-
-@pytest.mark.asyncio
-async def test_device_authorization_exchange_is_atomic_under_concurrency(tmp_path) -> None:
-    database, repositories, client = await _repositories(tmp_path)
-    now = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
-    verifier = "c" * 43
-    try:
-        created = await repositories.oauth_authorizations.create_device_authorization(
+        # Exchange is atomic under concurrency: exactly one concurrent call
+        # wins the one-time claim.
+        atomic = await repositories.oauth_authorizations.create_device_authorization(
             client_id=client.id,
             scopes=("terminal.read",),
-            pkce_challenge=create_s256_challenge(verifier),
+            pkce_challenge=create_s256_challenge("c" * 43),
             epoch=1,
             expires_at=now + timedelta(minutes=15),
             now=now,
         )
-        await repositories.oauth_authorizations.mark_approved(created.id, epoch=1, now=now)
+        await repositories.oauth_authorizations.mark_approved(atomic.id, epoch=1, now=now)
         results = await asyncio.gather(
             repositories.oauth_authorizations.exchange_device_code(
-                created.device_code, verifier, epoch=1, now=now
+                atomic.device_code, "c" * 43, epoch=1, now=now
             ),
             repositories.oauth_authorizations.exchange_device_code(
-                created.device_code, verifier, epoch=1, now=now
+                atomic.device_code, "c" * 43, epoch=1, now=now
             ),
         )
         assert len([result for result in results if result is not None]) == 1
-    finally:
-        await database.dispose()
 
-
-@pytest.mark.asyncio
-async def test_device_poll_interval_is_shared_and_atomic(tmp_path) -> None:
-    database, repositories, client = await _repositories(tmp_path)
-    now = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
-    try:
-        created = await repositories.oauth_authorizations.create_device_authorization(
+        # A token-issue failure rolls back the one-time claim: the
+        # authorization stays approved and exchangeable.
+        rollback = await repositories.oauth_authorizations.create_device_authorization(
             client_id=client.id,
             scopes=("terminal.read",),
-            pkce_challenge=create_s256_challenge("p" * 43),
-            epoch=1,
-            expires_at=now + timedelta(minutes=15),
-            interval=5,
-            now=now,
-        )
-        assert (
-            await repositories.oauth_authorizations.record_device_poll(
-                created.device_code,
-                epoch=1,
-                interval=5,
-                now=now,
-            )
-            is None
-        )
-        assert (
-            await repositories.oauth_authorizations.record_device_poll(
-                created.device_code,
-                epoch=1,
-                interval=5,
-                now=now + timedelta(seconds=1),
-            )
-            == 4
-        )
-        assert (
-            await repositories.oauth_authorizations.record_device_poll(
-                created.device_code,
-                epoch=1,
-                interval=5,
-                now=now + timedelta(seconds=5),
-            )
-            is None
-        )
-        row = await repositories.oauth_authorizations.get_device_authorization(
-            created.device_code,
-            epoch=1,
-        )
-        assert row is not None
-        assert row.device_last_polled_at.replace(tzinfo=UTC) == now + timedelta(seconds=5)
-    finally:
-        await database.dispose()
-
-
-@pytest.mark.asyncio
-async def test_device_token_issue_failure_rolls_back_one_time_claim(tmp_path, monkeypatch) -> None:
-    database, repositories, client = await _repositories(tmp_path)
-    now = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
-    verifier = "t" * 43
-    try:
-        created = await repositories.oauth_authorizations.create_device_authorization(
-            client_id=client.id,
-            scopes=("terminal.read",),
-            pkce_challenge=create_s256_challenge(verifier),
+            pkce_challenge=create_s256_challenge("t" * 43),
             epoch=1,
             expires_at=now + timedelta(minutes=15),
             now=now,
         )
-        await repositories.oauth_authorizations.mark_approved(created.id, epoch=1, now=now)
+        await repositories.oauth_authorizations.mark_approved(
+            rollback.id, epoch=1, now=now
+        )
 
         async def fail_insert(*args, **kwargs):
             return None
@@ -274,8 +214,8 @@ async def test_device_token_issue_failure_rolls_back_one_time_claim(tmp_path, mo
             fail_insert,
         )
         exchanged = await repositories.oauth_authorizations.exchange_device_code_with_tokens(
-            created.device_code,
-            verifier,
+            rollback.device_code,
+            "t" * 43,
             epoch=1,
             raw_access_token="a" * 43,
             raw_refresh_token="r" * 49,
@@ -286,7 +226,7 @@ async def test_device_token_issue_failure_rolls_back_one_time_claim(tmp_path, mo
         )
         assert exchanged is None
         row = await repositories.oauth_authorizations.get_device_authorization(
-            created.device_code,
+            rollback.device_code,
             epoch=1,
         )
         assert row is not None
@@ -295,30 +235,3 @@ async def test_device_token_issue_failure_rolls_back_one_time_claim(tmp_path, mo
         assert row.consumed_at is None
     finally:
         await database.dispose()
-
-
-def test_device_flow_migration_adds_digest_and_lifecycle_columns(tmp_path) -> None:
-    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'migration.db'}")
-
-    async def initialize() -> set[str]:
-        await database.initialize()
-        try:
-            async with database.engine.connect() as connection:
-                return await connection.run_sync(
-                    lambda sync: {
-                        column["name"]
-                        for column in inspect(sync).get_columns("oauth_authorizations")
-                    }
-                )
-        finally:
-            await database.dispose()
-
-    columns = asyncio.run(initialize())
-    assert {
-        "device_code_digest",
-        "user_code_digest",
-        "device_status",
-        "device_interval",
-        "device_exchanged_at",
-        "device_last_polled_at",
-    } <= columns

@@ -107,10 +107,6 @@ async def _seed_token(
     return raw_token
 
 
-def _now() -> datetime:
-    return datetime.now(UTC)
-
-
 @pytest.mark.asyncio
 async def test_valid_token_authenticates_with_binding_scope(repositories) -> None:
     binding = await _seed_binding(repositories, runtime_epoch=2)
@@ -125,116 +121,68 @@ async def test_valid_token_authenticates_with_binding_scope(repositories) -> Non
     assert principal.runtime_epoch == 2
     assert principal.scopes == frozenset({SCOPE_TERMINAL_OBSERVE, SCOPE_TERMINAL_WRITE})
 
+    # The HTTP dependency wraps the same authenticator without admin fallback.
+    dependency = require_agent_token(authenticator)
+    assert (await dependency(raw_token)).binding_id == binding.id
+    with pytest.raises(AgentTokenAuthError):
+        await dependency("mcp-not-issued")
+
 
 @pytest.mark.asyncio
-async def test_missing_or_empty_token_fails_closed(repositories) -> None:
+async def test_invalid_token_variants_fail_closed(repositories) -> None:
     authenticator = AgentTokenAuthenticator(repositories)
 
-    for token in (None, ""):
+    async def expect_rejected(raw_token: str) -> None:
         with pytest.raises(AgentTokenAuthError) as caught:
-            if token is None:
-                await authenticator.authenticate("")
-            else:
-                await authenticator.authenticate(token)
+            await authenticator.authenticate(raw_token)
         assert caught.value.status_code == 401
 
+    # Missing/unknown tokens.
+    for raw in ("", "mcp-never-issued"):
+        await expect_rejected(raw)
 
-@pytest.mark.asyncio
-async def test_unknown_token_hash_fails_closed(repositories) -> None:
+    # Revoked token.
     binding = await _seed_binding(repositories)
-    await _seed_token(repositories, binding)
-    authenticator = AgentTokenAuthenticator(repositories)
+    revoked = await _seed_token(repositories, binding)
+    assert await repositories.agent_tokens.revoke(hash_token(revoked)) is True
+    await expect_rejected(revoked)
 
-    with pytest.raises(AgentTokenAuthError) as caught:
-        await authenticator.authenticate("mcp-never-issued")
-
-    assert caught.value.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_revoked_token_fails_closed(repositories) -> None:
-    binding = await _seed_binding(repositories)
-    raw_token = await _seed_token(repositories, binding)
-    token = await repositories.agent_tokens.get_by_hash(hash_token(raw_token))
-    assert token is not None
-    assert await repositories.agent_tokens.revoke(hash_token(raw_token)) is True
-    authenticator = AgentTokenAuthenticator(repositories)
-
-    with pytest.raises(AgentTokenAuthError) as caught:
-        await authenticator.authenticate(raw_token)
-
-    assert caught.value.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_expired_token_fails_closed(repositories) -> None:
-    binding = await _seed_binding(repositories)
-    raw_token = await _seed_token(
-        repositories, binding, expires_in=timedelta(seconds=-60)
+    # Expired token.
+    expired_binding = await _seed_binding(repositories)
+    expired = await _seed_token(
+        repositories, expired_binding, expires_in=timedelta(seconds=-60)
     )
-    authenticator = AgentTokenAuthenticator(repositories)
+    await expect_rejected(expired)
 
-    with pytest.raises(AgentTokenAuthError) as caught:
-        await authenticator.authenticate(raw_token)
-
-    assert caught.value.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_epoch_mismatch_fails_closed(repositories) -> None:
-    binding = await _seed_binding(repositories, runtime_epoch=3)
     # Token minted at an earlier binding epoch is stale after rotation.
-    raw_token = await _seed_token(repositories, binding, binding_epoch=1)
-    authenticator = AgentTokenAuthenticator(repositories)
+    epoch_binding = await _seed_binding(repositories, runtime_epoch=3)
+    stale = await _seed_token(repositories, epoch_binding, binding_epoch=1)
+    await expect_rejected(stale)
 
-    with pytest.raises(AgentTokenAuthError) as caught:
-        await authenticator.authenticate(raw_token)
+    # Binding with an unprovisioned runtime.
+    unprovisioned_binding = await _seed_binding(
+        repositories, runtime_epoch=None, status="pending"
+    )
+    unprovisioned = await _seed_token(
+        repositories, unprovisioned_binding, binding_epoch=1
+    )
+    await expect_rejected(unprovisioned)
 
-    assert caught.value.status_code == 401
+    # Non-ready binding.
+    disabled_binding = await _seed_binding(repositories, runtime_epoch=2, status="disabled")
+    disabled = await _seed_token(repositories, disabled_binding, binding_epoch=2)
+    await expect_rejected(disabled)
 
+    # Deleted binding.
+    deleted_binding = await _seed_binding(repositories, runtime_epoch=2)
+    deleted = await _seed_token(repositories, deleted_binding, binding_epoch=2)
+    assert await repositories.agent_bindings.delete(deleted_binding.id) is True
+    await expect_rejected(deleted)
 
-@pytest.mark.asyncio
-async def test_unprovisioned_runtime_fails_closed(repositories) -> None:
-    binding = await _seed_binding(repositories, runtime_epoch=None, status="pending")
-    raw_token = await _seed_token(repositories, binding, binding_epoch=1)
-    authenticator = AgentTokenAuthenticator(repositories)
-
-    with pytest.raises(AgentTokenAuthError) as caught:
-        await authenticator.authenticate(raw_token)
-
-    assert caught.value.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_non_ready_binding_fails_closed(repositories) -> None:
-    binding = await _seed_binding(repositories, runtime_epoch=2, status="disabled")
-    raw_token = await _seed_token(repositories, binding, binding_epoch=2)
-    authenticator = AgentTokenAuthenticator(repositories)
-
-    with pytest.raises(AgentTokenAuthError) as caught:
-        await authenticator.authenticate(raw_token)
-
-    assert caught.value.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_deleted_binding_fails_closed(repositories) -> None:
-    binding = await _seed_binding(repositories, runtime_epoch=2)
-    raw_token = await _seed_token(repositories, binding, binding_epoch=2)
-    assert await repositories.agent_bindings.delete(binding.id) is True
-    authenticator = AgentTokenAuthenticator(repositories)
-
-    with pytest.raises(AgentTokenAuthError) as caught:
-        await authenticator.authenticate(raw_token)
-
-    assert caught.value.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_malformed_persisted_scopes_fail_closed(repositories) -> None:
-    binding = await _seed_binding(repositories, runtime_epoch=2)
-    raw_token = await _seed_token(repositories, binding, binding_epoch=2)
-    token = await repositories.agent_tokens.get_by_hash(hash_token(raw_token))
+    # Malformed persisted scopes fail closed rather than crashing.
+    malformed_binding = await _seed_binding(repositories, runtime_epoch=2)
+    malformed = await _seed_token(repositories, malformed_binding, binding_epoch=2)
+    token = await repositories.agent_tokens.get_by_hash(hash_token(malformed))
     assert token is not None
     async with repositories.session_factory() as session:  # type: ignore[attr-defined]
         await session.execute(
@@ -243,23 +191,4 @@ async def test_malformed_persisted_scopes_fail_closed(repositories) -> None:
             .values(scopes='"not-a-list"')
         )
         await session.commit()
-    authenticator = AgentTokenAuthenticator(repositories)
-
-    with pytest.raises(AgentTokenAuthError) as caught:
-        await authenticator.authenticate(raw_token)
-
-    assert caught.value.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_require_agent_token_is_di_friendly(repositories) -> None:
-    binding = await _seed_binding(repositories, runtime_epoch=2)
-    raw_token = await _seed_token(repositories, binding, binding_epoch=2)
-    authenticator = AgentTokenAuthenticator(repositories)
-    dependency = require_agent_token(authenticator)
-
-    principal = await dependency(raw_token)
-    assert principal.binding_id == binding.id
-
-    with pytest.raises(AgentTokenAuthError):
-        await dependency("mcp-not-issued")
+    await expect_rejected(malformed)

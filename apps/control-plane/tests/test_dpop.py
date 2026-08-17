@@ -61,20 +61,14 @@ def _proof(
     )
 
 
-def test_jwk_thumbprint_uses_rfc7638_required_members_only() -> None:
-    _, jwk = _key_and_jwk()
-    with_optional = {**jwk, "use": "sig", "kid": "ignored"}
-
-    assert jwk_thumbprint(with_optional) == jwk_thumbprint(jwk)
-    assert len(jwk_thumbprint(jwk)) == 43
-
-
-def test_dpop_requires_nonce_then_verifies_exact_request_and_rotates_nonce() -> None:
+def test_dpop_nonce_verification_flow() -> None:
     now = datetime(2026, 8, 2, 8, tzinfo=UTC)
     key, jwk = _key_and_jwk()
     verifier = DpopVerifier(clock=lambda: now)
     jkt = jwk_thumbprint(jwk)
+    assert len(jkt) == 43
 
+    # First proof without a nonce yields a DPoP-Nonce challenge.
     with pytest.raises(DpopNonceRequired) as first:
         verifier.verify(
             _proof(
@@ -89,6 +83,8 @@ def test_dpop_requires_nonce_then_verifies_exact_request_and_rotates_nonce() -> 
             expected_jkt=jkt,
         )
 
+    # The nonce-bound proof verifies, query components are ignored, and the
+    # nonce rotates for the next request.
     proof = _proof(key, jwk, now=now, nonce=first.value.nonce)
     verified = verifier.verify(
         proof,
@@ -99,6 +95,7 @@ def test_dpop_requires_nonce_then_verifies_exact_request_and_rotates_nonce() -> 
     assert verified.jkt == jkt
     assert verified.next_nonce != first.value.nonce
 
+    # A replay of the exact same proof is rejected.
     with pytest.raises(DpopInvalid, match="replayed"):
         verifier.verify(
             proof,
@@ -108,55 +105,12 @@ def test_dpop_requires_nonce_then_verifies_exact_request_and_rotates_nonce() -> 
         )
 
 
-@pytest.mark.parametrize(
-    ("method", "htu", "offset"),
-    [
-        ("POST", "https://b.example/api/v1/dashboard", 0),
-        ("GET", "https://evil.example/api/v1/dashboard", 0),
-        ("GET", "https://b.example/api/v1/dashboard", 121),
-    ],
-)
-def test_dpop_rejects_wrong_method_url_or_stale_iat(
-    method: str,
-    htu: str,
-    offset: int,
-) -> None:
-    now = datetime(2026, 8, 2, 8, tzinfo=UTC)
-    key, jwk = _key_and_jwk()
-    verifier = DpopVerifier(clock=lambda: now)
-    jkt = jwk_thumbprint(jwk)
-    with pytest.raises(DpopNonceRequired) as challenge:
-        verifier.verify(
-            _proof(key, jwk, now=now, nonce=None),
-            method="GET",
-            htu="https://b.example/api/v1/dashboard",
-            expected_jkt=jkt,
-        )
-    proof = _proof(
-        key,
-        jwk,
-        now=now + timedelta(seconds=offset),
-        nonce=challenge.value.nonce,
-        method=method,
-        htu=htu,
-    )
-
-    with pytest.raises(DpopInvalid):
-        verifier.verify(
-            proof,
-            method="GET",
-            htu="https://b.example/api/v1/dashboard",
-            expected_jkt=jkt,
-        )
-
-
-def test_resource_proof_requires_access_token_hash_and_bound_key() -> None:
+def test_dpop_rejects_bad_proofs_and_verifies_resource_and_websocket_proofs() -> None:
     now = datetime(2026, 8, 2, 8, tzinfo=UTC)
     key, jwk = _key_and_jwk()
     other_key, other_jwk = _key_and_jwk()
     verifier = DpopVerifier(clock=lambda: now)
     jkt = jwk_thumbprint(jwk)
-
     with pytest.raises(DpopNonceRequired) as challenge:
         verifier.verify(
             _proof(key, jwk, now=now, nonce=None),
@@ -165,6 +119,29 @@ def test_resource_proof_requires_access_token_hash_and_bound_key() -> None:
             expected_jkt=jkt,
         )
 
+    # Wrong method, wrong target URL, and stale iat are all rejected.
+    for method, htu, offset in (
+        ("POST", "https://b.example/api/v1/dashboard", 0),
+        ("GET", "https://evil.example/api/v1/dashboard", 0),
+        ("GET", "https://b.example/api/v1/dashboard", 121),
+    ):
+        with pytest.raises(DpopInvalid):
+            verifier.verify(
+                _proof(
+                    key,
+                    jwk,
+                    now=now + timedelta(seconds=offset),
+                    nonce=challenge.value.nonce,
+                    method=method,
+                    htu=htu,
+                ),
+                method="GET",
+                htu="https://b.example/api/v1/dashboard",
+                expected_jkt=jkt,
+            )
+
+    # Resource proofs must carry the access-token hash of the token they
+    # protect...
     with pytest.raises(DpopInvalid):
         verifier.verify(
             _proof(
@@ -180,6 +157,7 @@ def test_resource_proof_requires_access_token_hash_and_bound_key() -> None:
             access_token="right-token",
         )
 
+    # ...and must be signed by the key the token is bound to.
     with pytest.raises(DpopInvalid):
         verifier.verify(
             _proof(
@@ -195,13 +173,10 @@ def test_resource_proof_requires_access_token_hash_and_bound_key() -> None:
             access_token="right-token",
         )
 
-
-def test_websocket_proofs_can_reuse_nonce_with_fresh_jti_when_no_response_header_exists() -> None:
-    now = datetime(2026, 8, 2, 8, tzinfo=UTC)
-    key, jwk = _key_and_jwk()
-    verifier = DpopVerifier(clock=lambda: now)
-    jkt = jwk_thumbprint(jwk)
-    with pytest.raises(DpopNonceRequired) as challenge:
+    # WebSocket proofs (no response header exists to rotate the nonce) may
+    # reuse the nonce as long as each proof carries a fresh jti.
+    ws_challenge: DpopNonceRequired
+    with pytest.raises(DpopNonceRequired) as ws_challenge:
         verifier.verify(
             _proof(
                 key,
@@ -220,7 +195,7 @@ def test_websocket_proofs_can_reuse_nonce_with_fresh_jti_when_no_response_header
             key,
             jwk,
             now=now,
-            nonce=challenge.value.nonce,
+            nonce=ws_challenge.value.nonce,
             jti="websocket-proof-one",
             htu="https://b.example/api/v1/events",
         ),
@@ -234,7 +209,7 @@ def test_websocket_proofs_can_reuse_nonce_with_fresh_jti_when_no_response_header
             key,
             jwk,
             now=now,
-            nonce=challenge.value.nonce,
+            nonce=ws_challenge.value.nonce,
             jti="websocket-proof-two",
             htu="https://b.example/api/v1/events",
         ),
@@ -244,5 +219,5 @@ def test_websocket_proofs_can_reuse_nonce_with_fresh_jti_when_no_response_header
         rotate_nonce=False,
     )
 
-    assert first.next_nonce == challenge.value.nonce
-    assert second.next_nonce == challenge.value.nonce
+    assert first.next_nonce == ws_challenge.value.nonce
+    assert second.next_nonce == ws_challenge.value.nonce

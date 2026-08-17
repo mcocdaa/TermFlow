@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "apps/clients/tauri/src-tauri/Cargo.toml"
 
 
-def test_terminal_websocket_enables_public_ca_rustls() -> None:
+def test_terminal_websocket_uses_public_ca_rustls_without_native_tls() -> None:
     manifest = tomllib.loads(MANIFEST.read_text())
     dependency = manifest["dependencies"]["tokio-tungstenite"]
 
@@ -18,8 +18,6 @@ def test_terminal_websocket_enables_public_ca_rustls() -> None:
         "rustls-tls-webpki-roots",
     }
 
-
-def test_terminal_websocket_feature_tree_contains_rustls_and_webpki_roots() -> None:
     result = subprocess.run(
         [
             "cargo",

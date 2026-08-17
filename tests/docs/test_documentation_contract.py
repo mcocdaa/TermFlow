@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-def test_docs_state_v1_boundaries_and_never_show_special_key_api() -> None:
+def test_operator_docs_keep_current_boundaries_install_and_native_contracts() -> None:
     all_docs = "\n".join(path.read_text() for path in Path("docs").glob("*.md"))
     for boundary in (
         "termflow new",
@@ -15,8 +15,6 @@ def test_docs_state_v1_boundaries_and_never_show_special_key_api() -> None:
     for obsolete in ("/keys", "Kafka 是 V1 必需", "Web C 是 B 的内部页面"):
         assert obsolete not in all_docs
 
-
-def test_readme_links_every_operator_document() -> None:
     readme = Path("README.md").read_text()
     for name in (
         "architecture.md",
@@ -32,8 +30,6 @@ def test_readme_links_every_operator_document() -> None:
     assert "docs/superpowers/README.md" in readme
     assert ".env.example" in Path("docs/operations.md").read_text()
 
-
-def test_current_operator_docs_do_not_recommend_removed_runtime_variables() -> None:
     current_docs = "\n".join(
         Path(path).read_text()
         for path in (
@@ -57,9 +53,7 @@ def test_current_operator_docs_do_not_recommend_removed_runtime_variables() -> N
         assert obsolete not in current_docs
     assert "TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE" not in Path(".env.example").read_text()
 
-
-def test_operator_docs_keep_current_install_release_and_native_contracts() -> None:
-    current_docs = "\n".join(
+    operator_docs = "\n".join(
         Path(path).read_text()
         for path in (
             "README.md",
@@ -84,15 +78,17 @@ def test_operator_docs_keep_current_install_release_and_native_contracts() -> No
         "tmux 3.2",
         "Node 22.23.2",
         "Git Tag > TERMFLOW_BUILD_VERSION > 0.2.0-dev.0",
+        "Path.cwd().as_uri()",
+        "docker load -i termflow-control-plane.tar",
+        "docker run -d --name termflow-control-plane",
+        'TERMFLOW_ALLOW_INSECURE_LOOPBACK="${TERMFLOW_ALLOW_INSECURE_LOOPBACK:-true}"',
+        "curl -fsS http://127.0.0.1:8765/healthz",
     ):
-        assert contract in current_docs
+        assert contract in operator_docs
 
-
-def test_operator_docs_explain_native_device_authorization_and_windows_replacement() -> None:
     web_client = Path("docs/web-client.md").read_text()
     operations = Path("docs/operations.md").read_text()
     github_actions = Path("docs/github-actions.md").read_text()
-
     for contract in (
         "申请注册远程控制",
         "在其他设备上授权",
@@ -107,36 +103,5 @@ def test_operator_docs_explain_native_device_authorization_and_windows_replaceme
         "15 分钟",
     ):
         assert contract in operations
-    for contract in (
-        "Package C · Native Clients",
-        "Windows x64 · NSIS",
-        "GitHub Release",
-    ):
+    for contract in ("Package C · Native Clients", "Windows x64 · NSIS", "GitHub Release"):
         assert contract in github_actions
-
-
-def test_operator_docs_document_offline_artifact_install_and_local_image_run() -> None:
-    readme = Path("README.md").read_text()
-    operator_details = "\n".join(
-        Path(path).read_text()
-        for path in (
-            "docs/operations.md",
-            "docs/github-actions.md",
-        )
-    )
-
-    for phrase in (
-        "Path.cwd().as_uri()",
-        "docker load -i termflow-control-plane.tar",
-        "docker run -d --name termflow-control-plane",
-        'TERMFLOW_ALLOW_INSECURE_LOOPBACK="${TERMFLOW_ALLOW_INSECURE_LOOPBACK:-true}"',
-        "curl -fsS http://127.0.0.1:8765/healthz",
-    ):
-        assert phrase in operator_details
-
-    for detail in (
-        "Path.cwd().as_uri()",
-        "docker load -i termflow-control-plane.tar",
-        'TERMFLOW_ALLOW_INSECURE_LOOPBACK="${TERMFLOW_ALLOW_INSECURE_LOOPBACK:-true}"',
-    ):
-        assert detail not in readme

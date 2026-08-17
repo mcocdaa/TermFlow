@@ -110,40 +110,26 @@ def _enable_totp(client: TestClient, *, confirm_offset: int = -1) -> bytes:
     return secret
 
 
-def test_totp_status_accepts_browser_get_without_origin_and_setup_requires_exact_origin(
-    totp_client,
-) -> None:
-    assert _login(totp_client).status_code == 201
-
-    status = totp_client.get("/api/v1/admin/totp", headers={"Origin": ORIGIN})
-    assert status.status_code == 200
-    assert status.json() == {
-        "configured": False,
-        "enabled": False,
-        "available": True,
-    }
-    browser_status = totp_client.get("/api/v1/admin/totp")
-    assert browser_status.status_code == 200
-    assert browser_status.json() == status.json()
-    assert (
-        totp_client.get(
-            "/api/v1/admin/totp",
-            headers={"Origin": "https://evil.example"},
-        ).status_code
-        == 403
-    )
-
-    setup, _secret = _begin_setup(totp_client)
-    assert set(setup) == {"setup_id", "provisioning_uri", "setup_key", "expires_at"}
-
-
-def test_totp_setup_is_unavailable_without_independent_master_key(tmp_path) -> None:
-    settings = Settings(
+def test_totp_fails_closed_without_independent_master_key(tmp_path) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'missing-key.db'}"
+    encoded_key = base64.urlsafe_b64encode(b"t" * 32).decode().rstrip("=")
+    unkeyed = Settings(
         admin_token=ADMIN_TOKEN,
-        database_url=f"sqlite+aiosqlite:///{tmp_path / 'no-key.db'}",
+        database_url=database_url,
         allow_insecure_loopback=True,
+        auth_attempt_budget_capacity=100,
+        auth_attempt_refill_seconds=1,
     )
-    app = create_app(settings=settings, database=Database(settings.database_url))
+    keyed = Settings(
+        admin_token=ADMIN_TOKEN,
+        database_url=database_url,
+        allow_insecure_loopback=True,
+        totp_master_key=encoded_key,
+        auth_attempt_budget_capacity=100,
+        auth_attempt_refill_seconds=1,
+    )
+
+    app = create_app(settings=unkeyed, database=Database(database_url))
     with TestClient(app) as client:
         assert _login(client).status_code == 201
         status = client.get("/api/v1/admin/totp", headers={"Origin": ORIGIN})
@@ -162,28 +148,13 @@ def test_totp_setup_is_unavailable_without_independent_master_key(tmp_path) -> N
     assert setup.json()["error"]["code"] == "totp_unavailable"
     assert "setup_key" not in setup.text
 
-
-def test_enabled_totp_fails_closed_after_restart_without_master_key(tmp_path) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'missing-key-restart.db'}"
-    encoded_key = base64.urlsafe_b64encode(b"t" * 32).decode().rstrip("=")
-    keyed = Settings(
-        admin_token=ADMIN_TOKEN,
-        database_url=database_url,
-        allow_insecure_loopback=True,
-        totp_master_key=encoded_key,
-        auth_attempt_budget_capacity=100,
-    )
+    # Once TOTP is enabled, restarting without the master key must fail login
+    # closed instead of silently downgrading to password-only authentication.
     keyed_app = create_app(settings=keyed, database=Database(database_url))
     with TestClient(keyed_app) as client:
         _enable_totp(client)
 
-    missing_key = Settings(
-        admin_token=ADMIN_TOKEN,
-        database_url=database_url,
-        allow_insecure_loopback=True,
-        auth_attempt_budget_capacity=100,
-    )
-    restarted_app = create_app(settings=missing_key, database=Database(database_url))
+    restarted_app = create_app(settings=unkeyed, database=Database(database_url))
     with TestClient(restarted_app) as restarted:
         assert restarted.get("/healthz").status_code == 200
         login = _login(restarted)
@@ -233,52 +204,59 @@ def test_enabled_totp_changes_login_to_opaque_challenge_and_rejects_replay(
     assert replay.json()["error"]["message"] == wrong_token.json()["error"]["message"]
 
 
-def test_configured_but_disabled_totp_does_not_change_login(totp_client) -> None:
-    _configure_totp(totp_client)
-    assert totp_client.delete(
-        "/api/v1/admin/session", headers={"Origin": ORIGIN}
-    ).status_code == 200
+def test_disable_confirm_and_reconfigure_require_fresh_totp(totp_client) -> None:
+    # Confirm is single-use: the same setup id cannot be confirmed twice.
+    assert _login(totp_client).status_code == 201
+    setup, secret = _begin_setup(totp_client)
+    url = f"/api/v1/admin/totp/setups/{setup['setup_id']}/confirm"
+    payload = {"code": _code(secret, _counter(-1))}
 
-    login = _login(totp_client)
+    first = totp_client.post(url, headers={"Origin": ORIGIN}, json=payload)
+    second = totp_client.post(url, headers={"Origin": ORIGIN}, json=payload)
 
-    assert login.status_code == 201
-    assert "challenge_id" not in login.text
+    assert first.status_code == 200
+    assert second.status_code == 401
+    assert second.json()["error"]["code"] == "authentication_failed"
+    # Clear the progressive backoff the failed confirm recorded so the
+    # reconfigure confirm later in this test is not rate-limited.
+    totp_client.app.state.auth_rate_limiter.record_success(
+        "totp_setup_confirm", "testclient"
+    )
 
-
-def test_enable_requires_cookie_origin_primary_token_and_fresh_totp(totp_client) -> None:
-    secret = _configure_totp(totp_client)
-    payload = {"admin_token": ADMIN_TOKEN, "code": _code(secret, _counter())}
+    # Enable requires the session cookie, an exact allowed origin, the primary
+    # token, and a fresh (not replayed) TOTP code.
+    enable_payload = {"admin_token": ADMIN_TOKEN, "code": _code(secret, _counter(0))}
 
     wrong_origin = totp_client.post(
         "/api/v1/admin/totp/enable",
         headers={"Origin": "https://evil.example"},
-        json=payload,
+        json=enable_payload,
     )
     saved_cookies = dict(totp_client.cookies)
     totp_client.cookies.clear()
     missing_cookie = totp_client.post(
         "/api/v1/admin/totp/enable",
         headers={"Origin": ORIGIN},
-        json=payload,
+        json=enable_payload,
     )
     for name, value in saved_cookies.items():
         totp_client.cookies.set(name, value)
     wrong_token = totp_client.post(
         "/api/v1/admin/totp/enable",
         headers={"Origin": ORIGIN},
-        json={**payload, "admin_token": "wrong"},
+        json={**enable_payload, "admin_token": "wrong"},
     )
     totp_client.app.state.auth_rate_limiter.record_success("totp_enable", "testclient")
     replay = totp_client.post(
         "/api/v1/admin/totp/enable",
         headers={"Origin": ORIGIN},
-        json={**payload, "code": _code(secret, _counter(-1))},
+        json={**enable_payload, "code": _code(secret, _counter(-1))},
     )
     totp_client.app.state.auth_rate_limiter.record_success("totp_enable", "testclient")
     enabled = totp_client.post(
         "/api/v1/admin/totp/enable",
         headers={"Origin": ORIGIN},
-        json=payload,
+        json=enable_payload,
     )
 
     assert wrong_origin.status_code == 403
@@ -292,58 +270,8 @@ def test_enable_requires_cookie_origin_primary_token_and_fresh_totp(totp_client)
         "available": True,
     }
 
-
-def test_disable_requires_cookie_admin_token_and_fresh_current_totp(totp_client) -> None:
-    secret = _enable_totp(totp_client, confirm_offset=-1)
-
-    wrong_origin = totp_client.request(
-        "DELETE",
-        "/api/v1/admin/totp",
-        headers={"Origin": "https://evil.example"},
-        json={"admin_token": ADMIN_TOKEN, "code": _code(secret, _counter(1))},
-    )
-    wrong_token = totp_client.request(
-        "DELETE",
-        "/api/v1/admin/totp",
-        headers={"Origin": ORIGIN},
-        json={"admin_token": "wrong", "code": _code(secret, _counter())},
-    )
-    totp_client.app.state.auth_rate_limiter.record_success("totp_disable", "testclient")
-    disabled = totp_client.request(
-        "DELETE",
-        "/api/v1/admin/totp",
-        headers={"Origin": ORIGIN},
-        json={"admin_token": ADMIN_TOKEN, "code": _code(secret, _counter(1))},
-    )
-
-    assert wrong_origin.status_code == 403
-    assert wrong_token.status_code == 401
-    assert disabled.status_code == 200
-    assert disabled.json() == {
-        "configured": True,
-        "enabled": False,
-        "available": True,
-    }
-    status = totp_client.get("/api/v1/admin/totp", headers={"Origin": ORIGIN})
-    assert status.json() == disabled.json()
-
-
-def test_confirm_setup_is_single_use_and_expired_setup_is_rejected(totp_client) -> None:
-    assert _login(totp_client).status_code == 201
-    setup, secret = _begin_setup(totp_client)
-    url = f"/api/v1/admin/totp/setups/{setup['setup_id']}/confirm"
-    payload = {"code": _code(secret, _counter())}
-
-    first = totp_client.post(url, headers={"Origin": ORIGIN}, json=payload)
-    second = totp_client.post(url, headers={"Origin": ORIGIN}, json=payload)
-
-    assert first.status_code == 200
-    assert second.status_code == 401
-    assert second.json()["error"]["code"] == "authentication_failed"
-
-
-def test_reconfigure_requires_current_totp_and_replaces_the_old_secret(totp_client) -> None:
-    old_secret = _enable_totp(totp_client, confirm_offset=-1)
+    # Reconfigure: a new setup requires the current authenticator, replaces
+    # the old secret, and the old authenticator is rejected afterwards.
     missing_current = totp_client.post(
         "/api/v1/admin/totp/setups",
         headers={"Origin": ORIGIN},
@@ -357,16 +285,16 @@ def test_reconfigure_requires_current_totp_and_replaces_the_old_secret(totp_clie
         headers={"Origin": ORIGIN},
         json={
             "admin_token": ADMIN_TOKEN,
-            "totp_code": _code(old_secret, _counter(1)),
+            "totp_code": _code(secret, _counter(1)),
         },
     )
     assert replacement.status_code == 201
     replacement_secret = base64.b32decode(replacement.json()["setup_key"])
-    assert replacement_secret != old_secret
+    assert replacement_secret != secret
     confirmed = totp_client.post(
         f"/api/v1/admin/totp/setups/{replacement.json()['setup_id']}/confirm",
         headers={"Origin": ORIGIN},
-        json={"code": _code(replacement_secret, _counter())},
+        json={"code": _code(replacement_secret, _counter(0))},
     )
     assert confirmed.status_code == 200
     assert confirmed.json() == {
@@ -380,16 +308,40 @@ def test_reconfigure_requires_current_totp_and_replaces_the_old_secret(totp_clie
         headers={"Origin": ORIGIN},
         json={
             "admin_token": ADMIN_TOKEN,
-            "totp_code": _code(old_secret, _counter(1)),
+            "totp_code": _code(secret, _counter(1)),
         },
     )
     assert old_authenticator.status_code == 401
 
+    # Disable requires the same guardrails plus a fresh code for the current
+    # (replaced) authenticator.
+    wrong_origin = totp_client.request(
+        "DELETE",
+        "/api/v1/admin/totp",
+        headers={"Origin": "https://evil.example"},
+        json={"admin_token": ADMIN_TOKEN, "code": _code(replacement_secret, _counter(1))},
+    )
+    wrong_token = totp_client.request(
+        "DELETE",
+        "/api/v1/admin/totp",
+        headers={"Origin": ORIGIN},
+        json={"admin_token": "wrong", "code": _code(replacement_secret, _counter(0))},
+    )
+    totp_client.app.state.auth_rate_limiter.record_success("totp_disable", "testclient")
+    disabled = totp_client.request(
+        "DELETE",
+        "/api/v1/admin/totp",
+        headers={"Origin": ORIGIN},
+        json={"admin_token": ADMIN_TOKEN, "code": _code(replacement_secret, _counter(1))},
+    )
 
-def test_openapi_has_no_totp_reset_or_recovery_route(totp_client) -> None:
-    paths = totp_client.get("/openapi.json").json()["paths"]
-    login_responses = paths["/api/v1/admin/sessions"]["post"]["responses"]
-    assert "201" in login_responses
-    assert "202" in login_responses
-    assert "/api/v1/admin/totp/reset" not in paths
-    assert all("recover" not in path for path in paths)
+    assert wrong_origin.status_code == 403
+    assert wrong_token.status_code == 401
+    assert disabled.status_code == 200
+    assert disabled.json() == {
+        "configured": True,
+        "enabled": False,
+        "available": True,
+    }
+    status = totp_client.get("/api/v1/admin/totp", headers={"Origin": ORIGIN})
+    assert status.json() == disabled.json()

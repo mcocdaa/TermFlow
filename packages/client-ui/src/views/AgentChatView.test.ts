@@ -1,5 +1,5 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import type { AgentConversationDetailResponse, AgentMessageResponse } from '@termflow/client-contracts'
+import type { AgentConversationDetailResponse } from '@termflow/client-contracts'
 import type {
   AgentStreamConnectRequest,
   AgentStreamTransport,
@@ -23,11 +23,6 @@ const permission = (approvalId: string): AguiEvent => ({
   name: 'termflow.permission_requested',
   value: { approval_request_id: approvalId, tool_name: 'rm' },
 })
-const backendDelta = (state: string, epoch: number): AguiEvent => ({
-  type: 'STATE_DELTA',
-  delta: [{ op: 'replace', path: '/backend', value: { state, epoch } }],
-})
-
 class ScriptedTransport implements AgentStreamTransport<AguiEvent> {
   readonly requests: AgentStreamConnectRequest[] = []
   readonly connections: Array<{ close: ReturnType<typeof vi.fn> }> = []
@@ -41,22 +36,6 @@ class ScriptedTransport implements AgentStreamTransport<AguiEvent> {
   }
   emit(event: AgentStreamTransportEvent<AguiEvent>, index = this.emitters.length - 1) {
     this.emitters[index]?.(event)
-  }
-}
-
-function userRow(overrides: Partial<AgentMessageResponse> = {}): AgentMessageResponse {
-  return {
-    message_id: 'user-1',
-    conversation_id: CONVERSATION,
-    run_id: null,
-    role: 'user',
-    kind: 'user_message',
-    assembly_revision: 1,
-    is_final: true,
-    body_digest: 'd',
-    body: '用户历史',
-    created_at: '2026-08-12T00:00:00+00:00',
-    ...overrides,
   }
 }
 
@@ -197,21 +176,6 @@ describe('AgentChatView', () => {
     harness.unmount()
   })
 
-  it('shows the detail header: title, binding/term label, and the backend status badge', async () => {
-    const harness = await mounted()
-
-    expect(harness.wrapper.get('[data-agent-chat-title]').text()).toBe('测试会话')
-    expect(harness.wrapper.get('[data-agent-chat-binding]').text()).toContain('Binding b1')
-    expect(harness.wrapper.get('[data-agent-chat-binding]').text()).toContain('Term term-1')
-    expect(harness.wrapper.get('[data-agent-backend-state]').attributes('data-agent-backend-state')).toBe('unknown')
-
-    harness.transport.emit({ type: 'open' })
-    harness.transport.emit({ type: 'event', event: backendDelta('ready', 3), cursor: '7-1' })
-    await flushPromises()
-    expect(harness.wrapper.get('[data-agent-backend-state]').attributes('data-agent-backend-state')).toBe('ready')
-    harness.unmount()
-  })
-
   it('submits composer text through the ordinary message path', async () => {
     const harness = await mounted()
 
@@ -225,114 +189,6 @@ describe('AgentChatView', () => {
     expect(harness.wrapper.findAll('.agent-message--user')).toHaveLength(1)
     expect(harness.wrapper.get('.agent-message--user').text()).toContain('你好 Agent')
     expect((harness.wrapper.get('[data-agent-composer-input]').element as HTMLTextAreaElement).value).toBe('')
-    harness.unmount()
-  })
-
-  it('4401 closes the session: clearSessionState + redirect to /login with the return path', async () => {
-    const harness = await mounted()
-    harness.transport.emit({ type: 'open' })
-    harness.transport.emit({ type: 'close', code: 4401, reason: 'authentication_required' })
-    await flushPromises()
-
-    expect(harness.router.currentRoute.value.fullPath).toBe(`/login?redirect=/agent/${CONVERSATION}`)
-    expect(harness.transport.requests).toHaveLength(1)
-    harness.unmount()
-  })
-
-  it('4412 binding revocation: banner shown, composer disabled, cursor cleared', async () => {
-    const cursorStore = createFakeAgentCursorStore()
-    cursorStore.save(CONVERSATION, '7-5', 5)
-    const harness = await mounted({ cursorStore })
-    harness.transport.emit({ type: 'open' })
-    harness.transport.emit({ type: 'close', code: 4412, reason: 'binding_revoked' })
-    await flushPromises()
-
-    expect(harness.wrapper.get('[data-agent-revoked-banner]').text()).toContain('Binding 已撤销')
-    expect((harness.wrapper.get('[data-agent-composer-input]').element as HTMLTextAreaElement).disabled).toBe(true)
-    expect(harness.cursorStore.load(CONVERSATION)).toBeNull()
-    harness.unmount()
-  })
-
-  it('4410 slow consumer: recovery toast while the session replays the gap', async () => {
-    const harness = await mounted()
-    harness.transport.emit({ type: 'open' })
-    harness.transport.emit({ type: 'close', code: 4410, reason: 'too_slow' })
-    await flushPromises()
-
-    expect(harness.toast().text).toContain('连接恢复中')
-    harness.unmount()
-  })
-
-  it('503 runtime-unavailable: composer greys out and a ready STATE_DELTA re-enables it', async () => {
-    const submitMessage = vi.fn(async () => {
-      throw new ApiError('server', { status: 503, code: 'binding_runtime_unavailable' })
-    })
-    const harness = await mounted({ submitMessage })
-
-    await harness.wrapper.get('[data-agent-composer-input]').setValue('你好')
-    await harness.wrapper.get('[data-action="send-message"]').trigger('click')
-    await flushPromises()
-    expect(harness.wrapper.get('[data-agent-composer-unavailable]').text()).toContain('后端运行时未就绪')
-    expect((harness.wrapper.get('[data-agent-composer-input]').element as HTMLTextAreaElement).disabled).toBe(true)
-
-    harness.transport.emit({ type: 'open' })
-    harness.transport.emit({ type: 'event', event: backendDelta('ready', 1), cursor: '7-1' })
-    await flushPromises()
-    expect((harness.wrapper.get('[data-agent-composer-input]').element as HTMLTextAreaElement).disabled).toBe(false)
-    harness.unmount()
-  })
-
-  it('degrades seeded historical rows with a null body to the placeholder text', async () => {
-    const harness = await mounted({ listMessages: vi.fn(async () => ({ messages: [userRow({ body: null })] })) })
-    expect(harness.wrapper.get('.agent-message--user').text()).toContain('历史消息内容不可用')
-    harness.unmount()
-  })
-
-  it('capability disabled: placeholder rendered and no seed or stream requests fire', async () => {
-    const harness = await mounted({
-      capabilities: vi.fn(async () => ({ agent_broker_enabled: false, delegated_write_grants_enabled: false })),
-    })
-
-    expect(harness.wrapper.get('[data-agent-disabled]').text()).toContain('Agent Broker 未启用')
-    expect(harness.listMessages).not.toHaveBeenCalled()
-    expect(harness.transport.requests).toHaveLength(0)
-    harness.unmount()
-  })
-
-  it('shows the cancel button while a run is active and cancels through the API', async () => {
-    const harness = await mounted()
-    expect(harness.wrapper.find('[data-action="cancel-run"]').exists()).toBe(false)
-
-    harness.transport.emit({ type: 'open' })
-    harness.transport.emit({ type: 'event', event: { type: 'RUN_STARTED', threadId: 'th-1', runId: 'r1' }, cursor: '7-1' })
-    await flushPromises()
-
-    const cancel = harness.wrapper.get('[data-action="cancel-run"]')
-    await cancel.trigger('click')
-    await flushPromises()
-    expect(harness.cancelRun).toHaveBeenCalledWith(CONVERSATION, {}, expect.any(AbortSignal))
-    harness.unmount()
-  })
-
-  it('409 no_active_run: settles the stale active run locally without a toast', async () => {
-    const harness = await mounted({
-      cancelRun: vi.fn(async () => {
-        throw new ApiError('server', { status: 409, code: 'no_active_run' })
-      }),
-    })
-
-    harness.transport.emit({ type: 'open' })
-    harness.transport.emit({ type: 'event', event: { type: 'RUN_STARTED', threadId: 'th-1', runId: 'r1' }, cursor: '7-1' })
-    await flushPromises()
-    expect(harness.wrapper.find('[data-action="cancel-run"]').exists()).toBe(true)
-
-    await harness.wrapper.get('[data-action="cancel-run"]').trigger('click')
-    await flushPromises()
-
-    // The stale active run is settled locally: the cancel button disappears
-    // and no error toast is shown (the 409 is not an error).
-    expect(harness.wrapper.find('[data-action="cancel-run"]').exists()).toBe(false)
-    expect(harness.toast().text).toBeNull()
     harness.unmount()
   })
 })

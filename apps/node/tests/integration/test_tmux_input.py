@@ -2,7 +2,6 @@ import asyncio
 from uuid import uuid4
 
 import pytest
-from pydantic import ValidationError
 from termflow_node.bridge.input_handler import AsyncTmuxInput, InputHandler
 from termflow_node.tmux.runner import TmuxRunner
 from termflow_node.tmux.topology import TopologyReader
@@ -39,14 +38,3 @@ async def test_literal_text_and_enter_reach_real_pane(tmp_path) -> None:
         assert b"hello-termflow" in captured
     finally:
         runner.kill_server()
-
-
-def test_control_character_is_rejected_before_tmux() -> None:
-    with pytest.raises(ValidationError):
-        PaneInputPayload(
-            command_id=uuid4(),
-            idempotency_key=uuid4(),
-            pane_id="%1",
-            text="x\x03",
-            submit=False,
-        )

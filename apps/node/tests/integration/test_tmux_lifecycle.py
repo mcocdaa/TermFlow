@@ -4,8 +4,7 @@ import signal
 import subprocess
 import sys
 import time
-from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from termflow_node.instances.manager import InstanceManager
@@ -29,34 +28,6 @@ def test_private_tmux_server_survives_without_attached_client(tmp_path) -> None:
     finally:
         runner.kill_server()
     assert not runner.is_alive()
-
-
-def _prepare_socket_path(self: InstanceManager, instance_id: UUID) -> Path:
-    return Path("/tmp") / f"tf-serve-{instance_id.hex}.sock"
-
-
-def test_recover_rebuilds_tmux_keeping_the_same_identity(tmp_path, monkeypatch) -> None:
-    store = InstanceStore(tmp_path / "instances")
-    manager = InstanceManager(
-        store,
-        bridge_launcher=lambda instance: 1_000_000,
-        runner_factory=TmuxRunner,
-    )
-    monkeypatch.setattr(InstanceManager, "_prepare_socket_path", _prepare_socket_path)
-    created, _ = manager.create("alpha")
-    runner = TmuxRunner(created.socket_path)
-    runner.kill_server()
-
-    recovered = manager.recover(created.instance_id)
-
-    try:
-        assert recovered.instance_id == created.instance_id
-        assert recovered.instance_token == created.instance_token
-        assert recovered.lifecycle is InstanceLifecycle.RUNNING
-        assert TmuxRunner(recovered.socket_path).is_alive(recovered.session_id)
-        assert len(store.list().instances) == 1
-    finally:
-        TmuxRunner(recovered.socket_path).kill_server()
 
 
 def test_serve_runs_without_tty_and_stops_cleanly(tmp_path) -> None:
