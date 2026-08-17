@@ -18,15 +18,20 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<string | unde
   const pendingCounts = ref<ReadonlyMap<string, number>>(new Map())
   const loading = ref(true)
   const approvalsApi = createApprovalsApi(runtime.api.request)
-  let controller: AbortController | null = null
+  // List loads and mutations keep separate controllers: load() aborts its
+  // own in-flight list request on a binding switch, which must not cancel
+  // an in-flight delete/create (the server may have completed it while the
+  // UI would report a failure).
+  let listController: AbortController | null = null
+  let mutationController: AbortController | null = null
   let loadGeneration = 0
   let disposed = false
 
   async function load() {
     // Abort a still-in-flight load first: a rapid binding switch must not
     // let the older scope resolve last and overwrite the newer list.
-    controller?.abort()
-    controller = new AbortController()
+    listController?.abort()
+    listController = new AbortController()
     const generation = ++loadGeneration
     const current = toValue(bindingId)
     loading.value = true
@@ -45,10 +50,10 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<string | unde
       const [list, approvals] = await Promise.all([
         runtime.api.agents.listConversations({
           bindingId: current,
-          signal: controller.signal,
+          signal: listController.signal,
         }),
         approvalsApi.list({
-          signal: controller.signal,
+          signal: listController.signal,
         }),
       ])
       if (disposed || generation !== loadGeneration) return
@@ -71,11 +76,18 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<string | unde
 
   async function create(binding: string, title?: string) {
     try {
-      const created = await runtime.api.agents.createConversation({ binding_id: binding, title: title ?? null })
+      const created = await runtime.api.agents.createConversation(
+        { binding_id: binding, title: title ?? null },
+        mutationController?.signal,
+      )
       conversations.value = [created, ...conversations.value]
       toast.show({ text: '会话已创建。', tone: 'success' })
       return created
     } catch (error) {
+      // An unmount abort is not a user-visible failure (mirrors the list
+      // load's aborted filter); the caller still sees null and keeps the
+      // typed title for a retry.
+      if (error instanceof ApiError && error.kind === 'aborted') return null
       toast.show({ text: '创建会话失败。', tone: 'error' })
       return null
     }
@@ -83,12 +95,15 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<string | unde
 
   async function remove(conversationId: string) {
     try {
-      await runtime.api.agents.deleteConversation(conversationId, controller?.signal)
+      await runtime.api.agents.deleteConversation(conversationId, mutationController?.signal)
       conversations.value = conversations.value.filter((conversation) => conversation.conversation_id !== conversationId)
       // Deleted conversations can never resume (M6b spec §4.4).
       runtime.agentCursorStore.clear(conversationId)
       toast.show({ text: '会话已删除。', tone: 'success' })
     } catch (error) {
+      // An unmount abort is not a user-visible failure (mirrors the list
+      // load's aborted filter).
+      if (error instanceof ApiError && error.kind === 'aborted') return
       toast.show({ text: '删除会话失败。', tone: 'error' })
     }
   }
@@ -98,6 +113,7 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<string | unde
   }
 
   onMounted(() => {
+    mutationController = new AbortController()
     void load()
   })
   // A switched binding re-scopes the list (and the approval badges).
@@ -106,8 +122,10 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<string | unde
   })
   onBeforeUnmount(() => {
     disposed = true
-    controller?.abort()
-    controller = null
+    listController?.abort()
+    listController = null
+    mutationController?.abort()
+    mutationController = null
   })
 
   return { conversations, pendingCounts, loading, refresh: load, create, remove, pendingCount }
