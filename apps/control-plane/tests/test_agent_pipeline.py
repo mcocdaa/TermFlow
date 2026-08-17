@@ -52,6 +52,7 @@ from termflow_control_plane.plugins.agent_broker.agent.turns import (
 from termflow_protocol.agent import (
     AgentEventKind,
     AgentInputKind,
+    BackendRuntimeState,
 )
 
 RUNTIME_ID = "runtime-1"
@@ -428,6 +429,16 @@ async def test_submit_user_message_admits_enqueues_and_dispatches(
             return bool(runs) and all(run.run_state == "completed" for run in runs)
 
         await wait_until(run_completed)
+
+        # Review fix (multi-turn): the run's terminal outcome persists
+        # `delivered` for the dispatched inbox item, freeing the gate.
+        async def delivered() -> bool:
+            rows = await repositories.agent_inbox.list_for_conversation(conversation_id)
+            return bool(rows) and all(
+                row.delivery_state == "delivered" for row in rows
+            )
+
+        await wait_until(delivered)
     finally:
         await pipeline.stop()
 
@@ -586,6 +597,178 @@ async def test_two_conversations_serialize_on_one_binding(
         await wait_until(lambda: len(backend.submit_calls) == 2)
         assert backend.submit_calls[1].request.parts[0].text == "b"
         assert backend.submit_calls[1].request.conversation_ref.provider_ref == ("provider-2")
+    finally:
+        await pipeline.stop()
+
+
+# ---------------------------------------------------------------------------
+# Multi-turn conversations (review fix: the claim gate frees on run terminal).
+# ---------------------------------------------------------------------------
+
+
+async def test_same_conversation_second_turn_is_admitted_after_run_terminal(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    """The claim gate admits a second turn once the first run terminates.
+
+    Previously the M1.4 inbox kept a dispatched item in-flight forever, so
+    the second message stayed ``pending`` silently.  The run's terminal
+    outcome must persist ``delivered`` and free the gate (plan §2.1).
+    """
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    await pipeline.start()
+    try:
+        first = await pipeline.submit_user_message(conversation_id, "first", actor="admin")
+        second = await pipeline.submit_user_message(conversation_id, "second", actor="admin")
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        assert backend.submit_calls[0].request.idempotency_key == first.idempotency_key
+
+        # The second item stays pending while the first turn is in flight...
+        rows = await repositories.agent_inbox.list_for_conversation(conversation_id)
+        by_id = {row.id: row for row in rows}
+        assert by_id[second.message_id].delivery_state == "pending"
+
+        # ...and is admitted after the run terminates.
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.RUN_STARTED,
+                provider_ref="provider-1",
+            )
+        )
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.RUN_COMPLETED,
+                provider_ref="provider-1",
+            )
+        )
+        await wait_until(lambda: len(backend.submit_calls) == 2)
+        assert backend.submit_calls[1].request.idempotency_key == second.idempotency_key
+        assert backend.submit_calls[1].request.parts[0].text == "second"
+
+        rows = await repositories.agent_inbox.list_for_conversation(conversation_id)
+        by_id = {row.id: row for row in rows}
+        assert by_id[first.message_id].delivery_state == "delivered"
+        assert by_id[second.message_id].delivery_state == "dispatched"
+    finally:
+        await pipeline.stop()
+
+
+async def test_public_path_reuses_backend_ref_across_turns(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    """The public submit path can run a second turn on the same backend session.
+
+    Previously the public path could never reach a second submission, so the
+    backend-ref reuse branch was only exercisable directly.  Two admitted
+    messages must reuse the one created backend conversation.
+    """
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    await pipeline.start()
+    try:
+        await pipeline.submit_user_message(conversation_id, "one", actor="admin")
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.RUN_STARTED,
+                provider_ref="provider-1",
+            )
+        )
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.RUN_COMPLETED,
+                provider_ref="provider-1",
+            )
+        )
+        await wait_until(lambda: backend.created_sessions == 1)
+
+        await pipeline.submit_user_message(conversation_id, "two", actor="admin")
+        await wait_until(lambda: len(backend.submit_calls) == 2)
+
+        assert backend.created_sessions == 1
+        assert all(
+            call.request.conversation_ref.provider_ref == "provider-1"
+            for call in backend.submit_calls
+        )
+        assert [call.request.parts[0].text for call in backend.submit_calls] == [
+            "one",
+            "two",
+        ]
+    finally:
+        await pipeline.stop()
+
+
+# ---------------------------------------------------------------------------
+# Cancellation terminal delivery (plan §7: dispatched -> cancel_requested ->
+# cancelled|unknown).
+# ---------------------------------------------------------------------------
+
+
+async def test_cancel_proven_terminal_marks_delivery_cancelled(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    await pipeline.start()
+    try:
+        await pipeline.submit_user_message(conversation_id, "stop me", actor="admin")
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+
+        backend.reconcile_results = [
+            BackendConversationSnapshot(
+                conversation_ref=backend.submit_calls[0].ref,
+                outcome=BackendOutcome.CONFIRMED,
+                state=BackendRuntimeState.CLOSED,
+            )
+        ]
+        result = await pipeline.cancel_conversation(conversation_id, reason="user request")
+        assert result.outcome is BackendOutcome.CONFIRMED
+        assert result.run_state == "cancelled"
+
+        rows = await repositories.agent_inbox.list_for_conversation(conversation_id)
+        assert [row.delivery_state for row in rows] == ["cancelled"]
+        # The gate is freed: the conversation can run another turn.
+        await pipeline.submit_user_message(conversation_id, "resume", actor="admin")
+        await wait_until(lambda: len(backend.submit_calls) == 2)
+    finally:
+        await pipeline.stop()
+
+
+async def test_cancel_unproven_outcome_marks_delivery_unknown(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    await pipeline.start()
+    try:
+        await pipeline.submit_user_message(conversation_id, "busy turn", actor="admin")
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+
+        # The default reconcile snapshot is CONFIRMED with state RECONCILING:
+        # the cancellation cannot be proven terminal, so the delivery becomes
+        # the visible recoverable `delivery_unknown` (never auto-resubmitted).
+        result = await pipeline.cancel_conversation(conversation_id, reason="user request")
+        assert result.outcome is BackendOutcome.CONFIRMED
+        assert result.run_state == "unknown"
+
+        rows = await repositories.agent_inbox.list_for_conversation(conversation_id)
+        assert [row.delivery_state for row in rows] == ["delivery_unknown"]
+        await asyncio.sleep(0.05)
+        # Never an automatic duplicate action.
+        assert len(backend.submit_calls) == 1
     finally:
         await pipeline.stop()
 

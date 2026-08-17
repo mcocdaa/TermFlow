@@ -9,8 +9,10 @@ reconcile/reconnect loop.
 Serialization follows plan gate 6:
 
 * one in-flight turn per conversation is enforced by
-  :class:`~.inbox.InboxDeliveryStateMachine.claim_next` (the dispatched item
-  stays in-flight until the M1.4 schema can persist terminal delivery);
+  :class:`~.inbox.InboxDeliveryStateMachine.claim_next` (a dispatched item
+  stays in-flight until its run reaches a terminal outcome, which persists
+  the terminal delivery state ``delivered``/``cancelled``/
+  ``delivery_unknown`` and frees the conversation's next turn);
 * per-binding serialization is enforced inside this instance: the dispatcher
   handles exactly one envelope at a time and, after a confirmed submit,
   waits for the active run's terminal state (signalled by the SSE consumer)
@@ -70,6 +72,7 @@ from termflow_control_plane.plugins.agent_broker.agent.backend import (
 from termflow_control_plane.plugins.agent_broker.agent.inbox import (
     InboxDeliveryStateMachine,
     InboxEnvelope,
+    InboxStateError,
 )
 from termflow_control_plane.plugins.agent_broker.agent.runs import (
     AgentRunStateMachine,
@@ -350,9 +353,9 @@ class AgentPipelineService:
         self._active_run_id: UUID | None = None
         self._run_terminal_event: asyncio.Event | None = None
         # Same-process link from a run to the dispatched inbox envelope.  The
-        # current schema has no run_id on inbox rows; this lets runtime
-        # reconcile park the exact delivery without pretending restart-safe
-        # recovery (restart fencing remains run_agent_recovery's job).
+        # current schema has no run_id on inbox rows; this link persists the
+        # terminal delivery state (delivered/cancelled/delivery_unknown) when
+        # the run ends, while restart fencing remains run_agent_recovery's job.
         self._run_envelopes: dict[UUID, InboxEnvelope] = {}
 
         self._tasks: list[asyncio.Task[None]] = []
@@ -478,6 +481,20 @@ class AgentPipelineService:
         if run is None:
             raise NoActiveRunError(f"conversation {conversation_id} has no active run")
         ref = await self._existing_backend_ref(conversation_id)
+        # Review fix (plan §7 cancel path): persist ``cancel_requested`` on
+        # the run's dispatched inbox item before the backend call so a crash
+        # mid-cancel leaves a fenceable delivery state.
+        envelope = self._run_envelopes.get(run.id)
+        if envelope is not None and envelope.delivery_state == "dispatched":
+            try:
+                await self.inbox_machine.mark_cancel_requested(envelope)
+            except InboxStateError:
+                logger.warning(
+                    "Agent pipeline %s: run %s delivery could not be marked "
+                    "cancel_requested; the cancel proceeds without it",
+                    self.binding_id,
+                    run.id,
+                )
         result = await self._adapter.cancel(
             BackendCancelRequest(
                 conversation_ref=ref,
@@ -491,6 +508,7 @@ class AgentPipelineService:
                 run.id, wait_seconds=self._cancel_wait_timeout
             )
             if terminal is not None:
+                await self._finalize_cancel_delivery(run.id, envelope, cancelled=True)
                 return CancelResult(
                     outcome=BackendOutcome.CONFIRMED,
                     run_id=run.id,
@@ -503,7 +521,7 @@ class AgentPipelineService:
             ):
                 await self._transition_run_terminal(run.id, "cancelled")
                 self._signal_run_terminal(run.id)
-                self._run_envelopes.pop(run.id, None)
+                await self._finalize_cancel_delivery(run.id, envelope, cancelled=True)
                 return CancelResult(
                     outcome=BackendOutcome.CONFIRMED,
                     run_id=run.id,
@@ -514,7 +532,7 @@ class AgentPipelineService:
             # be proven cancelled, so it is marked unknown (spec §8).
             await self._transition_run_terminal(run.id, "unknown")
             self._signal_run_terminal(run.id)
-            self._run_envelopes.pop(run.id, None)
+            await self._finalize_cancel_delivery(run.id, envelope, cancelled=False)
             return CancelResult(
                 outcome=BackendOutcome.CONFIRMED,
                 run_id=run.id,
@@ -527,12 +545,44 @@ class AgentPipelineService:
         # non-confirmed adapter outcome masquerade as a cancellation).
         await self._transition_run_terminal(run.id, "unknown")
         self._signal_run_terminal(run.id)
-        self._run_envelopes.pop(run.id, None)
+        await self._finalize_cancel_delivery(run.id, envelope, cancelled=False)
         return CancelResult(
             outcome=BackendOutcome.UNKNOWN,
             run_id=run.id,
             run_state="unknown",
         )
+
+    async def _finalize_cancel_delivery(
+        self, run_id: UUID, envelope: InboxEnvelope | None, *, cancelled: bool
+    ) -> None:
+        """Terminal delivery for the run's item after a cancellation round trip.
+
+        ``dispatched -> cancel_requested -> cancelled`` when the cancellation
+        was proven terminal; otherwise the item becomes ``delivery_unknown``
+        (plan §7: an unproven outcome never masquerades as cancelled).  No
+        envelope (a run admitted before this process) leaves the item to
+        restart recovery.
+        """
+        self._run_envelopes.pop(run_id, None)
+        if envelope is None:
+            return
+        try:
+            if cancelled:
+                if envelope.delivery_state != "cancel_requested":
+                    return
+                await self.inbox_machine.mark_cancelled(envelope)
+                return
+            if envelope.delivery_state in ("dispatched", "cancel_requested"):
+                await self.inbox_machine.mark_delivery_unknown(envelope)
+        except InboxStateError:
+            # A concurrent path already settled the delivery; its durable
+            # state is authoritative.
+            logger.warning(
+                "Agent pipeline %s: run %s cancel delivery could not be "
+                "finalized; the item keeps its durable state",
+                self.binding_id,
+                run_id,
+            )
 
     async def resolve_permission(self, interaction: BackendInteraction) -> BackendOperationResult:
         """Forward a normalized one-shot permission decision to the adapter."""
@@ -979,6 +1029,34 @@ class AgentPipelineService:
         if envelope is not None:
             await self.inbox_machine.mark_delivery_unknown(envelope)
 
+    async def _mark_run_delivery_terminal(self, run_id: UUID) -> None:
+        """Persist the terminal delivery state for the run's inbox item.
+
+        A terminal run proves the input was accepted and acted upon, so the
+        dispatched item becomes ``delivered`` (submission ``accepted``) and
+        the one-in-flight gate frees the conversation's next turn (plan
+        §2.1/§7).  A cancel that raced the terminal event finishes as
+        ``cancelled``.  No envelope (for example a foreign-session run)
+        leaves the item to restart recovery rather than inventing an outcome.
+        """
+        envelope = self._run_envelopes.pop(run_id, None)
+        if envelope is None:
+            return
+        try:
+            if envelope.delivery_state == "dispatched":
+                await self.inbox_machine.mark_delivered(envelope)
+            elif envelope.delivery_state == "cancel_requested":
+                await self.inbox_machine.mark_cancelled(envelope)
+        except InboxStateError:
+            # A concurrent failure path already settled the delivery; its
+            # durable state is authoritative.
+            logger.warning(
+                "Agent pipeline %s: run %s terminal delivery could not be "
+                "persisted; the item keeps its durable state",
+                self.binding_id,
+                run_id,
+            )
+
     @staticmethod
     def _to_turns_ref(row: BackendConversationRefRow) -> BackendConversationRef:
         """Project a persisted ORM ref row onto the neutral turns model."""
@@ -1164,8 +1242,13 @@ class AgentPipelineService:
                     notification.kind.value,
                 )
             else:
+                # Review fix (multi-turn, plan §2.1/§7): the run is terminal,
+                # so the dispatched inbox item's delivery outcome is proven.
+                # Persist the terminal delivery state BEFORE signalling the
+                # dispatcher, so the one-in-flight gate is released before
+                # the next turn is claimed.
+                await self._mark_run_delivery_terminal(run_id)
                 self._signal_run_terminal(run_id)
-                self._run_envelopes.pop(run_id, None)
 
         # 5) Canonical event persistence (one JSON string for digest + payload).
         payload_json = _canonical_payload_json(notification)
