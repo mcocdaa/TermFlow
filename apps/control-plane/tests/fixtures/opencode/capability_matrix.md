@@ -7,6 +7,13 @@ OpenCode container yet: live-container contract tests happen at M4, and until
 they pass every dimension carries `verification_status: "unknown"` (or
 `"unsupported"`). Unverified behavior is never silently marked "yes".
 
+The matrix records the **shipped v0.2.0 adapter semantics**: values here match
+the adapter's frozen capability descriptor (the descriptor a test can pin).
+Where the plan cites a later target semantic that the shipped adapter does not
+yet implement (e.g. volume-proof resume, §6.2.1 attribution), the target is
+recorded as `plan_target` alongside the shipped value — it is never asserted
+as already shipped.
+
 The machine-readable matrix is the embedded `termflow-capability-matrix`
 JSON block; the tables below are the human-readable form.
 
@@ -65,8 +72,8 @@ captured OpenAPI spec confirms the identity components available on the wire.
 
 | Property | Value | Verification |
 | --- | --- | --- |
-| `context_mode` | `resume_requires_volume_proof` — resume only when the runtime persistence volume and health contract prove backend context survived restart; otherwise B marks the context lost and offers a new conversation fork from its curated transcript (plan §6) | `unknown` (M4) |
-| `context_lost_fallback` | `fork_from_curated_transcript` | `unknown` (M4) |
+| `context_mode` | `lost_on_restart` — shipped v0.2.0 semantic: `reconcile` never returns `resumable=True`; a 404 session yields `CONTEXT_LOST`. Plan §6 targets `resume_requires_volume_proof` (resume only when the runtime persistence volume and health contract prove backend context survived restart); that upgrade is not yet implemented by the adapter and is recorded as `plan_target` | `unknown` (M4) |
+| `context_lost_fallback` | `fork_from_curated_transcript` — B-side plan §6 fallback: the adapter reports `CONTEXT_LOST` and leaves the fork-from-curated-transcript decision to B | `unknown` (M4) |
 | `delete_endpoint` | `DELETE /session/:id` — idempotent backend cleanup | `unknown` (M4) |
 
 ## 7. Runtime / conversation isolation (plan §6.2.1)
@@ -75,7 +82,7 @@ captured OpenAPI spec confirms the identity components available on the wire.
 | --- | --- | --- |
 | `runtime_isolation` | `binding` — one runtime/container is never shared across bindings unless an adapter capability explicitly proves per-binding tool isolation | `unknown` (M4) |
 | `concurrency_mode` | `serialized` — one active Agent Run per binding; a second conversation waits in the Inbox | `unknown` (M4) |
-| `tool_call_identity` | `run` — the active-run lease is the v0.2 tool-call attribution mechanism | `unknown` (M4) |
+| `tool_call_identity` | `binding` — shipped v0.2.0 semantic: backend tool-call `callID` values are server-generated and unique within the binding's runtime. The plan §6.2.1 active-run lease (a binding-scoped MCP call is accepted only while exactly one B-owned run is active and is attached to that run before policy evaluation) is the v0.2 tool-call **attribution** mechanism, implemented at the broker/MCP layer — it does not change the backend ID-uniqueness scope of the adapter descriptor | `unknown` (M4) |
 | `one_active_run_per_binding` | `contractual` — required by the v0.2 safety default | `unknown` (M4) |
 | `epoch_bound_mcp_capability` | `contractual` — freshly provisioned epoch-bound binding token; late old-epoch calls are rejected and recorded, never reassigned | `unknown` (M4) |
 
@@ -144,15 +151,17 @@ captured OpenAPI spec confirms the identity components available on the wire.
       "verification_status": "unknown"
     },
     "resume_delete": {
-      "context_mode": "resume_requires_volume_proof",
+      "context_mode": "lost_on_restart",
       "context_lost_fallback": "fork_from_curated_transcript",
       "delete_endpoint": "DELETE /session/:id",
+      "plan_target": "resume_requires_volume_proof (plan §6): resume only when the runtime persistence volume and health contract prove backend context survived restart; not yet implemented by the shipped v0.2.0 adapter",
       "verification_status": "unknown"
     },
     "isolation": {
       "runtime_isolation": "binding",
       "concurrency_mode": "serialized",
-      "tool_call_identity": "run",
+      "tool_call_identity": "binding",
+      "attribution_mechanism": "the active-run lease is the v0.2 tool-call attribution mechanism (plan §6.2.1), implemented at the broker/MCP layer; backend tool-call IDs are server-generated and unique within the binding runtime",
       "one_active_run_per_binding": "contractual",
       "epoch_bound_mcp_capability": "contractual",
       "late_old_epoch_call": "rejected_and_recorded",
