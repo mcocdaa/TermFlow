@@ -3100,7 +3100,14 @@ class AgentInboxRepository:
         now: datetime | None = None,
     ) -> AgentInboxItem | None:
         """Fence the dispatch on the live claim: only the lease holder can mark
-        the item dispatched before the lease expires."""
+        the item dispatched before the lease expires.
+
+        The claim owner and lease are deliberately kept on the dispatched row:
+        they double as the submission's persisted fencing identity and
+        submission lease, so restart recovery can fence a started submission
+        whose outcome is unproven (plan §7/§17).  The dispatched state is
+        never re-claimed by the claim scan.
+        """
         observed_at = now or datetime.now(UTC)
         async with self._sessions() as session:
             result = await session.execute(
@@ -3113,6 +3120,73 @@ class AgentInboxRepository:
                 )
                 .values(
                     delivery_state="dispatched",
+                    next_attempt_at=None,
+                )
+                .returning(AgentInboxItem)
+            )
+            item = result.scalar_one_or_none()
+            await session.commit()
+            return item
+
+    async def start_submission(
+        self,
+        item_id: UUID,
+        owner: str,
+        *,
+        attempt_id: str,
+        fencing_token: str,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> AgentInboxItem | None:
+        """Commit ``submission_state=started`` before any network write (plan §7).
+
+        The CAS succeeds only while the caller still holds the live claim.
+        The started row persists the attempt/fencing identity as
+        ``claim_owner = "<attempt_id>|<fencing_token>"`` and a fresh
+        submission lease (``claim_expires_at``) so restart recovery can fence
+        or surface the started submission without any in-memory state.
+        """
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentInboxItem)
+                .where(
+                    AgentInboxItem.id == item_id,
+                    AgentInboxItem.delivery_state == "claimed",
+                    AgentInboxItem.claim_owner == owner,
+                    AgentInboxItem.claim_expires_at > observed_at,
+                )
+                .values(
+                    delivery_state="dispatched",
+                    claim_owner=f"{attempt_id}|{fencing_token}",
+                    claim_expires_at=observed_at + timedelta(seconds=lease_seconds),
+                    next_attempt_at=None,
+                )
+                .returning(AgentInboxItem)
+            )
+            item = result.scalar_one_or_none()
+            await session.commit()
+            return item
+
+    async def mark_delivered(
+        self,
+        item_id: UUID,
+    ) -> AgentInboxItem | None:
+        """Prove the delivery accepted: ``dispatched`` -> ``delivered``.
+
+        ``delivered`` is a persisted terminal state: the one-in-flight gate
+        stops counting the item, freeing the conversation's next turn
+        (plan §2.1 multi-turn conversations).
+        """
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentInboxItem)
+                .where(
+                    AgentInboxItem.id == item_id,
+                    AgentInboxItem.delivery_state == "dispatched",
+                )
+                .values(
+                    delivery_state="delivered",
                     claim_owner=None,
                     claim_expires_at=None,
                     next_attempt_at=None,
@@ -3122,6 +3196,85 @@ class AgentInboxRepository:
             item = result.scalar_one_or_none()
             await session.commit()
             return item
+
+    async def mark_delivery_unknown(
+        self,
+        item_id: UUID,
+    ) -> AgentInboxItem | None:
+        """Persist ``delivery_unknown``: uncertain delivery is a visible
+        recoverable state, never an automatic duplicate action (plan §7/§17)."""
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentInboxItem)
+                .where(
+                    AgentInboxItem.id == item_id,
+                    AgentInboxItem.delivery_state.in_(
+                        ("claimed", "dispatched", "cancel_requested")
+                    ),
+                )
+                .values(
+                    delivery_state="delivery_unknown",
+                    claim_owner=None,
+                    claim_expires_at=None,
+                    next_attempt_at=None,
+                )
+                .returning(AgentInboxItem)
+            )
+            item = result.scalar_one_or_none()
+            await session.commit()
+            return item
+
+    async def mark_cancel_requested(
+        self,
+        item_id: UUID,
+    ) -> AgentInboxItem | None:
+        """``dispatched`` -> ``cancel_requested`` before the backend cancel call.
+
+        The submission lease is kept so recovery can fence a cancellation that
+        died mid-flight; the terminal outcome is ``cancelled`` or
+        ``delivery_unknown`` (plan §7: ``dispatched -> cancel_requested ->
+        cancelled|unknown``).
+        """
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentInboxItem)
+                .where(
+                    AgentInboxItem.id == item_id,
+                    AgentInboxItem.delivery_state == "dispatched",
+                )
+                .values(delivery_state="cancel_requested")
+                .returning(AgentInboxItem)
+            )
+            item = result.scalar_one_or_none()
+            await session.commit()
+            return item
+
+    async def list_started_with_expired_lease(
+        self,
+        *,
+        now: datetime | None = None,
+    ) -> list[AgentInboxItem]:
+        """Started/cancel-requested submissions whose lease expired without a
+        proven terminal outcome (restart recovery, plan §17).
+
+        These rows are provably past their submission lease but their outcome
+        is unproven, so recovery must fence them to ``delivered`` (reconciled)
+        or ``delivery_unknown`` instead of re-offering them for delivery.
+        """
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentInboxItem)
+                .where(
+                    AgentInboxItem.delivery_state.in_(
+                        ("dispatched", "cancel_requested")
+                    ),
+                    AgentInboxItem.claim_expires_at.is_not(None),
+                    AgentInboxItem.claim_expires_at <= observed_at,
+                )
+                .order_by(AgentInboxItem.admission_seq)
+            )
+            return list(rows)
 
     async def mark_retry(
         self,
@@ -3186,7 +3339,7 @@ class AgentInboxRepository:
                 .where(
                     AgentInboxItem.id == item_id,
                     AgentInboxItem.delivery_state.in_(
-                        ("pending", "claimed", "retry_wait")
+                        ("pending", "claimed", "retry_wait", "cancel_requested")
                     ),
                 )
                 .values(
@@ -3237,9 +3390,10 @@ class AgentInboxRepository:
     ) -> int:
         """Delete terminal-state rows after the retention window (plan §15).
 
-        ``dead_letter`` and ``cancelled`` deliveries are terminal recovery
-        states; their admission rows are retained for the configured window
-        and then removed by the startup purge sweep.
+        ``delivered``, ``delivery_unknown``, ``dead_letter``, and ``cancelled``
+        deliveries are terminal recovery states; their admission rows are
+        retained for the configured window and then removed by the startup
+        purge sweep.
         """
         observed_at = now or datetime.now(UTC)
         cutoff = observed_at - older_than
@@ -3248,7 +3402,14 @@ class AgentInboxRepository:
                 CursorResult[Any],
                 await session.execute(
                     delete(AgentInboxItem).where(
-                        AgentInboxItem.delivery_state.in_(("dead_letter", "cancelled")),
+                        AgentInboxItem.delivery_state.in_(
+                            (
+                                "dead_letter",
+                                "cancelled",
+                                "delivered",
+                                "delivery_unknown",
+                            )
+                        ),
                         AgentInboxItem.created_at <= cutoff,
                     )
                 ),

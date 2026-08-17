@@ -6,10 +6,11 @@ with the plan §7 delivery and submission state machines:
 .. code-block:: text
 
     delivery_state:
-    pending -> claimed -> dispatched
-                        └-> retry_wait
-                        └-> delivery_unknown
-                        └-> dead_letter
+    pending -> claimed -> dispatched -> delivered (proven accepted)
+                        \\-> retry_wait
+                        \\-> delivery_unknown (persisted; never auto-retried)
+                        \\-> dead_letter
+                        \\-> cancel_requested -> cancelled|delivery_unknown
     pending/claimed/retry_wait -> cancelled
 
     submission_state:
@@ -25,41 +26,36 @@ backend rejected the stable delivery key.  A network-unknown outcome becomes
 ``delivery_unknown``; recovery is reconciliation or an explicit user decision,
 never an automatic duplicate action.
 
-Persistence mapping (M1.4)
-==========================
+Persistence mapping
+===================
 
-The M1.3 ``agent_inbox_items`` table (migration ``0006``) stores
-``delivery_state``, ``attempt_count``, and claim lease columns only; it has no
-``submission_state``, ``attempt_id``, ``stable_message_id``, or
-``fencing_token`` columns and the repository has no ``started`` API.  Until a
-later milestone adds schema/repository support:
+Terminal delivery is durable, not in-memory:
 
-* :meth:`mark_started` persists the delivery transition through the existing
-  ``mark_dispatched`` repository call (``claimed`` -> ``dispatched``, lease
-  released) and records ``submission_state=started`` plus the attempt ID,
-  stable message ID, owner, and fencing token on the in-memory
-  :class:`_StartedSubmission` record, exposed on the returned
-  :class:`InboxEnvelope`.
-* Because ``mark_started`` maps ``started`` onto the ``dispatched`` delivery
-  state and the repository has no ``dispatched`` -> ``retry_wait`` path, a
-  rejection observed *after* ``mark_started`` cannot be auto-retried in M1.4;
-  only never-submitted items retry (``pending``/``claimed``/``retry_wait``).
-  ``mark_delivery_unknown`` and ``recover_stale`` remain the honest terminal
-  paths for started items until a later milestone adds schema/repository
-  support for the submission track.
-* ``delivery_unknown`` is represented only in memory
-  (:attr:`InboxDeliveryStateMachine._parked`); the repository cannot persist
-  it, so :meth:`claim_next` and :meth:`recover_stale` consult that guard to
-  keep unknown items out of the claim path.
-* :meth:`recover_stale` restores provably-not-started expired claims to
-  ``pending`` without a write: the repository treats an expired ``claimed``
-  row as reclaimable, which preserves the attempt count exactly.
+* ``mark_started`` commits the dispatch through the repository's
+  ``start_submission`` CAS (``claimed`` -> ``dispatched``): the started row
+  keeps the claim lease as its submission lease and persists the
+  attempt/fencing identity as ``claim_owner = "<attempt_id>|<fencing_token>"``.
+* When a run reaches a terminal outcome the pipeline proves the delivery:
+  ``mark_delivered`` persists ``dispatched -> delivered`` (submission
+  ``accepted``), which releases the one-in-flight gate so a conversation can
+  run its next turn (plan §2.1 multi-turn conversations).
+* ``mark_delivery_unknown`` persists the terminal state through the
+  repository (no in-memory ``_parked`` guard): the claim scan never re-offers
+  an unknown delivery, and restart recovery sees it as visible, recoverable
+  state (plan §7/§17).
+* Cancellation follows the plan path ``dispatched -> cancel_requested ->
+  cancelled|delivery_unknown``; the submission lease is kept through the
+  cancel round trip so recovery can fence a cancel that died mid-flight.
+* :meth:`recover_stale` fences from the database only: expired never-started
+  claims are restorable to ``pending`` (provably not started), while expired
+  ``started``/``cancel_requested`` submissions become ``delivered`` (when
+  reconciliation proves acceptance) or ``delivery_unknown``.
 
 The repository is the last line of defense: every transition below also
 passes through the repository's own ``WHERE`` guards and CAS (``claim``,
-``mark_dispatched``).  If the repository rejects a transition, the state
-machine raises :class:`InboxStateError` (fail-loud policy, see
-:meth:`_guard`).
+``start_submission``, ``mark_delivered``, ...).  If the repository rejects a
+transition, the state machine raises :class:`InboxStateError` (fail-loud
+policy, see :meth:`_guard`).
 """
 
 from __future__ import annotations
@@ -95,10 +91,12 @@ _NON_RETRYABLE_OUTCOMES = (
 # The repository's ``WHERE`` guards for each transition; used to validate
 # before calling and to explain failures after the fact.
 _ALLOWED_FOR_RETRY = ("pending", "claimed", "retry_wait")
-_ALLOWED_FOR_CANCEL = ("pending", "claimed", "retry_wait")
+_ALLOWED_FOR_CANCEL = ("pending", "claimed", "retry_wait", "cancel_requested")
 _ALLOWED_FOR_DEAD_LETTER = ("pending", "claimed", "retry_wait")
 _ALLOWED_FOR_DISPATCH = ("claimed",)
-_ALLOWED_FOR_DELIVERY_UNKNOWN = ("claimed", "dispatched")
+_ALLOWED_FOR_DELIVERY_UNKNOWN = ("claimed", "dispatched", "cancel_requested")
+_ALLOWED_FOR_DELIVERED = ("dispatched",)
+_ALLOWED_FOR_CANCEL_REQUEST = ("dispatched",)
 
 # Bounded keyset scan for per-conversation claiming (review fix major-1): a
 # page of ``next_pending`` candidates fully blocked by the claim filter must
@@ -150,7 +148,12 @@ class InboxEnvelope:
 
 @dataclass
 class _StartedSubmission:
-    """In-memory ``started`` submission record (schema lacks the columns)."""
+    """Live ``started`` submission record for the current process.
+
+    The durable counterpart (attempt/fencing identity and submission lease)
+    is persisted on the inbox row by the repository's ``start_submission``;
+    this record only enriches live envelopes until the process restarts.
+    """
 
     attempt_id: str
     stable_message_id: str
@@ -207,10 +210,9 @@ class InboxDeliveryStateMachine:
         self._worker_id = worker_id
         self._claim_filter = claim_filter
         self._claim_scan_max_pages = claim_scan_max_pages
-        # item_id -> delivery state parked in memory because the repository
-        # cannot persist delivery_unknown (or proven-accepted recovery).
-        self._parked: dict[UUID, str] = {}
-        # item_id -> started submission metadata (schema lacks the columns).
+        # item_id -> started submission metadata for live envelopes (the
+        # durable counterpart lives on the inbox row: attempt/fencing identity
+        # and submission lease persist through ``start_submission``).
         self._submissions: dict[UUID, _StartedSubmission] = {}
 
     # ------------------------------------------------------------------
@@ -226,11 +228,13 @@ class InboxDeliveryStateMachine:
 
         Enforces at most one in-flight turn per conversation (unless the
         backend capability allows concurrency) and never re-claims an item
-        parked as ``delivery_unknown`` or proven accepted.
+        whose delivery already reached a persisted terminal state
+        (``delivered``/``delivery_unknown``/...): those rows are excluded by
+        the repository's claimable-state filter.
 
         Candidates are scanned in bounded keyset pages (review fix
-        major-1): a page fully rejected by the parked/claim filters no
-        longer starves later rows, because the scan advances past it up to
+        major-1): a page fully rejected by the claim filter no longer
+        starves later rows, because the scan advances past it up to
         ``claim_scan_max_pages`` pages.
         """
         observed = self._now()
@@ -247,8 +251,7 @@ class InboxDeliveryStateMachine:
             candidates = [
                 row
                 for row in rows
-                if row.id not in self._parked
-                and (self._claim_filter is None or self._claim_filter(row))
+                if self._claim_filter is None or self._claim_filter(row)
             ]
             if not candidates:
                 # The page is fully blocked by the parked/claim filters:
@@ -347,10 +350,11 @@ class InboxDeliveryStateMachine:
     ) -> InboxEnvelope:
         """Commit ``submission_state=started`` before any network write.
 
-        Persists the delivery transition via the repository's
-        ``mark_dispatched`` (``claimed`` -> ``dispatched``, lease released)
-        and records the attempt ID / stable message ID / owner / fencing token
-        on the in-memory submission record, surfaced on the returned envelope.
+        Persists the delivery transition through the repository's
+        ``start_submission`` CAS (``claimed`` -> ``dispatched``): the started
+        row keeps a submission lease and persists the attempt/fencing
+        identity in the claim owner column, so restart recovery can fence the
+        submission without in-memory state (plan §7/§17).
         """
         observed = self._now()
         self._guard(envelope, _ALLOWED_FOR_DISPATCH, "dispatch")
@@ -365,12 +369,15 @@ class InboxDeliveryStateMachine:
                 f"cannot start submission of inbox item {envelope.id}: "
                 "claim lease is missing or has expired"
             )
-        dispatched = await self._agent_inbox.mark_dispatched(
+        started = await self._agent_inbox.start_submission(
             envelope.id,
             owner,
+            attempt_id=attempt_id,
+            fencing_token=fencing_token,
+            lease_seconds=self._lease_seconds,
             now=observed,
         )
-        if dispatched is None:
+        if started is None:
             raise InboxStateError(
                 f"cannot start submission of inbox item {envelope.id}: "
                 "repository rejected the claimed -> dispatched transition"
@@ -396,7 +403,13 @@ class InboxDeliveryStateMachine:
         return envelope
 
     async def mark_dispatched(self, envelope: InboxEnvelope) -> InboxEnvelope:
-        """Fence the dispatch on the live claim (thin repository wrapper)."""
+        """Fence the dispatch on the live claim (thin repository wrapper).
+
+        The repository keeps the claim owner/lease on the dispatched row so
+        the submission stays recovery-fenceable (plan §17): a dispatched row
+        whose outcome is never proven can be surfaced as ``delivery_unknown``
+        by a later recovery sweep instead of blocking the gate forever.
+        """
         observed = self._now()
         self._guard(envelope, _ALLOWED_FOR_DISPATCH, "dispatch")
         if envelope.claim_owner is None:
@@ -416,6 +429,47 @@ class InboxDeliveryStateMachine:
         envelope.delivery_state = "dispatched"
         envelope.claim_owner = None
         envelope.claim_expires_at = None
+        return envelope
+
+    async def mark_delivered(self, envelope: InboxEnvelope) -> InboxEnvelope:
+        """Prove the delivery accepted: ``dispatched`` -> ``delivered``.
+
+        The persisted terminal state releases the one-in-flight gate, so the
+        conversation's next turn can be claimed once the current run has
+        terminated (plan §2.1 multi-turn conversations; submission
+        ``accepted``).
+        """
+        self._guard(envelope, _ALLOWED_FOR_DELIVERED, "mark delivered")
+        delivered = await self._agent_inbox.mark_delivered(envelope.id)
+        if delivered is None:
+            raise InboxStateError(
+                f"cannot mark inbox item {envelope.id} delivered: "
+                "repository rejected the dispatched -> delivered transition"
+            )
+        self._record_outcome(envelope.id, "accepted")
+        envelope.delivery_state = "delivered"
+        envelope.submission_state = "accepted"
+        envelope.claim_owner = None
+        envelope.claim_expires_at = None
+        envelope.next_attempt_at = None
+        return envelope
+
+    async def mark_cancel_requested(self, envelope: InboxEnvelope) -> InboxEnvelope:
+        """``dispatched`` -> ``cancel_requested`` before the backend cancel call.
+
+        The item stays in-flight during the cancel round trip; the terminal
+        outcome is ``cancelled`` or ``delivery_unknown`` (plan §7).  The
+        submission lease is kept so recovery can fence a cancel that died
+        mid-flight.
+        """
+        self._guard(envelope, _ALLOWED_FOR_CANCEL_REQUEST, "mark cancel_requested")
+        requested = await self._agent_inbox.mark_cancel_requested(envelope.id)
+        if requested is None:
+            raise InboxStateError(
+                f"cannot mark inbox item {envelope.id} cancel_requested: "
+                "repository rejected the dispatched -> cancel_requested transition"
+            )
+        envelope.delivery_state = "cancel_requested"
         return envelope
 
     async def mark_retry(
@@ -455,18 +509,26 @@ class InboxDeliveryStateMachine:
         return envelope
 
     async def mark_delivery_unknown(self, envelope: InboxEnvelope) -> InboxEnvelope:
-        """Park the item as ``delivery_unknown`` (never auto-retried).
+        """Persist the item as ``delivery_unknown`` (never auto-retried).
 
-        The repository cannot persist this state (M1.4 limitation), so the
-        state machine keeps the item parked in memory and both
-        :meth:`claim_next` and :meth:`recover_stale` exclude it from the claim
-        path.  Recovery is reconciliation or an explicit user decision.
+        The repository CAS persists the terminal state, so the claim path and
+        restart recovery see it without any in-memory guard (plan §7/§17:
+        uncertain delivery is a visible recoverable state).  Recovery is
+        reconciliation or an explicit user decision.
         """
         self._guard(envelope, _ALLOWED_FOR_DELIVERY_UNKNOWN, "mark delivery_unknown")
-        self._parked[envelope.id] = "delivery_unknown"
+        unknown = await self._agent_inbox.mark_delivery_unknown(envelope.id)
+        if unknown is None:
+            raise InboxStateError(
+                f"cannot mark inbox item {envelope.id} delivery_unknown: "
+                "repository rejected the transition"
+            )
         self._record_outcome(envelope.id, "unknown")
         envelope.delivery_state = "delivery_unknown"
         envelope.submission_state = "unknown"
+        envelope.claim_owner = None
+        envelope.claim_expires_at = None
+        envelope.next_attempt_at = None
         return envelope
 
     async def dead_letter(self, envelope: InboxEnvelope) -> InboxEnvelope:
@@ -485,7 +547,13 @@ class InboxDeliveryStateMachine:
         return envelope
 
     async def mark_cancelled(self, envelope: InboxEnvelope) -> InboxEnvelope:
-        """Cancel a queued/claimed/retrying item (never a dispatched one)."""
+        """Cancel a queued/claimed/retrying item, or finish a cancel request.
+
+        The plan §7 cancel path is ``dispatched -> cancel_requested ->
+        cancelled``: a ``cancel_requested`` item whose backend cancellation
+        was proven terminal lands here; an unproven one becomes
+        ``delivery_unknown`` instead.
+        """
         self._guard(envelope, _ALLOWED_FOR_CANCEL, "cancel")
         cancelled = await self._agent_inbox.mark_cancelled(envelope.id)
         if cancelled is None:
@@ -509,26 +577,28 @@ class InboxDeliveryStateMachine:
         now: datetime,
         reconciled_ids: set[UUID] | None = None,
     ) -> list[InboxEnvelope]:
-        """Recover expired claims after a crash or long outage.
+        """Recover expired claims and unproven started submissions after a crash.
 
         * Expired claims that never reached ``started`` are restored to
           ``pending`` and may be re-claimed (provably not started).
-        * Expired ``started`` submissions become ``delivery_unknown`` unless
-          the item is in ``reconciled_ids``, in which case reconciliation has
-          proven the outcome and the item is restored to ``dispatched``
-          (accepted) and never re-offered for delivery.
+        * Expired ``started``/``cancel_requested`` submissions are fenced
+          from the database row (review fix: the submission lease and
+          attempt/fencing identity are persisted, so recovery needs no
+          in-memory state): items in ``reconciled_ids`` have a proven outcome
+          and become ``delivered`` (accepted); everything else becomes the
+          persisted terminal ``delivery_unknown`` and is never re-offered for
+          delivery.
         """
         reconciled = reconciled_ids or set()
         recovered: list[InboxEnvelope] = []
 
         # 1) Expired claims the database can still see: by construction these
-        #    never reached `started` (mark_started persists `dispatched`).
+        #    never reached `started` (start_submission persists `dispatched`).
         for row in await self._agent_inbox.next_pending(now=now):
-            if row.delivery_state != "claimed" or row.id in self._parked:
+            if row.delivery_state != "claimed":
                 continue
             envelope = self._envelope(row)
             if row.id in reconciled:
-                self._parked[row.id] = "dispatched"
                 envelope.delivery_state = "dispatched"
                 envelope.submission_state = "accepted"
             else:
@@ -537,23 +607,28 @@ class InboxDeliveryStateMachine:
                 envelope.delivery_state = "pending"
             recovered.append(envelope)
 
-        # 2) Started submissions whose claim lease expired without a proven
-        #    outcome (their database row is already `dispatched`).
-        for item_id, submission in list(self._submissions.items()):
-            if submission.submission_state != "started":
-                continue
-            if submission.lease_expires_at > now or item_id in self._parked:
-                continue
-            envelope = replace(submission.snapshot)
-            if item_id in reconciled:
-                submission.submission_state = "accepted"
-                self._parked[item_id] = "dispatched"
-                envelope.delivery_state = "dispatched"
+        # 2) Started submissions whose submission lease expired without a
+        #    proven outcome (their database row is `dispatched` or
+        #    `cancel_requested` and still carries the persisted lease).
+        for row in await self._agent_inbox.list_started_with_expired_lease(now=now):
+            attempt_id, fencing_token = self._started_identity(row.claim_owner)
+            if row.id in reconciled:
+                terminal = await self._agent_inbox.mark_delivered(row.id)
+                if terminal is None:
+                    # Lost the CAS to another recovery sweep; its result
+                    # already covers this item.
+                    continue
+                submission_state = "accepted"
             else:
-                submission.submission_state = "unknown"
-                self._parked[item_id] = "delivery_unknown"
-                envelope.delivery_state = "delivery_unknown"
-            envelope.submission_state = submission.submission_state
+                terminal = await self._agent_inbox.mark_delivery_unknown(row.id)
+                if terminal is None:
+                    continue
+                submission_state = "unknown"
+            envelope = self._envelope(terminal)
+            envelope.submission_state = submission_state
+            envelope.attempt_id = attempt_id
+            envelope.stable_message_id = terminal.idempotency_key
+            envelope.fencing_token = fencing_token
             recovered.append(envelope)
 
         return recovered
@@ -591,6 +666,21 @@ class InboxDeliveryStateMachine:
     def _record_outcome(self, item_id: UUID, outcome: str) -> None:
         if item_id in self._submissions:
             self._submissions[item_id].submission_state = outcome
+
+    @staticmethod
+    def _started_identity(claim_owner: str | None) -> tuple[str | None, str | None]:
+        """Split the persisted ``<attempt_id>|<fencing_token>`` claim identity.
+
+        Rows dispatched through the plain :meth:`mark_dispatched` path keep
+        the worker owner string (no ``|``), which doubles as the attempt
+        identity for recovery reporting.
+        """
+        if not claim_owner:
+            return None, None
+        attempt, separator, fencing = claim_owner.partition("|")
+        if not separator:
+            return claim_owner, None
+        return attempt or None, fencing or None
 
     def _envelope(self, row: AgentInboxItem) -> InboxEnvelope:
         submission = self._submissions.get(row.id)
