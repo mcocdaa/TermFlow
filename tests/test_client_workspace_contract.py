@@ -39,6 +39,17 @@ def test_python_dependency_configuration_pins_the_official_pypi_index() -> None:
         assert index.get("url") == "https://pypi.org/simple"
 
 
+def test_repository_verification_never_relocks_with_a_local_index() -> None:
+    commands = [
+        line.strip()
+        for line in (ROOT / "scripts/verify.sh").read_text().splitlines()
+        if line.strip().startswith("uv run ")
+    ]
+
+    assert commands
+    assert all(" --frozen " in command for command in commands)
+
+
 def test_client_workspace_has_one_lock_and_fixed_dependency_direction() -> None:
     root = _manifest("package.json")
     workspace_version = root["version"]

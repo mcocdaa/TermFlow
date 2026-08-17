@@ -17,9 +17,9 @@ npm run test:run
 npm run typecheck
 npm run build --workspaces --if-present
 uv sync --frozen --all-packages
-uv run --all-packages python -m pytest -q
-uv run --all-packages ruff check .
-uv run --all-packages mypy packages/protocol/src apps/control-plane/src apps/node/src
+uv run --frozen --all-packages python -m pytest -q
+uv run --frozen --all-packages ruff check .
+uv run --frozen --all-packages mypy packages/protocol/src apps/control-plane/src apps/node/src
 scripts/verify-tauri.sh
 
 CONTROL_PLANE_IMAGE="${TERMFLOW_VERIFY_IMAGE:-termflow-control-plane:verify}"
