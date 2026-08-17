@@ -135,4 +135,27 @@ describe('AgentStreamSession', () => {
     expect(scheduler.pending).toHaveLength(0)
     await session.dispose()
   })
+
+  it('signals continuity loss on a global 4410 close instead of silently reconnecting', async () => {
+    const { transport, scheduler, callbacks, replay } = await setup({ conversationId: null })
+    transport.emit({ type: 'event', event: event(1), cursor: '7-1' })
+    transport.emit({ type: 'close', code: 4410, reason: 'stream_too_slow' })
+    expect(callbacks.onError).toHaveBeenCalledWith({ code: 'stream_too_slow' })
+    expect(callbacks.onReset).toHaveBeenCalledWith('7-1')
+    expect(replay).not.toHaveBeenCalled()
+    expect(scheduler.pending).toHaveLength(1)
+    // The dedup window was cleared: a redelivered event id after the
+    // reconnect is delivered again because the consumer reloaded state.
+    scheduler.runNext()
+    transport.emit({ type: 'open' }, 1)
+    transport.emit({ type: 'event', event: event(1), cursor: '7-1' }, 1)
+    expect(callbacks.onEvent).toHaveBeenCalledTimes(2)
+    expect(deliveredSeqs(callbacks)).toEqual([1, 1])
+  })
+
+  it('reports an empty last cursor on a global 4410 close before any event', async () => {
+    const { transport, callbacks } = await setup({ conversationId: null })
+    transport.emit({ type: 'close', code: 4410, reason: 'stream_too_slow' })
+    expect(callbacks.onReset).toHaveBeenCalledWith('')
+  })
 })

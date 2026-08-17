@@ -24,7 +24,10 @@ export interface AgentStreamCallbacks<TEvent = AgentEventResponse> {
   onEvent: (event: TEvent) => void
   /**
    * cursor_too_old: the server minted a fresh cursor instead of silently
-   * skipping events; the caller must reload state from REST history.
+   * skipping events; the caller must reload state from REST history. Also
+   * fired after a global-stream 4410 (stream_too_slow) close, where the
+   * dropped live range cannot be recovered through replay: the cursor is
+   * the last delivered position ('' when nothing was delivered yet).
    */
   onReset: (cursor: string) => void
   onClosed: (info: AgentStreamCloseInfo) => void
@@ -255,13 +258,19 @@ export class AgentStreamSession<TEvent = AgentEventResponse> {
     }
     if (this.disposed || this.suppressReconnect) return
     if (code === AGENT_STREAM_CLOSE_TOO_SLOW) {
-      // The live queue dropped events: recover through REST replay, then
-      // resume the stream after the replayed range.
+      // The live queue dropped events: conversation streams recover through
+      // REST replay, then resume the stream after the replayed range.
       this.callbacks.onError({ code: 'stream_too_slow' })
       if (this.conversationId !== null) {
         void this.recoverThroughReplay()
         return
       }
+      // Global streams have no replay path, so the dropped range is
+      // unrecoverable: clear the dedup window and surface onReset so the
+      // consumer knows continuity was lost and reloads state from REST
+      // history instead of silently missing events.
+      this.recentEventIds.clear()
+      this.callbacks.onReset(this.cursor ?? '')
     }
     this.scheduleReconnect()
   }
