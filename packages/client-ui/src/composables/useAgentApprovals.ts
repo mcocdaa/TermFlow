@@ -16,6 +16,63 @@ export interface UseAgentApprovalsOptions {
   conversationId?: string
 }
 
+//: Shared approval entry cache (approval_id → latest known REST entry).
+//: List loads seed it with every entry (the list already carries all the
+//: fields the timeline approval card renders), so the cards reuse the
+//: panel's data instead of firing one detail request per card. approval_id
+//: values are B-generated globally, so the cache is safe across
+//: conversations. Genuine misses are fetched once and cached.
+const approvalEntryCache = new Map<string, ApprovalResponse>()
+
+//: In-flight list-load tracking. A card mounting while the panel's list is
+//: still loading waits for it to settle and re-checks the cache before
+//: falling back to its own detail fetch (avoids the N-fetch flood on the
+//: first render and on live permission arrivals).
+let pendingListLoads = 0
+const listSettledWaiters: Array<() => void> = []
+
+function beginApprovalListLoad() {
+  pendingListLoads += 1
+}
+
+function endApprovalListLoad() {
+  pendingListLoads -= 1
+  if (pendingListLoads === 0) {
+    const waiters = listSettledWaiters.splice(0)
+    for (const resolve of waiters) resolve()
+  }
+}
+
+/** Seed the shared cache from a list response (all states, not just pending). */
+function seedApprovalEntryCache(approvals: ApprovalResponse[]) {
+  for (const approval of approvals) approvalEntryCache.set(approval.approval_id, approval)
+}
+
+/** A card-side detail fetch result enters the shared cache. */
+export function cacheApprovalDetail(entry: ApprovalResponse): void {
+  approvalEntryCache.set(entry.approval_id, entry)
+}
+
+export function cachedApprovalEntry(approvalId: string): ApprovalResponse | undefined {
+  return approvalEntryCache.get(approvalId)
+}
+
+export function hasPendingApprovalListLoads(): boolean {
+  return pendingListLoads > 0
+}
+
+export function whenApprovalListLoadsSettled(): Promise<void> {
+  if (pendingListLoads === 0) return Promise.resolve()
+  return new Promise((resolve) => listSettledWaiters.push(resolve))
+}
+
+/** Test support: reset the module-level cache (and settlement state) between tests. */
+export function resetApprovalEntryCache(): void {
+  approvalEntryCache.clear()
+  pendingListLoads = 0
+  listSettledWaiters.length = 0
+}
+
 export function useAgentApprovals(options: UseAgentApprovalsOptions = {}) {
   const runtime = useClientRuntime()
   const toast = useBottomToast()
@@ -42,17 +99,21 @@ export function useAgentApprovals(options: UseAgentApprovalsOptions = {}) {
     // resurrect already-handled approvals). Only the latest load applies.
     const generation = ++loadGeneration
     loading.value = true
+    beginApprovalListLoad()
     try {
       const response = await approvalsApi.list({
         ...(options.conversationId !== undefined ? { conversationId: options.conversationId } : {}),
         ...(controller !== null ? { signal: controller.signal } : {}),
       })
+      // Every entry (any state) feeds the shared card cache.
+      seedApprovalEntryCache(response.approvals)
       if (!disposed && generation === loadGeneration) approvals.value = response.approvals
     } catch (error) {
       if (generation === loadGeneration && !(error instanceof ApiError && error.kind === 'aborted')) {
         toast.show({ text: '无法加载审批列表。', tone: 'error' })
       }
     } finally {
+      endApprovalListLoad()
       if (!disposed && generation === loadGeneration) loading.value = false
     }
   }

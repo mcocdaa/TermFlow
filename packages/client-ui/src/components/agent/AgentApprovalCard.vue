@@ -29,17 +29,26 @@
 //: Timeline inline read-only approval card (M6b spec §4.7). The card's
 //: visibility is driven by a CUSTOM termflow.permission_requested event
 //: (the history reducer's permission record); it renders those fields
-//: immediately, then lazily loads the authoritative REST detail on mount —
-//: no spinner wall, aria-busy marks the in-flight load. A failed detail
-//: degrades to the CUSTOM data plus a 详情不可用 marker; the card never
-//: offers decision actions, only a 在审批面板处理 button that emits
-//: ``focus`` with the approval id so the parent can focus the matching
-//: panel entry. All text is pure interpolation (no v-html) with ANSI/OSC
-//: stripped before rendering; unknown states label 未知 while the raw
-//: value stays in the data attribute.
+//: immediately, then resolves the authoritative REST data through the
+//: shared approval entry cache — the approval panel's list load seeds the
+//: cache with every field the card needs, so a long session does not fire
+//: one detail request per card. On a genuine miss the card fetches the
+//: detail once, caches it, and a failed detail degrades to the CUSTOM data
+//: plus a 详情不可用 marker. No spinner wall: aria-busy marks the in-flight
+//: resolution. The card never offers decision actions, only a 在审批面板处理
+//: button that emits ``focus`` with the approval id so the parent can focus
+//: the matching panel entry. All text is pure interpolation (no v-html)
+//: with ANSI/OSC stripped before rendering; unknown states label 未知 while
+//: the raw value stays in the data attribute.
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ApiError, createApprovalsApi, stripAnsiOsc, type AgentPermissionState } from '@termflow/client-core'
-import type { ApprovalDetailResponse } from '@termflow/client-contracts'
+import type { ApprovalResponse } from '@termflow/client-contracts'
+import {
+  cachedApprovalEntry,
+  cacheApprovalDetail,
+  hasPendingApprovalListLoads,
+  whenApprovalListLoadsSettled,
+} from '../../composables/useAgentApprovals'
 import { useClientRuntime } from '../../runtime'
 
 const props = defineProps<{
@@ -51,13 +60,13 @@ const emit = defineEmits<{ focus: [approvalId: string] }>()
 const runtime = useClientRuntime()
 const approvalsApi = createApprovalsApi(runtime.api.request)
 const controller = new AbortController()
-const detail = ref<ApprovalDetailResponse | null>(null)
+const detail = ref<ApprovalResponse | null>(null)
 const detailLoading = ref(true)
 const detailFailed = ref(false)
 
 onMounted(async () => {
   try {
-    detail.value = await approvalsApi.detail(props.permission.approvalId, controller.signal)
+    detail.value = await resolveDetail(props.permission.approvalId)
   } catch (error) {
     if (!(error instanceof ApiError && error.kind === 'aborted')) detailFailed.value = true
   } finally {
@@ -65,6 +74,26 @@ onMounted(async () => {
   }
 })
 onBeforeUnmount(() => controller.abort())
+
+/**
+ * Resolve the authoritative entry through the shared cache. The approval
+ * panel's list load seeds the cache with every field this card renders, so
+ * the common path is a cache hit (no per-card request). While a list load
+ * is in flight the card waits for it to settle and re-checks the cache —
+ * the panel refresh triggered by this very approval usually lands first.
+ */
+async function resolveDetail(approvalId: string): Promise<ApprovalResponse> {
+  const cached = cachedApprovalEntry(approvalId)
+  if (cached !== undefined) return cached
+  if (hasPendingApprovalListLoads()) {
+    await whenApprovalListLoadsSettled()
+    const seeded = cachedApprovalEntry(approvalId)
+    if (seeded !== undefined) return seeded
+  }
+  const fetched = await approvalsApi.detail(approvalId, controller.signal)
+  cacheApprovalDetail(fetched)
+  return fetched
+}
 
 const STATE_LABELS: Record<string, string> = {
   pending: '待处理',
