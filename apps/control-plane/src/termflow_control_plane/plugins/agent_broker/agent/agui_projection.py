@@ -29,7 +29,7 @@ import json
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import NamedTuple, cast
+from typing import NamedTuple
 
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.models import (
@@ -159,7 +159,10 @@ def _project_tool_started(
     if payload is None:
         return [], ProjectionDropCounts(missing_payload=1)
     tool_call_id = str(_required(payload, "tool_call_id"))
-    tool_name = str(_required(payload, "tool_name"))
+    # The canonical serializer writes ``tool_name`` when the adapter surfaced
+    # the tool name; pre-fix payloads (and adapters that sent none) degrade
+    # to the tool call id instead of dropping the whole event.
+    tool_name = payload.get("tool_name") or tool_call_id
     return [
         {
             "type": "TOOL_CALL_START",
@@ -177,13 +180,26 @@ def _project_tool_completed(
         return [], ProjectionDropCounts(missing_payload=1)
     tool_call_id = str(_required(payload, "tool_call_id"))
     # Bounded summary only: B does not store raw tool results (spec §4.3);
-    # hashes stay in B.
+    # hashes stay in B.  ``status`` is written by the canonical serializer;
+    # pre-fix payloads derive it from the error fields the same way.  Byte
+    # counts are only projected when the canonical payload recorded them
+    # (they are not observable at the adapter boundary).
+    if "status" not in payload:
+        status = (
+            "error"
+            if payload.get("error_code") or payload.get("error_message")
+            else "success"
+        )
+    else:
+        status = str(payload["status"])
     summary: dict[str, object] = {
-        "status": str(_required(payload, "status")),
-        "input_bytes": cast(int, _required(payload, "input_bytes")),
-        "output_bytes": cast(int, _required(payload, "output_bytes")),
+        "status": status,
         "truncated": bool(payload.get("truncated", False)),
     }
+    for key in ("input_bytes", "output_bytes"):
+        value = payload.get(key)
+        if isinstance(value, int):
+            summary[key] = value
     for optional in ("error_code", "error_message"):
         item = payload.get(optional)
         if item is not None:
@@ -209,9 +225,20 @@ def _project_permission_requested(
 ) -> tuple[list[dict[str, object]], ProjectionDropCounts]:
     if payload is None:
         return [], ProjectionDropCounts(missing_payload=1)
-    value: dict[str, object] = {
-        "approval_request_id": str(_required(payload, "approval_request_id"))
-    }
+    # The opaque backend permission id has no neutral carrier in the
+    # canonical payload (adapter-internal, plan §6); the tool call id is the
+    # correlation key C can join on, and ``approval_request_id`` appears when
+    # a later milestone writes one.
+    if payload.get("approval_request_id") is not None:
+        value: dict[str, object] = {
+            "approval_request_id": str(payload["approval_request_id"])
+        }
+    elif payload.get("tool_call_id") is not None:
+        value = {"tool_call_id": str(payload["tool_call_id"])}
+    else:
+        raise ValueError(
+            "permission_requested payload requires approval_request_id or tool_call_id"
+        )
     for optional in ("tool_name", "evidence", "expires_at"):
         item = payload.get(optional)
         if item is not None:
@@ -251,8 +278,12 @@ def _project_backend_state_changed(
 ) -> tuple[list[dict[str, object]], ProjectionDropCounts]:
     if payload is None:
         return [], ProjectionDropCounts(missing_payload=1)
-    state = str(_required(payload, "state"))
-    epoch = cast(int, _required(payload, "epoch"))
+    # The canonical serializer writes ``state`` (the adapter's bounded state
+    # summary) and ``epoch`` (the binding/runtime epoch); pre-fix payloads
+    # degrade to an explicit unknown state instead of dropping the event.
+    state = payload.get("state") or "unknown"
+    epoch_value = payload.get("epoch")
+    epoch = epoch_value if isinstance(epoch_value, int) else 0
     return [
         {
             "type": "STATE_DELTA",

@@ -289,10 +289,12 @@ def make_notification(
     kind: AgentEventKind,
     provider_ref: str,
     text: str | None = None,
+    summary: str | None = None,
     error_code: str | None = None,
     dedup_key: str | None = None,
     run_id: UUID | None = None,
     message_id: UUID | None = None,
+    tool_call_id: str | None = None,
     binding_id: str | None = None,
     runtime_id: str | None = None,
 ) -> BackendNotification:
@@ -311,8 +313,13 @@ def make_notification(
         kind=kind,
         run_id=run_id or uuid4(),
         message_id=message_id or uuid4(),
+        tool_call_id=tool_call_id,
         dedup_key=dedup_key or f"dedup-{uuid4()}",
-        payload=NotificationPayload(text=text, error_code=error_code),
+        payload=NotificationPayload(
+            text=text,
+            summary=summary,
+            error_code=error_code,
+        ),
     )
 
 
@@ -571,6 +578,107 @@ async def test_sse_events_advance_run_and_persist_canonical_events(
             return bool(runs) and all(run.run_state == "completed" for run in runs)
 
         await wait_until(run_completed)
+    finally:
+        await pipeline.stop()
+
+
+async def test_canonical_payloads_carry_agui_projection_keys(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    """Tool/permission/state events persist the keys the AG-UI projector reads.
+
+    Previously TOOL_STARTED/TOOL_COMPLETED/PERMISSION_REQUESTED/
+    BACKEND_STATE_CHANGED were dropped 100% as malformed under ?wire=agui
+    because the canonical payload never wrote tool_name/status/state/epoch.
+    """
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    pipeline = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    await pipeline.start()
+    try:
+        await pipeline.submit_user_message(conversation_id, "inspect panes", actor="admin")
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.RUN_STARTED,
+                provider_ref="provider-1",
+                dedup_key="evt-run-started",
+            )
+        )
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.TOOL_STARTED,
+                provider_ref="provider-1",
+                tool_call_id="call-1",
+                summary="termflow_pane_read",
+                dedup_key="evt-tool-started",
+            )
+        )
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.TOOL_COMPLETED,
+                provider_ref="provider-1",
+                tool_call_id="call-1",
+                dedup_key="evt-tool-completed",
+            )
+        )
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.BACKEND_STATE_CHANGED,
+                provider_ref="provider-1",
+                summary="idle",
+                dedup_key="evt-state",
+            )
+        )
+        backend.push_event(
+            make_notification(
+                backend,
+                pipeline,
+                kind=AgentEventKind.PERMISSION_REQUESTED,
+                provider_ref="provider-1",
+                tool_call_id="call-2",
+                summary="write pane",
+                dedup_key="evt-permission",
+            )
+        )
+
+        async def five_events() -> bool:
+            events = await _events(repositories, conversation_id)
+            return len(events) == 5
+
+        await wait_until(five_events)
+        events = await _events(repositories, conversation_id)
+        by_kind = {event.event_kind: event for event in events}
+
+        tool_started = by_kind["tool_started"]
+        assert tool_started.payload is not None
+        assert '"tool_name":"termflow_pane_read"' in tool_started.payload
+        tool_completed = by_kind["tool_completed"]
+        assert tool_completed.payload is not None
+        assert '"status":"success"' in tool_completed.payload
+        state = by_kind["backend_state_changed"]
+        assert state.payload is not None
+        assert '"state":"idle"' in state.payload
+        assert '"epoch":1' in state.payload
+        permission = by_kind["permission_requested"]
+        assert permission.payload is not None
+        assert '"tool_call_id":"call-2"' in permission.payload
+
+        # The digest invariant still holds for the kind-aware payloads.
+        for event in events:
+            if event.payload is not None:
+                assert (
+                    hashlib.sha256(event.payload.encode("utf-8")).hexdigest()
+                    == event.payload_digest
+                )
     finally:
         await pipeline.stop()
 

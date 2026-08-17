@@ -178,6 +178,15 @@ def _canonical_payload_json(notification: BackendNotification) -> str:
     ``payload_digest`` so the repository's digest invariant
     (``sha256(payload_json) == payload_digest``, enforced by
     :class:`AgentEventRepository`) can never drift.
+
+    Kind-aware keys (review fix): the AG-UI projector reads ``tool_name``,
+    ``status``, ``state``, and ``epoch`` from the canonical payload, so the
+    serializer writes every key it can truthfully derive.  Byte counts,
+    hashes, and truncation for tool results are not observable at the
+    adapter boundary (raw tool results are dropped by design, plan §4.4) and
+    are omitted rather than invented; the opaque backend permission id has no
+    neutral carrier, so ``approval_request_id`` is written only when one
+    exists.
     """
     payload: dict[str, object] = {
         "kind": notification.kind.value,
@@ -192,6 +201,21 @@ def _canonical_payload_json(notification: BackendNotification) -> str:
         "error_code": notification.payload.error_code,
         "error_message": notification.payload.error_message,
     }
+    if notification.kind is AgentEventKind.TOOL_STARTED:
+        # The adapter carries the tool name as the bounded summary; the AG-UI
+        # projector reads it back under its canonical key.
+        payload["tool_name"] = notification.payload.summary
+    elif notification.kind is AgentEventKind.TOOL_COMPLETED:
+        # Plan §7 tool-activity status: a failed call carries error fields;
+        # anything else completed without error.
+        payload["status"] = (
+            "error"
+            if notification.payload.error_code or notification.payload.error_message
+            else "success"
+        )
+    elif notification.kind is AgentEventKind.BACKEND_STATE_CHANGED:
+        payload["state"] = notification.payload.summary
+        payload["epoch"] = notification.scope.runtime_epoch
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
