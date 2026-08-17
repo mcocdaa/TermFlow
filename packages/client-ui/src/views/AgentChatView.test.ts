@@ -39,11 +39,11 @@ class ScriptedTransport implements AgentStreamTransport<AguiEvent> {
   }
 }
 
-function detailResponse(): AgentConversationDetailResponse {
+function detailResponse(conversationId: string = CONVERSATION, title = '测试会话'): AgentConversationDetailResponse {
   return {
-    conversation_id: CONVERSATION,
+    conversation_id: conversationId,
     binding_id: 'b1',
-    title: '测试会话',
+    title,
     status: 'open',
     created_at: '2026-08-12T00:00:00+00:00',
     updated_at: '2026-08-12T00:00:00+00:00',
@@ -65,6 +65,7 @@ interface ChatHarness {
 }
 
 async function mounted(overrides: {
+  route?: string
   capabilities?: ReturnType<typeof vi.fn>
   listMessages?: ReturnType<typeof vi.fn>
   submitMessage?: ReturnType<typeof vi.fn>
@@ -73,6 +74,7 @@ async function mounted(overrides: {
   request?: ReturnType<typeof vi.fn>
   cursorStore?: ReturnType<typeof createFakeAgentCursorStore>
 } = {}): Promise<ChatHarness> {
+  const initialRoute = overrides.route ?? `/agent/${CONVERSATION}`
   const capabilities = overrides.capabilities ?? vi.fn(async () => ({
     agent_broker_enabled: true,
     delegated_write_grants_enabled: false,
@@ -128,9 +130,9 @@ async function mounted(overrides: {
     ],
   })
   const clientUi = createClientUi(runtime)
-  // Resolve the route BEFORE mounting: the view captures the route param
-  // once in setup (the conversation lifecycle keys on it).
-  await router.push(`/agent/${CONVERSATION}`)
+  // Resolve the route BEFORE mounting: the view's conversation body keys on
+  // the route param, so the initial scope must be in place first.
+  await router.push(initialRoute)
   await router.isReady()
   const wrapper = mount(AgentChatView, {
     attachTo: document.body,
@@ -189,6 +191,42 @@ describe('AgentChatView', () => {
     expect(harness.wrapper.findAll('.agent-message--user')).toHaveLength(1)
     expect(harness.wrapper.get('.agent-message--user').text()).toContain('你好 Agent')
     expect((harness.wrapper.get('[data-agent-composer-input]').element as HTMLTextAreaElement).value).toBe('')
+    harness.unmount()
+  })
+
+  it('re-scopes the conversation state when navigating to another conversation', async () => {
+    const harness = await mounted({
+      getConversation: vi.fn(async (id: string) =>
+        detailResponse(id, id === CONVERSATION ? '会话一' : '会话二')),
+    })
+    harness.transport.emit({ type: 'open' })
+    harness.transport.emit({ type: 'event', event: chunk('m1', '来自一会话的消息'), cursor: '7-1' })
+    await flushPromises()
+
+    // The first conversation's data is displayed and its stream connected.
+    expect(harness.wrapper.get('[data-agent-chat-title]').text()).toBe('会话一')
+    expect(harness.wrapper.text()).toContain('来自一会话的消息')
+    expect(harness.transport.requests.map((request) => request.conversationId)).toEqual([CONVERSATION])
+
+    // Navigate to a different conversation on the same route record:
+    // the view is reused (no routeViewKey change), so the conversation
+    // body must re-scope itself.
+    await harness.router.push('/agent/conv-2')
+    await flushPromises()
+
+    // The detail header re-fetches and shows the new conversation.
+    expect(harness.getConversation).toHaveBeenCalledWith('conv-2', expect.anything())
+    expect(harness.wrapper.get('[data-agent-chat-title]').text()).toBe('会话二')
+    // The previous conversation's history no longer renders.
+    expect(harness.wrapper.text()).not.toContain('来自一会话的消息')
+    // The stream re-connects scoped to the new conversation.
+    expect(harness.transport.requests.map((request) => request.conversationId)).toEqual([CONVERSATION, 'conv-2'])
+
+    // Submitting targets the new conversation, not the stale scope.
+    await harness.wrapper.get('[data-agent-composer-input]').setValue('发给会话二')
+    await harness.wrapper.get('[data-action="send-message"]').trigger('click')
+    await flushPromises()
+    expect(harness.submitMessage).toHaveBeenCalledWith('conv-2', { text: '发给会话二' })
     harness.unmount()
   })
 })
