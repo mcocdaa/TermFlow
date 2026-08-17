@@ -348,7 +348,9 @@ async def _events(repositories: RepositoryBundle, conversation_id: UUID):
 
 
 async def _messages_count(repositories: RepositoryBundle, conversation_id: UUID) -> bool:
-    return len(await _messages(repositories, conversation_id)) == 1
+    """True once exactly one assistant message row is assembled."""
+    messages = await _messages(repositories, conversation_id)
+    return sum(1 for message in messages if message.role == "assistant") == 1
 
 
 # ---------------------------------------------------------------------------
@@ -379,6 +381,16 @@ async def test_submit_user_message_admits_enqueues_and_dispatches(
         assert row.kind == "user_message"
         assert row.source == "user"
         assert row.payload_digest == hashlib.sha256(b"please fix the build").hexdigest()
+
+        # Review fix (payload durability): the typed payload is persisted as
+        # the user message row BEFORE the enqueue, digest-verified.
+        messages = await _messages(repositories, conversation_id)
+        assert [message.role for message in messages] == ["user"]
+        assert messages[0].body == "please fix the build"
+        assert (
+            messages[0].body_digest
+            == hashlib.sha256(b"please fix the build").hexdigest()
+        )
 
         await wait_until(lambda: len(backend.submit_calls) == 1)
 
@@ -508,12 +520,25 @@ async def test_sse_events_advance_run_and_persist_canonical_events(
 
         # MESSAGE_DELTA is an ephemeral event row only: no message assembly.
         messages = await _messages(repositories, conversation_id)
-        assert len(messages) == 1
-        assert messages[0].role == "assistant"
-        assert messages[0].kind == "text"
-        assert messages[0].is_final is True
-        assert messages[0].body_digest == hashlib.sha256(completed_text.encode("utf-8")).hexdigest()
-        assert messages[0].run_id == runs[0].id
+        assistant_messages = [message for message in messages if message.role == "assistant"]
+        assert len(assistant_messages) == 1
+        assert assistant_messages[0].kind == "text"
+        assert assistant_messages[0].is_final is True
+        assert (
+            assistant_messages[0].body_digest
+            == hashlib.sha256(completed_text.encode("utf-8")).hexdigest()
+        )
+        assert assistant_messages[0].run_id == runs[0].id
+
+        # Review fix (payload durability): the admitted user message text was
+        # persisted as the user message row at admission time.
+        user_messages = [message for message in messages if message.role == "user"]
+        assert len(user_messages) == 1
+        assert user_messages[0].body == "hello"
+        assert (
+            user_messages[0].body_digest
+            == hashlib.sha256(b"hello").hexdigest()
+        )
 
         # Digest invariant (M6a): every persisted payload hashes to its digest.
         events = await _events(repositories, conversation_id)
@@ -707,6 +732,40 @@ async def test_public_path_reuses_backend_ref_across_turns(
         ]
     finally:
         await pipeline.stop()
+
+
+async def test_restart_recovers_pending_user_payload_from_persisted_row(
+    repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    """A B restart must not fail-close a 202-acked message into delivery_unknown.
+
+    The typed payload is persisted with the admission (the user message row,
+    digest-verified), so a fresh pipeline can still render and deliver the
+    turn (plan §7 "persist an Agent Inbox item before submitting it").
+    """
+    backend = FakeBackend(repositories=repositories)
+    binding_id, conversation_id = await seed_conversation(repositories)
+    first = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    # The first pipeline admits the message but is never started: its
+    # in-process payload table dies with the simulated restart.
+    admission = await first.submit_user_message(
+        conversation_id, "survive restart", actor="admin"
+    )
+    assert admission.delivery_state == "pending"
+    await first.stop()
+
+    restarted = make_pipeline(repositories, hub, backend, binding_id=binding_id)
+    await restarted.start()
+    try:
+        await wait_until(lambda: len(backend.submit_calls) == 1)
+        call = backend.submit_calls[0]
+        assert call.request.idempotency_key == admission.idempotency_key
+        assert call.request.parts[0].text == "survive restart"
+        # The durable admission row advanced to dispatched (not delivery_unknown).
+        rows = await repositories.agent_inbox.list_for_conversation(conversation_id)
+        assert [row.delivery_state for row in rows] == ["dispatched"]
+    finally:
+        await restarted.stop()
 
 
 # ---------------------------------------------------------------------------

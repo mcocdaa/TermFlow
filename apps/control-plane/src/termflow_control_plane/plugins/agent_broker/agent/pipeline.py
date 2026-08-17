@@ -21,15 +21,18 @@ Serialization follows plan gate 6:
   submitting as a second line of defence against a running run left behind
   by recovery.
 
-Fail-closed rules (M4.5 spec §2/§5/§7): a payload the in-process table cannot
-render (for example after a B restart) exhausts a bounded grace and becomes
-``delivery_unknown``; a submit outcome other than admission parks the inbox
-item as ``delivery_unknown`` and fails the run — automatic retries are never
-attempted.  Watch-triggered items are the exception (review fix M1): their
-typed payload is registered asynchronously by the watch engine's trigger
-sink after ``fire()`` commits the inbox row, so a payload-less watch item is
-never claimed and never burned — it stays visible pending until the sink
-registers (a B restart leaves it pending, which recovery keeps visible).
+Fail-closed rules (M4.5 spec §2/§5/§7): a payload the pipeline cannot render
+exhausts a bounded grace and becomes ``delivery_unknown``; a submit outcome
+other than admission parks the inbox item as ``delivery_unknown`` and fails
+the run — automatic retries are never attempted.  User-message payloads are
+the exception to the restart loss: their typed payload is persisted with the
+admission (the digest-verified user message row), so a fresh pipeline can
+still render and deliver them (review fix).  Watch-triggered items are the
+other exception (review fix M1): their typed payload is registered
+asynchronously by the watch engine's trigger sink after ``fire()`` commits
+the inbox row, so a payload-less watch item is never claimed and never
+burned — it stays visible pending until the sink registers (a B restart
+leaves it pending, which recovery keeps visible).
 """
 
 from __future__ import annotations
@@ -409,16 +412,27 @@ class AgentPipelineService:
     async def submit_user_message(
         self, conversation_id: UUID, text: str, *, actor: str
     ) -> SubmitAdmission:
-        """Admit one user message: durable enqueue + in-process payload (spec §2).
+        """Admit one user message: durable enqueue + persisted payload (spec §2).
 
         The enqueue is the durable admission (204 semantics stay
-        adapter-internal); the typed payload is registered for the dispatcher
-        in-process so the turn can be rendered without a payload column.
-
+        adapter-internal).  The typed payload is persisted as the user
+        message row (``agent_messages.body``, digest-verified) BEFORE the
+        inbox enqueue, so a committed inbox item always has durable
+        re-submission data: if B restarts after the 202 ack the dispatcher
+        can still render and deliver the turn instead of fail-closing it
+        (plan §7 "persist an Agent Inbox item before submitting it").
+        The in-process table remains the fast path for this process.
         """
         idempotency_key = str(uuid4())
         correlation_id = uuid4()
         payload_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        await self._repositories.agent_messages.create(
+            conversation_id=conversation_id,
+            role="user",
+            kind="text",
+            body_digest=payload_digest,
+            body=text,
+        )
         item = await self._repositories.agent_inbox.enqueue(
             conversation_id=conversation_id,
             kind=AgentInputKind.USER_MESSAGE.value,
@@ -745,8 +759,10 @@ class AgentPipelineService:
             pass
 
     async def _dispatch_envelope(self, envelope: InboxEnvelope) -> None:
-        # 1) Payload lookup in the in-process table with a bounded grace
-        #    window (spec §2 step 2); exhaustion fails closed.
+        # 1) Payload lookup: the in-process table first (bounded grace), then
+        #    the persisted user message row for user messages (review fix:
+        #    digest-verified re-submission data survives a restart).  Only
+        #    true exhaustion fails closed.
         payload = await self._lookup_payload(envelope)
         if payload is None:
             if envelope.kind == "watch_triggered":
@@ -923,7 +939,45 @@ class AgentPipelineService:
                 return payload
             if attempt + 1 < self._payload_grace_attempts:
                 await asyncio.sleep(self._payload_grace_delay)
+        # Review fix (payload durability): the in-process table is lost on
+        # restart, but a user message's typed payload was persisted with the
+        # admission.  Recover it digest-verified from the user message row
+        # (body_digest == payload_digest == sha256(text)) so the turn can
+        # still be delivered instead of fail-closing into delivery_unknown.
+        if envelope.kind == AgentInputKind.USER_MESSAGE.value:
+            return await self._persisted_user_payload(envelope)
         return None
+
+    async def _persisted_user_payload(
+        self, envelope: InboxEnvelope
+    ) -> UserMessageInput | None:
+        """Reconstruct a user message payload from its persisted message row.
+
+        A digest match proves the re-submission text; a missing row or body
+        (pre-migration rows) fails closed exactly like the old grace path.
+        """
+        row = await self._repositories.agent_messages.find_user_message_by_digest(
+            envelope.conversation_id, envelope.payload_digest
+        )
+        if row is None or row.body is None:
+            return None
+        return UserMessageInput(
+            kind="user_message",
+            input_id=envelope.id,
+            conversation_id=envelope.conversation_id,
+            actor_id=envelope.actor_id,
+            actor_kind=AgentActorKind(envelope.actor_kind),
+            admission_seq=envelope.admission_seq,
+            idempotency_key=envelope.idempotency_key,
+            source=AgentInputSource(envelope.source),
+            causation_id=(
+                str(envelope.causation_id)
+                if envelope.causation_id is not None
+                else str(envelope.correlation_id)
+            ),
+            correlation_id=str(envelope.correlation_id),
+            payload=UserMessagePayload(text=row.body),
+        )
 
     async def _resolve_backend_ref(self, conversation_id: UUID) -> BackendConversationRef:
         """Reuse the persisted backend conversation ref, or create + persist one.

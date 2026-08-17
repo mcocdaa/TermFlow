@@ -3754,6 +3754,30 @@ class AgentMessageRepository:
             )
             return int(revision) if revision is not None else None
 
+    async def find_user_message_by_digest(
+        self, conversation_id: UUID, body_digest: str
+    ) -> AgentMessage | None:
+        """Return the newest persisted user message whose body hashes to
+        ``body_digest`` (digest-verified payload recovery, review fix).
+
+        The inbox item's ``payload_digest`` is ``sha256(text)`` for user
+        messages and the message row's ``body_digest`` carries the same
+        hash, so a digest match proves the re-submission text without any
+        cross-table linkage.
+        """
+        async with self._sessions() as session:
+            row = await session.scalar(
+                select(AgentMessage)
+                .where(
+                    AgentMessage.conversation_id == conversation_id,
+                    AgentMessage.role == "user",
+                    AgentMessage.body_digest == body_digest,
+                )
+                .order_by(AgentMessage.assembly_revision.desc())
+                .limit(1)
+            )
+            return row
+
 
 class AgentEventRepository:
     """Canonical product events with a B-assigned monotonic conversation cursor
