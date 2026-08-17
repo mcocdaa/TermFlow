@@ -142,8 +142,16 @@ class PermissionResolvedPayload(PayloadModel):
 
 class SystemNotificationPayload(PayloadModel):
     notification_type: str = Field(min_length=1, max_length=128)
-    text: str = Field(min_length=1, max_length=MAX_REF_LENGTH)
+    text: str = Field(min_length=1)
     event_ref: str | None = Field(default=None, min_length=1, max_length=256)
+
+    @field_validator("text")
+    @classmethod
+    def plain_text_only(cls, value: str) -> str:
+        # Same strength of constraint as UserMessagePayload.text: a byte cap
+        # plus plain-text validation, so notification text can never smuggle
+        # control characters into client rendering.
+        return validate_plain_text(value, max_bytes=MAX_AGENT_TEXT_BYTES)
 
 
 class UserMessageInput(AgentInputBase):

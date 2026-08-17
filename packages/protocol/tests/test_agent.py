@@ -9,6 +9,7 @@ from termflow_protocol import (
     parse_agent_event,
     parse_agent_input,
 )
+from termflow_protocol.agent import MAX_AGENT_TEXT_BYTES
 
 
 def _input_dict(
@@ -64,3 +65,34 @@ def test_agent_input_rejects_unknown_kind() -> None:
     data = _input_dict("bogus_kind", "user_session", "user", {"text": "hello"})
     with pytest.raises(ValidationError, match="bogus_kind"):
         parse_agent_input(data)
+
+
+def test_system_notification_text_is_plain_text_with_byte_cap() -> None:
+    payload = {"notification_type": "notice", "text": "maintenance soon"}
+    parsed = parse_agent_input(
+        _input_dict("system_notification", "system", "system", payload)
+    )
+    assert parsed.payload.text == "maintenance soon"
+
+    with pytest.raises(ValidationError, match="control"):
+        parse_agent_input(
+            _input_dict(
+                "system_notification",
+                "system",
+                "system",
+                {"notification_type": "notice", "text": "bad\x00text"},
+            )
+        )
+
+    with pytest.raises(ValidationError, match="exceeds"):
+        parse_agent_input(
+            _input_dict(
+                "system_notification",
+                "system",
+                "system",
+                {
+                    "notification_type": "notice",
+                    "text": "x" * (MAX_AGENT_TEXT_BYTES + 1),
+                },
+            )
+        )
