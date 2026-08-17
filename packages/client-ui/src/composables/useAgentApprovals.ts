@@ -6,8 +6,10 @@
 import { createApprovalsApi, ApiError } from '@termflow/client-core'
 import type { ApprovalResponse } from '@termflow/client-contracts'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useClientRuntime } from '../runtime'
 import { useBottomToast } from './useBottomToast'
+import { useSession } from './useSession'
 
 export interface UseAgentApprovalsOptions {
   /** Restrict the list to one conversation (conversation-scoped panel). */
@@ -17,27 +19,41 @@ export interface UseAgentApprovalsOptions {
 export function useAgentApprovals(options: UseAgentApprovalsOptions = {}) {
   const runtime = useClientRuntime()
   const toast = useBottomToast()
+  const { clearSessionState } = useSession()
+  const router = useRouter()
+  const route = useRoute()
   const approvals = ref<ApprovalResponse[]>([])
   const loading = ref(true)
   const busyIds = ref<ReadonlySet<string>>(new Set())
   const approvalsApi = createApprovalsApi(runtime.api.request)
   let controller: AbortController | null = null
   let disposed = false
+  let loadGeneration = 0
+
+  /** Same handling as the stream path (useAgentConversation 4401). */
+  function handleAuthenticationRequired() {
+    clearSessionState()
+    void router.replace({ path: '/login', query: { redirect: route.fullPath } })
+  }
 
   async function load() {
+    // Generation guard: a slow mount-time load must not overwrite a newer
+    // list refreshed after decide()/revoke() succeeded (it would briefly
+    // resurrect already-handled approvals). Only the latest load applies.
+    const generation = ++loadGeneration
     loading.value = true
     try {
       const response = await approvalsApi.list({
         ...(options.conversationId !== undefined ? { conversationId: options.conversationId } : {}),
         ...(controller !== null ? { signal: controller.signal } : {}),
       })
-      if (!disposed) approvals.value = response.approvals
+      if (!disposed && generation === loadGeneration) approvals.value = response.approvals
     } catch (error) {
-      if (!(error instanceof ApiError && error.kind === 'aborted')) {
+      if (generation === loadGeneration && !(error instanceof ApiError && error.kind === 'aborted')) {
         toast.show({ text: '无法加载审批列表。', tone: 'error' })
       }
     } finally {
-      if (!disposed) loading.value = false
+      if (!disposed && generation === loadGeneration) loading.value = false
     }
   }
 
@@ -65,7 +81,10 @@ export function useAgentApprovals(options: UseAgentApprovalsOptions = {}) {
       return
     }
     if (error.status === 409 && error.code === 'approval_auth_epoch_stale') {
-      toast.show({ text: '会话凭据已变更，请重新登录后再处理审批。', tone: 'error' })
+      // The session is stale; a toast alone would leave the user stuck on
+      // a session that can never decide again. Align with the stream path:
+      // clear the session and redirect to login.
+      handleAuthenticationRequired()
       return
     }
     if (error.status === 409 || error.status === 410) {
