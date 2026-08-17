@@ -16,7 +16,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .common import utc_now
-from .keys import MAX_KEY_SEQUENCE_LENGTH
+from .keys import MAX_KEY_SEQUENCE_LENGTH, NAMED_KEYS
 from .messages import validate_plain_text
 from .topology import PaneId
 
@@ -151,11 +151,11 @@ class PaneSendKeysParams(ToolModel):
     @field_validator("keys")
     @classmethod
     def named_keys_only(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        for key in value:
-            if not 1 <= len(key) <= 64:
-                raise ValueError("each named key must contain between 1 and 64 characters")
-            if any(ord(character) < 32 or 127 <= ord(character) <= 159 for character in key):
-                raise ValueError("keys contain unsupported control characters")
+        # The closed NAMED_KEYS vocabulary is shared by B, the wire protocol,
+        # and A: membership is the single validation so no side can drift.
+        unknown = [key for key in value if key not in NAMED_KEYS]
+        if unknown:
+            raise ValueError(f"unknown named keys: {sorted(unknown)}")
         return value
 
 
