@@ -58,3 +58,13 @@ def test_pane_send_keys_params_rejects_unknown_named_keys() -> None:
             conversation_id=uuid4(),
             keys=("enter", "ctrl-shift-c"),
         )
+
+
+def test_pane_read_params_max_bytes_respects_hard_bound() -> None:
+    PaneReadParams(pane_id="%1", view="viewport", max_bytes=MAX_PANE_READ_BYTES)
+    with pytest.raises(ValidationError, match="max_bytes"):
+        PaneReadParams(
+            pane_id="%1",
+            view="viewport",
+            max_bytes=MAX_PANE_READ_BYTES + 1,
+        )

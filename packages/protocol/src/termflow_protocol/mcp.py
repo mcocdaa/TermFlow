@@ -94,7 +94,7 @@ class PaneReadParams(ToolModel):
     start_line: int | None = Field(default=None, ge=0, le=MAX_PANE_READ_LINES)
     end_line: int | None = Field(default=None, ge=0, le=MAX_PANE_READ_LINES)
     tail_lines: int | None = Field(default=None, ge=1, le=MAX_PANE_READ_LINES)
-    max_bytes: int = Field(default=MAX_PANE_READ_BYTES, ge=1)
+    max_bytes: int = Field(default=MAX_PANE_READ_BYTES, ge=1, le=MAX_PANE_READ_BYTES)
     join_wrapped: bool = False
     cursor: PaneCursor | None = None
 
