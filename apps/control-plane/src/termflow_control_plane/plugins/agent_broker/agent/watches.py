@@ -895,6 +895,19 @@ async def _insert_watch_delivery(
     return existing
 
 
+@dataclass(slots=True)
+class WatchEngineDiagnostics:
+    """Bounded, identifier-only counters for failed watch-engine work.
+
+    One malformed wire message or raising handler never stops the consumer
+    (plan §17): the failure increments the counter and is logged with
+    identifiers only - payload content is never logged (spec §6 diagnostic
+    redaction).
+    """
+
+    wire_messages_failed: int = 0
+
+
 class WatchEngine:
     """Crash-safe evaluation of durable watch conditions (plan §11).
 
@@ -939,6 +952,9 @@ class WatchEngine:
         self._topologies: dict[UUID, TopologySnapshot] = {}
         self._subscriber: EventSubscriber | None = None
         self._task: asyncio.Task[None] | None = None
+        #: Bounded counters for failed wire messages etc. (plan §17): visible
+        #: to tests and audits like the pipeline's PipelineDiagnostics.
+        self.diagnostics = WatchEngineDiagnostics()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -977,11 +993,29 @@ class WatchEngine:
         self._task = asyncio.create_task(self._consume())
 
     async def _consume(self) -> None:
+        """Drain the subscriber queue forever (plan §11.2; plan §17).
+
+        One malformed wire message or failing handler must never kill the
+        loop: the failure is recorded on the engine diagnostics and logged
+        (identifiers only), and consumption continues with the next message.
+        Cancellation still propagates so ``stop()`` can tear the task down.
+        """
         assert self._subscriber is not None
         try:
             while True:
                 message = await self._subscriber.queue.get()
-                await self.handle_wire_message(message)
+                try:
+                    await self.handle_wire_message(message)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.diagnostics.wire_messages_failed += 1
+                    logger.exception(
+                        "Watch engine: dropping failed wire message "
+                        "(type=%s message_id=%s)",
+                        message.type.value,
+                        message.message_id,
+                    )
         except asyncio.CancelledError:
             pass
 

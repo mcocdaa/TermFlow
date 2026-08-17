@@ -327,3 +327,109 @@ async def test_engine_subscribes_to_event_hub_and_consumes_live_events(
         assert item.kind == "watch_triggered"
     finally:
         await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_engine_consume_survives_invalid_wire_payload(
+    repositories: RepositoryBundle,
+) -> None:
+    """Plan §17: one malformed wire message must not kill the consumer.
+
+    A PANE_OUTPUT whose payload fails validation raises inside
+    ``handle_wire_message``; the consume task must record the failure, keep
+    running, and still process the next (valid) message into an inbox item.
+    """
+    binding, conversation_id = await _seed_binding_and_conversation(repositories)
+    stream = uuid4()
+    start = _cursor(binding.term_id, seq=5, stream_id=stream)
+    await _seed_watch(
+        repositories,
+        binding,
+        conversation_id,
+        condition=_condition(WatchConditionKind.OUTPUT_CONTAINS, match="go"),
+        start_cursor=start,
+    )
+    clock = Clock()
+    hub = EventHub(queue_size=16)
+    engine = _engine(repositories, clock=clock, hub=hub)
+    await engine.start()
+    try:
+        # Poisoned: PaneOutputPayload.model_validate rejects this dict.
+        await hub.publish(
+            WireMessage(
+                type=MessageType.PANE_OUTPUT,
+                instance_id=binding.term_id,
+                payload={"pane_id": "%0"},
+            )
+        )
+        # Valid message published after the poison must still be consumed.
+        await hub.publish(
+            WireMessage(
+                type=MessageType.PANE_OUTPUT,
+                instance_id=binding.term_id,
+                payload=PaneOutputPayload.from_bytes(
+                    "%0", stream, 6, b"go!"
+                ).model_dump(mode="json"),
+            )
+        )
+        item = await _wait_for_item(repositories, conversation_id)
+        assert item is not None
+        assert item.kind == "watch_triggered"
+        assert engine.diagnostics.wire_messages_failed == 1
+    finally:
+        await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_engine_consume_survives_raising_handler(
+    repositories: RepositoryBundle,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plan §17: a raising handler (DB error, capture port) must not kill the
+    consume task; the message is dropped, recorded, and the loop continues."""
+    binding, conversation_id = await _seed_binding_and_conversation(repositories)
+    stream = uuid4()
+    start = _cursor(binding.term_id, seq=5, stream_id=stream)
+    await _seed_watch(
+        repositories,
+        binding,
+        conversation_id,
+        condition=_condition(WatchConditionKind.OUTPUT_CONTAINS, match="go"),
+        start_cursor=start,
+    )
+    clock = Clock()
+    hub = EventHub(queue_size=16)
+    engine = _engine(repositories, clock=clock, hub=hub)
+
+    real_handler = engine.handle_wire_message
+
+    async def flaky_handler(message: WireMessage) -> list:
+        if message.payload.get("poison") is True:
+            raise RuntimeError("handler exploded")
+        return await real_handler(message)
+
+    monkeypatch.setattr(engine, "handle_wire_message", flaky_handler)
+    await engine.start()
+    try:
+        await hub.publish(
+            WireMessage(
+                type=MessageType.PANE_OUTPUT,
+                instance_id=binding.term_id,
+                payload={"poison": True},
+            )
+        )
+        await hub.publish(
+            WireMessage(
+                type=MessageType.PANE_OUTPUT,
+                instance_id=binding.term_id,
+                payload=PaneOutputPayload.from_bytes(
+                    "%0", stream, 6, b"go!"
+                ).model_dump(mode="json"),
+            )
+        )
+        item = await _wait_for_item(repositories, conversation_id)
+        assert item is not None
+        assert item.kind == "watch_triggered"
+        assert engine.diagnostics.wire_messages_failed == 1
+    finally:
+        await engine.stop()
