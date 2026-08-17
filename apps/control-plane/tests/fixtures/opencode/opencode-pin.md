@@ -199,13 +199,14 @@ remote ACP.
   otherwise). The `serve` subcommand starts the headless server
   (`opencode serve --hostname 0.0.0.0 --port 4096`).
 
-- Image vs npm versioning: the OpenCode container images
-  (`ghcr.io/anomalyco/opencode`) version as `1.0.<n>` plus `latest`; the
-  `opencode-ai` npm package follows a DIFFERENT versioning sequence (`1.18.x`).
-  The M4 image pin records the `1.0.<n>` tag. The digest observed at research
-  time (`sha256:531d22f5...`, 2026-08-12 capture) is recorded for traceability
-  only; the full image digest is re-captured and pinned with the M4 image and
-  is never assumed from this note.
+- Image vs npm versioning: the OpenCode container image tags
+  (`ghcr.io/anomalyco/opencode`) track the opencode CLI release series
+  (`1.18.x`) — the same series as the `opencode-ai` npm package. The M4 exit
+  image pin records tag `1.18.18`. The digest observed at research time
+  (`sha256:531d22f5...`, 2026-08-12 capture) is superseded by the M4 exit
+  digest (`sha256:f3e00f8e...`, 2026-08-16 live capture, above) and is
+  recorded for traceability only; a deployment never assumes an image digest
+  from this note.
 - `/api/*` namespace (undocumented): the captured spec also contains an
   undocumented `/api/*` namespace (51 paths, including
   `/api/session/{id}/event?after=` durable event replay). It is OUT of the
@@ -271,9 +272,9 @@ remote ACP.
   "server_password": "OPENCODE_SERVER_PASSWORD HTTP Basic credential authenticates B-to-OpenCode server requests; not a replacement for AgentToken (OpenCode-to-B MCP auth)",
   "api_namespace_out_of_scope": "undocumented /api/* namespace (51 paths, incl. /api/session/{id}/event?after= durable replay) is out of the 0.2.0 pinned contract; recorded as a future reconciliation option",
   "versioning": {
-    "image_sequence": "ghcr.io/anomalyco/opencode tags are 1.0.<n> plus latest; M4 pin records the 1.0.<n> tag",
-    "npm_sequence": "opencode-ai npm package is a different versioning sequence (1.18.x)",
-    "digest": "observed sha256:531d22f5... (2026-08-12 research capture); full digest re-captured and pinned with the M4 image, never assumed from this note"
+    "image_sequence": "ghcr.io/anomalyco/opencode image tags track the opencode CLI release series (1.18.x); the M4 exit image pin records tag 1.18.18",
+    "npm_sequence": "opencode-ai npm package follows the same 1.18.x release series",
+    "digest": "M4 exit image digest sha256:f3e00f8e... (2026-08-16 live capture); the earlier research capture sha256:531d22f5... (2026-08-12) is superseded and kept for traceability only, never assumed for deployment"
   },
   "sse_starlette_alignment": ">=3.4,<4 (BSD-3-Clause); already a direct dependency of mcp==2.0.0 (>=3.0.0), zero marginal dependency; disconnect detection and bounded channels confirmed",
   "acp_out_of_scope": "ACP is out of scope for the 0.2.0 HTTP/SSE compatibility surface; a future ACP adapter must use the stdio/bridge contract, not assumed remote ACP."
