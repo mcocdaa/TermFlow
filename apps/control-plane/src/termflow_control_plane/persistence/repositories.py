@@ -17,6 +17,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from termflow_control_plane.agent_contracts import RETENTION_MATRIX, DataClass
 from termflow_control_plane.auth.pkce import create_s256_challenge
 from termflow_control_plane.auth.secret_box import EncryptedSecret
 
@@ -69,6 +70,31 @@ AGENT_TERMINAL_RETENTION = timedelta(days=30)
 #: Retention window for approval audit metadata (spec §7 and the
 #: ``APPROVAL_AUDIT_METADATA`` contract: 90 days, redacted, no raw storage).
 AGENT_APPROVAL_AUDIT_RETENTION = timedelta(days=90)
+
+#: §16.1 retention ceilings wired from the executable contract module
+#: (``termflow_control_plane.agent_contracts.RETENTION_MATRIX``): streaming
+#: assembly checkpoints (ephemeral ``MESSAGE_DELTA`` events and non-final
+#: message checkpoints) live 24 hours; final product messages and the durable
+#: timeline live 30 days.  The contract allows a data class whose ceiling is
+#: governed elsewhere (``retention is None``); for these two classes the
+#: defaults below fall back to the §16.1 table values if the matrix is ever
+#: changed to drop the explicit ceiling.
+
+
+def _matrix_retention(data_class: DataClass, default: timedelta) -> timedelta:
+    """A §16.1 ceiling from RETENTION_MATRIX, or ``default`` when governed
+    elsewhere (``retention is None``).  An explicit zero retention is honored
+    (immediate expiry), never silently replaced by the default."""
+    policy = RETENTION_MATRIX[data_class].retention
+    return default if policy is None else policy
+
+
+AGENT_ASSEMBLY_CHECKPOINT_RETENTION = _matrix_retention(
+    DataClass.ASSEMBLY_CHECKPOINTS, timedelta(hours=24)
+)
+AGENT_FINAL_TIMELINE_RETENTION = _matrix_retention(
+    DataClass.FINAL_MESSAGES, timedelta(days=30)
+)
 
 
 def _encode_scopes(scopes: tuple[str, ...]) -> str:
@@ -3778,6 +3804,41 @@ class AgentMessageRepository:
             )
             return row
 
+    async def purge_expired(self, *, now: datetime | None = None) -> int:
+        """Delete message rows past their §16.1 retention ceiling.
+
+        Non-final assembly checkpoints follow the 24-hour
+        ``ASSEMBLY_CHECKPOINTS`` ceiling; final product messages follow the
+        30-day ``FINAL_MESSAGES`` ceiling.  Both ceilings are wired from
+        ``RETENTION_MATRIX`` via :data:`AGENT_ASSEMBLY_CHECKPOINT_RETENTION`
+        and :data:`AGENT_FINAL_TIMELINE_RETENTION` (plan §15 startup purge
+        sweep, §16.1 retention defaults).
+        """
+        observed_at = now or datetime.now(UTC)
+        checkpoint_cutoff = observed_at - AGENT_ASSEMBLY_CHECKPOINT_RETENTION
+        durable_cutoff = observed_at - AGENT_FINAL_TIMELINE_RETENTION
+        async with self._sessions() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    delete(AgentMessage).where(
+                        or_(
+                            and_(
+                                AgentMessage.is_final.is_(False),
+                                AgentMessage.created_at <= checkpoint_cutoff,
+                            ),
+                            and_(
+                                AgentMessage.is_final.is_(True),
+                                AgentMessage.created_at <= durable_cutoff,
+                            ),
+                        )
+                    )
+                ),
+            )
+            count = int(result.rowcount or 0)
+            await session.commit()
+            return count
+
 
 class AgentEventRepository:
     """Canonical product events with a B-assigned monotonic conversation cursor
@@ -3952,6 +4013,43 @@ class AgentEventRepository:
                 .offset(offset)
             )
             return list(rows)
+
+    async def purge_expired(self, *, now: datetime | None = None) -> int:
+        """Delete events past their §16.1 retention ceiling.
+
+        Ephemeral events (high-frequency ``MESSAGE_DELTA`` streaming deltas)
+        follow the 24-hour ``ASSEMBLY_CHECKPOINTS`` ceiling; canonical
+        durable-timeline events follow the 30-day ``FINAL_MESSAGES`` ceiling.
+        Both ceilings are wired from ``RETENTION_MATRIX`` via
+        :data:`AGENT_ASSEMBLY_CHECKPOINT_RETENTION` and
+        :data:`AGENT_FINAL_TIMELINE_RETENTION` (plan §15 startup purge sweep,
+        §16.1 retention defaults), so the sweep bounds otherwise unbounded
+        delta growth.
+        """
+        observed_at = now or datetime.now(UTC)
+        ephemeral_cutoff = observed_at - AGENT_ASSEMBLY_CHECKPOINT_RETENTION
+        durable_cutoff = observed_at - AGENT_FINAL_TIMELINE_RETENTION
+        async with self._sessions() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    delete(AgentEvent).where(
+                        or_(
+                            and_(
+                                AgentEvent.ephemeral.is_(True),
+                                AgentEvent.created_at <= ephemeral_cutoff,
+                            ),
+                            and_(
+                                AgentEvent.ephemeral.is_(False),
+                                AgentEvent.created_at <= durable_cutoff,
+                            ),
+                        )
+                    )
+                ),
+            )
+            count = int(result.rowcount or 0)
+            await session.commit()
+            return count
 
 
 class AgentTokenRepository:
@@ -4726,7 +4824,9 @@ class RepositoryBundle:
 
         The same startup sweep covers the Agent Broker classes (plan §15):
         expired tokens are deleted, diagnostics are pruned, expired watches
-        are deleted, and inbox/run
+        are deleted, canonical events and message checkpoints past their
+        §16.1 retention ceilings are removed (ephemeral MESSAGE_DELTA deltas
+        after 24 hours, final timeline rows after 30 days), and inbox/run
         rows and cleanup tombstones in terminal states older than the
         retention window are removed.  Expired approvals are NOT swept here:
         the composition root sweeps them through ``ApprovalPolicy`` so every
@@ -4756,5 +4856,7 @@ class RepositoryBundle:
         counts["watches"] = await self.watches.purge_expired(now=now)
         counts["agent_inbox"] = await self.agent_inbox.purge_terminal(now=now)
         counts["agent_runs"] = await self.agent_runs.purge_terminal(now=now)
+        counts["agent_events"] = await self.agent_events.purge_expired(now=now)
+        counts["agent_messages"] = await self.agent_messages.purge_expired(now=now)
         counts["cleanup_jobs"] = await self.cleanup_jobs.purge_completed(now=now)
         return counts
