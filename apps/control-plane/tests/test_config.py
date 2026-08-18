@@ -1,0 +1,266 @@
+"""Settings validation tests for the Control Plane configuration surface."""
+
+import base64
+
+import pytest
+from pydantic import ValidationError
+from termflow_control_plane.config import Settings
+
+ADMIN_TOKEN = "admin-token-that-is-long-enough-for-tests"
+
+
+def test_offline_timeout_must_exceed_heartbeat() -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            admin_token=ADMIN_TOKEN,
+            heartbeat_interval_seconds=15,
+            offline_after_seconds=15,
+        )
+
+
+def test_control_plane_defaults_are_single_process_friendly() -> None:
+    settings = Settings(admin_token=ADMIN_TOKEN)
+    assert settings.connection_queue_size == 256
+    assert settings.event_queue_size == 512
+    assert settings.max_input_bytes == 16 * 1024
+    assert settings.browser_session_ttl_seconds == 8 * 60 * 60
+    assert settings.enrollment_token_ttl_seconds == 60
+    assert settings.terminal_max_frame_bytes == 65_536
+    assert settings.terminal_input_rate_bytes_per_second == 256 * 1024
+    assert settings.terminal_queue_max_messages == 256
+    assert settings.terminal_queue_max_bytes == 1024 * 1024
+    assert settings.terminal_resume_grace_seconds == 30
+    assert settings.allowed_web_origins == ("http://127.0.0.1:8000",)
+    assert settings.auth_challenge_ttl_seconds == 5 * 60
+    assert settings.oauth_authorization_ttl_seconds == 5 * 60
+    assert settings.oauth_authorization_code_ttl_seconds == 60
+    assert settings.auth_access_token_ttl_seconds == 10 * 60
+    assert settings.auth_refresh_token_ttl_seconds == 30 * 24 * 60 * 60
+    assert settings.auth_cli_token_ttl_seconds == 15 * 60
+    assert settings.auth_attempt_budget_capacity == 5
+    assert settings.auth_max_challenge_attempts == 5
+    assert settings.totp_master_key_bytes is None
+    assert settings.enable_docs is False
+    assert settings.trust_proxy is False
+
+
+def test_admin_token_requires_at_least_32_utf8_bytes_without_echoing_value() -> None:
+    raw = "too-short-admin-token"
+    with pytest.raises(ValidationError) as captured:
+        Settings(admin_token=raw)
+    assert raw not in str(captured.value)
+
+
+def test_opencode_basic_auth_password_is_secret_and_pair_is_preserved() -> None:
+    raw_password = "opencode-password-that-must-not-appear-in-settings-repr"
+    settings = Settings(
+        admin_token=ADMIN_TOKEN,
+        agent_opencode_username="termflow",
+        agent_opencode_password=raw_password,
+    )
+
+    assert settings.agent_opencode_username == "termflow"
+    assert settings.agent_opencode_password is not None
+    assert settings.agent_opencode_password.get_secret_value() == raw_password
+    assert raw_password not in repr(settings)
+
+
+@pytest.mark.parametrize(
+    ("username", "password"),
+    [
+        ("termflow", None),
+        (None, "secret"),
+        ("termflow", ""),
+        ("", "secret"),
+    ],
+)
+def test_opencode_basic_auth_rejects_partial_or_empty_pairs(
+    username: str | None,
+    password: str | None,
+) -> None:
+    with pytest.raises(ValidationError, match="must be set together"):
+        Settings(
+            admin_token=ADMIN_TOKEN,
+            agent_opencode_username=username,
+            agent_opencode_password=password,
+        )
+
+
+def test_opencode_empty_basic_auth_pair_normalizes_to_unconfigured() -> None:
+    settings = Settings(
+        admin_token=ADMIN_TOKEN,
+        agent_opencode_username="",
+        agent_opencode_password="",
+    )
+
+    assert settings.agent_opencode_username is None
+    assert settings.agent_opencode_password is None
+
+
+def test_totp_master_key_accepts_unpadded_base64url_for_exactly_32_bytes() -> None:
+    raw = b"k" * 32
+    encoded = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    settings = Settings(admin_token=ADMIN_TOKEN, totp_master_key=encoded)
+    assert settings.totp_master_key_bytes == raw
+    assert encoded not in repr(settings)
+
+
+@pytest.mark.parametrize(
+    "encoded",
+    [
+        base64.urlsafe_b64encode(b"short").decode().rstrip("="),
+        "not+base64url",
+        base64.urlsafe_b64encode(b"x" * 32).decode(),
+    ],
+)
+def test_totp_master_key_rejects_wrong_length_alphabet_or_padding_without_echo(
+    encoded: str,
+) -> None:
+    with pytest.raises(ValidationError) as captured:
+        Settings(admin_token=ADMIN_TOKEN, totp_master_key=encoded)
+    assert encoded not in str(captured.value)
+
+
+def test_totp_master_key_can_be_loaded_from_a_file(tmp_path) -> None:
+    raw = b"f" * 32
+    encoded = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    key_file = tmp_path / "totp.key"
+    key_file.write_text(encoded)
+    settings = Settings(admin_token=ADMIN_TOKEN, totp_master_key_file=key_file)
+    assert settings.totp_master_key_bytes == raw
+
+
+def test_totp_master_key_sources_are_mutually_exclusive(tmp_path) -> None:
+    encoded = base64.urlsafe_b64encode(b"f" * 32).decode().rstrip("=")
+    key_file = tmp_path / "totp.key"
+    key_file.write_text(encoded)
+    with pytest.raises(ValidationError, match="only one"):
+        Settings(
+            admin_token=ADMIN_TOKEN,
+            totp_master_key=encoded,
+            totp_master_key_file=key_file,
+        )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://user@example.com",
+        "https://example.com/app",
+        "https://example.com/?query=yes",
+        "https://example.com/#fragment",
+    ],
+)
+def test_public_base_url_is_a_canonical_root_http_url(url: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(admin_token=ADMIN_TOKEN, public_base_url=url)
+
+
+def test_public_integration_environment_names_are_stable(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("TERMFLOW_ADMIN_TOKEN", ADMIN_TOKEN)
+    monkeypatch.setenv("TERMFLOW_STATIC_DIR", str(tmp_path / "static"))
+    monkeypatch.setenv("TERMFLOW_PUBLIC_BASE_URL", "https://termflow.example")
+    monkeypatch.setenv(
+        "TERMFLOW_TRUSTED_WEB_ORIGINS",
+        "https://termflow.example,https://admin.termflow.example",
+    )
+    monkeypatch.setenv("TERMFLOW_BROWSER_SESSION_TTL_SECONDS", "1234")
+    monkeypatch.setenv("TERMFLOW_ENROLLMENT_TOKEN_TTL_SECONDS", "45")
+    monkeypatch.setenv("TERMFLOW_TERMINAL_MAX_FRAME_BYTES", "4096")
+    monkeypatch.setenv("TERMFLOW_TERMINAL_INPUT_RATE_BYTES_PER_SECOND", "8192")
+    monkeypatch.setenv("TERMFLOW_TERMINAL_QUEUE_MAX_MESSAGES", "32")
+    monkeypatch.setenv("TERMFLOW_TERMINAL_QUEUE_MAX_BYTES", "262144")
+    monkeypatch.setenv("TERMFLOW_TERMINAL_RESUME_GRACE_SECONDS", "45")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.static_dir == tmp_path / "static"
+    assert str(settings.public_base_url) == "https://termflow.example/"
+    assert settings.allowed_web_origins == (
+        "https://termflow.example",
+        "https://admin.termflow.example",
+    )
+    assert settings.browser_session_ttl_seconds == 1234
+    assert settings.enrollment_token_ttl_seconds == 45
+    assert settings.terminal_max_frame_bytes == 4096
+    assert settings.terminal_input_rate_bytes_per_second == 8192
+    assert settings.terminal_queue_max_messages == 32
+    assert settings.terminal_queue_max_bytes == 262144
+    assert settings.terminal_resume_grace_seconds == 45
+
+
+# ---------------------------------------------------------------------------
+# Agent MCP allowed hosts (DNS-rebinding allowlist, plan §10/§16).
+# ---------------------------------------------------------------------------
+
+
+def test_agent_mcp_allowed_hosts_defaults_to_loopback_only() -> None:
+    settings = Settings(admin_token=ADMIN_TOKEN)
+    assert settings.agent_mcp_allowed_hosts == (
+        "127.0.0.1:*",
+        "localhost:*",
+        "[::1]:*",
+    )
+
+
+def test_agent_mcp_allowed_hosts_parses_comma_separated_env(monkeypatch) -> None:
+    monkeypatch.setenv("TERMFLOW_ADMIN_TOKEN", ADMIN_TOKEN)
+    monkeypatch.setenv(
+        "TERMFLOW_AGENT_MCP_ALLOWED_HOSTS",
+        " control-plane:8000 , opencode-agent:8000 ",
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert settings.agent_mcp_allowed_hosts == (
+        "control-plane:8000",
+        "opencode-agent:8000",
+    )
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        # The container-deployment shapes (plan §16): internal service names
+        # with B's in-container port, plus wildcard-port loopback forms.
+        "control-plane:8000",
+        "opencode-agent:4096",
+        "testserver",  # TestClient's bare Host header
+        "localhost",
+        "127.0.0.1:*",
+        "localhost:*",
+        "[::1]:*",
+        "[2001:db8::1]:8000",
+        "a.b-c.d:65535",
+    ],
+)
+def test_agent_mcp_allowed_hosts_accepts_valid_entries(entry: str) -> None:
+    settings = Settings(admin_token=ADMIN_TOKEN, agent_mcp_allowed_hosts=(entry,))
+    assert settings.agent_mcp_allowed_hosts == (entry,)
+
+
+def test_agent_mcp_allowed_hosts_rejects_empty_allowlist(monkeypatch) -> None:
+    # An empty allowlist would silently reject every MCP request (421);
+    # that is a misconfiguration, so it must fail at config load instead.
+    monkeypatch.setenv("TERMFLOW_ADMIN_TOKEN", ADMIN_TOKEN)
+    monkeypatch.setenv("TERMFLOW_AGENT_MCP_ALLOWED_HOSTS", "")
+    with pytest.raises(ValidationError, match="must not be empty"):
+        Settings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "http://control-plane:8000",  # no schemes
+        "host:",  # missing port
+        ":8000",  # missing host
+        "host:0",  # port range
+        "host:65536",
+        "host:notaport",
+        "*.example.com:8000",  # the SDK has no host wildcards
+        "host with space:80",
+    ],
+)
+def test_agent_mcp_allowed_hosts_rejects_malformed_entries(entry: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(admin_token=ADMIN_TOKEN, agent_mcp_allowed_hosts=(entry,))

@@ -23,6 +23,15 @@ def _web_origin(value: str) -> str:
 
 _UNPADDED_BASE64URL = re.compile(r"^[A-Za-z0-9_-]+$")
 
+#: One ``agent_mcp_allowed_hosts`` entry: a hostname/IPv4 (or bracketed IPv6)
+#: with an optional ``:port`` or ``:*`` suffix.  Mirrors the MCP SDK's
+#: DNS-rebinding matcher, which does exact matches and ``host:*`` wildcards
+#: (no host wildcards, no schemes).
+_ALLOWED_HOST_ENTRY = re.compile(
+    r"^(?P<host>[A-Za-z0-9][A-Za-z0-9.-]*|\[[0-9a-fA-F:.]+\])"
+    r"(?::(?P<port>\*|[0-9]{1,5}))?$"
+)
+
 
 def _decode_master_key(value: SecretStr) -> bytes:
     encoded = value.get_secret_value()
@@ -63,6 +72,13 @@ class Settings(BaseSettings):
     # constants in plugins.agent_broker.api.mcp_server
     # (DEFAULT_ALLOWED_HOSTS / DEFAULT_MAX_REQUEST_BYTES).
     opencode_config_path: str | None = None
+    # The MCP Streamable HTTP endpoint's DNS-rebinding allowlist.  The
+    # loopback-only default serves non-container deployments; a containerized
+    # OpenCode that reaches B over the agent_internal network must name B's
+    # internal host explicitly (e.g. ``control-plane:8000`` in the reference
+    # compose profile, plan §16) or every MCP request is rejected with 421.
+    # Entries are ``host``, ``host:port``, or ``host:*`` (bracketed IPv6
+    # allowed); the SDK matches them exactly or by the ``host:*`` wildcard.
     agent_mcp_allowed_hosts: Annotated[tuple[str, ...], NoDecode] = (
         "127.0.0.1:*",
         "localhost:*",
@@ -166,6 +182,25 @@ class Settings(BaseSettings):
     def parse_agent_mcp_allowed_hosts(cls, value: object) -> object:
         if isinstance(value, str):
             return tuple(part.strip() for part in value.split(",") if part.strip())
+        return value
+
+    @field_validator("agent_mcp_allowed_hosts")
+    @classmethod
+    def validate_agent_mcp_allowed_hosts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value:
+            # An empty allowlist would make the SDK reject every MCP request
+            # (421) silently; that is a misconfiguration, not a safe default.
+            raise ValueError("agent_mcp_allowed_hosts must not be empty")
+        for entry in value:
+            match = _ALLOWED_HOST_ENTRY.fullmatch(entry)
+            if match is None:
+                raise ValueError(
+                    f"agent MCP allowed host {entry!r} must be 'host', "
+                    "'host:port', or 'host:*' (bracketed IPv6 allowed)"
+                )
+            port = match.group("port")
+            if port is not None and port != "*" and not 1 <= int(port) <= 65535:
+                raise ValueError(f"agent MCP allowed host {entry!r} has an invalid port")
         return value
 
     @field_validator(
