@@ -80,4 +80,25 @@ describe('createTauriAgentStreamTransport', () => {
       { type: 'close', code: 4410, reason: 'too_slow' },
     ])
   })
+
+  it('maps an authorization_required rejection to the terminal 4401 close', async () => {
+    invoke.mockImplementation(() => Promise.reject('authorization_required'))
+    const { events, pending } = harness()
+    await pending
+    await vi.waitFor(() => {
+      // Terminal, not the transient 1006: the session must go to
+      // onAuthenticationRequired instead of the backoff-reconnect loop.
+      expect(events).toEqual([{ type: 'close', code: 4401, reason: 'authentication_required' }])
+    })
+    expect(logNativeEvent).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps other command rejections as a transient 1006 with the sanitized detail', async () => {
+    invoke.mockImplementation(() => Promise.reject('offline'))
+    const { events, pending } = harness()
+    await pending
+    await vi.waitFor(() => {
+      expect(events).toEqual([{ type: 'close', code: 1006, reason: 'offline' }])
+    })
+  })
 })

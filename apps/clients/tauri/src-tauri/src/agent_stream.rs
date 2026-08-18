@@ -26,7 +26,7 @@
 //!   owns the at-most-one-terminal-frame guard, mirroring the browser
 //!   transport's `finish`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 
@@ -93,6 +93,22 @@ pub fn close_for_status(status: u16) -> (u16, &'static str) {
     }
 }
 
+/// Map a pre-handshake stream-command failure to a terminal close frame,
+/// mirroring the browser transport's HTTP-status mapping. `authorization_required`
+/// (no refreshable credential for the issuer) is the command-level analogue
+/// of an HTTP 401: it must terminate as 4401 `authentication_required` so
+/// the session goes to `onAuthenticationRequired` — surfacing it as a
+/// command rejection would land in the adapter's transient 1006 path and
+/// the session would enter the backoff-reconnect loop forever. Any other
+/// failure stays a command rejection (`None`) and the adapter surfaces it
+/// as a transient 1006 the session may retry.
+fn close_for_stream_error(error: &str) -> Option<(u16, &'static str)> {
+    match error {
+        "authorization_required" => Some((4401, "authentication_required")),
+        _ => None,
+    }
+}
+
 /// One IPC channel payload. The shape mirrors the client-core
 /// `AgentStreamTransportEvent` union.
 #[derive(Debug, Clone, Serialize)]
@@ -108,13 +124,23 @@ pub enum AgentStreamFrame {
     Close { code: u16, reason: &'static str },
 }
 
+/// Upper bound on one buffered SSE frame. B caps the projected event
+/// payload at 64 KiB (`MAX_AGENT_EVENT_PAYLOAD_BYTES`), so a legitimate
+/// frame — payload plus the `event:`/`data:` envelope and cursor — stays
+/// far below this; 256 KiB is generous headroom while still bounding the
+/// buffer if a server never sends a frame terminator (defense-in-depth:
+/// the buffer must not grow without limit even though B is trusted).
+const MAX_FRAME_BYTES: usize = 256 * 1024;
+
 /// Incremental SSE frame splitter: buffers raw bytes and yields the raw
 /// text of every complete frame as soon as its `\n\n` terminator arrives,
 /// mirroring the browser transport's line buffering (M6b spec §4.2).
 /// Bytes are buffered raw so a UTF-8 character split across chunks decodes
 /// correctly; frames that are empty or not valid UTF-8 are dropped without
 /// ever being forwarded (the TS parser would reject them anyway, and the
-/// content is untrusted).
+/// content is untrusted). An unterminated frame beyond `MAX_FRAME_BYTES` is
+/// dropped whole — it can never complete — and the splitter resynchronizes
+/// at the next terminator.
 pub struct SseFrameSplitter {
     buffer: Vec<u8>,
 }
@@ -145,9 +171,26 @@ impl SseFrameSplitter {
                 frames.push(text);
             }
         }
+        // An unterminated frame beyond the cap can never be completed as a
+        // valid frame: drop the buffered tail so the next terminator
+        // resynchronizes and the buffer stays bounded no matter how many
+        // chunks a server streams without ever closing a frame.
+        if self.buffer.len() > MAX_FRAME_BYTES {
+            self.buffer.clear();
+        }
         frames
     }
 }
+
+/// Upper bound on remembered cancel tombstones. A tombstone only matters
+/// until the racing stream command registers — the two IPC commands are
+/// dispatched concurrently, so the window is one tokio scheduling turn at
+/// most. Anything older is stale by construction: request ids are random
+/// UUIDs that are never reused, so only a same-id register could consume a
+/// tombstone and that register has long since either run or not. FIFO
+/// eviction keeps the set small while the newest cancels — the only ones
+/// that can still race a registration — stay remembered.
+const CANCELLED_TOMBSTONE_CAP: usize = 32;
 
 /// Cancellation registry for in-flight agent streams. `native_agent_stream`
 /// registers a `Notify` under its `request_id` and removes it on exit;
@@ -158,56 +201,78 @@ impl SseFrameSplitter {
 /// recorded as a tombstone so the (late) registration fails closed instead
 /// of opening a connection that can never be cancelled — the two IPC
 /// commands are scheduled concurrently by tokio, so the ordering is not
-/// guaranteed.
+/// guaranteed. The tombstone set is bounded (see `CANCELLED_TOMBSTONE_CAP`)
+/// so repeated cancels of finished/unknown streams cannot grow the registry
+/// without limit.
 #[derive(Default)]
 pub struct AgentStreamState {
-    streams: Mutex<HashMap<String, Arc<Notify>>>,
-    cancelled: Mutex<HashSet<String>>,
+    /// One lock for both maps so register/cancel/unregister are atomic with
+    /// respect to each other: a cancel either notifies a registered stream
+    /// or records a tombstone, and a register either consumes a tombstone
+    /// or opens — a cancel can never be lost in between.
+    registry: Mutex<AgentStreamRegistry>,
+}
+
+#[derive(Default)]
+struct AgentStreamRegistry {
+    streams: HashMap<String, Arc<Notify>>,
+    /// Cancel tombstones in FIFO insertion order, bounded by
+    /// `CANCELLED_TOMBSTONE_CAP`.
+    cancelled: VecDeque<String>,
 }
 
 impl AgentStreamState {
     fn register(&self, request_id: &str, cancel: Arc<Notify>) -> Result<(), String> {
-        let mut streams = self
-            .streams
+        let mut registry = self
+            .registry
             .lock()
             .map_err(|_| safe_error("stream_state_unavailable"))?;
-        if streams.contains_key(request_id) {
+        if registry.streams.contains_key(request_id) {
             return Err(safe_error("stream_already_running"));
         }
-        let mut cancelled = self
-            .cancelled
-            .lock()
-            .map_err(|_| safe_error("stream_state_unavailable"))?;
-        if cancelled.remove(request_id) {
+        if let Some(index) = registry.cancelled.iter().position(|id| id == request_id) {
             // A cancel arrived before registration: never open the
             // connection. The JS adapter's terminal-frame guard already
             // absorbed the close frame, so this rejection is silent there.
+            registry.cancelled.remove(index);
             return Err(safe_error("stream_cancelled"));
         }
-        streams.insert(request_id.to_owned(), cancel);
+        registry.streams.insert(request_id.to_owned(), cancel);
         Ok(())
     }
 
     fn unregister(&self, request_id: &str) {
-        if let Ok(mut streams) = self.streams.lock() {
-            streams.remove(request_id);
-        }
-        if let Ok(mut cancelled) = self.cancelled.lock() {
-            cancelled.remove(request_id);
+        if let Ok(mut registry) = self.registry.lock() {
+            registry.streams.remove(request_id);
+            // Defensive: with one lock a registered stream can never have a
+            // same-id tombstone, but releasing an id fully keeps the
+            // invariant local instead of relying on the callers.
+            if let Some(index) = registry.cancelled.iter().position(|id| id == request_id) {
+                registry.cancelled.remove(index);
+            }
         }
     }
 
     fn cancel(&self, request_id: &str) {
-        if let Ok(streams) = self.streams.lock() {
-            if let Some(cancel) = streams.get(request_id) {
-                cancel.notify_one();
-                return;
-            }
+        let Ok(mut registry) = self.registry.lock() else {
+            return;
+        };
+        if let Some(cancel) = registry.streams.get(request_id) {
+            cancel.notify_one();
+            return;
         }
-        // Not registered (yet): tombstone so a racing register fails closed.
-        if let Ok(mut cancelled) = self.cancelled.lock() {
-            cancelled.insert(request_id.to_owned());
+        // Not registered (yet): remember a tombstone so a racing register
+        // fails closed. The set is bounded: ids are never reused, so a
+        // tombstone only matters for the one concurrent register it races;
+        // FIFO eviction drops the oldest — guaranteed stale — entries first
+        // and duplicate cancels of the same id collapse into one entry.
+        if registry.cancelled.iter().any(|id| id == request_id) {
+            return;
         }
+        if registry.cancelled.len() >= CANCELLED_TOMBSTONE_CAP {
+            registry.cancelled.pop_front();
+        }
+        registry.cancelled.push_back(request_id.to_owned());
     }
 }
 
@@ -279,7 +344,19 @@ async fn run_stream(
     channel: &Channel<AgentStreamFrame>,
     cancel: &Arc<Notify>,
 ) -> Result<(), String> {
-    let access_token = current_access_token(state, issuer).await?;
+    let access_token = match current_access_token(state, issuer).await {
+        Ok(token) => token,
+        // Unauthenticated is terminal: emit the same 4401 close the HTTP
+        // 401 path produces instead of rejecting, which the adapter would
+        // surface as a transient 1006 and retry forever.
+        Err(error) => match close_for_stream_error(&error) {
+            Some((code, reason)) => {
+                let _ = channel.send(AgentStreamFrame::Close { code, reason });
+                return Ok(());
+            }
+            None => return Err(error),
+        },
+    };
     let remembered = remembered_dpop_nonce(state, issuer)?;
 
     let first = cancel_guard(
@@ -373,9 +450,11 @@ async fn pump(channel: &Channel<AgentStreamFrame>, cancel: &Arc<Notify>, respons
     }
 }
 
-/// Cancel an in-flight agent stream by `request_id`. Idempotent: a finished
-/// or unknown stream is a no-op so the JS adapter's close() can call it
-/// unconditionally.
+/// Cancel an in-flight agent stream by `request_id`. Idempotent and safe
+/// for the JS adapter's close() to call unconditionally: a registered
+/// stream is notified, and a finished or unknown id has no effect on any
+/// live connection (an unknown id is remembered as a bounded tombstone so
+/// a racing register fails closed).
 #[tauri::command]
 pub fn native_agent_stream_cancel(
     stream_state: State<'_, AgentStreamState>,
@@ -437,6 +516,22 @@ mod tests {
     }
 
     #[test]
+    fn unauthenticated_command_failures_map_to_the_terminal_4401_close() {
+        // The token failure is the command-level analogue of an HTTP 401:
+        // identical terminal close, so the session goes to
+        // onAuthenticationRequired instead of the transient-1006 retry loop.
+        assert_eq!(
+            close_for_stream_error("authorization_required"),
+            Some(close_for_status(401))
+        );
+        // Every other failure stays a command rejection (transient 1006).
+        assert_eq!(close_for_stream_error("offline"), None);
+        assert_eq!(close_for_stream_error("stream_state_unavailable"), None);
+        assert_eq!(close_for_stream_error("issuer_invalid"), None);
+        assert_eq!(close_for_stream_error(""), None);
+    }
+
+    #[test]
     fn splitter_returns_each_complete_frame_and_keeps_the_rest_buffered() {
         let mut splitter = SseFrameSplitter::new();
         // Two complete frames in one chunk (sticky packets).
@@ -489,6 +584,26 @@ mod tests {
     }
 
     #[test]
+    fn splitter_drops_unterminated_frames_beyond_the_cap_and_resynchronizes() {
+        let mut splitter = SseFrameSplitter::new();
+        let half = vec![b'x'; MAX_FRAME_BYTES / 2];
+        assert!(splitter.push(&half).is_empty());
+        assert!(splitter.push(&half).is_empty());
+        // The unterminated frame is over the cap: it is dropped whole and
+        // the buffer stays bounded no matter how many chunks follow without
+        // a terminator.
+        for _ in 0..16 {
+            assert!(splitter.push(&half).is_empty());
+            assert!(splitter.buffer.len() <= MAX_FRAME_BYTES);
+        }
+        // The next terminator resynchronizes: subsequent frames are intact.
+        assert_eq!(
+            splitter.push(b"event: a\ndata: {}\n\n"),
+            vec!["event: a\ndata: {}"]
+        );
+    }
+
+    #[test]
     fn channel_frames_serialize_to_the_agent_stream_transport_shape() {
         assert_eq!(
             serde_json::to_value(AgentStreamFrame::Open).unwrap(),
@@ -536,6 +651,48 @@ mod tests {
         // After unregister a cancel becomes a tombstone again (id reused).
         state.cancel("req-2");
         assert!(state.register("req-2", Arc::new(Notify::new())).is_err());
+    }
+
+    #[test]
+    fn cancel_after_unregister_is_bounded_by_fifo_tombstone_eviction() {
+        let state = AgentStreamState::default();
+        // Repeated dispose-vs-finished-stream cycles: every cancel lands on
+        // an unknown id (fresh UUID, never reused), so each one would leave
+        // a permanent tombstone in an unbounded registry.
+        for index in 0..(CANCELLED_TOMBSTONE_CAP * 4) {
+            let id = format!("req-{index}");
+            state.register(&id, Arc::new(Notify::new())).unwrap();
+            state.unregister(&id);
+            state.cancel(&id);
+        }
+        let cancelled_len = state.registry.lock().unwrap().cancelled.len();
+        assert_eq!(
+            cancelled_len,
+            CANCELLED_TOMBSTONE_CAP,
+            "the tombstone registry must stay bounded across cancel-after-unregister cycles"
+        );
+        // Duplicate cancels of one id collapse into a single entry.
+        state.cancel("req-dup");
+        state.cancel("req-dup");
+        assert_eq!(state.registry.lock().unwrap().cancelled.len(), CANCELLED_TOMBSTONE_CAP);
+    }
+
+    #[test]
+    fn fifo_eviction_keeps_only_the_newest_tombstones() {
+        let state = AgentStreamState::default();
+        // Fill the tombstone registry to capacity with stale cancels.
+        for index in 0..CANCELLED_TOMBSTONE_CAP {
+            state.cancel(&format!("req-{index}"));
+        }
+        // The newest cancel must survive the eviction and still fail the
+        // racing register closed — the race protection stays intact.
+        state.cancel("req-newest");
+        assert_eq!(
+            state.register("req-newest", Arc::new(Notify::new())),
+            Err("stream_cancelled".to_owned())
+        );
+        // The oldest tombstone was evicted first: its register is allowed.
+        assert!(state.register("req-0", Arc::new(Notify::new())).is_ok());
     }
 
     #[test]

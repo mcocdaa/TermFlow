@@ -122,9 +122,14 @@ export function createTauriAgentStreamTransport(options: { wire: 'agui' }): Agen
           finish(1006, 'transport_error')
         },
         (error: unknown) => {
-          // The command rejected before or without a channel close frame:
-          // surface a transient 1006 with the sanitized safe error text and
-          // a diagnostic; reconnect semantics stay with the session.
+          // The command rejected before or without a channel close frame.
+          // An `authorization_required` rejection is the unauthenticated
+          // analogue of an HTTP 401: it must be the terminal 4401 close
+          // (defense-in-depth with the Rust side's close frame) so the
+          // session goes to onAuthenticationRequired — a 1006 here would
+          // look transient and the session would retry forever. Anything
+          // else surfaces a transient 1006 with the sanitized safe error
+          // text; reconnect semantics stay with the session.
           const detail = sanitizeNativeDetail(error)
           void logNativeEvent({
             event: 'agent_stream_failed',
@@ -134,6 +139,10 @@ export function createTauriAgentStreamTransport(options: { wire: 'agui' }): Agen
             errorCode: 'offline',
             errorDetail: detail,
           })
+          if (detail === 'authorization_required') {
+            finish(4401, 'authentication_required')
+            return
+          }
           finish(1006, detail === '' ? 'transport_error' : detail)
         },
       )
