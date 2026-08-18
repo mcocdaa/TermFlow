@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -12,6 +12,9 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.shared.exceptions import MCPError
+from mcp_types import INTERNAL_ERROR, INVALID_REQUEST
 from sqlalchemy.exc import SQLAlchemyError
 from starlette._utils import get_route_path
 from starlette.applications import Starlette
@@ -26,6 +29,7 @@ from termflow_protocol import (
     MessageType,
     WireMessage,
 )
+from termflow_protocol.mcp import TermFlowErrorCode
 
 from termflow_control_plane import __version__
 from termflow_control_plane.api.agent_admin import router as agent_admin_router
@@ -71,6 +75,11 @@ from termflow_control_plane.plugins.agent_broker.agent.permissions import Approv
 from termflow_control_plane.plugins.agent_broker.agent.runtime_registry import (
     AgentRuntimeRegistry,
 )
+from termflow_control_plane.plugins.agent_broker.agent.runtime_supervisor import (
+    SecretUnavailableError,
+    SupervisorConnector,
+    UnknownRuntimeError,
+)
 from termflow_control_plane.plugins.agent_broker.agent.stream_hub import (
     AGENT_STREAM_QUEUE_SIZE,
     AgentStreamHub,
@@ -90,6 +99,7 @@ from termflow_control_plane.plugins.agent_broker.api.mcp_server import (
     check_tool_config_drift,
     create_streamable_http_app,
     pinned_allowlist_from_fixture,
+    principal_from_access_token,
 )
 from termflow_control_plane.plugins.agent_broker.auth import AgentTokenAuthenticator
 from termflow_control_plane.plugins.agent_broker.plugin import (
@@ -99,9 +109,15 @@ from termflow_control_plane.plugins.agent_broker.plugin import (
 )
 from termflow_control_plane.plugins.context import build_feature_context
 from termflow_control_plane.plugins.protocol import (
-    AgentRuntimeSupervisor,
     AuthPort,
+    BackendOperationOutcome,
+    BackendOperationResult,
+    CapabilityRef,
+    DrainStatus,
     LifecyclePort,
+    RuntimeHealth,
+    RuntimeRef,
+    RuntimeStatus,
     TerminalCommandPort,
     TerminalObservationPort,
     TermPort,
@@ -181,6 +197,10 @@ async def _build_agent_mcp_app(app: FastAPI, settings: Settings) -> Starlette:
     cursor store, and it shares the composition-root approval policy and
     audit writer.
 
+    Every served tool port is wrapped in the supervisor's fail-closed
+    tool-call gate (plan §6.2.1): a binding-scoped MCP call is admitted only
+    while its runtime is attested ready at the token's epoch.
+
     The SDK app is built at ``path="/"``: Starlette mounts rewrite the child
     scope's route path, so the mounted app sees its own ``/`` route while the
     public path stays ``/api/v1/agent/mcp``.
@@ -203,27 +223,39 @@ async def _build_agent_mcp_app(app: FastAPI, settings: Settings) -> Starlette:
         policy=app.state.approval_policy,
     )
     app.state.command_service = commands
+    # Plan §6.2.1 fail-closed gate: every MCP tool invocation - observe,
+    # watch, and write alike - is admitted only while the binding's runtime
+    # is attested ready at the token's epoch.  The ports are wrapped here so
+    # the api/mcp_server assembly stays untouched.
+    tool_gate = _build_mcp_tool_gate(
+        repositories=app.state.repositories,
+        supervisor=getattr(app.state, "agent_runtime_supervisor", None),
+    )
     server = build_mcp_server(
-        observation=ObservationService(
-            app.state.registry,
-            cursor_store=ObservationCursorStore(app.state.session_factory),
+        observation=_SupervisorGatedToolPort(
+            ObservationService(
+                app.state.registry,
+                cursor_store=ObservationCursorStore(app.state.session_factory),
+            ),
+            tool_gate,
         ),
-        continuation=WatchContinuationService(
-            app.state.repositories.watches,
-            app.state.repositories.agent_bindings,
+        continuation=_SupervisorGatedToolPort(
+            WatchContinuationService(
+                app.state.repositories.watches,
+                app.state.repositories.agent_bindings,
+            ),
+            tool_gate,
         ),
         policy_checker=app.state.repositories,
         token_auth=AgentTokenAuthenticator(app.state.repositories),
         sessions=app.state.session_factory,
-        commands=commands,
+        commands=_SupervisorGatedToolPort(commands, tool_gate),
         guardrails=guardrails,
     )
     config_path = settings.opencode_config_path
     if config_path:
         allowlist = pinned_allowlist_from_fixture(
-            await asyncio.to_thread(
-                lambda: Path(config_path).read_text(encoding="utf-8")
-            )
+            await asyncio.to_thread(lambda: Path(config_path).read_text(encoding="utf-8"))
         )
         registered = {tool.name for tool in await server.list_tools()}
         check_tool_config_drift(registered, allowlist)
@@ -335,7 +367,179 @@ def _unimplemented_port(_port: object) -> Any:
     return object()
 
 
-def create_app(*, settings: Settings, database: Database | None = None) -> FastAPI:
+class _UnattestedRuntimeClient:
+    """Production ``RuntimeClient`` for deployments without a runtime manager.
+
+    Plan §6.2.1: the reference Compose profile ships no deployment-owned
+    runtime manager, and B must never attest a runtime it cannot observe
+    (the runtime_supervisor connector's production wiring to such a manager
+    is out of 0.2.0 scope).  Every health probe therefore reports
+    ``UNKNOWN`` so ``SupervisorConnector.register`` fails closed: no binding
+    is admitted and MCP tool calls stay gated until a deployment injects a
+    real runtime-manager client.  This is honest fail-closed wiring, never a
+    fabricated "ready" attestation.
+    """
+
+    async def health(self, runtime_ref: RuntimeRef) -> RuntimeHealth:
+        del runtime_ref  # every runtime is unattested
+        return RuntimeHealth(
+            status=RuntimeStatus.UNKNOWN,
+            epoch=1,
+            observed_at=datetime.now(UTC),
+            detail=(
+                "no deployment-owned runtime manager is wired; runtime "
+                "attestation fails closed (plan §6.2.1)"
+            ),
+        )
+
+    async def quiesce(self, runtime_ref: RuntimeRef, deadline: datetime) -> DrainStatus:
+        del runtime_ref, deadline
+        # A drain that can never complete blocks activation (fail closed).
+        return DrainStatus.DRAIN_TIMEOUT
+
+    async def restart(
+        self, runtime_ref: RuntimeRef, epoch: int, capability_secret: str
+    ) -> RuntimeHealth:
+        del epoch, capability_secret
+        raise UnknownRuntimeError(
+            f"runtime {runtime_ref} cannot be restarted: no deployment-owned "
+            "runtime manager is wired (plan §6.2.1)"
+        )
+
+    async def cleanup(self, runtime_ref: RuntimeRef) -> BackendOperationResult:
+        return BackendOperationResult(
+            outcome=BackendOperationOutcome.UNKNOWN,
+            message=(
+                f"runtime {runtime_ref} was never attested: no "
+                "deployment-owned runtime manager is wired; nothing to clean up"
+            ),
+        )
+
+
+def _unavailable_secret_provider(capability_ref: CapabilityRef, epoch: int) -> str:
+    raise SecretUnavailableError(
+        f"no capability secret is available for {capability_ref} epoch {epoch}: "
+        "no deployment-owned runtime manager is wired (plan §6.2.1)"
+    )
+
+
+def _build_production_runtime_supervisor() -> SupervisorConnector:
+    """The composition root's production ``AgentRuntimeSupervisor``.
+
+    Built from the fail-closed ``_UnattestedRuntimeClient`` because the
+    reference deployment has no deployment-owned runtime manager to attest
+    runtimes (plan §6.2.1).  Deployments that operate a real runtime
+    manager replace this seam with a client wired to that manager; until
+    then every binding activation and MCP tool call fails closed.
+    """
+    return SupervisorConnector(
+        _UnattestedRuntimeClient(),
+        _unavailable_secret_provider,
+    )
+
+
+def _build_mcp_tool_gate(
+    *,
+    repositories: RepositoryBundle,
+    supervisor: SupervisorConnector | None,
+) -> Callable[[], Awaitable[None]]:
+    """Build the supervisor's fail-closed MCP tool-call admission gate.
+
+    Plan §6.2.1: a binding-scoped MCP call is admitted only while its
+    runtime is attested ready at the token's epoch.  The gate resolves the
+    verified binding identity from the SDK auth context, looks up the
+    binding's runtime fields, and applies ``accept_tool_call``; any doubt -
+    missing token, missing runtime fields, a stale epoch, an unwired
+    supervisor, a rejecting or raising gate - fails closed.
+    """
+
+    async def gate() -> None:
+        access_token = get_access_token()
+        if access_token is None:
+            raise MCPError(
+                code=INVALID_REQUEST,
+                message="an authenticated agent token is required",
+            )
+        principal = principal_from_access_token(access_token)
+        binding = await repositories.agent_bindings.get_by_id(principal.binding_id)
+        if binding is None or not binding.runtime_ref or binding.runtime_epoch is None:
+            raise MCPError(
+                code=INTERNAL_ERROR,
+                message="the binding has no admitted runtime; the tool call fails closed",
+                data={"termflow_error_code": TermFlowErrorCode.INTERNAL_ERROR.value},
+            )
+        if principal.runtime_epoch != binding.runtime_epoch:
+            raise MCPError(
+                code=INTERNAL_ERROR,
+                message="the token carries a stale runtime epoch; the tool call fails closed",
+                data={"termflow_error_code": TermFlowErrorCode.INTERNAL_ERROR.value},
+            )
+        if supervisor is None:
+            raise MCPError(
+                code=INTERNAL_ERROR,
+                message="no runtime supervisor is wired; the tool call fails closed",
+                data={"termflow_error_code": TermFlowErrorCode.INTERNAL_ERROR.value},
+            )
+        try:
+            accepted = supervisor.accept_tool_call(
+                RuntimeRef(binding.runtime_ref.strip()), binding.runtime_epoch
+            )
+        except Exception:
+            logger.exception("Agent MCP tool gate raised; failing closed")
+            accepted = False
+        if not accepted:
+            raise MCPError(
+                code=INTERNAL_ERROR,
+                message="the binding runtime is not ready; the tool call fails closed",
+                data={"termflow_error_code": TermFlowErrorCode.INTERNAL_ERROR.value},
+            )
+
+    return gate
+
+
+class _SupervisorGatedToolPort:
+    """Apply the MCP tool-call gate at the boundary of a tool port.
+
+    The MCP handlers receive the observation/continuation/commands ports as
+    dependencies; wrapping them here applies the supervisor's ready/epoch
+    admission to every tool invocation without touching the
+    ``api/mcp_server`` assembly (owned elsewhere).  ``__getattr__`` keeps the
+    proxy transparent for attribute access and non-callable members.
+    """
+
+    def __init__(
+        self,
+        delegate: object,
+        gate: Callable[[], Awaitable[None]],
+    ) -> None:
+        self._delegate = delegate
+        self._gate = gate
+
+    def __getattr__(self, name: str) -> Any:
+        attribute = getattr(self._delegate, name)
+        if not callable(attribute):
+            return attribute
+
+        async def gated(*args: Any, **kwargs: Any) -> Any:
+            await self._gate()
+            return await attribute(*args, **kwargs)
+
+        return gated
+
+
+def create_app(
+    *,
+    settings: Settings,
+    database: Database | None = None,
+    agent_runtime_supervisor: SupervisorConnector | None = None,
+) -> FastAPI:
+    """Assemble the FastAPI application.
+
+    ``agent_runtime_supervisor`` is the composition-root test seam: production
+    callers pass ``None`` and the lifespan wires the fail-closed production
+    supervisor (:func:`_build_production_runtime_supervisor`); tests inject a
+    fake to exercise attested-runtime paths.
+    """
     active_database = database or Database(settings.database_url)
 
     @asynccontextmanager
@@ -396,21 +600,24 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
             capability_wait_seconds=settings.command_timeout_seconds,
             resume_grace_seconds=settings.terminal_resume_grace_seconds,
         )
+        # Plan §6.2.1: the runtime supervisor is a required control-plane
+        # port.  Production wires the real SupervisorConnector (fail-closed
+        # when no deployment-owned runtime manager can attest runtimes);
+        # tests may inject a fake through create_app.
+        runtime_supervisor = agent_runtime_supervisor or _build_production_runtime_supervisor()
+        app.state.agent_runtime_supervisor = runtime_supervisor
         feature_context = build_feature_context(
-            # No real port implementations exist yet, so every port is an
-            # explicitly labeled placeholder until its milestone lands; real
-            # terms/persistence adapters arrive with the M1.3+ services.
+            # No real port implementations exist yet, so every port except
+            # the runtime supervisor is an explicitly labeled placeholder
+            # until its milestone lands; real terms/persistence adapters
+            # arrive with the M1.3+ services.
             auth=_unimplemented_port(AuthPort),  # AuthenticationService lacks AuthPort
             terms=_unimplemented_port(TermPort),  # real TermPort adapter lands with M1.3+
             observation=_unimplemented_port(TerminalObservationPort),  # lands with M2
             commands=_unimplemented_port(TerminalCommandPort),  # lands with M5
             persistence=_unimplemented_port(UnitOfWorkFactory),  # real adapter lands with M1.3+
             lifecycle=_unimplemented_port(LifecyclePort),  # lands with plugin background tasks
-            # Deviation (M4.5 spec risk 7): the AgentRuntimeSupervisor port is
-            # still a placeholder repository-wide; the supervisor activation
-            # gate lands with it.  M4.5 production therefore runs with the
-            # gate open (see the registry wiring below).
-            runtime=_unimplemented_port(AgentRuntimeSupervisor),  # lands with the supervisor port
+            runtime=runtime_supervisor,
         )
         app.state.feature_context = feature_context
         # Deterministic restart recovery (plan §17: B restarts): fence stale
@@ -451,14 +658,13 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
                 repositories=app.state.repositories,
                 sessions=app.state.session_factory,
                 hub=app.state.agent_stream_hub,
-                # Deviation (M4.5 spec risk 7): the supervisor activation
-                # gate lands with the AgentRuntimeSupervisor port (still
-                # _unimplemented_port repository-wide), so M4.5 production
-                # runs with the gate open (accept_activation is a no-op).
-                # Bindings without runtime fields still fail closed (spec
-                # §6).  TODO(supervisor-port): inject the deployment-owned
-                # SupervisorConnector here and remove this deviation.
-                supervisor=None,
+                # Plan §6.2.1: the supervisor activation gate is always
+                # wired in production.  Without a deployment-owned runtime
+                # manager the supervisor fails closed, so every binding
+                # stays disabled until its runtime can be attested
+                # (spec §6).  Bindings without runtime fields fail closed
+                # regardless of the supervisor.
+                supervisor=runtime_supervisor,
             )
             app.state.agent_watch_engine = WatchEngine(
                 sessions=app.state.session_factory,

@@ -26,6 +26,9 @@ from termflow_control_plane.auth.tokens import hash_token
 from termflow_control_plane.config import Settings
 from termflow_control_plane.persistence.models import Base
 from termflow_control_plane.persistence.repositories import RepositoryBundle, digest_secret
+from termflow_control_plane.plugins.agent_broker.agent.runtime_supervisor import (
+    SupervisorConnector,
+)
 from termflow_control_plane.plugins.agent_broker.agent.terminal_ports import (
     WatchContinuationService,
 )
@@ -174,6 +177,50 @@ def _seed_app_round_trip(client: TestClient) -> str:
         return await _seed_token(client.app.state.repositories, binding)
 
     return client.portal.call(_seed)
+
+
+class _DummyRuntimeClient:
+    """Never reached: the permissive supervisor overrides every gate."""
+
+    async def health(self, runtime_ref):
+        raise AssertionError("unreachable")
+
+    async def quiesce(self, runtime_ref, deadline):
+        raise AssertionError("unreachable")
+
+    async def restart(self, runtime_ref, epoch, capability_secret):
+        raise AssertionError("unreachable")
+
+    async def cleanup(self, runtime_ref):
+        raise AssertionError("unreachable")
+
+
+class _PermissiveRuntimeSupervisor(SupervisorConnector):
+    """Attest-anything supervisor for the app-level round trip.
+
+    The binding is seeded after app startup (its runtime pipeline is never
+    built), so the §6.2.1 MCP tool-call gate would fail closed under the
+    production supervisor.  This fake attests any runtime so the round trip
+    can exercise the mount + auth + tool path end to end.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            _DummyRuntimeClient(),
+            lambda capability_ref, epoch: f"test-secret-{epoch}",
+            health_poll_delay_seconds=0.0,
+        )
+
+    async def register(self, binding_id, runtime_ref, epoch, capability_ref) -> None:
+        del binding_id, runtime_ref, epoch, capability_ref
+
+    def accept_activation(self, runtime_ref, epoch) -> bool:
+        del runtime_ref, epoch
+        return True
+
+    def accept_tool_call(self, runtime_ref, epoch) -> bool:
+        del runtime_ref, epoch
+        return True
 
 
 async def _allow_async(repositories: RepositoryBundle, binding, pane_id: str) -> None:
@@ -405,7 +452,10 @@ def test_mcp_mount_full_round_trip_with_valid_agent_token(tmp_path) -> None:
         # wiring names the agent-internal hosts (plan §16).
         agent_mcp_allowed_hosts=("testserver",),
     )
-    app = create_app(settings=settings)
+    app = create_app(
+        settings=settings,
+        agent_runtime_supervisor=_PermissiveRuntimeSupervisor(),
+    )
     with TestClient(app) as client:
         raw_token = _seed_app_round_trip(client)
         headers = _initialize(client, raw_token)
