@@ -14,6 +14,10 @@ from uuid import UUID, uuid4
 from fastapi.testclient import TestClient
 from termflow_control_plane.persistence.models import AgentCleanupJob
 from termflow_control_plane.persistence.repositories import RepositoryBundle
+from termflow_control_plane.plugins.agent_broker.agent.inbox import (
+    InboxDeliveryStateMachine,
+    InboxEnvelope,
+)
 from termflow_control_plane.plugins.agent_broker.plugin import (
     CLEANUP_TARGET_KINDS,
     AgentBrokerPlugin,
@@ -274,5 +278,94 @@ def test_run_agent_recovery_fences_inbox_then_runs_then_cleanup(
         assert report.runs_marked_unknown == 1
         assert report.cleanup_jobs_completed == 1
         assert observed == ["cleanup"]
+
+    client.portal.call(scenario)
+
+
+def test_run_agent_recovery_counts_reconciled_inbox_envelopes(
+    client: TestClient, admin_headers: dict[str, str], provision_term
+) -> None:
+    """Reconciled inbox items count into ``inbox_reconciled`` whether their
+    submission was started or not.
+
+    Track A reconciliation semantics: a started submission whose run
+    terminated is fenced to ``delivered`` (the persisted terminal state), not
+    ``dispatched``, so the recovery report must count both flavors of the
+    reconciliation outcome instead of dropping the ``delivered`` ones."""
+
+    _, binding_id = _seed_binding(client, admin_headers, provision_term)
+
+    async def scenario() -> None:
+        repositories: RepositoryBundle = client.app.state.repositories
+        now = datetime.now(UTC)
+        conversation = await repositories.agent_conversations.create(
+            binding_id=binding_id, title="reconciled"
+        )
+
+        # A started submission whose lease expired: reconciliation proves
+        # acceptance, so recovery fences it to the delivered terminal state.
+        started_item = await repositories.agent_inbox.enqueue(
+            conversation_id=conversation.id,
+            kind="user_message",
+            actor_id="actor-1",
+            actor_kind="user_session",
+            idempotency_key="reconciled-started",
+            payload_digest="d" * 64,
+            source="user",
+            now=now,
+        )
+        await repositories.agent_inbox.claim(
+            started_item.id, "crashed-worker", lease_seconds=60, now=now
+        )
+        started = await repositories.agent_inbox.start_submission(
+            started_item.id,
+            "crashed-worker",
+            attempt_id="attempt-reconciled",
+            fencing_token="fence-reconciled",
+            lease_seconds=60,
+            now=now,
+        )
+        assert started is not None and started.delivery_state == "dispatched"
+
+        # A claimed item that never reached started: reconciled, its envelope
+        # still reports ``dispatched``.
+        never_started = await repositories.agent_inbox.enqueue(
+            conversation_id=conversation.id,
+            kind="user_message",
+            actor_id="actor-1",
+            actor_kind="user_session",
+            idempotency_key="reconciled-claimed",
+            payload_digest="d" * 64,
+            source="user",
+            now=now,
+        )
+        await repositories.agent_inbox.claim(
+            never_started.id, "crashed-worker", lease_seconds=60, now=now
+        )
+
+        later = now + timedelta(minutes=5)
+        machine = InboxDeliveryStateMachine(repositories.agent_inbox)
+
+        class _ReconcilingMachine:
+            """The reconciliation seam: both items have proven outcomes."""
+
+            async def recover_stale(self, *, now: datetime) -> list[InboxEnvelope]:
+                return await machine.recover_stale(
+                    now=now,
+                    reconciled_ids={started_item.id, never_started.id},
+                )
+
+        report = await run_agent_recovery(
+            repositories,
+            now=later,
+            inbox_machine=_ReconcilingMachine(),
+        )
+        assert report.inbox_reconciled == 2
+        assert report.inbox_recovered == 0
+        assert report.inbox_delivery_unknown == 0
+
+        # The reconciled started submission is the persisted terminal state.
+        rows = await repositories.agent_inbox.list_for_conversation(conversation.id)
+        assert [row.delivery_state for row in rows] == ["delivered", "claimed"]
 
     client.portal.call(scenario)

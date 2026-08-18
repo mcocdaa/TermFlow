@@ -166,7 +166,10 @@ async def run_agent_recovery(
                 report.inbox_recovered += 1
             elif envelope.delivery_state == "delivery_unknown":
                 report.inbox_delivery_unknown += 1
-            elif envelope.delivery_state == "dispatched":
+            elif envelope.delivery_state in ("dispatched", "delivered"):
+                # Reconciliation proves the outcome for both a never-started
+                # claim (``dispatched``) and a started submission whose run
+                # terminated (``delivered``, the persisted terminal state).
                 report.inbox_reconciled += 1
     except Exception as exc:
         logger.exception("Agent inbox recovery failed: %s", exc)
