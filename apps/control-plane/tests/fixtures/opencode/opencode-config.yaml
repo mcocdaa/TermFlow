@@ -1,31 +1,3 @@
-# TermFlow frozen OpenCode config fixture (M0).
-#
-# This is the allow-listed OpenCode config the adapter runtime is started with.
-# The body below is JSON (JSON is valid YAML); the "opencode" runtime consumes
-# the JSON-equivalent form. Comment lines are documentation only.
-#
-# Reviewed permission policy (plan §10, §12):
-#   - "*" : "deny" denies EVERY unreviewed built-in tool (bash, edit, webfetch,
-#     websearch, lsp, skill, task, read of unlisted patterns, ...).
-#   - The 8 TermFlow MCP tools are the exact reviewed allowlist. Their reviewed
-#     policy is "ask" so OpenCode always surfaces a permission request before a
-#     TermFlow tool call. B resolves permission responses only via the adapter's
-#     optional BackendInteraction facet and only with "once"/"reject"; "always"/
-#     remember decisions are rejected (plan §6). Read/watch tools additionally
-#     require B's terminal.observe scope and write tools additionally require a
-#     valid B approval/grant (plan §12).
-#   - The tool allowlist must match exactly the 8 TermFlow MCP tools. Adding a
-#     tool requires an explicit capability and policy review (plan §10).
-#
-# Startup drift guard (fail closed):
-#   - Startup MUST FAIL if the live OpenCode tool inventory drifts from this
-#     pinned allowlist, or if any config surface (mcp/plugin/lsp/tools) diverges
-#     from this frozen fixture. There are NO remote or default MCP servers, NO
-#     plugins, NO LSP servers, and NO downloaded tools here by design.
-#   - The TermFlow MCP server itself is a remote MCP entry injected at runtime
-#     by the AgentRuntimeSupervisor with the epoch-bound capability token
-#     (plan §6.2.1); it is NOT part of this "no defaults" fixture, because the
-#     fixture must never contain a static shared token.
 {
   "$schema": "https://opencode.ai/config.json",
   "permission": {

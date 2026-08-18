@@ -67,6 +67,29 @@ services:
   # The TermFlow MCP server entry is NOT baked into the frozen config below:
   # the supervisor injects it at runtime with the epoch-bound capability token
   # (plan §6.2.1), so no static shared token ever lives in an image or volume.
+  # A fresh named volume is owned by root. This one-shot, networkless init
+  # container grants only the pinned guest UID access to the dedicated data
+  # volume before the long-running non-root service starts.
+  opencode-init:
+    image: ghcr.io/anomalyco/opencode:1.18.18@sha256:f3e00f8e25500150373c817e24b13f2f08e2ccd4cafd53dc3ad4827d47863b6f
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - chown 0:0 /data && chmod 0700 /data && chown 405:100 /data
+    volumes:
+      - opencode-data:/data
+    network_mode: none
+    user: "0:0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    restart: "no"
+
   opencode-agent:
     # M4 exit verified against this exact image (2026-08-16): the CLI's
     # `serve` subcommand was confirmed live (`/global/health` returns the
@@ -94,11 +117,17 @@ services:
       # credential env (e.g. ANTHROPIC_API_KEY) with the pinned image.
       OPENCODE_MODEL_API_KEY: ${OPENCODE_MODEL_API_KEY:?set OPENCODE_MODEL_API_KEY}
       HOME: /home/opencode
+      # Keep persistent OpenCode data outside HOME so Docker never creates
+      # root-owned nested mountpoint parents inside the non-root HOME tmpfs.
+      XDG_DATA_HOME: /data
+    depends_on:
+      opencode-init:
+        condition: service_completed_successfully
     volumes:
       # Dedicated data volume for backend conversation persistence (plan §16);
       # no docker socket, no A directories, no TermFlow credentials, and no
       # arbitrary host workspaces are ever mounted.
-      - opencode-data:/home/opencode/.local/share/opencode
+      - opencode-data:/data
       # The frozen M0.3 config fixture is the only host file mounted, read-only.
       - ../apps/control-plane/tests/fixtures/opencode/opencode-config.yaml:/etc/termflow/opencode-config.yaml:ro
     expose:
@@ -119,7 +148,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777,noexec,nosuid
-      - /home/opencode:size=512m,noexec,nosuid
+      - /home/opencode:size=512m,noexec,nosuid,uid=405,gid=100,mode=0700
     mem_limit: ${OPENCODE_MEM_LIMIT:-2g}
     cpus: ${OPENCODE_CPUS:-2}
     pids_limit: 512
@@ -139,7 +168,10 @@ services:
       # Docker seccomp/AppArmor profiles apply (never "unconfined").
       test:
         - CMD-SHELL
-        - wget -q -O- --user "$$OPENCODE_SERVER_USERNAME" --password "$$OPENCODE_SERVER_PASSWORD" http://127.0.0.1:4096/global/health | grep -q healthy
+        - >-
+          auth="$$(printf '%s:%s' "$$OPENCODE_SERVER_USERNAME" "$$OPENCODE_SERVER_PASSWORD" | base64)";
+          wget -q -O- --header "Authorization: Basic $$auth"
+          http://127.0.0.1:4096/global/health | grep -q healthy
       interval: 10s
       timeout: 3s
       retries: 3

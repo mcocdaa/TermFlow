@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import yaml
@@ -5,8 +6,9 @@ import yaml
 
 def test_compose_keeps_the_hardened_single_worker_deployable_shape() -> None:
     compose = yaml.safe_load(Path("deploy/compose.yaml").read_text())
-    service = compose["services"]["control-plane"]
-    agent = compose["services"]["opencode-agent"]
+    services = compose["services"]
+    service = services["control-plane"]
+    agent = services["opencode-agent"]
     text = Path("deploy/compose.yaml").read_text().lower()
     verify = Path("scripts/verify.sh").read_text().lower()
 
@@ -21,7 +23,24 @@ def test_compose_keeps_the_hardened_single_worker_deployable_shape() -> None:
         "termflow-totp-key:/app/totp-secrets",
     ]
     assert service["healthcheck"]["test"][-1].endswith("/healthz")
-    assert list(compose["services"]) == ["control-plane", "opencode-agent"]
+    assert list(services) == [
+        "control-plane",
+        "opencode-init",
+        "opencode-agent",
+    ]
+
+    agent_init = services["opencode-init"]
+    assert agent_init["image"] == agent["image"]
+    assert agent_init["network_mode"] == "none"
+    assert agent_init["user"] == "0:0"
+    assert agent_init["cap_drop"] == ["ALL"]
+    assert agent_init["cap_add"] == ["CHOWN"]
+    assert agent_init["read_only"] is True
+    assert agent_init["restart"] == "no"
+    assert agent_init["volumes"] == ["opencode-data:/data"]
+    assert agent_init["command"] == [
+        "chown 0:0 /data && chmod 0700 /data && chown 405:100 /data"
+    ]
 
     assert agent["networks"] == ["agent_internal"]
     assert "ports" not in agent
@@ -31,8 +50,44 @@ def test_compose_keeps_the_hardened_single_worker_deployable_shape() -> None:
     assert "PLACEHOLDER" not in agent["image"]
     assert agent["user"] == "405:100"
     assert agent["environment"]["HOME"] == "/home/opencode"
+    assert agent["environment"].get("XDG_DATA_HOME") == "/data"
     assert any("OPENCODE_SERVER_" in key for key in agent["environment"])
-    assert "OPENCODE_SERVER_USERNAME" in agent["healthcheck"]["test"][1]
+    assert agent["volumes"] == [
+        "opencode-data:/data",
+        "../apps/control-plane/tests/fixtures/opencode/opencode-config.yaml:/etc/termflow/opencode-config.yaml:ro",
+    ]
+    assert agent["depends_on"] == {
+        "opencode-init": {"condition": "service_completed_successfully"}
+    }
+    home_tmpfs = next(entry for entry in agent["tmpfs"] if entry.startswith("/home/opencode:"))
+    assert "uid=405" in home_tmpfs
+    assert "gid=100" in home_tmpfs
+    assert "mode=0700" in home_tmpfs
+    healthcheck = agent["healthcheck"]["test"][1]
+    assert "OPENCODE_SERVER_USERNAME" in healthcheck
+    assert "Authorization: Basic" in healthcheck
+    assert "| base64" in healthcheck
+    assert "--user" not in healthcheck
+    assert "--password" not in healthcheck
+
+    opencode_config_text = Path(
+        "apps/control-plane/tests/fixtures/opencode/opencode-config.yaml"
+    ).read_text()
+    assert not any(line.lstrip().startswith("#") for line in opencode_config_text.splitlines())
+    opencode_config = json.loads(opencode_config_text)
+    assert opencode_config["permission"]["*"] == "deny"
+    assert {
+        name for name in opencode_config["permission"] if name.startswith("termflow_")
+    } == {
+        "termflow_list_panes",
+        "termflow_pane_read",
+        "termflow_pane_send_text",
+        "termflow_pane_send_keys",
+        "termflow_watch_create",
+        "termflow_watch_list",
+        "termflow_watch_get",
+        "termflow_watch_cancel",
+    }
 
     environment = service["environment"]
     assert environment["TERMFLOW_STATIC_DIR"] == "/app/frontend-dist"
