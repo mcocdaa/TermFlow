@@ -4635,6 +4635,40 @@ class CleanupJobRepository:
             )
             return list(rows)
 
+    async def list_pending_retry_now(
+        self,
+        *,
+        now: datetime | None = None,
+        limit: int = 50,
+    ) -> list[AgentCleanupJob]:
+        """Pending jobs due now, plus any pending job whose previous attempt
+        failed because no cleanup handler was registered.
+
+        The handlers are registered by the plugin startup; a job that the
+        pre-startup recovery swept before registration recorded that error
+        and a retry backoff.  Once the handlers exist the backoff no longer
+        needs to be honored, so the plugin's first cleanup sweep includes
+        those rows even when they are not due yet.
+        """
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentCleanupJob)
+                .where(
+                    AgentCleanupJob.state == "pending",
+                    or_(
+                        AgentCleanupJob.next_attempt_at.is_(None),
+                        AgentCleanupJob.next_attempt_at <= observed_at,
+                        AgentCleanupJob.last_error.like(
+                            "no cleanup handler registered%"
+                        ),
+                    ),
+                )
+                .order_by(AgentCleanupJob.created_at)
+                .limit(limit)
+            )
+            return list(rows)
+
     async def record_attempt(
         self,
         job_id: UUID,

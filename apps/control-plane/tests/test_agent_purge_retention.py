@@ -15,7 +15,6 @@ from uuid import UUID
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
-
 from termflow_control_plane.agent_contracts import RETENTION_MATRIX, DataClass
 from termflow_control_plane.persistence.models import AgentEvent, AgentMessage
 from termflow_control_plane.persistence.repositories import (

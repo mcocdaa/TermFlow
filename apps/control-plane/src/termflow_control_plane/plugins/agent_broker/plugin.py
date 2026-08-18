@@ -30,6 +30,8 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import cast
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -39,7 +41,13 @@ from termflow_control_plane.api.agent_approvals import router as agent_approvals
 from termflow_control_plane.api.agent_capabilities import get_agent_capabilities
 from termflow_control_plane.api.agent_conversations import router as agent_conversations_router
 from termflow_control_plane.api.agent_stream import router as agent_stream_router
-from termflow_control_plane.persistence.models import AgentBinding, AgentCleanupJob
+from termflow_control_plane.persistence.models import (
+    AgentBinding,
+    AgentCleanupJob,
+)
+from termflow_control_plane.persistence.models import (
+    BackendConversationRef as BackendConversationRefRow,
+)
 from termflow_control_plane.persistence.repositories import RepositoryBundle
 from termflow_control_plane.plugins.agent_broker.agent.inbox import (
     InboxDeliveryStateMachine,
@@ -50,6 +58,12 @@ from termflow_control_plane.plugins.agent_broker.agent.runtime_registry import (
     AgentRuntimeRegistry,
 )
 from termflow_control_plane.plugins.agent_broker.agent.stream_hub import binding_is_closed
+from termflow_control_plane.plugins.agent_broker.agent.turns import (
+    BackendConversationRef,
+    BackendOperationResult,
+    BackendOutcome,
+    ProviderRef,
+)
 from termflow_control_plane.plugins.agent_broker.agent.watches import (
     FiredTrigger,
     WatchEngine,
@@ -73,6 +87,24 @@ _AGENT_CLEANUP_RETRY_BACKOFF = timedelta(minutes=5)
 #: A cleanup handler performs one target_kind's durable deletion work; it
 #: raises when the attempt failed and the job must be retried.
 CleanupJobHandler = Callable[[AgentCleanupJob], Awaitable[None]]
+
+#: Agent deletion tombstone target kinds (plan §15/§17).  ``term`` and
+#: ``installation`` jobs are created by the core Term/Computer delete paths;
+#: the conversation/binding/profile kinds are created by the Agent Broker's
+#: own delete endpoints so a backend (OpenCode) session is never silently
+#: orphaned.
+CLEANUP_TARGET_KINDS = ("term", "installation", "conversation", "binding", "profile")
+
+#: Default interval between cleanup-retry sweeps while the plugin is running
+#: (the loop also sweeps immediately at startup and on every shutdown-safe
+#: stop event).
+_CLEANUP_TICK_SECONDS = 30.0
+
+
+class BackendRuntimeUnavailableError(RuntimeError):
+    """A backend session exists but no runtime pipeline is mapped, so the
+    backend deletion cannot be proven; the rows must stay so the tombstone
+    retry can attempt again (fail closed, plan §17)."""
 
 
 @dataclass
@@ -154,34 +186,14 @@ async def run_agent_recovery(
         logger.exception("Agent run recovery scan failed: %s", exc)
 
     # 3) Pending cleanup tombstones are retried (or completed) in order.
-    handlers = cleanup_handlers or {}
     try:
-        for job in await repositories.cleanup_jobs.list_pending(now=observed):
-            handler = handlers.get(job.target_kind)
-            try:
-                if handler is None:
-                    raise RuntimeError(
-                        "no cleanup handler registered for "
-                        f"target_kind={job.target_kind!r}"
-                    )
-                await handler(job)
-            except Exception as exc:
-                logger.exception(
-                    "Agent cleanup job %s (%s %s) retry failed; scheduling backoff: %s",
-                    job.id,
-                    job.target_kind,
-                    job.target_ref,
-                    exc,
-                )
-                await repositories.cleanup_jobs.record_attempt(
-                    job.id,
-                    next_attempt_at=observed + _AGENT_CLEANUP_RETRY_BACKOFF,
-                    last_error=str(exc) or exc.__class__.__name__,
-                )
-                report.cleanup_jobs_retried += 1
-            else:
-                await repositories.cleanup_jobs.complete(job.id, now=observed)
-                report.cleanup_jobs_completed += 1
+        retried, completed = await run_cleanup_retry(
+            repositories,
+            handlers=cleanup_handlers or {},
+            now=observed,
+        )
+        report.cleanup_jobs_retried = retried
+        report.cleanup_jobs_completed = completed
     except Exception as exc:
         logger.exception("Agent cleanup job scan failed: %s", exc)
 
@@ -197,6 +209,397 @@ async def run_agent_recovery(
             logger.exception("Agent approval recovery failed: %s", exc)
 
     return report
+
+
+async def run_cleanup_retry(
+    repositories: RepositoryBundle,
+    *,
+    handlers: Mapping[str, CleanupJobHandler],
+    now: datetime | None = None,
+    retry_unhandled: bool = False,
+) -> tuple[int, int]:
+    """Retry pending cleanup tombstones through the registered handlers.
+
+    Returns ``(retried, completed)``.  A job whose ``target_kind`` has no
+    handler, or whose handler raises, records an attempt with a retry
+    backoff and stays visible as ``deletion_pending`` (plan §15/§17).
+    ``retry_unhandled`` additionally picks up jobs whose previous attempt
+    failed with "no cleanup handler registered" even while their backoff has
+    not elapsed - the plugin's first sweep after startup uses it because the
+    composition root's pre-startup recovery ran without the handlers, which
+    now exist.
+    """
+    observed = now or datetime.now(UTC)
+    if retry_unhandled:
+        jobs = await repositories.cleanup_jobs.list_pending_retry_now(now=observed)
+    else:
+        jobs = await repositories.cleanup_jobs.list_pending(now=observed)
+    retried = 0
+    completed = 0
+    for job in jobs:
+        handler = handlers.get(job.target_kind)
+        try:
+            if handler is None:
+                raise RuntimeError(
+                    "no cleanup handler registered for "
+                    f"target_kind={job.target_kind!r}"
+                )
+            await handler(job)
+        except Exception as exc:
+            logger.exception(
+                "Agent cleanup job %s (%s %s) retry failed; scheduling backoff: %s",
+                job.id,
+                job.target_kind,
+                job.target_ref,
+                exc,
+            )
+            await repositories.cleanup_jobs.record_attempt(
+                job.id,
+                next_attempt_at=observed + _AGENT_CLEANUP_RETRY_BACKOFF,
+                last_error=str(exc) or exc.__class__.__name__,
+            )
+            retried += 1
+        else:
+            await repositories.cleanup_jobs.complete(job.id, now=observed)
+            completed += 1
+    return retried, completed
+
+
+async def cleanup_retry_loop(
+    repositories: RepositoryBundle,
+    handlers: Mapping[str, CleanupJobHandler],
+    *,
+    tick_seconds: float,
+    stop: asyncio.Event,
+) -> None:
+    """Periodic cleanup-tombstone retry task started by the plugin ``startup``.
+
+    The first sweep runs immediately and re-attempts tombstones whose
+    previous attempt predates the handler registration ("no cleanup handler
+    registered"); afterwards the loop waits ``tick_seconds`` between sweeps
+    and exits promptly when ``stop`` is set.  A failed sweep never kills the
+    task: the error is logged and the next tick retries.
+    """
+    first_sweep = True
+    while True:
+        try:
+            retried, completed = await run_cleanup_retry(
+                repositories,
+                handlers=handlers,
+                retry_unhandled=first_sweep,
+            )
+            first_sweep = False
+            if retried or completed:
+                logger.info(
+                    "Agent cleanup retry: %s tombstones completed, %s retried",
+                    completed,
+                    retried,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Agent cleanup retry sweep failed; retrying next tick")
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=tick_seconds)
+        except TimeoutError:
+            pass
+        if stop.is_set():
+            return
+
+
+def backend_ref_from_row(row: BackendConversationRefRow) -> BackendConversationRef:
+    """Project a persisted backend ref row onto the neutral turns model."""
+    return BackendConversationRef(
+        backend_kind=row.backend_kind,
+        backend_version=cast(str, row.backend_version),
+        runtime_id=row.runtime_id,
+        binding_capability_epoch=row.binding_capability_epoch,
+        provider_ref=ProviderRef(row.provider_ref),
+    )
+
+
+async def record_cleanup_failure(
+    job: AgentCleanupJob,
+    repositories: RepositoryBundle,
+    error: str,
+    *,
+    now: datetime | None = None,
+) -> AgentCleanupJob | None:
+    """Record a failed cleanup attempt with the retry backoff (plan §17).
+
+    The tombstone stays ``pending`` and remains visible as
+    ``deletion_pending``; the next recovery/retry sweep re-attempts it.
+    """
+    observed = now or datetime.now(UTC)
+    return await repositories.cleanup_jobs.record_attempt(
+        job.id,
+        next_attempt_at=observed + _AGENT_CLEANUP_RETRY_BACKOFF,
+        last_error=error,
+    )
+
+
+async def cancel_conversation_runs(
+    repositories: RepositoryBundle,
+    conversation_id: UUID,
+) -> int:
+    """Cancel a conversation's queued/running runs before deletion (plan §17).
+
+    The durable fence is authoritative: every queued/running row is CAS'd to
+    ``cancelled`` so a deletion can never race an in-flight dispatch.  The
+    rows themselves are removed by the cascade when the conversation row is
+    deleted; this transition is the durable cancellation proof that survives
+    even when the row deletion is deferred to the tombstone retry.  Runs are
+    paged so the sweep is complete beyond the repository's default page.
+    """
+    cancelled = 0
+    offset = 0
+    while True:
+        page = await repositories.agent_runs.list_for_conversation(
+            conversation_id, limit=200, offset=offset
+        )
+        for run in page:
+            if run.run_state in ("queued", "running"):
+                updated = await repositories.agent_runs.set_state(
+                    run.id, "cancelled", expected_state=run.run_state
+                )
+                if updated is not None:
+                    cancelled += 1
+        if len(page) < 200:
+            break
+        offset += 200
+    return cancelled
+
+
+async def delete_backend_conversation(
+    repositories: RepositoryBundle,
+    registry: AgentRuntimeRegistry | None,
+    conversation_id: UUID,
+) -> BackendOperationResult | None:
+    """Prove the backend session for ``conversation_id`` is deleted.
+
+    Returns ``None`` when no backend session was ever created (nothing to
+    delete).  Raises :class:`BackendRuntimeUnavailableError` when a session
+    exists but no runtime pipeline is mapped for the conversation's binding
+    (including when no runtime registry is wired at all): the rows must stay
+    so the tombstone retry can attempt again.  Otherwise returns the
+    adapter's outcome (``CONFIRMED`` or not).
+    """
+    ref_row = await repositories.agent_backend_conversations.get_by_conversation(
+        conversation_id
+    )
+    if ref_row is None:
+        return None
+    conversation = await repositories.agent_conversations.get_by_id(conversation_id)
+    pipeline = (
+        registry.pipeline_for(conversation.binding_id)
+        if conversation is not None and registry is not None
+        else None
+    )
+    if pipeline is None:
+        raise BackendRuntimeUnavailableError(
+            f"conversation {conversation_id} has a backend session but no "
+            "mapped runtime pipeline"
+        )
+    return await pipeline.adapter.delete_conversation(backend_ref_from_row(ref_row))
+
+
+async def delete_binding_backend_sessions(
+    repositories: RepositoryBundle,
+    registry: AgentRuntimeRegistry | None,
+    binding_id: UUID,
+) -> list[str]:
+    """Delete every backend session of a binding's conversations.
+
+    Returns the unconfirmed failure messages (empty means everything is
+    confirmed or there is nothing to delete).  Raises
+    :class:`BackendRuntimeUnavailableError` when sessions exist but no
+    runtime pipeline is mapped (including when no runtime registry is wired
+    at all).
+    """
+    refs: list[BackendConversationRef] = []
+    offset = 0
+    while True:
+        page = await repositories.agent_conversations.list_for_binding(
+            binding_id, limit=200, offset=offset
+        )
+        for conversation in page:
+            ref_row = (
+                await repositories.agent_backend_conversations.get_by_conversation(
+                    conversation.id
+                )
+            )
+            if ref_row is not None:
+                refs.append(backend_ref_from_row(ref_row))
+        if len(page) < 200:
+            break
+        offset += 200
+    if not refs:
+        return []
+    pipeline = registry.pipeline_for(binding_id) if registry is not None else None
+    if pipeline is None:
+        raise BackendRuntimeUnavailableError(
+            f"binding {binding_id} has backend sessions but no mapped "
+            "runtime pipeline"
+        )
+    failures: list[str] = []
+    for ref in refs:
+        result = await pipeline.adapter.delete_conversation(ref)
+        if result.outcome is not BackendOutcome.CONFIRMED:
+            failures.append(
+                result.message
+                or f"backend session {ref.provider_ref} deletion unconfirmed"
+            )
+    return failures
+
+
+async def _sweep_binding_agent_rows(
+    repositories: RepositoryBundle, binding_id: UUID
+) -> None:
+    """Defensive sweep for the tombstone retry path: cancel a binding's
+    watches (plan §17 cancels them on Term deletion; the retry path repeats
+    the cancellation so a crash mid-delete never leaves a live watch)."""
+    for watch in await repositories.watches.list_for_binding(binding_id):
+        await repositories.watches.cancel(watch.id)
+
+
+async def _conversation_cleanup_handler(
+    job: AgentCleanupJob,
+    repositories: RepositoryBundle,
+    registry: AgentRuntimeRegistry,
+) -> None:
+    """Complete a conversation deletion tombstone (plan §15/§17).
+
+    The B-side rows are only deleted after the backend session deletion is
+    proven (or after no backend session ever existed), so an OpenCode
+    session is never silently orphaned.  Missing rows mean an earlier
+    attempt already finished the durable work.
+    """
+    conversation_id = UUID(job.target_ref)
+    result = await delete_backend_conversation(repositories, registry, conversation_id)
+    if result is not None and result.outcome is not BackendOutcome.CONFIRMED:
+        raise RuntimeError(result.message or "backend deletion unconfirmed")
+    await repositories.agent_conversations.delete(conversation_id)
+
+
+async def _binding_cleanup_handler(
+    job: AgentCleanupJob,
+    repositories: RepositoryBundle,
+    registry: AgentRuntimeRegistry,
+) -> None:
+    """Complete a binding deletion tombstone (plan §15/§17).
+
+    The binding row is only deleted after every backend session of its
+    conversations is proven deleted; a missing binding row means an earlier
+    attempt already finished the durable work.
+    """
+    binding_id = UUID(job.target_ref)
+    binding = await repositories.agent_bindings.get_by_id(binding_id)
+    if binding is None:
+        return
+    failures = await delete_binding_backend_sessions(repositories, registry, binding_id)
+    if failures:
+        raise RuntimeError("; ".join(failures))
+    await repositories.agent_bindings.delete(binding_id)
+
+
+async def _profile_cleanup_handler(
+    job: AgentCleanupJob,
+    repositories: RepositoryBundle,
+    registry: AgentRuntimeRegistry,
+) -> None:
+    """Complete a profile deletion tombstone (plan §15/§17).
+
+    Every binding of the profile must prove its backend sessions deleted
+    before the profile row is removed (cascading the bindings); a missing
+    profile row means an earlier attempt already finished the durable work.
+    """
+    profile_id = UUID(job.target_ref)
+    if await repositories.agent_profiles.get_by_id(profile_id) is None:
+        return
+    failures: list[str] = []
+    for binding in await repositories.agent_bindings.list_for_profile(profile_id):
+        try:
+            failures.extend(
+                await delete_binding_backend_sessions(repositories, registry, binding.id)
+            )
+        except BackendRuntimeUnavailableError as exc:
+            failures.append(str(exc))
+    if failures:
+        raise RuntimeError("; ".join(failures))
+    await repositories.agent_profiles.delete(profile_id)
+
+
+async def _term_cleanup_handler(
+    job: AgentCleanupJob,
+    repositories: RepositoryBundle,
+    registry: AgentRuntimeRegistry,
+) -> None:
+    """Complete a Term deletion tombstone (created by the core delete path).
+
+    Every surviving Agent binding of the Term is swept (watch cancellation)
+    and deleted; normally the cascade already removed them, so the handler
+    mostly verifies emptiness.  Backend session/volume/log/provider cleanup
+    for the deleted Term cannot be enumerated from B rows after the cascade
+    and stays owned by the deployment layer (plan §16).
+    """
+    del registry  # Term cleanup needs no runtime registry: rows are cascaded.
+    term_id = UUID(job.target_ref)
+    for binding in await repositories.agent_bindings.list_for_term(term_id):
+        await _sweep_binding_agent_rows(repositories, binding.id)
+        await repositories.agent_bindings.delete(binding.id)
+
+
+async def _installation_cleanup_handler(
+    job: AgentCleanupJob,
+    repositories: RepositoryBundle,
+    registry: AgentRuntimeRegistry,
+) -> None:
+    """Complete an installation deletion tombstone (core delete path).
+
+    Sweeps the Agent rows of every surviving Term of the installation; the
+    core path deletes the Terms themselves, and normally the cascade already
+    removed the Agent rows.  Deployment-level volume/log/provider cleanup
+    stays owned by the deployment layer (plan §16).
+    """
+    del registry  # Installation cleanup needs no runtime registry: rows are cascaded.
+    installation_id = UUID(job.target_ref)
+    for instance in await repositories.instances.list_for_installation(installation_id):
+        for binding in await repositories.agent_bindings.list_for_term(instance.id):
+            await _sweep_binding_agent_rows(repositories, binding.id)
+            await repositories.agent_bindings.delete(binding.id)
+
+
+def build_agent_cleanup_handlers(
+    repositories: RepositoryBundle,
+    registry: AgentRuntimeRegistry,
+) -> Mapping[str, CleanupJobHandler]:
+    """The registered deletion-cleanup handlers for every tombstone kind.
+
+    Each handler performs one target_kind's durable deletion work and raises
+    on failure so :func:`run_cleanup_retry` records an attempt with a
+    backoff.  Registered through the plugin's lifecycle hooks so the
+    tombstones created by the delete endpoints (and by the core
+    Term/Computer delete paths) can always complete.
+    """
+
+    def _bind(
+        work: Callable[
+            [AgentCleanupJob, RepositoryBundle, AgentRuntimeRegistry],
+            Awaitable[None],
+        ],
+    ) -> CleanupJobHandler:
+        async def _run(job: AgentCleanupJob) -> None:
+            await work(job, repositories, registry)
+
+        return _run
+
+    return {
+        "term": _bind(_term_cleanup_handler),
+        "installation": _bind(_installation_cleanup_handler),
+        "conversation": _bind(_conversation_cleanup_handler),
+        "binding": _bind(_binding_cleanup_handler),
+        "profile": _bind(_profile_cleanup_handler),
+    }
 
 
 async def _list_active_bindings(
@@ -329,19 +732,31 @@ class AgentBrokerPlugin:
     recovery already fenced stale runs in app.py), and ``shutdown`` stops
     them in reverse.  Because the feature registry only starts enabled
     plugins, all of this wiring is gated by ``agent_broker_enabled``.
+
+    Deletion cleanup (plan §15/§17): ``register_services`` registers the
+    durable deletion-cleanup handlers for every tombstone target kind, and
+    ``startup`` spawns the periodic cleanup-retry loop that drives them.
+    The composition root's pre-startup ``run_agent_recovery`` runs without
+    these handlers, so the loop's first sweep re-attempts any tombstone
+    whose previous attempt failed with "no cleanup handler registered".
     """
 
     id = "agent_broker"
     version = "0.2.0-dev.0"
     requires_core_api = "0.2.0"
 
-    def __init__(self) -> None:
+    def __init__(self, *, cleanup_tick_seconds: float = _CLEANUP_TICK_SECONDS) -> None:
         self._watch_engine: WatchEngine | None = None
         self._runtime_registry: AgentRuntimeRegistry | None = None
         self._sessions: async_sessionmaker[AsyncSession] | None = None
         self._watch_tick_seconds: float = 1.0
         self._watch_tick_task: asyncio.Task[None] | None = None
         self._watch_tick_stop: asyncio.Event | None = None
+        self._repositories: RepositoryBundle | None = None
+        self._cleanup_handlers: dict[str, CleanupJobHandler] = {}
+        self._cleanup_tick_seconds: float = cleanup_tick_seconds
+        self._cleanup_tick_task: asyncio.Task[None] | None = None
+        self._cleanup_tick_stop: asyncio.Event | None = None
 
     def bind_runtime_services(
         self,
@@ -361,9 +776,29 @@ class AgentBrokerPlugin:
         self._runtime_registry = registry
         self._sessions = sessions
         self._watch_tick_seconds = watch_tick_seconds
+        # The cleanup handlers need the persistence bundle; it is rebuilt
+        # from the same session factory the composition root used, so it
+        # shares the same database (repositories are stateless wrappers).
+        self._repositories = RepositoryBundle(sessions)
+
+    @property
+    def cleanup_handlers(self) -> Mapping[str, CleanupJobHandler]:
+        """The deletion-cleanup handlers registered for this plugin instance."""
+        return dict(self._cleanup_handlers)
 
     def register_services(self, context: BFeatureContext) -> None:
-        """Runtime services are attached by the composition root (see above)."""
+        """Register the durable deletion-cleanup handlers (plan §15/§17).
+
+        Runtime services themselves are attached by the composition root
+        (see :meth:`bind_runtime_services`); this hook registers the
+        tombstone handlers so every pending cleanup job - including the
+        ``term``/``installation`` jobs the core delete paths create - has a
+        handler that can complete it.
+        """
+        if self._repositories is not None and self._runtime_registry is not None:
+            self._cleanup_handlers = dict(
+                build_agent_cleanup_handlers(self._repositories, self._runtime_registry)
+            )
 
     def register_routes(self, routes: FeatureRouteRegistry) -> None:
         routes.add_route(
@@ -404,6 +839,12 @@ class AgentBrokerPlugin:
         manifest.add_revision(
             MigrationRevision(id="0008", owner="agent_broker", dependencies=("0007",))
         )
+        manifest.add_revision(
+            MigrationRevision(id="0009", owner="agent_broker", dependencies=("0008",))
+        )
+        manifest.add_revision(
+            MigrationRevision(id="0010", owner="agent_broker", dependencies=("0009",))
+        )
 
     async def startup(self, context: BFeatureContext) -> None:
         """Start the attached runtime services in the spec §3a/§7 order.
@@ -412,7 +853,10 @@ class AgentBrokerPlugin:
         (app.py runs it before feature startup), so the watch engine loads
         its deadline heap and subscribes first, then per-binding pipelines
         activate, then the deadline tick task starts - a fired trigger can
-        never arrive before a pipeline can receive it.
+        never arrive before a pipeline can receive it.  The cleanup-retry
+        loop starts last: its first sweep re-attempts tombstones that the
+        pre-startup recovery could not complete because the handlers did not
+        exist yet.
         """
         if self._watch_engine is None or self._runtime_registry is None:
             return
@@ -429,9 +873,29 @@ class AgentBrokerPlugin:
             ),
             name="agent-watch-deadlines",
         )
+        if self._cleanup_handlers and self._repositories is not None:
+            self._cleanup_tick_stop = asyncio.Event()
+            self._cleanup_tick_task = asyncio.create_task(
+                cleanup_retry_loop(
+                    self._repositories,
+                    self._cleanup_handlers,
+                    tick_seconds=self._cleanup_tick_seconds,
+                    stop=self._cleanup_tick_stop,
+                ),
+                name="agent-cleanup-retry",
+            )
 
     async def shutdown(self) -> None:
         """Stop the runtime services in reverse start order (spec §7)."""
+        cleanup_task, cleanup_stop = self._cleanup_tick_task, self._cleanup_tick_stop
+        self._cleanup_tick_task = None
+        self._cleanup_tick_stop = None
+        if cleanup_task is not None and cleanup_stop is not None:
+            cleanup_stop.set()
+            try:
+                await cleanup_task
+            except asyncio.CancelledError:
+                pass
         tick_task, tick_stop = self._watch_tick_task, self._watch_tick_stop
         self._watch_tick_task = None
         self._watch_tick_stop = None

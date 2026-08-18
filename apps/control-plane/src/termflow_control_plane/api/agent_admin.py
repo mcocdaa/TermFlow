@@ -342,10 +342,62 @@ async def update_agent_profile(
 @router.delete("/profiles/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent_profile(
     profile_id: UUID,
+    http_request: Request,
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
 ) -> Response:
-    if not await repositories.agent_profiles.delete(profile_id):
+    """Delete a profile through the durable tombstone/cleanup path.
+
+    Plan §15/§17 delete contract: a durable cleanup tombstone is created
+    BEFORE the row deletion, the profile's active runs are cancelled, and
+    every backend session of its bindings is proven deleted before any row
+    goes away.  When the backend deletion cannot be proven, the rows stay
+    and the request fails with ``deletion_pending`` while the tombstone
+    keeps retrying.
+    """
+    from termflow_control_plane.api.agent_conversations import get_agent_runtime_registry
+    from termflow_control_plane.plugins.agent_broker.plugin import (
+        BackendRuntimeUnavailableError,
+        delete_binding_backend_sessions,
+        record_cleanup_failure,
+    )
+
+    if await repositories.agent_profiles.get_by_id(profile_id) is None:
         raise TermFlowError("profile_not_found", 404, "The Agent Profile does not exist.")
+    registry = get_agent_runtime_registry(http_request)
+
+    # 1) Durable cleanup tombstone BEFORE the row deletion (plan §15), so a
+    #    crash mid-delete leaves a retryable job instead of orphaned rows.
+    job = await repositories.cleanup_jobs.create(
+        target_kind="profile",
+        target_ref=str(profile_id),
+    )
+
+    # 2) Cancel the profile's active runs and prove every backend session of
+    #    its bindings is gone before any row goes away (plan §17).
+    failures: list[str] = []
+    for binding in await repositories.agent_bindings.list_for_profile(profile_id):
+        for run in await repositories.agent_runs.list_active_for_binding(binding.id):
+            await repositories.agent_runs.set_state(
+                run.id, "cancelled", expected_state=run.run_state
+            )
+        try:
+            failures.extend(
+                await delete_binding_backend_sessions(repositories, registry, binding.id)
+            )
+        except BackendRuntimeUnavailableError as exc:
+            failures.append(str(exc))
+    if failures:
+        await record_cleanup_failure(job, repositories, "; ".join(failures))
+        raise TermFlowError(
+            "deletion_pending",
+            503,
+            "The profile's backend sessions could not be deleted; the "
+            "cleanup job stays pending and will retry.",
+        )
+
+    # 3) Delete the profile row (cascading its bindings and conversations).
+    await repositories.agent_profiles.delete(profile_id)
+    await repositories.cleanup_jobs.complete(job.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -482,10 +534,67 @@ async def update_agent_binding(
 @router.delete("/bindings/{binding_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent_binding(
     binding_id: UUID,
+    http_request: Request,
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
 ) -> Response:
-    if not await repositories.agent_bindings.delete(binding_id):
-        raise TermFlowError("binding_not_found", 404, "The Agent Binding does not exist.")
+    """Delete a binding through the durable tombstone/cleanup path.
+
+    Plan §15/§17 delete contract: the binding's active runs are cancelled
+    first, a durable cleanup tombstone is created BEFORE the row deletion,
+    and every backend session of the binding's conversations is proven
+    deleted before any row goes away.  When the backend deletion cannot be
+    proven, the rows stay and the request fails with ``deletion_pending``
+    while the tombstone keeps retrying.
+    """
+    from termflow_control_plane.api.agent_conversations import get_agent_runtime_registry
+    from termflow_control_plane.plugins.agent_broker.plugin import (
+        BackendRuntimeUnavailableError,
+        delete_binding_backend_sessions,
+        record_cleanup_failure,
+    )
+
+    await _require_binding(binding_id, repositories)
+    registry = get_agent_runtime_registry(http_request)
+
+    # 1) Cancel the binding's active runs before any deletion (plan §17).
+    for run in await repositories.agent_runs.list_active_for_binding(binding_id):
+        await repositories.agent_runs.set_state(
+            run.id, "cancelled", expected_state=run.run_state
+        )
+
+    # 2) Durable cleanup tombstone BEFORE the row deletion (plan §15), so a
+    #    crash mid-delete leaves a retryable job instead of orphaned rows.
+    job = await repositories.cleanup_jobs.create(
+        target_kind="binding",
+        target_ref=str(binding_id),
+    )
+
+    # 3) Prove every backend session of the binding's conversations is gone
+    #    before deleting the rows (an OpenCode session is never orphaned).
+    try:
+        failures = await delete_binding_backend_sessions(
+            repositories, registry, binding_id
+        )
+    except BackendRuntimeUnavailableError as exc:
+        await record_cleanup_failure(job, repositories, str(exc))
+        raise TermFlowError(
+            "binding_runtime_unavailable",
+            503,
+            "The binding has backend sessions but its runtime is not "
+            "available; the cleanup job stays pending.",
+        ) from exc
+    if failures:
+        await record_cleanup_failure(job, repositories, "; ".join(failures))
+        raise TermFlowError(
+            "deletion_pending",
+            503,
+            "The binding's backend sessions could not be deleted; the "
+            "cleanup job stays pending and will retry.",
+        )
+
+    # 4) Delete the binding row (cascading its conversations and events).
+    await repositories.agent_bindings.delete(binding_id)
+    await repositories.cleanup_jobs.complete(job.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
