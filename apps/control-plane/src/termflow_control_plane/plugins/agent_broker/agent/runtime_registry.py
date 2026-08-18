@@ -2,14 +2,19 @@
 
 ``AgentRuntimeRegistry`` resolves each :class:`AgentBinding` to a dedicated
 adapter instance (``OpenCodeAdapter`` with base_url/directory/runtime_id/
-binding_capability_epoch pinned from the binding), proves activation through
-the supervisor's fail-closed ``accept_activation`` gate, and owns the
-per-binding ``AgentPipelineService`` lifecycle (``start_all`` / ``stop_all`` /
-``pipeline_for``).
+binding_capability_epoch pinned from the binding), attests the runtime
+through the supervisor's fail-closed ``register``/``accept_activation``
+gates, and owns the per-binding ``AgentPipelineService`` lifecycle
+(``start_all`` / ``stop_all`` / ``pipeline_for``).
 
-Every binding gets an independent adapter and pipeline instance; the
-``directory``/``runtime_id`` are fixed per binding, which satisfies the
-two-binding isolation of plan gate 6.
+Every binding gets an independent adapter and pipeline instance.  Two
+bindings must never resolve to the same ``(base_url, directory)`` endpoint
+pair: the settings-based default provider is the single-binding reference
+deployment, and the registry refuses a second binding that would share an
+endpoint with an already-mapped binding (plan gate 6 two-binding isolation) -
+a shared directory would let the bindings observe each other's events.
+Multi-binding fleets inject their own endpoint provider with per-binding
+directories.
 """
 
 from __future__ import annotations
@@ -34,11 +39,12 @@ from termflow_control_plane.plugins.agent_broker.agent.pipeline import (
 )
 from termflow_control_plane.plugins.agent_broker.agent.runtime_supervisor import (
     RuntimeNotReadyError,
+    RuntimeSupervisorError,
     SupervisorConnector,
 )
 from termflow_control_plane.plugins.agent_broker.agent.stream_hub import AgentStreamHub
 from termflow_control_plane.plugins.agent_broker.agent.turns import BackendEventScope
-from termflow_control_plane.plugins.protocol import RuntimeRef
+from termflow_control_plane.plugins.protocol import CapabilityRef, RuntimeRef
 
 # M4 pin: the OpenCode backend version B negotiates with the pinned contract
 # (tests/fixtures/opencode/opencode-pin.md); test_opencode_adapter.py pins the
@@ -48,8 +54,12 @@ PINNED_OPENCODE_BACKEND_VERSION = "0.1.0"
 RuntimeEndpointProvider = Callable[[RuntimeRef], tuple[str, str]]
 """Resolve a runtime ref to ``(base_url, directory)``.
 
-The settings-based default serves the single-binding reference deployment; a
-multi-binding fleet injects its own endpoint table (M4.5 spec §6).
+The settings-based default serves the single-binding reference deployment;
+a multi-binding fleet injects its own endpoint table (M4.5 spec §6).
+Whichever provider is used, the registry refuses a second binding that
+resolves to the same ``(base_url, directory)`` as an already-mapped binding
+(plan gate 6): bindings sharing a directory could observe each other's
+events on the runtime's global stream.
 """
 
 AdapterFactory = Callable[..., AgentBackend]
@@ -61,7 +71,15 @@ production uses the default :func:`_build_opencode_adapter`.
 
 
 def _settings_endpoint_provider(settings: Settings) -> RuntimeEndpointProvider:
-    """Default provider: every runtime maps to the reference deployment endpoint."""
+    """Default provider: the single-binding reference deployment endpoint.
+
+    Every runtime resolves to the same ``agent_opencode_base_url`` /
+    ``agent_opencode_directory`` pair.  That is correct only while exactly
+    ONE binding is active: the registry refuses a second binding resolving
+    to the same pair (plan gate 6) instead of letting two bindings observe
+    each other's events through a shared directory.  Multi-binding fleets
+    must inject their own endpoint table with per-binding directories.
+    """
 
     def resolve(runtime_ref: RuntimeRef) -> tuple[str, str]:
         return (settings.agent_opencode_base_url, settings.agent_opencode_directory)
@@ -101,15 +119,19 @@ class _BoundRuntime:
     runtime_ref: RuntimeRef
     runtime_epoch: int
     capability_ref: str | None
+    base_url: str
+    directory: str
 
 
 class AgentRuntimeRegistry:
     """binding → (pipeline, adapter, scope, supervisor gate) mapping with lifecycle.
 
     Every binding gets an independent adapter and pipeline instance (M4.5
-    spec §6).  A binding whose runtime is missing or rejected by the
-    supervisor never enters the mapping and stays disabled (fail closed); the
-    API layer treats an unmapped binding as ``binding_runtime_unavailable``.
+    spec §6).  A binding whose runtime is missing, shares an endpoint with
+    another binding (plan gate 6), or is rejected by the supervisor's
+    ``register`` attestation never enters the mapping and stays disabled
+    (fail closed); the API layer treats an unmapped binding as
+    ``binding_runtime_unavailable``.
     """
 
     def __init__(
@@ -123,8 +145,11 @@ class AgentRuntimeRegistry:
         endpoint_provider: RuntimeEndpointProvider | None = None,
         adapter_factory: AdapterFactory | None = None,
     ) -> None:
-        # None in unit tests: the activation gate stays open, but a binding
-        # still needs a runtime_ref/epoch to build an adapter (spec §6).
+        # None only in focused unit tests: the activation gate stays open,
+        # but a binding still needs runtime fields (and now also a
+        # capability_ref) to build an adapter (spec §6).  The production
+        # composition root always injects a real supervisor, so the
+        # register/accept_activation gates are active in production.
         self._supervisor = supervisor
         self._repositories = repositories
         self._sessions = sessions
@@ -140,14 +165,53 @@ class AgentRuntimeRegistry:
         """Resolve and activate one binding's runtime, fail closed on any doubt.
 
         Resolution order follows M4.5 spec §6: binding runtime fields →
-        endpoint → adapter → capabilities → scope → supervisor
-        ``accept_activation`` gate → pipeline.  Any missing runtime field or a
-        rejected activation raises :class:`RuntimeNotReadyError` and the
-        binding stays unmapped (the constructed adapter is closed so its owned
-        HTTP client is never leaked).
+        endpoint → shared-endpoint isolation guard (plan gate 6) → supervisor
+        ``register`` attestation → adapter → capabilities → scope →
+        supervisor ``accept_activation`` gate → pipeline.  Any missing runtime
+        field, a shared endpoint, or a rejected attestation raises
+        :class:`RuntimeNotReadyError` and the binding stays unmapped (a
+        constructed adapter is closed so its owned HTTP client is never
+        leaked).
         """
         runtime_ref, epoch = self._resolve_binding_runtime(binding)
         base_url, directory = self._endpoint_provider(runtime_ref)
+        # Plan gate 6 (two-binding isolation): a second binding must never
+        # resolve to the same (base_url, directory) as an already-mapped
+        # binding - a shared directory would let the bindings observe each
+        # other's events on the runtime's global stream.  Fail closed with a
+        # reason ``start_all`` records in ``unavailable_bindings``.
+        for other_id, existing in self._bindings.items():
+            if (
+                other_id != binding.id
+                and existing.base_url == base_url
+                and existing.directory == directory
+            ):
+                raise RuntimeNotReadyError(
+                    f"binding {binding.id} resolves to the same runtime endpoint "
+                    f"({base_url}, {directory}) as binding {other_id}; bindings "
+                    "sharing a runtime endpoint could observe each other's "
+                    "events (plan gate 6), so activation fails closed"
+                )
+        capability_ref = (binding.capability_ref or "").strip()
+        if not capability_ref:
+            raise RuntimeNotReadyError(
+                f"binding {binding.id} has no capability_ref; activation fails closed"
+            )
+        if self._supervisor is not None:
+            # Attest the runtime before any adapter is allocated: a
+            # not-ready/epoch-mismatched/conflicting runtime fails closed
+            # without constructing or leaking an HTTP client.
+            try:
+                await self._supervisor.register(
+                    str(binding.id),
+                    runtime_ref,
+                    epoch,
+                    CapabilityRef(capability_ref),
+                )
+            except (RuntimeSupervisorError, ValueError) as exc:
+                raise RuntimeNotReadyError(
+                    f"supervisor attestation failed for binding {binding.id}: {exc}"
+                ) from exc
         adapter_kwargs: dict[str, Any] = {
             "base_url": base_url,
             "directory": directory,
@@ -199,6 +263,8 @@ class AgentRuntimeRegistry:
             runtime_ref=runtime_ref,
             runtime_epoch=epoch,
             capability_ref=binding.capability_ref,
+            base_url=base_url,
+            directory=directory,
         )
         return pipeline
 
