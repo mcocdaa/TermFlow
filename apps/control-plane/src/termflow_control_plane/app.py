@@ -235,7 +235,10 @@ def create_app(*, settings: Settings, database: Database | None = None) -> FastA
         queue_size=settings.connection_queue_size,
         queue_max_bytes=settings.terminal_queue_max_bytes,
     )
-    app.state.event_hub = EventHub(queue_size=settings.event_queue_size)
+    app.state.event_hub = EventHub(
+        queue_size=settings.event_queue_size,
+        queue_max_bytes=settings.event_queue_max_bytes,
+    )
     app.state.terminal_hub = TerminalHub(
         queue_max_messages=settings.terminal_queue_max_messages,
         queue_max_bytes=settings.terminal_queue_max_bytes,

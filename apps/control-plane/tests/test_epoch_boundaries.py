@@ -132,7 +132,7 @@ async def test_event_subscription_consumes_quiet_client_disconnect(tmp_path) -> 
     database = Database(f"sqlite+aiosqlite:///{tmp_path / 'event-disconnect.db'}")
     await database.initialize()
     repositories = RepositoryBundle(database.session_factory)
-    subscriber = await EventHub(queue_size=2).subscribe(instance_id=None, auth_epoch=1)
+    subscriber = await EventHub(queue_size=2, queue_max_bytes=1024 * 1024).subscribe(instance_id=None, auth_epoch=1)
     websocket = _FakeWebSocket({"type": "websocket.disconnect"})
     try:
         await asyncio.wait_for(
@@ -149,7 +149,7 @@ async def test_event_message_checks_persisted_epoch_before_sending(tmp_path) -> 
     database = Database(f"sqlite+aiosqlite:///{tmp_path / 'event-boundary.db'}")
     await database.initialize()
     repositories = RepositoryBundle(database.session_factory)
-    hub = EventHub(queue_size=2)
+    hub = EventHub(queue_size=2, queue_max_bytes=1024 * 1024)
     subscriber = await hub.subscribe(instance_id=None, auth_epoch=1)
     websocket = _FakeWebSocket()
     subscriber.queue.put_nowait(
@@ -193,7 +193,7 @@ async def test_epoch_watcher_retries_after_transient_database_error(monkeypatch)
     repositories = SimpleNamespace(auth_state=auth_state)
     sessions = BrowserSessionStore(ttl=timedelta(minutes=5), capacity=2)
     terminal_hub = TerminalHub(queue_max_messages=2, queue_max_bytes=1024)
-    event_hub = EventHub(queue_size=2)
+    event_hub = EventHub(queue_size=2, queue_max_bytes=1024 * 1024)
     terminal = await terminal_hub.register(uuid4(), session_key=None, auth_epoch=1)
     subscriber = await event_hub.subscribe(instance_id=None, auth_epoch=1)
     stop = asyncio.Event()

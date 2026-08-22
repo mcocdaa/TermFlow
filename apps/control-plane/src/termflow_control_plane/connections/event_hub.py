@@ -9,10 +9,36 @@ from uuid import UUID, uuid4
 from termflow_protocol import WireMessage
 
 
+class BoundedEventQueue:
+    """Message-count and serialized-byte bounded queue for one subscriber."""
+
+    def __init__(self, *, max_messages: int, max_bytes: int) -> None:
+        self._queue: asyncio.Queue[tuple[WireMessage, int]] = asyncio.Queue(
+            maxsize=max_messages
+        )
+        self._max_bytes = max_bytes
+        self._queued_bytes = 0
+
+    def put_nowait(self, message: WireMessage) -> None:
+        size = len(message.model_dump_json().encode("utf-8"))
+        if size > self._max_bytes - self._queued_bytes:
+            raise asyncio.QueueFull
+        self._queue.put_nowait((message, size))
+        self._queued_bytes += size
+
+    async def get(self) -> WireMessage:
+        message, size = await self._queue.get()
+        self._queued_bytes -= size
+        return message
+
+    def empty(self) -> bool:
+        return self._queue.empty()
+
+
 @dataclass(eq=False, slots=True)
 class EventSubscriber:
     instance_id: UUID | None
-    queue: asyncio.Queue[WireMessage]
+    queue: BoundedEventQueue
     id: UUID = field(default_factory=uuid4)
     closed: asyncio.Event = field(default_factory=asyncio.Event)
     close_code: int = 4410
@@ -20,8 +46,9 @@ class EventSubscriber:
 
 
 class EventHub:
-    def __init__(self, *, queue_size: int) -> None:
+    def __init__(self, *, queue_size: int, queue_max_bytes: int) -> None:
         self._queue_size = queue_size
+        self._queue_max_bytes = queue_max_bytes
         self._subscribers: dict[UUID, EventSubscriber] = {}
         self._lock = asyncio.Lock()
         self._auth_epoch = 1
@@ -34,7 +61,10 @@ class EventHub:
     ) -> EventSubscriber:
         subscriber = EventSubscriber(
             instance_id=instance_id,
-            queue=asyncio.Queue(maxsize=self._queue_size),
+            queue=BoundedEventQueue(
+                max_messages=self._queue_size,
+                max_bytes=self._queue_max_bytes,
+            ),
         )
         async with self._lock:
             if auth_epoch == self._auth_epoch:
