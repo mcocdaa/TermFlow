@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 SCRIPT = Path("scripts/security/verify-public-edge.sh")
 REQUIRED_CONTROLS = (
     "308",
