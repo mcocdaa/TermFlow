@@ -99,6 +99,11 @@ def test_compose_keeps_the_hardened_single_worker_deployable_shape() -> None:
     assert environment["TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE"] == (
         "/app/totp-secrets/totp-master-key"
     )
+    # In-container OpenCode reaches B by the agent_internal service name, so
+    # the loopback-only MCP allowlist defaults must be overridden (plan §16).
+    assert environment["TERMFLOW_AGENT_MCP_ALLOWED_HOSTS"] == (
+        "${TERMFLOW_AGENT_MCP_ALLOWED_HOSTS:-control-plane:8000}"
+    )
 
     override = yaml.safe_load(Path("deploy/compose.totp-secret.yaml").read_text())
     assert override["services"]["control-plane"]["environment"][

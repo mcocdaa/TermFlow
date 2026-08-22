@@ -30,6 +30,10 @@ services:
       # OPENCODE_SERVER_* values; both or neither).
       TERMFLOW_AGENT_OPENCODE_USERNAME: ${OPENCODE_SERVER_USERNAME:-}
       TERMFLOW_AGENT_OPENCODE_PASSWORD: ${OPENCODE_SERVER_PASSWORD:-}
+      # MCP endpoint DNS-rebinding allowlist (plan §10/§16): in-container
+      # OpenCode reaches B over agent_internal by the service name, so the
+      # loopback-only defaults would reject every request with 421.
+      TERMFLOW_AGENT_MCP_ALLOWED_HOSTS: ${TERMFLOW_AGENT_MCP_ALLOWED_HOSTS:-control-plane:8000}
     ports:
       # Bind address is configurable: deployments keep the loopback-only
       # default; Docker Desktop (WSL2) verification overrides it to 0.0.0.0
