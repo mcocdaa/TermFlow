@@ -107,9 +107,10 @@ services:
       - --port
       - "4096"
     environment:
-      # The frozen deny-by-default config (M0.3 fixture), consumed read-only
-      # from /etc/termflow (see volumes); not overridable at runtime. The
-      # startup drift guard fails closed on any tool/config divergence.
+      # The frozen deny-by-default config (M0.3 fixture) is canonical in
+      # deploy/ and mounted read-only from /etc/termflow (see volumes); not
+      # overridable at runtime. The startup drift guard fails closed on any
+      # tool/config divergence.
       OPENCODE_CONFIG: /etc/termflow/opencode-config.yaml
       # HTTP Basic auth for the internal B-to-OpenCode connection (official
       # OPENCODE_SERVER_* variables, verified live in M4 exit); values must
@@ -132,8 +133,9 @@ services:
       # no docker socket, no A directories, no TermFlow credentials, and no
       # arbitrary host workspaces are ever mounted.
       - opencode-data:/data
-      # The frozen M0.3 config fixture is the only host file mounted, read-only.
-      - ../apps/control-plane/tests/fixtures/opencode/opencode-config.yaml:/etc/termflow/opencode-config.yaml:ro
+      # The frozen M0.3 config fixture (canonical in deploy/) is the only
+      # host file mounted, read-only.
+      - ./opencode-config.yaml:/etc/termflow/opencode-config.yaml:ro
     expose:
       - "4096"
     networks:

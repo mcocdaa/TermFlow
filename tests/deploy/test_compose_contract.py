@@ -54,7 +54,7 @@ def test_compose_keeps_the_hardened_single_worker_deployable_shape() -> None:
     assert any("OPENCODE_SERVER_" in key for key in agent["environment"])
     assert agent["volumes"] == [
         "opencode-data:/data",
-        "../apps/control-plane/tests/fixtures/opencode/opencode-config.yaml:/etc/termflow/opencode-config.yaml:ro",
+        "./opencode-config.yaml:/etc/termflow/opencode-config.yaml:ro",
     ]
     assert agent["depends_on"] == {
         "opencode-init": {"condition": "service_completed_successfully"}
@@ -70,9 +70,7 @@ def test_compose_keeps_the_hardened_single_worker_deployable_shape() -> None:
     assert "--user" not in healthcheck
     assert "--password" not in healthcheck
 
-    opencode_config_text = Path(
-        "apps/control-plane/tests/fixtures/opencode/opencode-config.yaml"
-    ).read_text()
+    opencode_config_text = Path("deploy/opencode-config.yaml").read_text()
     assert not any(line.lstrip().startswith("#") for line in opencode_config_text.splitlines())
     opencode_config = json.loads(opencode_config_text)
     assert opencode_config["permission"]["*"] == "deny"
