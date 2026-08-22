@@ -7,24 +7,20 @@ export interface PublicEcJwk {
   kid?: string
 }
 
-export interface NativeKeyPort {
+export interface NativePublicKeyPort {
   publicJwk(): Promise<PublicEcJwk>
   thumbprint(): Promise<string>
+}
+
+export interface NativeKeyPort extends NativePublicKeyPort {
   /** Return the raw 64-byte JOSE ES256 signature, never the private key. */
   signJwt(signingInput: Uint8Array): Promise<Uint8Array>
 }
 
-export interface NativeAccessCredential {
-  accessToken: string
+export interface NativeAuthorizationStatus {
+  authorized: true
   expiresAt: string
   tokenType: 'DPoP'
-}
-
-export interface CredentialVaultPort {
-  /** Loads only the short-lived access credential; refresh material stays native. */
-  load(issuer: string): Promise<NativeAccessCredential | null>
-  replace(issuer: string, value: NativeAccessCredential): Promise<void>
-  clear(issuer: string): Promise<void>
 }
 
 export interface AuthorizationBrowserPort {

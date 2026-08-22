@@ -1,9 +1,9 @@
-import type { OAuthDeviceTokenErrorCode, OAuthPublicJwk, OAuthTokenResponse } from '@termflow/client-contracts'
+import type { OAuthDeviceTokenErrorCode, OAuthPublicJwk } from '@termflow/client-contracts'
 import type { DeviceAuthorizationPollInput } from '../api/oauth'
 import { createAuthorizationStateMachine } from './authorizationState'
-import type { AuthorizationStateListener, CredentialVaultPort, NativeAccessCredential } from './ports'
+import type { AuthorizationStateListener, NativeAuthorizationStatus } from './ports'
 
-export type DeviceAuthorizationPollResponse = OAuthTokenResponse | NativeAccessCredential
+export type DeviceAuthorizationPollResponse = NativeAuthorizationStatus
 
 export interface DeviceAuthorizationSessionOptions extends AuthorizationStateListener {
   issuer: string
@@ -15,7 +15,6 @@ export interface DeviceAuthorizationSessionOptions extends AuthorizationStateLis
   /** Alias accepted when callers use the RFC terminology. */
   intervalSeconds?: number
   poll: (input: DeviceAuthorizationPollInput, signal?: AbortSignal) => Promise<DeviceAuthorizationPollResponse>
-  vault: CredentialVaultPort
   /** Platform-provided wait primitive; the shared core never owns timers. */
   sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void>
   now?: () => number
@@ -44,15 +43,6 @@ function abortError(): Error {
   return error
 }
 
-function asCredential(response: DeviceAuthorizationPollResponse, now: () => number): NativeAccessCredential {
-  if ('accessToken' in response) return response
-  return {
-    accessToken: response.access_token,
-    expiresAt: new Date(now() + response.expires_in * 1000).toISOString(),
-    tokenType: response.token_type,
-  }
-}
-
 /**
  * Polls an OAuth device grant without owning transport, timing, or storage.
  * Device code and PKCE material remain in this session's memory only.
@@ -76,7 +66,7 @@ export class DeviceAuthorizationSession {
     this.progress.cancelled()
   }
 
-  /** Returns an HTTP OAuth response or an access-only native response. */
+  /** Returns the tokenless native authorization status. */
   async poll(signal?: AbortSignal): Promise<DeviceAuthorizationPollResponse> {
     const combined = this.combinedSignal(signal)
     let interval = this.initialInterval()
@@ -100,7 +90,6 @@ export class DeviceAuthorizationSession {
           const response = await this.waitWithAbort(this.options.poll(input, combined), combined)
           this.throwIfAborted(combined)
           this.progress.approved()
-          await this.options.vault.replace(this.options.issuer, asCredential(response, this.now))
           this.progress.connected()
           return response
         } catch (error) {
@@ -124,10 +113,9 @@ export class DeviceAuthorizationSession {
     }
   }
 
-  /** Returns the credential shape used by NativeAuthorizationSession/TokenSession. */
-  async authorize(signal?: AbortSignal): Promise<NativeAccessCredential> {
-    const response = await this.poll(signal)
-    return asCredential(response, this.now)
+  /** Returns the tokenless native authorization status. */
+  async authorize(signal?: AbortSignal): Promise<NativeAuthorizationStatus> {
+    return this.poll(signal)
   }
 
   private initialInterval(): number {

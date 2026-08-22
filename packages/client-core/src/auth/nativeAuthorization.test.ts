@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { isValidNativeAuthorizationCallback, NativeAuthorizationSession, parseLoopbackNativeAuthorizationCallback, parseNativeAuthorizationCallback } from './nativeAuthorization'
-import type { AuthorizationBrowserPort, CredentialVaultPort, NativeAccessCredential } from './ports'
+import type { AuthorizationBrowserPort, NativeAuthorizationStatus, NativePublicKeyPort } from './ports'
 import type { AuthorizationState } from './authorizationState'
 
 const browser = (callback: string): AuthorizationBrowserPort => ({
@@ -8,40 +8,50 @@ const browser = (callback: string): AuthorizationBrowserPort => ({
   waitForCallback: vi.fn().mockResolvedValue(callback),
 })
 
-const vault = (): CredentialVaultPort => ({
-  load: vi.fn().mockResolvedValue(null),
-  replace: vi.fn().mockResolvedValue(undefined),
-  clear: vi.fn().mockResolvedValue(undefined),
+const publicKey = (): NativePublicKeyPort => ({
+  publicJwk: async () => ({ kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' }),
+  thumbprint: async () => 'jkt',
 })
 
 describe('NativeAuthorizationSession', () => {
-  it('opens the system browser and accepts only the matching state and transaction', async () => {
-    const callback = 'termflow://auth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111'
-    const port = browser(callback)
-    const store = vault()
+  it('opens the system browser and returns the tokenless status after exchange', async () => {
+    const callback = 'http://127.0.0.1:51234/oauth/callback?state=state-1&transaction_id=11111111-1111-4111-8111-111111111111'
+    const port: AuthorizationBrowserPort = {
+      prepareCallback: vi.fn().mockResolvedValue('http://127.0.0.1:51234/oauth/callback'),
+      open: vi.fn().mockResolvedValue(undefined),
+      waitForCallback: vi.fn().mockResolvedValue(callback),
+    }
     const exchange = vi.fn().mockResolvedValue({
-      accessToken: 'access', expiresAt: '2026-08-02T12:00:00Z', tokenType: 'DPoP',
-    } satisfies NativeAccessCredential)
+      authorized: true, expiresAt: '2026-08-21T12:00:00Z', tokenType: 'DPoP',
+    } satisfies NativeAuthorizationStatus)
     const states: AuthorizationState[] = []
     const session = new NativeAuthorizationSession({
-      issuer: 'https://b.example',
-      authorizeEndpoint: 'https://b.example/api/v1/oauth/authorize',
+      issuer: 'https://termflow.example',
+      authorizeEndpoint: 'https://termflow.example/api/v1/oauth/authorize',
       client: { name: 'TermFlow Desktop', platform: 'linux', version: '0.1.0' },
       scopes: ['terminal.read'],
       browser: port,
-      vault: store,
-      key: { publicJwk: async () => ({ kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' }), thumbprint: async () => 'jkt', signJwt: async () => new Uint8Array() },
+      key: publicKey(),
       createPkce: async () => ({ verifier: 'v'.repeat(43), challenge: 'c'.repeat(43), method: 'S256' }),
       createId: () => 'state-1',
       exchange,
       onState: (state) => states.push(state),
     })
 
-    await expect(session.authorize()).resolves.toMatchObject({ accessToken: 'access' })
+    await expect(session.authorize()).resolves.toEqual({
+      authorized: true,
+      expiresAt: '2026-08-21T12:00:00Z',
+      tokenType: 'DPoP',
+    })
     expect(port.open).toHaveBeenCalledOnce()
     expect(vi.mocked(port.waitForCallback).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(port.open).mock.invocationCallOrder[0]!)
-    expect(exchange).toHaveBeenCalledWith(expect.objectContaining({ transaction: '11111111-1111-4111-8111-111111111111', verifier: 'v'.repeat(43) }))
-    expect(store.replace).toHaveBeenCalledWith('https://b.example', expect.objectContaining({ accessToken: 'access' }))
+    expect(exchange).toHaveBeenCalledWith({
+      issuer: 'https://termflow.example',
+      transaction: expect.any(String),
+      verifier: expect.any(String),
+      redirectUri: expect.stringMatching(/^http:\/\/127\.0\.0\.1:/),
+      key: expect.anything(),
+    })
     expect(states).toEqual(['requesting', 'pending', 'approved', 'connected'])
   })
 
@@ -52,29 +62,28 @@ describe('NativeAuthorizationSession', () => {
       open: vi.fn(),
       waitForCallback: vi.fn().mockResolvedValue(callback),
     }
-    const store = vault()
     const exchange = vi.fn().mockResolvedValue({
-      accessToken: 'access', expiresAt: '2026-08-02T12:00:00Z', tokenType: 'DPoP',
-    } satisfies NativeAccessCredential)
+      authorized: true, expiresAt: '2026-08-21T12:00:00Z', tokenType: 'DPoP',
+    } satisfies NativeAuthorizationStatus)
     const session = new NativeAuthorizationSession({
       issuer: 'https://b.example',
       authorizeEndpoint: 'https://b.example/api/v1/oauth/authorize',
       client: { name: 'TermFlow Desktop', platform: 'windows', version: '0.1.0' },
       scopes: ['terminal.read'],
       browser: port,
-      vault: store,
-      key: { publicJwk: async () => ({ kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' }), thumbprint: async () => 'jkt', signJwt: async () => new Uint8Array() },
+      key: publicKey(),
       createPkce: async () => ({ verifier: 'v'.repeat(43), challenge: 'c'.repeat(43), method: 'S256' }),
       createId: () => 'state-1',
       exchange,
     })
 
-    await expect(session.authorize()).resolves.toMatchObject({ accessToken: 'access' })
+    await expect(session.authorize()).resolves.toEqual({
+      authorized: true, expiresAt: '2026-08-21T12:00:00Z', tokenType: 'DPoP',
+    })
     expect(vi.mocked(port.prepareCallback)).toHaveBeenCalledWith('state-1')
     const opened = vi.mocked(port.open).mock.calls[0]?.[0] ?? ''
     expect(new URL(opened).searchParams.get('redirect_uri')).toBe('http://127.0.0.1:51234/oauth/callback')
     expect(exchange).toHaveBeenCalledWith(expect.objectContaining({ redirectUri: 'http://127.0.0.1:51234/oauth/callback' }))
-    expect(store.replace).toHaveBeenCalledWith('https://b.example', expect.objectContaining({ accessToken: 'access' }))
   })
 
   it('rejects callbacks with the wrong state before token exchange', async () => {
@@ -82,8 +91,7 @@ describe('NativeAuthorizationSession', () => {
     const session = new NativeAuthorizationSession({
       issuer: 'https://b.example', authorizeEndpoint: 'https://b.example/api/v1/oauth/authorize',
       client: { name: 'Desktop', platform: 'linux', version: '1' }, scopes: ['terminal.read'],
-      browser: browser('termflow://auth/callback?state=attacker&transaction_id=11111111-1111-4111-8111-111111111111'), vault: vault(),
-      key: { publicJwk: async () => ({ kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' }), thumbprint: async () => 'jkt', signJwt: async () => new Uint8Array() },
+      browser: browser('termflow://auth/callback?state=attacker&transaction_id=11111111-1111-4111-8111-111111111111'), key: publicKey(),
       createPkce: async () => ({ verifier: 'v'.repeat(43), challenge: 'c'.repeat(43), method: 'S256' }),
       createId: () => 'expected', exchange,
     })
@@ -97,8 +105,7 @@ describe('NativeAuthorizationSession', () => {
     const session = new NativeAuthorizationSession({
       issuer: 'https://b.example', authorizeEndpoint: 'https://b.example/api/v1/oauth/authorize',
       client: { name: 'Desktop', platform: 'linux', version: '1' }, scopes: ['terminal.read'],
-      browser: browser('termflow://auth/callback?state=expected&transaction_id=11111111-1111-4111-8111-111111111111&code=must-not-leak'), vault: vault(),
-      key: { publicJwk: async () => ({ kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' }), thumbprint: async () => 'jkt', signJwt: async () => new Uint8Array() },
+      browser: browser('termflow://auth/callback?state=expected&transaction_id=11111111-1111-4111-8111-111111111111&code=must-not-leak'), key: publicKey(),
       createPkce: async () => ({ verifier: 'v'.repeat(43), challenge: 'c'.repeat(43), method: 'S256' }),
       createId: () => 'expected', exchange,
     })
@@ -119,8 +126,7 @@ describe('NativeAuthorizationSession', () => {
       const session = new NativeAuthorizationSession({
         issuer: 'https://b.example', authorizeEndpoint: 'https://b.example/api/v1/oauth/authorize',
         client: { name: 'Desktop', platform: 'linux', version: '1' }, scopes: ['terminal.read'],
-        browser: browser(callback), vault: vault(),
-        key: { publicJwk: async () => ({ kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' }), thumbprint: async () => 'jkt', signJwt: async () => new Uint8Array() },
+        browser: browser(callback), key: publicKey(),
         createPkce: async () => ({ verifier: 'v'.repeat(43), challenge: 'c'.repeat(43), method: 'S256' }),
         createId: () => 'expected', exchange,
       })
@@ -137,8 +143,7 @@ describe('NativeAuthorizationSession', () => {
     const session = new NativeAuthorizationSession({
       issuer: 'https://b.example', authorizeEndpoint: 'https://b.example/api/v1/oauth/authorize',
       client: { name: 'Desktop', platform: 'linux', version: '1' }, scopes: ['terminal.read'],
-      browser: port, vault: vault(),
-      key: { publicJwk: async () => ({ kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' }), thumbprint: async () => 'jkt', signJwt: async () => new Uint8Array() },
+      browser: port, key: publicKey(),
       createPkce: async () => ({ verifier: 'v'.repeat(43), challenge: 'c'.repeat(43), method: 'S256' }),
       createId: () => 'expected', exchange: vi.fn(),
     })
@@ -160,8 +165,7 @@ describe('NativeAuthorizationSession', () => {
     const session = new NativeAuthorizationSession({
       issuer: 'https://b.example', authorizeEndpoint: 'https://b.example/api/v1/oauth/authorize',
       client: { name: 'Desktop', platform: 'linux', version: '1' }, scopes: ['terminal.read'],
-      browser: port, vault: vault(),
-      key: { publicJwk: async () => ({ kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' }), thumbprint: async () => 'jkt', signJwt: async () => new Uint8Array() },
+      browser: port, key: publicKey(),
       createPkce: async () => ({ verifier: 'v'.repeat(43), challenge: 'c'.repeat(43), method: 'S256' }),
       createId: () => 'expected', exchange: vi.fn(),
     })
