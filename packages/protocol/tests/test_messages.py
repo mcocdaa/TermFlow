@@ -8,8 +8,12 @@ from termflow_protocol import (
     PaneOutputPayload,
     PaneSnapshot,
     TerminalActionPayload,
+    TerminalBinding,
+    TerminalBindingsPayload,
     TerminalInputPayload,
+    TerminalOpenedPayload,
     TerminalOutputPayload,
+    TerminalSizePayload,
     TermRenamePayload,
     TermRenameResultPayload,
     TopologySnapshot,
@@ -295,3 +299,192 @@ def test_term_rename_command_and_result_are_strongly_typed() -> None:
 def test_term_rename_command_validates_display_name(name: str) -> None:
     with pytest.raises(ValidationError):
         TermRenamePayload(command_id=uuid4(), name=name)
+
+
+def _pane(window_id: str = "@0", index: int = 0, **overrides: object) -> PaneSnapshot:
+    values: dict[str, object] = {
+        "pane_id": f"%{index}",
+        "window_id": window_id,
+        "index": index,
+        "title": "pane",
+        "width": 80,
+        "height": 24,
+        "active": True,
+        "dead": False,
+    }
+    values.update(overrides)
+    return PaneSnapshot.model_validate(values)
+
+
+def _window(window_id: str = "@0", index: int = 0, panes: list[PaneSnapshot] | None = None, name: str = "main") -> WindowSnapshot:
+    return WindowSnapshot(
+        window_id=window_id,
+        index=index,
+        name=name,
+        active=True,
+        panes=panes if panes is not None else [_pane(window_id, index)],
+    )
+
+
+def build_topology(**overrides: object) -> TopologySnapshot:
+    window_name = overrides.pop("window_name", "main")
+    pane_title = overrides.pop("pane_title", "pane")
+    current_command = overrides.pop("current_command", None)
+    windows = overrides.pop("windows", None)
+    if windows is None:
+        panes = [_pane("@0", 0)]
+        if pane_title is not None:
+            panes[0] = _pane("@0", 0, title=pane_title, current_command=current_command)
+        windows = [_window("@0", 0, panes=panes, name=window_name)]  # type: ignore[arg-type]
+    values: dict[str, object] = {
+        "session_id": "$0",
+        "session_name": "session",
+        "revision": 1,
+        "windows": windows,
+    }
+    values.update(overrides)
+    return TopologySnapshot.model_validate(values)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("session_name", "s" * 257),
+        ("window_name", "w" * 257),
+        ("pane_title", "p" * 257),
+        ("current_command", "c" * 257),
+    ],
+)
+def test_topology_rejects_oversized_text(field: str, value: str) -> None:
+    with pytest.raises(ValidationError):
+        build_topology(**{field: value})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("session_name", "s" * 256),
+        ("window_name", "w" * 256),
+        ("pane_title", "p" * 256),
+        ("current_command", "c" * 256),
+    ],
+)
+def test_topology_accepts_text_at_the_exact_limit(field: str, value: str) -> None:
+    assert build_topology(**{field: value}) is not None
+
+
+def test_topology_rejects_more_than_64_windows() -> None:
+    windows = [_window(f"@{index}", index) for index in range(65)]
+    with pytest.raises(ValidationError):
+        build_topology(windows=windows)
+
+
+def test_topology_accepts_exactly_64_windows() -> None:
+    windows = [_window(f"@{index}", index) for index in range(64)]
+    assert build_topology(windows=windows) is not None
+
+
+def test_window_rejects_more_than_64_panes() -> None:
+    panes = [_pane("@0", index) for index in range(65)]
+    with pytest.raises(ValidationError):
+        _window("@0", 0, panes=panes)
+
+
+def test_window_accepts_exactly_64_panes() -> None:
+    panes = [_pane("@0", index) for index in range(64)]
+    assert _window("@0", 0, panes=panes) is not None
+
+
+@pytest.mark.parametrize("index", [4096, 2**31])
+def test_topology_rejects_indexes_above_the_tmux_limit(index: int) -> None:
+    with pytest.raises(ValidationError):
+        _pane(index=index)
+    with pytest.raises(ValidationError):
+        _window(index=index)
+
+
+def test_topology_accepts_index_at_the_exact_tmux_limit() -> None:
+    assert _pane(index=4095).index == 4095
+    assert _window(index=4095).index == 4095
+
+
+@pytest.mark.parametrize("dimension", [32768, 2**31])
+def test_topology_rejects_dimensions_above_the_screen_limit(dimension: int) -> None:
+    for field in ("width", "height", "left", "top"):
+        with pytest.raises(ValidationError):
+            _pane(**{field: dimension})
+
+
+def test_topology_accepts_dimensions_at_the_exact_screen_limit() -> None:
+    pane = _pane(width=32767, height=32767, left=32767, top=32767)
+    assert pane.width == 32767
+
+
+def test_topology_rejects_revision_above_63_bits() -> None:
+    with pytest.raises(ValidationError):
+        build_topology(revision=2**63)
+
+
+def test_topology_accepts_revision_at_the_63_bit_limit() -> None:
+    assert build_topology(revision=2**63 - 1).revision == 2**63 - 1
+
+
+def _capabilities(count: int) -> tuple[str, ...]:
+    return tuple(f"capability_{index}" for index in range(count))
+
+
+def test_bridge_hello_rejects_more_than_64_capabilities() -> None:
+    with pytest.raises(ValidationError):
+        BridgeHelloPayload(name="term", capabilities=_capabilities(65))
+    with pytest.raises(ValidationError):
+        BridgeHelloPayload(name="term", capabilities=("UPPER_CASE",))
+    with pytest.raises(ValidationError):
+        BridgeHelloPayload(name="term", capabilities=("x" * 65,))
+    with pytest.raises(ValidationError):
+        BridgeHelloPayload(name="term", capabilities=("",))
+
+
+def test_bridge_hello_accepts_capabilities_at_the_exact_limit() -> None:
+    payload = BridgeHelloPayload(name="term", capabilities=_capabilities(64))
+    assert len(payload.capabilities) == 64
+
+
+def _bindings(count: int) -> list[TerminalBinding]:
+    return [TerminalBinding(action="select_left", tooltip=f"b{index}") for index in range(count)]
+
+
+def test_terminal_bindings_reject_more_than_128_entries() -> None:
+    with pytest.raises(ValidationError):
+        TerminalBindingsPayload(terminal_id=uuid4(), prefix="C-b", bindings=_bindings(129))
+
+
+def test_terminal_bindings_accept_exactly_128_entries() -> None:
+    payload = TerminalBindingsPayload(terminal_id=uuid4(), prefix="C-b", bindings=_bindings(128))
+    assert len(payload.bindings) == 128
+
+
+def test_terminal_binding_key_is_bounded_to_128_characters() -> None:
+    with pytest.raises(ValidationError):
+        TerminalBinding(action="select_left", key="k" * 129, tooltip="t")
+    assert TerminalBinding(action="select_left", key="k" * 128, tooltip="t").key == "k" * 128
+
+
+@pytest.mark.parametrize("model", ["opened", "size"])
+def test_terminal_dimensions_are_bounded(model: str, ) -> None:
+    terminal_id = uuid4()
+    with pytest.raises(ValidationError):
+        if model == "opened":
+            TerminalOpenedPayload(terminal_id=terminal_id, stream_id=uuid4(), rows=32768, cols=80)
+        else:
+            TerminalSizePayload(terminal_id=terminal_id, rows=32768, cols=80)
+    if model == "opened":
+        payload = TerminalOpenedPayload(terminal_id=terminal_id, stream_id=uuid4(), rows=32767, cols=32767)
+    else:
+        payload = TerminalSizePayload(terminal_id=terminal_id, rows=32767, cols=32767)
+    assert payload.rows == 32767
+
+
+def test_tmux_ids_are_bounded_to_32_characters() -> None:
+    long_number = "9" * 32
+    with pytest.raises(ValidationError):
+        _pane(window_id="@" + long_number)

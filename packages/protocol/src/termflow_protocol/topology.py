@@ -4,9 +4,26 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-SessionId = Annotated[str, StringConstraints(pattern=r"^\$[0-9]+$")]
-WindowId = Annotated[str, StringConstraints(pattern=r"^@[0-9]+$")]
-PaneId = Annotated[str, StringConstraints(pattern=r"^%[0-9]+$")]
+MAX_TOPOLOGY_WINDOWS = 64
+MAX_PANES_PER_WINDOW = 64
+MAX_TOPOLOGY_TEXT_CHARS = 256
+MAX_TMUX_INDEX = 4095
+MAX_TMUX_DIMENSION = 32767
+MAX_TOPOLOGY_REVISION = 2**63 - 1
+
+SessionId = Annotated[
+    str,
+    StringConstraints(pattern=r"^\$[0-9]+$", max_length=32),
+]
+WindowId = Annotated[
+    str,
+    StringConstraints(pattern=r"^@[0-9]+$", max_length=32),
+]
+PaneId = Annotated[
+    str,
+    StringConstraints(pattern=r"^%[0-9]+$", max_length=32),
+]
+TopologyText = Annotated[str, StringConstraints(max_length=MAX_TOPOLOGY_TEXT_CHARS)]
 
 
 class PaneSnapshot(BaseModel):
@@ -14,13 +31,13 @@ class PaneSnapshot(BaseModel):
 
     pane_id: PaneId
     window_id: WindowId
-    index: int = Field(ge=0)
-    title: str
-    width: int = Field(ge=1)
-    height: int = Field(ge=1)
-    left: int = Field(default=0, ge=0)
-    top: int = Field(default=0, ge=0)
-    current_command: str | None = None
+    index: int = Field(ge=0, le=MAX_TMUX_INDEX)
+    title: TopologyText
+    width: int = Field(ge=1, le=MAX_TMUX_DIMENSION)
+    height: int = Field(ge=1, le=MAX_TMUX_DIMENSION)
+    left: int = Field(default=0, ge=0, le=MAX_TMUX_DIMENSION)
+    top: int = Field(default=0, ge=0, le=MAX_TMUX_DIMENSION)
+    current_command: TopologyText | None = None
     active: bool
     dead: bool
 
@@ -29,10 +46,10 @@ class WindowSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     window_id: WindowId
-    index: int = Field(ge=0)
-    name: str
+    index: int = Field(ge=0, le=MAX_TMUX_INDEX)
+    name: TopologyText
     active: bool
-    panes: list[PaneSnapshot]
+    panes: list[PaneSnapshot] = Field(max_length=MAX_PANES_PER_WINDOW)
 
     @model_validator(mode="after")
     def pane_windows_match(self) -> "WindowSnapshot":
@@ -47,9 +64,9 @@ class TopologySnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     session_id: SessionId
-    session_name: str
-    revision: int = Field(ge=0)
-    windows: list[WindowSnapshot]
+    session_name: TopologyText
+    revision: int = Field(ge=0, le=MAX_TOPOLOGY_REVISION)
+    windows: list[WindowSnapshot] = Field(max_length=MAX_TOPOLOGY_WINDOWS)
 
     @model_validator(mode="after")
     def window_ids_are_unique(self) -> "TopologySnapshot":
