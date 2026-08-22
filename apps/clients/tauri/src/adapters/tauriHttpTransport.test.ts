@@ -29,18 +29,27 @@ describe('createTauriHttpTransport', () => {
     serverConfig.current = 'https://b.example'
   })
 
-  it('retries one resource request with the server DPoP nonce', async () => {
-    invoke
-      .mockResolvedValueOnce(nativeResponse({ status: 401, headers: { 'dpop-nonce': 'nonce-1' } }))
-      .mockResolvedValueOnce(nativeResponse({ body: { ok: true } }))
+  it('never retries in JavaScript because Rust owns the DPoP nonce retry', async () => {
+    invoke.mockResolvedValue(nativeResponse({ status: 401, headers: { 'dpop-nonce': 'nonce-1' } }))
 
     const response = await createTauriHttpTransport().request('/api/v1/dashboard', { method: 'GET' })
 
-    expect(response.status).toBe(200)
-    expect(response.body).toEqual({ ok: true })
-    const calls = invoke.mock.calls.filter(([command]) => command === 'native_http_request')
-    expect(calls).toHaveLength(2)
-    expect(calls[1]).toEqual(['native_http_request', expect.objectContaining({ nonce: 'nonce-1' })])
+    expect(response.status).toBe(401)
+    expect(invoke.mock.calls.filter(([command]) => command === 'native_http_request')).toHaveLength(1)
+  })
+
+  it('never sends caller headers or a DPoP nonce in the invoke payload', async () => {
+    invoke.mockResolvedValue(nativeResponse({ body: { ok: true } }))
+
+    await createTauriHttpTransport().request('/api/v1/dashboard', {
+      method: 'GET',
+      headers: { 'x-custom': 'ignored' },
+    })
+
+    const call = invoke.mock.calls.find(([command]) => command === 'native_http_request')
+    expect(call).toBeDefined()
+    expect(call?.[1]).not.toHaveProperty('headers')
+    expect(call?.[1]).not.toHaveProperty('nonce')
   })
 
   it('keeps device-code creation public before a credential exists', async () => {
@@ -55,7 +64,7 @@ describe('createTauriHttpTransport', () => {
     const response = await createTauriHttpTransport().request('/api/v1/dashboard', { method: 'GET' })
 
     expect(response.status).toBe(401)
-    expect(invoke.mock.calls.filter(([command]) => command === 'native_http_request')).toHaveLength(2)
+    expect(invoke.mock.calls.filter(([command]) => command === 'native_http_request')).toHaveLength(1)
   })
 
   it('exposes response headers through a case-insensitive reader', async () => {

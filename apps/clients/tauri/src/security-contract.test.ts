@@ -53,6 +53,19 @@ describe('Tauri security composition', () => {
     expect(shell).not.toContain('println!')
   })
 
+  it('constrains the native HTTP client and production CSP', () => {
+    const rust = readFileSync(resolve(import.meta.dirname, '../src-tauri/src/auth.rs'), 'utf8')
+    const config = JSON.parse(readFileSync(resolve(import.meta.dirname, '../src-tauri/tauri.conf.json'), 'utf8')) as { app: { security: { csp: string } } }
+    expect(rust).toContain('reqwest::redirect::Policy::none()')
+    expect(rust).toContain('const NATIVE_HTTP_REQUEST_MAX_BYTES: usize = 256 * 1024;')
+    expect(rust).toContain('const NATIVE_HTTP_RESPONSE_MAX_BYTES: usize = 1024 * 1024;')
+    expect(rust).toContain('fn response_header_allowed(name: &str) -> bool')
+    const csp = config.app.security.csp
+    expect(csp).not.toMatch(/\bhttps:/)
+    expect(csp).not.toMatch(/\bwss:/)
+    expect(csp).toContain('connect-src ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*')
+  })
+
   it('clears native refresh credentials only through a controlled Rust command', () => {
     const rust = readFileSync(resolve(import.meta.dirname, '../src-tauri/src/auth.rs'), 'utf8')
     const shell = readFileSync(resolve(import.meta.dirname, '../src-tauri/src/lib.rs'), 'utf8')

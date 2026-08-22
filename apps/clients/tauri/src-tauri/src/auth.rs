@@ -26,6 +26,8 @@ use std::sync::OnceLock;
 
 const KEYRING_SERVICE: &str = "io.termflow.client";
 const ACCESS_EARLY_SECONDS: i64 = 60;
+const NATIVE_HTTP_REQUEST_MAX_BYTES: usize = 256 * 1024;
+const NATIVE_HTTP_RESPONSE_MAX_BYTES: usize = 1024 * 1024;
 
 /// The protocol only accepts loopback HTTP callbacks on explicit ephemeral
 /// ports, so the listener must bind inside that range for the browser handoff
@@ -58,13 +60,29 @@ struct AccessState {
     expires_at_unix: i64,
 }
 
-#[derive(Default)]
 pub struct NativeAuthState {
     access: Mutex<HashMap<String, AccessState>>,
     nonces: Mutex<HashMap<String, String>>,
     callback_listeners: Mutex<HashMap<String, PendingCallbackListener>>,
     refresh_gate: tokio::sync::Mutex<()>,
     http: Client,
+}
+
+impl Default for NativeAuthState {
+    fn default() -> Self {
+        let http = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .expect("native HTTP client configuration must be valid");
+        Self {
+            access: Mutex::new(HashMap::new()),
+            nonces: Mutex::new(HashMap::new()),
+            callback_listeners: Mutex::new(HashMap::new()),
+            refresh_gate: tokio::sync::Mutex::new(()),
+            http,
+        }
+    }
 }
 
 /// A bound loopback callback listener waiting for the browser handoff. The
@@ -786,18 +804,33 @@ pub struct NativeHttpResponse {
     body: Option<Value>,
 }
 
+fn response_header_allowed(name: &str) -> bool {
+    matches!(
+        name,
+        "content-type" | "dpop-nonce" | "retry-after" | "x-request-id"
+    )
+}
+
+fn append_response_chunk(buffer: &mut Vec<u8>, chunk: &[u8]) -> Result<(), String> {
+    if chunk.len() > NATIVE_HTTP_RESPONSE_MAX_BYTES.saturating_sub(buffer.len()) {
+        return Err(safe_error("response_too_large"));
+    }
+    buffer.extend_from_slice(chunk);
+    Ok(())
+}
+
 /// The only WebView-visible HTTP channel. The Rust side pins the target to
 /// the configured issuer origin and `/api/` prefix (or the public bootstrap
 /// paths), signs DPoP locally, and never hands the raw access token to JS.
+/// It accepts no caller-supplied headers or nonce, follows no redirects, and
+/// caps request and response bodies in bytes before any JSON parsing.
 #[tauri::command]
 pub async fn native_http_request(
     state: State<'_, NativeAuthState>,
     issuer: String,
     path: String,
     method: String,
-    headers: Option<HashMap<String, String>>,
     body: Option<Value>,
-    nonce: Option<String>,
 ) -> Result<NativeHttpResponse, String> {
     let issuer = canonical_issuer(&issuer)?;
     let _ = assert_http_target(&issuer, &path)?;
@@ -814,7 +847,17 @@ pub async fn native_http_request(
     } else {
         remembered_dpop_nonce(&state, &issuer)?
     };
-    let effective_nonce = nonce.or(remembered);
+    let body_bytes = match &body {
+        Some(value) => {
+            let bytes =
+                serde_json::to_vec(value).map_err(|_| safe_error("request_body_invalid"))?;
+            if bytes.len() > NATIVE_HTTP_REQUEST_MAX_BYTES {
+                return Err(safe_error("request_too_large"));
+            }
+            Some(bytes)
+        }
+        None => None,
+    };
 
     let send = |request_nonce: Option<String>| -> Result<reqwest::RequestBuilder, String> {
         let mut builder = match method.as_str() {
@@ -824,9 +867,6 @@ pub async fn native_http_request(
             "DELETE" => state.http.delete(&url),
             _ => return Err(safe_error("method_not_allowed")),
         };
-        for (name, value) in headers.iter().flatten() {
-            builder = builder.header(name, value);
-        }
         if !is_public {
             let key = signing_key(&issuer)?;
             let proof = dpop_proof(
@@ -843,13 +883,15 @@ pub async fn native_http_request(
                 )
                 .header("DPoP", proof);
         }
-        if let Some(value) = &body {
-            builder = builder.json(value);
+        if let Some(bytes) = &body_bytes {
+            builder = builder
+                .header("Content-Type", "application/json")
+                .body(bytes.clone());
         }
         Ok(builder)
     };
 
-    let first = send(effective_nonce.clone())?
+    let first = send(remembered.clone())?
         .send()
         .await
         .map_err(|_| safe_error("request_failed"))?;
@@ -882,6 +924,7 @@ pub async fn native_http_request(
     let response_headers = response
         .headers()
         .iter()
+        .filter(|(name, _)| response_header_allowed(name.as_str()))
         .map(|(name, value)| {
             (
                 name.as_str().to_owned(),
@@ -889,12 +932,23 @@ pub async fn native_http_request(
             )
         })
         .collect::<HashMap<String, String>>();
-    let body_value = if response_headers
+    let content_type = response_headers
         .get("content-type")
-        .unwrap_or(&String::new())
-        .contains("application/json")
-    {
-        response.json::<Value>().await.map(Some).unwrap_or(None)
+        .cloned()
+        .unwrap_or_default();
+    let mut body_buffer: Vec<u8> = Vec::new();
+    if content_type.contains("application/json") {
+        let mut stream = response.bytes_stream();
+        use futures_util::StreamExt;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|_| safe_error("response_failed"))?;
+            append_response_chunk(&mut body_buffer, &chunk)?;
+        }
+    }
+    let body_value = if content_type.contains("application/json") {
+        serde_json::from_slice::<Value>(&body_buffer)
+            .map(Some)
+            .unwrap_or(None)
     } else {
         None
     };
@@ -922,6 +976,30 @@ mod tests {
         assert!(value.get("refreshToken").is_none());
         assert!(value.get("authorization").is_none());
         assert!(value.get("dpop").is_none());
+    }
+
+    #[test]
+    fn native_http_exposes_only_safe_response_headers() {
+        for allowed in ["content-type", "dpop-nonce", "retry-after", "x-request-id"] {
+            assert!(response_header_allowed(allowed));
+        }
+        for forbidden in [
+            "set-cookie",
+            "authorization",
+            "proxy-authenticate",
+            "location",
+        ] {
+            assert!(!response_header_allowed(forbidden));
+        }
+    }
+
+    #[test]
+    fn native_http_response_body_is_bounded_byte_by_byte() {
+        let mut buffer: Vec<u8> = Vec::new();
+        let chunk = vec![0_u8; NATIVE_HTTP_RESPONSE_MAX_BYTES];
+        append_response_chunk(&mut buffer, &chunk).unwrap();
+        let overflow = append_response_chunk(&mut buffer, &[1_u8]);
+        assert_eq!(overflow, Err("response_too_large".to_owned()));
     }
 
     #[test]
