@@ -4,7 +4,7 @@ import { createApiClient, TerminalSession, type TerminalScheduler } from '@termf
 import type { ClientRuntime } from '@termflow/client-ui'
 import { createTauriHttpTransport } from './adapters/tauriHttpTransport'
 import { createTauriTerminalTransport } from './adapters/tauriTerminalTransport'
-import { clearNativeCredentials } from './adapters/tauriCredentialVault'
+import { clearNativeCredentials } from './adapters/tauriCredentialControl'
 import { serverConfig } from './serverConfig'
 
 export async function createTauriRuntime(): Promise<ClientRuntime> {

@@ -1,7 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { createMemoryAccessVault } from './adapters/memoryAccessVault'
 import { canonicalAuthorizeEndpoint, canonicalIssuer } from './serverConfig'
 
 describe('Tauri security composition', () => {
@@ -10,16 +9,13 @@ describe('Tauri security composition', () => {
     expect(entrypoint).toContain('#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]')
   })
 
-  it('keeps short-lived access in memory and exposes no browser credential storage', async () => {
-    const vault = createMemoryAccessVault()
-    await vault.replace('https://b.example', { accessToken: 'short-lived', expiresAt: '2026-08-02T12:00:00Z', tokenType: 'DPoP' })
-    await expect(vault.load('https://b.example')).resolves.toMatchObject({ accessToken: 'short-lived' })
-    await vault.clear('https://b.example')
-    await expect(vault.load('https://b.example')).resolves.toBeNull()
-
-    const source = ['runtime.ts', 'nativeAuth.ts', 'adapters/memoryAccessVault.ts'].map((file) => readFileSync(resolve(import.meta.dirname, file), 'utf8')).join('\n')
+  it('keeps credentials entirely outside the WebView source tree', () => {
+    const source = ['runtime.ts', 'nativeAuth.ts'].map((file) => readFileSync(resolve(import.meta.dirname, file), 'utf8')).join('\n')
     expect(source).not.toMatch(/localStorage|sessionStorage|indexedDB/i)
     expect(source).not.toMatch(/refreshToken\s*:/)
+    expect(source).not.toMatch(/CredentialVault|NativeAccessCredential|accessToken/)
+    expect(existsSync(resolve(import.meta.dirname, 'adapters/memoryAccessVault.ts'))).toBe(false)
+    expect(existsSync(resolve(import.meta.dirname, 'adapters/tauriCredentialVault.ts'))).toBe(false)
   })
 
   it('reports the logical package version independently of platform bundle versions', () => {
@@ -45,11 +41,11 @@ describe('Tauri security composition', () => {
     const rust = readFileSync(resolve(import.meta.dirname, '../src-tauri/src/auth.rs'), 'utf8')
     const shell = readFileSync(resolve(import.meta.dirname, '../src-tauri/src/lib.rs'), 'utf8')
     expect(main).toContain('@termflow/client-ui')
-    expect(rust).toContain('struct AccessCredential')
-    const accessShape = rust.slice(rust.indexOf('struct AccessCredential'), rust.indexOf('struct AccessState'))
-    expect(accessShape).not.toContain('refresh')
-    const deviceExchange = rust.slice(rust.indexOf('pub async fn native_exchange_device_code'), rust.indexOf('pub async fn native_refresh_access'))
-    expect(deviceExchange).toContain('Result<AccessCredential, String>')
+    expect(rust).toContain('struct NativeAuthorizationStatus')
+    const statusShape = rust.slice(rust.indexOf('struct NativeAuthorizationStatus'), rust.indexOf('struct AccessState'))
+    expect(statusShape).not.toContain('access_token')
+    const deviceExchange = rust.slice(rust.indexOf('pub async fn native_exchange_device_code'), rust.indexOf('pub fn native_clear_credentials'))
+    expect(deviceExchange).toContain('Result<NativeAuthorizationStatus, String>')
     expect(deviceExchange).not.toContain('TokenResponse, String')
     expect(rust).not.toContain('println!')
     expect(rust).not.toContain('dbg!')

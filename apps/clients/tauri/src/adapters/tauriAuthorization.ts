@@ -2,17 +2,16 @@ import { invoke } from '@tauri-apps/api/core'
 import { onOpenUrl } from '@tauri-apps/plugin-deep-link'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { isValidNativeAuthorizationCallback } from '@termflow/client-core'
-import type { AuthorizationBrowserPort, NativeAccessCredential, NativeKeyPort, PublicEcJwk } from '@termflow/client-core'
+import type { AuthorizationBrowserPort, NativeAuthorizationStatus, NativePublicKeyPort, PublicEcJwk } from '@termflow/client-core'
 import { logNativeEvent, sanitizeNativeDetail } from '../diagnostics'
 
 const LOOPBACK_PORT_MIN = 49152
 const LOOPBACK_PORT_MAX = 65535
 
-export function createTauriKey(issuer: string): NativeKeyPort {
+export function createTauriPublicKey(issuer: string): NativePublicKeyPort {
   return {
     publicJwk: () => invoke<PublicEcJwk>('native_public_jwk', { issuer }),
     thumbprint: () => invoke<string>('native_key_thumbprint', { issuer }),
-    signJwt: async (input) => new Uint8Array(await invoke<number[]>('native_sign_jwt', { issuer, signingInput: Array.from(input) })),
   }
 }
 
@@ -137,9 +136,9 @@ export function tauriAuthorizationBrowser(options: TauriAuthorizationBrowserOpti
   }
 }
 
-export async function exchangeAuthorization(input: { issuer: string; transaction: string; verifier: string; redirectUri: string }): Promise<NativeAccessCredential> {
+export async function exchangeAuthorization(input: { issuer: string; transaction: string; verifier: string; redirectUri: string }): Promise<NativeAuthorizationStatus> {
   try {
-    return await invoke<NativeAccessCredential>('native_exchange_authorization', {
+    return await invoke<NativeAuthorizationStatus>('native_exchange_authorization', {
       request: {
         issuer: input.issuer, transactionId: input.transaction, codeVerifier: input.verifier, redirectUri: input.redirectUri,
       },
@@ -151,9 +150,9 @@ export async function exchangeAuthorization(input: { issuer: string; transaction
 }
 
 /** Device-code exchange runs in Rust so it can sign DPoP before a credential exists. */
-export function pollDeviceAuthorization(input: { issuer: string; deviceCode: string; codeVerifier: string; publicJwk: PublicEcJwk }, signal?: AbortSignal): Promise<NativeAccessCredential> {
+export function pollDeviceAuthorization(input: { issuer: string; deviceCode: string; codeVerifier: string; publicJwk: PublicEcJwk }, signal?: AbortSignal): Promise<NativeAuthorizationStatus> {
   if (signal?.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'))
-  return invoke<NativeAccessCredential>('native_exchange_device_code', {
+  return invoke<NativeAuthorizationStatus>('native_exchange_device_code', {
     request: {
       issuer: input.issuer,
       deviceCode: input.deviceCode,
@@ -166,8 +165,4 @@ export function pollDeviceAuthorization(input: { issuer: string; deviceCode: str
     }
     throw error
   })
-}
-
-export async function refreshAuthorization(issuer: string): Promise<NativeAccessCredential> {
-  return invoke<NativeAccessCredential>('native_refresh_access', { issuer })
 }

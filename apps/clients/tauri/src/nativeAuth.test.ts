@@ -7,9 +7,8 @@ vi.mock('@tauri-apps/plugin-os', () => ({ platform: () => 'linux', arch: () => '
 vi.mock('./serverConfig', () => ({
   serverConfig: { current: 'https://relay.example.com', replace: vi.fn().mockResolvedValue(undefined) },
 }))
-vi.mock('./adapters/tauriCredentialVault', () => ({ createTauriCredentialVault: () => ({ load: vi.fn(), replace: vi.fn(), clear: vi.fn() }) }))
 vi.mock('./adapters/tauriAuthorization', () => ({
-  createTauriKey: vi.fn(),
+  createTauriPublicKey: vi.fn(),
   exchangeAuthorization: vi.fn(),
   tauriAuthorizationBrowser: vi.fn(),
   pollDeviceAuthorization: vi.fn(),
