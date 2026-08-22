@@ -71,7 +71,6 @@ def test_serve_runs_without_tty_and_stops_cleanly(tmp_path) -> None:
                 "server_url": "http://127.0.0.1:1",
                 "installation_id": str(installation_id),
                 "installation_token": "dummy-token",
-                "allow_insecure_http": True,
             }
         ),
         encoding="utf-8",

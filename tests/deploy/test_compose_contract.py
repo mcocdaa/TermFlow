@@ -142,7 +142,6 @@ def test_node_image_initializes_managed_mounts_then_drops_privileges() -> None:
     for optional_environment in (
         "TERMFLOW_SERVER",
         "TERMFLOW_CODE",
-        "TERMFLOW_ALLOW_INSECURE_HTTP",
         "TERMFLOW_NEW",
     ):
         assert f"${{{optional_environment}:-}}" in entrypoint

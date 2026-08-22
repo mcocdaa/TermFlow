@@ -69,24 +69,10 @@ def login(
         help="Single-use Computer registration code.",
     ),
     force: bool = typer.Option(False, "--force", help="Replace an existing Installation login."),
-    allow_insecure_http: bool = typer.Option(
-        False,
-        "--allow-insecure-http",
-        help=(
-            "Permit a plain-HTTP Control Plane URL on a trusted LAN. "
-            "WARNING: credentials and terminal traffic are unencrypted."
-        ),
-    ),
 ) -> None:
     """Enroll this computer with one Control Plane."""
 
-    if allow_insecure_http and urlsplit(server).scheme == "http":
-        typer.echo(
-            "WARNING: connecting to a plain-HTTP Control Plane. "
-            "Enrollment tokens and terminal traffic will be sent unencrypted "
-            "and can be intercepted on the network."
-        )
-    normalized_server = validate_server_url(server, allow_insecure_http=allow_insecure_http)
+    normalized_server = validate_server_url(server)
     store = ConfigStore.default()
     if store.exists() and not force:
         stored = store.load()
@@ -103,7 +89,6 @@ def login(
             ControlPlaneClient().enroll(
                 normalized_server,
                 enrollment_token,
-                allow_insecure_http=allow_insecure_http,
             )
         )
     except Exception:
@@ -118,7 +103,6 @@ def login(
             "server_url": normalized_server,
             "installation_id": response.installation_id,
             "installation_token": response.installation_token,
-            "allow_insecure_http": allow_insecure_http,
         }
     )
     store.save(config)
@@ -135,9 +119,10 @@ def _transport_insecure() -> bool:
     """Whether the Control Plane transport is plaintext; false before login."""
 
     try:
-        return ConfigStore.default().load().allow_insecure_http
+        installation = ConfigStore.default().load()
     except ConfigNotFound:
         return False
+    return urlsplit(str(installation.server_url)).scheme == "http"
 
 
 def _status_payload(record: LocalInstance, *, insecure: bool) -> dict[str, object]:
