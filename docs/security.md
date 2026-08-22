@@ -66,9 +66,12 @@ token 不放 URL。B 不持久化终端输入、输出、屏幕快照或录像�
 终端输入审计（来源会话、累计字节数）以聚合日志写入 stdout 并进入容器日志系统，不落
 SQLite；`docker logs` 由 Compose 的 `max-size` 配置轮转。
 
-A 端 `--allow-insecure-http` 会以明文传输注册凭据与终端流量：该开关只输出警告并标记
-`status`/日志为 `insecure`，不会拒绝公网 HTTP 目标。仅应在受信任的专用局域网使用；公网
-部署必须使用 HTTPS。
+A 端的明文传输边界：Plaintext HTTP is supported only on literal loopback hosts
+(`127.0.0.1`, `localhost`, and `::1`) for local development. Every non-loopback
+Control Plane URL requires HTTPS. There is no command-line or persisted-config
+override。旧配置里的 `allow_insecure_http` 开关会在读取时被移除或拒绝：值为
+`false` 的旧文件按新格式加载，值为 `true` 的旧文件报错并提示重新执行
+`termflow login`；该开关不再写入新配置。
 
 每个 Term 同时只有一个可输入的远程 tmux client，新连接显式替换旧连接。单帧最大
 64 KiB，并有输入速率、队列和背压上限。远程连接关闭只 detach 代理 client，不能结束

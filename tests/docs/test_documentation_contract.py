@@ -58,6 +58,14 @@ def test_current_operator_docs_do_not_recommend_removed_runtime_variables() -> N
     assert "TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE" not in Path(".env.example").read_text()
 
 
+def test_security_guide_defines_the_loopback_only_plaintext_boundary() -> None:
+    security = Path("docs/security.md").read_text()
+
+    assert "Plaintext HTTP is supported only on literal loopback hosts" in security
+    assert "--allow-insecure-http" not in security
+    assert "trusted LAN" not in security
+
+
 def test_operator_docs_keep_current_install_release_and_native_contracts() -> None:
     current_docs = "\n".join(
         Path(path).read_text()
