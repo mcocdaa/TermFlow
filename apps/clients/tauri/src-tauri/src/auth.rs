@@ -44,10 +44,10 @@ pub struct PublicJwk {
     y: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AccessCredential {
-    access_token: String,
+pub struct NativeAuthorizationStatus {
+    authorized: bool,
     expires_at: String,
     token_type: &'static str,
 }
@@ -134,50 +134,6 @@ pub(crate) fn canonical_issuer(value: &str) -> Result<String, String> {
     Ok(url.origin().ascii_serialization())
 }
 
-fn assert_api_target(issuer: &str, target: &str) -> Result<Url, String> {
-    let url = Url::parse(target).map_err(|_| safe_error("url_invalid"))?;
-    if url.username() != "" || url.password().is_some() {
-        return Err(safe_error("url_not_allowed"));
-    }
-    let base = Url::parse(issuer).map_err(|_| safe_error("issuer_invalid"))?;
-    if url.origin() != base.origin() {
-        return Err(safe_error("url_not_allowed"));
-    }
-    if !url.path().starts_with("/api/") {
-        return Err(safe_error("url_not_allowed"));
-    }
-    Ok(url)
-}
-
-fn validate_dpop_signing_input(input: &[u8]) -> Result<(), String> {
-    let text = std::str::from_utf8(input).map_err(|_| safe_error("signing_input_invalid"))?;
-    let mut parts = text.split('.');
-    let header_segment = parts.next().ok_or(safe_error("signing_input_invalid"))?;
-    let payload_segment = parts.next().ok_or(safe_error("signing_input_invalid"))?;
-    if parts.next().is_some() {
-        return Err(safe_error("signing_input_invalid"));
-    }
-    let header = decode_jwt_segment(header_segment)?;
-    if header.get("typ").and_then(Value::as_str) != Some("dpop+jwt")
-        || header.get("alg").and_then(Value::as_str) != Some("ES256")
-    {
-        return Err(safe_error("signing_input_invalid"));
-    }
-    let payload = decode_jwt_segment(payload_segment)?;
-    for field in ["jti", "htm", "htu"] {
-        if !payload.get(field).and_then(Value::as_str).is_some() {
-            return Err(safe_error("signing_input_invalid"));
-        }
-    }
-    Ok(())
-}
-
-fn decode_jwt_segment(segment: &str) -> Result<Value, String> {
-    let bytes = URL_SAFE_NO_PAD
-        .decode(segment)
-        .map_err(|_| safe_error("signing_input_invalid"))?;
-    serde_json::from_slice(&bytes).map_err(|_| safe_error("signing_input_invalid"))
-}
 fn issuer_key(issuer: &str, kind: &str) -> String {
     format!(
         "{}.{}",
@@ -342,11 +298,11 @@ fn dpop_proof(
         URL_SAFE_NO_PAD.encode(signature.to_bytes())
     ))
 }
-fn access_credential(value: &AccessState) -> AccessCredential {
+fn authorization_status(value: &AccessState) -> NativeAuthorizationStatus {
     let timestamp = time::OffsetDateTime::from_unix_timestamp(value.expires_at_unix)
         .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-    AccessCredential {
-        access_token: value.access_token.clone(),
+    NativeAuthorizationStatus {
+        authorized: true,
         expires_at: timestamp
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_default(),
@@ -420,7 +376,7 @@ async fn store_token_response(
     state: &NativeAuthState,
     issuer: &str,
     response: TokenResponse,
-) -> Result<AccessCredential, String> {
+) -> Result<NativeAuthorizationStatus, String> {
     keyring_entry(issuer, "refresh")?
         .set_secret(response.refresh_token.as_bytes())
         .map_err(|_| safe_error("secure_store_unavailable"))?;
@@ -428,7 +384,7 @@ async fn store_token_response(
         access_token: response.access_token,
         expires_at_unix: now_unix()? + response.expires_in,
     };
-    let result = access_credential(&access);
+    let result = authorization_status(&access);
     state
         .access
         .lock()
@@ -436,7 +392,10 @@ async fn store_token_response(
         .insert(issuer.to_owned(), access);
     Ok(result)
 }
-async fn refresh_access(state: &NativeAuthState, issuer: &str) -> Result<AccessCredential, String> {
+async fn refresh_access(
+    state: &NativeAuthState,
+    issuer: &str,
+) -> Result<NativeAuthorizationStatus, String> {
     let refresh = keyring_entry(issuer, "refresh")?
         .get_secret()
         .map_err(|_| safe_error("authorization_required"))?;
@@ -490,18 +449,10 @@ pub fn native_key_thumbprint(issuer: String) -> Result<String, String> {
     Ok(thumbprint(&public_jwk(&signing_key(&issuer)?)?))
 }
 #[tauri::command]
-pub fn native_sign_jwt(issuer: String, signing_input: Vec<u8>) -> Result<Vec<u8>, String> {
-    let issuer = canonical_issuer(&issuer)?;
-    validate_dpop_signing_input(&signing_input)?;
-    let signature: Signature = signing_key(&issuer)?.sign(&signing_input);
-    Ok(signature.to_bytes().to_vec())
-}
-
-#[tauri::command]
 pub async fn native_exchange_authorization(
     state: State<'_, NativeAuthState>,
     request: NativeAuthorizationExchangeRequest,
-) -> Result<AccessCredential, String> {
+) -> Result<NativeAuthorizationStatus, String> {
     let NativeAuthorizationExchangeRequest {
         issuer,
         transaction_id,
@@ -520,7 +471,7 @@ pub async fn native_exchange_authorization(
 pub async fn native_exchange_device_code(
     state: State<'_, NativeAuthState>,
     request: NativeDeviceExchangeRequest,
-) -> Result<AccessCredential, String> {
+) -> Result<NativeAuthorizationStatus, String> {
     let NativeDeviceExchangeRequest {
         issuer,
         device_code,
@@ -767,16 +718,6 @@ async fn respond_http(
     stream.flush().await
 }
 
-#[tauri::command]
-pub async fn native_refresh_access(
-    state: State<'_, NativeAuthState>,
-    issuer: String,
-) -> Result<AccessCredential, String> {
-    let issuer = canonical_issuer(&issuer)?;
-    let _refresh_guard = state.refresh_gate.lock().await;
-    refresh_access(&state, &issuer).await
-}
-
 /// Removes the refresh credential for one canonical issuer. The device P-256
 /// key is intentionally retained so a later authorization keeps the same
 /// device identity without exposing that key to the WebView.
@@ -787,47 +728,6 @@ pub fn native_clear_credentials(
 ) -> Result<(), String> {
     let issuer = canonical_issuer(&issuer)?;
     clear_native_credentials(&state, &issuer)
-}
-
-#[tauri::command]
-pub async fn native_request_headers(
-    state: State<'_, NativeAuthState>,
-    issuer: String,
-    method: String,
-    url: String,
-    nonce: Option<String>,
-) -> Result<NativeHeaders, String> {
-    let issuer = canonical_issuer(&issuer)?;
-    assert_api_target(&issuer, &url)?;
-    let access = current_access(&state, &issuer).await?;
-    let nonce = match nonce {
-        Some(value) => {
-            remember_dpop_nonce(&state, &issuer, &value)?;
-            Some(value)
-        }
-        None => remembered_dpop_nonce(&state, &issuer)?,
-    };
-    let proof = dpop_proof(
-        &signing_key(&issuer)?,
-        &method,
-        &url,
-        nonce.as_deref(),
-        Some(&access.access_token),
-    )?;
-    Ok(NativeHeaders {
-        authorization: format!("DPoP {}", access.access_token),
-        dpop: proof,
-    })
-}
-
-#[tauri::command]
-pub fn native_remember_dpop_nonce(
-    state: State<'_, NativeAuthState>,
-    issuer: String,
-    nonce: String,
-) -> Result<(), String> {
-    let issuer = canonical_issuer(&issuer)?;
-    remember_dpop_nonce(&state, &issuer, &nonce)
 }
 
 fn is_public_api_path(path: &str) -> bool {
@@ -1010,6 +910,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn native_authorization_status_serializes_only_public_state() {
+        let value = serde_json::to_value(NativeAuthorizationStatus {
+            authorized: true,
+            expires_at: "2026-08-21T12:00:00Z".to_owned(),
+            token_type: "DPoP",
+        })
+        .unwrap();
+        assert_eq!(value["authorized"], true);
+        assert!(value.get("accessToken").is_none());
+        assert!(value.get("refreshToken").is_none());
+        assert!(value.get("authorization").is_none());
+        assert!(value.get("dpop").is_none());
+    }
+
+    #[test]
     fn public_jwk_accepts_owned_ipc_payload() {
         let public: PublicJwk =
             serde_json::from_str(r#"{"kty":"EC","crv":"P-256","alg":"ES256","x":"x","y":"y"}"#)
@@ -1064,16 +979,6 @@ mod tests {
     }
 
     #[test]
-    fn api_target_must_match_issuer_origin_and_api_prefix() {
-        let issuer = "https://b.example";
-        assert!(assert_api_target(issuer, "https://b.example/api/v1/dashboard").is_ok());
-        assert!(assert_api_target(issuer, "https://attacker.example/api/v1/dashboard").is_err());
-        assert!(assert_api_target(issuer, "https://b.example/other").is_err());
-        assert!(assert_api_target(issuer, "https://b.example/").is_err());
-        assert!(assert_api_target(issuer, "https://user:pass@b.example/api/v1/dashboard").is_err());
-    }
-
-    #[test]
     fn http_target_allows_public_paths_without_api_prefix() {
         let issuer = "https://b.example";
         assert!(assert_http_target(issuer, "/api/v1/dashboard").is_ok());
@@ -1083,27 +988,6 @@ mod tests {
         assert!(assert_http_target(issuer, "/not-api").is_err());
         assert!(assert_http_target(issuer, "//attacker.example/api/v1/x").is_err());
         assert!(assert_http_target(issuer, "/api/v1/../secret").is_ok());
-    }
-
-    #[test]
-    fn dpop_signing_input_must_be_two_part_dpop_jwt() {
-        let key = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
-        let jwk = public_jwk(&key).unwrap();
-        let header = jwt_segment(&json!({"typ": "dpop+jwt", "alg": "ES256", "jwk": jwk})).unwrap();
-        let claims =
-            jwt_segment(&json!({"jti": "abc", "htm": "GET", "htu": "https://b.example/api"}))
-                .unwrap();
-        let valid = format!("{header}.{claims}");
-        assert!(validate_dpop_signing_input(valid.as_bytes()).is_ok());
-        assert!(validate_dpop_signing_input(b"not-a-jwt".as_slice()).is_err());
-        let missing_htu = jwt_segment(&json!({"jti": "abc", "htm": "GET"})).unwrap();
-        assert!(validate_dpop_signing_input(format!("{header}.{missing_htu}").as_bytes()).is_err());
-        let wrong_alg =
-            jwt_segment(&json!({"typ": "dpop+jwt", "alg": "RS256", "jwk": {}})).unwrap();
-        assert!(validate_dpop_signing_input(format!("{wrong_alg}.{claims}").as_bytes()).is_err());
-        assert!(
-            validate_dpop_signing_input(format!("{header}.{claims}.extra").as_bytes()).is_err()
-        );
     }
 
     #[test]

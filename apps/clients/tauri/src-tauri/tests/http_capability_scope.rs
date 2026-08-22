@@ -10,6 +10,24 @@ fn capability_document(capability: &str) -> Value {
 }
 
 #[test]
+fn credential_export_commands_are_never_registered_in_the_invoke_handler() {
+    let lib_source =
+        fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"))
+            .expect("read lib.rs");
+    for forbidden in [
+        "auth::native_sign_jwt,",
+        "auth::native_refresh_access,",
+        "auth::native_request_headers,",
+        "auth::native_remember_dpop_nonce,",
+    ] {
+        assert!(
+            !lib_source.contains(forbidden),
+            "forbidden IPC command: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn native_network_capabilities_are_removed_because_rust_owns_all_webview_traffic() {
     for capability in ["default.json", "mobile.json"] {
         let document = capability_document(capability);
