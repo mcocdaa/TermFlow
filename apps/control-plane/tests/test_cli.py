@@ -115,6 +115,26 @@ def test_serve_rejects_multiple_workers() -> None:
     assert "exactly one worker" in result.output
 
 
+def test_serve_disables_uvicorn_proxy_header_rewriting(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(*args: object, **kwargs: object) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr("termflow_control_plane.cli.uvicorn.run", fake_run)
+    result = CliRunner().invoke(
+        app,
+        ["serve", "--host", "127.0.0.1", "--port", "8123"],
+        env={
+            "TERMFLOW_ADMIN_TOKEN": ADMIN_TOKEN,
+            "TERMFLOW_ALLOW_INSECURE_LOOPBACK": "true",
+        },
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured.get("proxy_headers") is False
+
+
 def test_auth_totp_reset_aborts_without_explicit_interactive_confirmation(tmp_path: Path) -> None:
     database_path = tmp_path / "reset-abort.db"
     database_url = f"sqlite+aiosqlite:///{database_path}"

@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from threading import Lock
 
-from fastapi import Request
+from starlette.requests import HTTPConnection
 
 from termflow_control_plane.errors import TermFlowError
 
@@ -34,10 +34,10 @@ class _Bucket:
     updated_at: float
 
 
-def direct_peer_source(request: Request) -> str:
+def direct_peer_source(connection: HTTPConnection) -> str:
     """Return only the ASGI peer address, deliberately ignoring proxy headers."""
 
-    return request.client.host if request.client is not None else "unknown-peer"
+    return connection.client.host if connection.client is not None else "unknown-peer"
 
 
 def _first_forwarded_address(value: str | None) -> str | None:
@@ -50,19 +50,20 @@ def _first_forwarded_address(value: str | None) -> str | None:
         return None
 
 
-def client_source(request: Request) -> str:
+def client_source(connection: HTTPConnection) -> str:
     """Resolve the authentication source, honoring X-Forwarded-For only when trusted.
 
     The reverse proxy deployment option (TERMFLOW_TRUST_PROXY=true) is the only
     path that reads forwarded headers; by default only the direct peer is used.
     An unparseable first forwarded address falls back to the direct peer so an
-    attacker-supplied header can never widen the rate-limit budget.
+    attacker-supplied header can never widen the rate-limit budget. HTTP
+    requests and WebSocket connections resolve through this one function.
     """
 
-    if not getattr(request.app.state.settings, "trust_proxy", False):
-        return direct_peer_source(request)
-    forwarded = _first_forwarded_address(request.headers.get("X-Forwarded-For"))
-    return forwarded or direct_peer_source(request)
+    if not getattr(connection.app.state.settings, "trust_proxy", False):
+        return direct_peer_source(connection)
+    forwarded = _first_forwarded_address(connection.headers.get("X-Forwarded-For"))
+    return forwarded or direct_peer_source(connection)
 
 
 class AuthRateLimiter:

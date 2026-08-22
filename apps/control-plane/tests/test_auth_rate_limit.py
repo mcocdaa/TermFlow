@@ -6,11 +6,14 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from starlette.datastructures import Headers
+from starlette.requests import HTTPConnection
 from termflow_control_plane.auth.rate_limit import (
     AuthRateLimiter,
     client_source,
     direct_peer_source,
 )
+from termflow_control_plane.auth.sessions import authenticate_admin_websocket
 from termflow_control_plane.errors import TermFlowError
 
 
@@ -286,3 +289,86 @@ def test_real_browser_login_enforces_backoff_and_emits_safe_audit(client: TestCl
     assert "a-different-secret" not in serialized
     assert "REJECTED" in serialized
     assert "RATE_LIMITED" in serialized
+
+
+def _connection(
+    scope_type: str,
+    *,
+    trust_proxy: bool,
+    xff: str | None = None,
+) -> HTTPConnection:
+    headers = [(b"x-forwarded-for", xff.encode())] if xff else []
+    scope = {
+        "type": scope_type,
+        "client": ("127.0.0.1", 54321),
+        "headers": headers,
+        "app": SimpleNamespace(
+            state=SimpleNamespace(settings=SimpleNamespace(trust_proxy=trust_proxy))
+        ),
+    }
+    return HTTPConnection(scope)
+
+
+@pytest.mark.parametrize("scope_type", ["http", "websocket"])
+def test_client_source_resolves_http_and_websocket_connections_identically(
+    scope_type: str,
+) -> None:
+    trusted = _connection(scope_type, trust_proxy=True, xff="198.51.100.12")
+    untrusted = _connection(scope_type, trust_proxy=False, xff="198.51.100.12")
+    malformed = _connection(scope_type, trust_proxy=True, xff="not-an-ip")
+
+    assert client_source(trusted) == "198.51.100.12"
+    assert client_source(untrusted) == "127.0.0.1"
+    assert client_source(malformed) == "127.0.0.1"
+
+
+class _RecordingLimiter:
+    def __init__(self, *, limited: bool) -> None:
+        self.seen: list[tuple[str, str]] = []
+        self._limited = limited
+
+    def check(self, purpose: str, source: str) -> None:
+        self.seen.append((purpose, source))
+        if self._limited:
+            raise TermFlowError(
+                code="rate_limited",
+                status_code=429,
+                message="Authentication is temporarily unavailable.",
+                retry_after=1,
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("trust_proxy", "expected_source"),
+    [(True, "203.0.113.7"), (False, "127.0.0.1")],
+)
+async def test_admin_websocket_limiter_uses_forwarded_source_only_when_trusted(
+    trust_proxy: bool,
+    expected_source: str,
+) -> None:
+    limiter = _RecordingLimiter(limited=True)
+
+    class _StubWebsocket:
+        def __init__(self) -> None:
+            self.headers = Headers(raw=[(b"x-forwarded-for", b"203.0.113.7")])
+            self.cookies: dict[str, str] = {}
+            self.client = SimpleNamespace(host="127.0.0.1")
+            self.app = SimpleNamespace(
+                state=SimpleNamespace(
+                    auth_rate_limiter=limiter,
+                    settings=SimpleNamespace(trust_proxy=trust_proxy),
+                )
+            )
+
+    result = await authenticate_admin_websocket(
+        _StubWebsocket(),  # type: ignore[arg-type]
+        settings=SimpleNamespace(trust_proxy=trust_proxy),  # type: ignore[arg-type]
+        store=None,  # type: ignore[arg-type]
+        repositories=None,  # type: ignore[arg-type]
+        dpop=None,  # type: ignore[arg-type]
+        required_scope="terminal.read",
+    )
+
+    assert result.close_code == 4429
+    assert limiter.seen == [("protected_websocket", expected_source)]

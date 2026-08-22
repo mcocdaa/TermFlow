@@ -58,8 +58,10 @@ socket 的同 OS 用户进程视为可信。`termflow kill` 只操作精确解�
 DNS、TLS、反向代理和可选 mTLS 由部署者的外部边缘服务负责，TermFlow 容器只接收代理转发的
 HTTP/WS。`TERMFLOW_PUBLIC_BASE_URL` 是用户、A、Web C 和原生客户端共同使用的 canonical
 origin；添加电脑返回的登录命令也从它生成。反向代理部署时认证限速默认按直连 IP 计源，
-所有用户共享代理 IP 的预算；仅在信任代理正确追加 `X-Forwarded-For` 时显式设置
-`TERMFLOW_TRUST_PROXY=true` 才会按转发头计源。非回环的明文 `PUBLIC_BASE_URL` 会在启动时
+所有用户共享代理 IP 的预算。仅当 B 只能经由可信反向代理访问、且该代理覆写（而不是追加
+或保留）`X-Forwarded-For` 时，才可显式设置 `TERMFLOW_TRUST_PROXY=true` 按转发头计源；
+HTTP 请求与 WebSocket 连接的认证限速使用同一个来源解析函数，Uvicorn 不做代理头预改写。
+非回环的明文 `PUBLIC_BASE_URL` 会在启动时
 拒绝；HTTPS 部署自动附加 HSTS 响应头。
 token 不放 URL。B 不持久化终端输入、输出、屏幕快照或录像；SQLite 和审计只含身份、
 字节数、动作、结果等元数据。A 的短期输出环只存在于 Bridge 内存，进程退出即消失。

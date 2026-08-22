@@ -114,5 +114,6 @@ def serve(
         host=host,
         port=port,
         workers=1,
+        proxy_headers=False,
         ws_max_size=settings.terminal_max_frame_bytes * 8,
     )
