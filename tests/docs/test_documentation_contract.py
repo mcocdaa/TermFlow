@@ -66,6 +66,20 @@ def test_security_guide_defines_the_loopback_only_plaintext_boundary() -> None:
     assert "trusted LAN" not in security
 
 
+def test_security_guide_describes_the_mechanically_enforced_native_boundary() -> None:
+    security = " ".join(Path("docs/security.md").read_text().split())
+
+    assert (
+        "The Tauri WebView never receives access tokens, refresh tokens, DPoP proofs,"
+        " private-key signatures, or authorization headers." in security
+    )
+    assert "Rust returns only public-key metadata and tokenless authorization status." in security
+    assert (
+        "Authenticated API requests are performed by the bounded same-origin native HTTP command."
+        in security
+    )
+
+
 def test_operator_docs_keep_current_install_release_and_native_contracts() -> None:
     current_docs = "\n".join(
         Path(path).read_text()

@@ -77,10 +77,14 @@ override。旧配置里的 `allow_insecure_http` 开关会在读取时被移除�
 64 KiB，并有输入速率、队列和背压上限。远程连接关闭只 detach 代理 client，不能结束
 tmux server/session 或 Pane 进程。
 
-原生 C 的所有 HTTP 与 WebSocket 流量都由 Rust 侧统一发出：WebView 不再持有
-`http`/`websocket` 插件权限，`native_request_headers`/`native_http_request`/
-`native_terminal_connect` 会把目标严格限定为配置 issuer 的 origin 与 `/api/` 路径前缀，
-Access Token 不进入 JavaScript 环境；DPoP 签名输入被限定为规范 JWT 结构。客户端日志在
+原生 C 的所有 HTTP 与 WebSocket 流量都由 Rust 侧统一发出：The Tauri WebView never
+receives access tokens, refresh tokens, DPoP proofs, private-key signatures, or
+authorization headers. Rust returns only public-key metadata and tokenless
+authorization status. Authenticated API requests are performed by the bounded
+same-origin native HTTP command. Rust 侧把目标严格限定为配置 issuer 的 origin 与
+`/api/` 路径前缀（外加固定的公开 bootstrap 路径），不跟随重定向，请求/响应体分别
+限制在 256 KiB 与 1 MiB，响应头只透传 `content-type`、`dpop-nonce`、`retry-after`
+与 `x-request-id`，并按收到的 `DPoP-Nonce` 在原生侧完成唯一一次重试。客户端日志在
 Rust 统一脱敏后落盘。
 
 安装与供应链：Release 产物携带 GitHub Artifact Attestations（build provenance），镜像
