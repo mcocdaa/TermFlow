@@ -316,7 +316,12 @@ def _pane(window_id: str = "@0", index: int = 0, **overrides: object) -> PaneSna
     return PaneSnapshot.model_validate(values)
 
 
-def _window(window_id: str = "@0", index: int = 0, panes: list[PaneSnapshot] | None = None, name: str = "main") -> WindowSnapshot:
+def _window(
+    window_id: str = "@0",
+    index: int = 0,
+    panes: list[PaneSnapshot] | None = None,
+    name: str = "main",
+) -> WindowSnapshot:
     return WindowSnapshot(
         window_id=window_id,
         index=index,
@@ -470,7 +475,9 @@ def test_terminal_binding_key_is_bounded_to_128_characters() -> None:
 
 
 @pytest.mark.parametrize("model", ["opened", "size"])
-def test_terminal_dimensions_are_bounded(model: str, ) -> None:
+def test_terminal_dimensions_are_bounded(
+    model: str,
+) -> None:
     terminal_id = uuid4()
     with pytest.raises(ValidationError):
         if model == "opened":
@@ -478,7 +485,9 @@ def test_terminal_dimensions_are_bounded(model: str, ) -> None:
         else:
             TerminalSizePayload(terminal_id=terminal_id, rows=32768, cols=80)
     if model == "opened":
-        payload = TerminalOpenedPayload(terminal_id=terminal_id, stream_id=uuid4(), rows=32767, cols=32767)
+        payload = TerminalOpenedPayload(
+            terminal_id=terminal_id, stream_id=uuid4(), rows=32767, cols=32767
+        )
     else:
         payload = TerminalSizePayload(terminal_id=terminal_id, rows=32767, cols=32767)
     assert payload.rows == 32767

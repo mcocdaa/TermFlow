@@ -8,7 +8,14 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from .common import utc_now
 from .topology import MAX_TMUX_DIMENSION, PaneId, TopologySnapshot
@@ -261,7 +268,9 @@ class TerminalSizePayload(TerminalPayload):
 
 class TerminalBinding(PayloadModel):
     action: TerminalAction
-    key: Annotated[str, StringConstraints(min_length=1, max_length=MAX_BINDING_KEY_CHARS)] | None = None
+    key: (
+        Annotated[str, StringConstraints(min_length=1, max_length=MAX_BINDING_KEY_CHARS)] | None
+    ) = None
     tooltip: str = Field(min_length=1, max_length=256)
 
 

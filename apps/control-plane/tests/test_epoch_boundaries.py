@@ -132,7 +132,9 @@ async def test_event_subscription_consumes_quiet_client_disconnect(tmp_path) -> 
     database = Database(f"sqlite+aiosqlite:///{tmp_path / 'event-disconnect.db'}")
     await database.initialize()
     repositories = RepositoryBundle(database.session_factory)
-    subscriber = await EventHub(queue_size=2, queue_max_bytes=1024 * 1024).subscribe(instance_id=None, auth_epoch=1)
+    subscriber = await EventHub(queue_size=2, queue_max_bytes=1024 * 1024).subscribe(
+        instance_id=None, auth_epoch=1
+    )
     websocket = _FakeWebSocket({"type": "websocket.disconnect"})
     try:
         await asyncio.wait_for(
