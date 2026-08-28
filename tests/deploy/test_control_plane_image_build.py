@@ -8,6 +8,17 @@ ROOT = Path(__file__).resolve().parents[2]
 BUILD_SCRIPT = ROOT / "scripts/build-control-plane-image.sh"
 
 
+def test_control_plane_entrypoint_never_dereferences_owned_symlinks() -> None:
+    entrypoint = (ROOT / "deploy/entrypoint.control-plane.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'chown -h termflow:termflow "${dir}"' in entrypoint
+    assert 'find "${dir}" -xdev -exec chown -h termflow:termflow {} +' in entrypoint
+    assert 'chown termflow:termflow "${dir}"' not in entrypoint
+    assert '-exec chown termflow:termflow {} +' not in entrypoint
+
+
 def _fake_docker(tmp_path: Path) -> tuple[Path, Path]:
     binary_dir = tmp_path / "bin"
     binary_dir.mkdir()

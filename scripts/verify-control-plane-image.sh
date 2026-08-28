@@ -68,6 +68,9 @@ docker run --rm --user 0:0 --entrypoint /bin/sh "${CONTROL_PLANE_IMAGE}" -ec '
 CONTROL_PLANE_CONTAINER="termflow-verify-control-plane-$$"
 CONTROL_PLANE_HOST_PORT="18077"
 CONTROL_PLANE_HEALTH_URL="http://127.0.0.1:${CONTROL_PLANE_HOST_PORT}/healthz"
+SYMLINK_DATA_DIR="$(mktemp -d)"
+SYMLINK_TOTP_DIR="$(mktemp -d)"
+SYMLINK_SENTINEL_DIR="$(mktemp -d)"
 DATA_DIR="$(mktemp -d)"
 TOTP_DIR="$(mktemp -d)"
 cleanup() {
@@ -75,10 +78,32 @@ cleanup() {
   docker run --rm --user 0:0 \
     --volume "${DATA_DIR}:/data" \
     --volume "${TOTP_DIR}:/totp" \
-    --entrypoint rm "${CONTROL_PLANE_IMAGE}" -rf /data /totp >/dev/null 2>&1 || true
-  rmdir "${DATA_DIR}" "${TOTP_DIR}" 2>/dev/null || true
+    --volume "${SYMLINK_DATA_DIR}:/symlink-data" \
+    --volume "${SYMLINK_TOTP_DIR}:/symlink-totp" \
+    --volume "${SYMLINK_SENTINEL_DIR}:/sentinel" \
+    --entrypoint rm "${CONTROL_PLANE_IMAGE}" \
+      -rf /data /totp /symlink-data /symlink-totp /sentinel >/dev/null 2>&1 || true
+  rmdir \
+    "${DATA_DIR}" \
+    "${TOTP_DIR}" \
+    "${SYMLINK_DATA_DIR}" \
+    "${SYMLINK_TOTP_DIR}" \
+    "${SYMLINK_SENTINEL_DIR}" 2>/dev/null || true
 }
 trap cleanup EXIT
+
+touch "${SYMLINK_SENTINEL_DIR}/must-keep-owner"
+sentinel_uid="$(stat -c %u "${SYMLINK_SENTINEL_DIR}/must-keep-owner")"
+ln -s /sentinel/must-keep-owner "${SYMLINK_DATA_DIR}/data-link"
+ln -s /sentinel/must-keep-owner "${SYMLINK_TOTP_DIR}/totp-link"
+
+docker run --rm \
+  --volume "${SYMLINK_DATA_DIR}:/app/data" \
+  --volume "${SYMLINK_TOTP_DIR}:/app/totp-secrets" \
+  --volume "${SYMLINK_SENTINEL_DIR}:/sentinel" \
+  "${CONTROL_PLANE_IMAGE}" true
+
+test "$(stat -c %u "${SYMLINK_SENTINEL_DIR}/must-keep-owner")" = "${sentinel_uid}"
 
 docker run --detach \
   --name "${CONTROL_PLANE_CONTAINER}" \

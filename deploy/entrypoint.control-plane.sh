@@ -14,8 +14,8 @@ init_mount_points() {
             echo "mount point is not a directory: ${dir}" >&2
             exit 1
         fi
-        chown termflow:termflow "${dir}"
-        find "${dir}" -xdev -exec chown termflow:termflow {} +
+        chown -h termflow:termflow "${dir}"
+        find "${dir}" -xdev -exec chown -h termflow:termflow {} +
     done
 }
 
