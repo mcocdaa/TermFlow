@@ -14,6 +14,8 @@ dist/
 .worktrees/
 apps/clients/tauri/src-tauri/target/
 apps/clients/tauri/src-tauri/gen/
+vendor/**/target/
+vendor/**/Cargo.lock
 *.tsbuildinfo
 *.jks
 *.keystore

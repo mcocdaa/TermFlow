@@ -52,3 +52,6 @@ ndk-context = "0.1.1"
 
 [target."cfg(any(target_os = \"macos\", windows, target_os = \"linux\"))".dependencies]
 tauri-plugin-single-instance = { version = "=2.4.3", features = ["deep-link"] }
+
+[patch.crates-io]
+glib = { path = "../../../../vendor/glib-0.18.5" }
