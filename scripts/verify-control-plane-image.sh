@@ -2,6 +2,17 @@
 set -euo pipefail
 
 CONTROL_PLANE_IMAGE="${1:-termflow-control-plane:verify}"
+CONTROL_PLANE_RUNTIME_SECURITY_ARGS=(
+  --read-only
+  --tmpfs /tmp:rw,nosuid,nodev,noexec,size=64m
+  --cap-drop ALL
+  --cap-add CHOWN
+  --cap-add DAC_OVERRIDE
+  --cap-add SETUID
+  --cap-add SETGID
+  --cap-add SETPCAP
+  --security-opt no-new-privileges:true
+)
 
 docker run --rm --user 0:0 --entrypoint /bin/sh "${CONTROL_PLANE_IMAGE}" -eu -c '
   test -x /opt/termflow/bin/termflow-control
@@ -45,9 +56,14 @@ docker run --rm --user 0:0 --entrypoint /bin/sh "${CONTROL_PLANE_IMAGE}" -eu -c 
 
 # The entrypoint initializes mount points as root and then exec-drops to
 # termflow: PID 1 must never run as uid 0.
-docker run --rm "${CONTROL_PLANE_IMAGE}" sh -ec '
+docker run --rm \
+  "${CONTROL_PLANE_RUNTIME_SECURITY_ARGS[@]}" \
+  --tmpfs /app/data:rw,nosuid,nodev,noexec,size=16m \
+  --tmpfs /app/totp-secrets:rw,nosuid,nodev,noexec,size=4m \
+  "${CONTROL_PLANE_IMAGE}" sh -ec '
   test "$(stat -c %u /proc/1)" = "$(id -u termflow)"
   test "$(id -u termflow)" != 0
+  test "$(awk '\''/^CapEff:/ { print $2 }'\'' /proc/1/status)" = "0000000000000000"
 '
 
 # A --user override bypasses the privileged init and still works.
@@ -98,6 +114,7 @@ ln -s /sentinel/must-keep-owner "${SYMLINK_DATA_DIR}/data-link"
 ln -s /sentinel/must-keep-owner "${SYMLINK_TOTP_DIR}/totp-link"
 
 docker run --rm \
+  "${CONTROL_PLANE_RUNTIME_SECURITY_ARGS[@]}" \
   --volume "${SYMLINK_DATA_DIR}:/app/data" \
   --volume "${SYMLINK_TOTP_DIR}:/app/totp-secrets" \
   --volume "${SYMLINK_SENTINEL_DIR}:/sentinel" \
@@ -106,6 +123,7 @@ docker run --rm \
 test "$(stat -c %u "${SYMLINK_SENTINEL_DIR}/must-keep-owner")" = "${sentinel_uid}"
 
 docker run --detach \
+  "${CONTROL_PLANE_RUNTIME_SECURITY_ARGS[@]}" \
   --name "${CONTROL_PLANE_CONTAINER}" \
   --publish "127.0.0.1:${CONTROL_PLANE_HOST_PORT}:8000" \
   --env TERMFLOW_ADMIN_TOKEN=verify-admin-token-that-is-long-enough \
@@ -135,5 +153,12 @@ docker exec "${CONTROL_PLANE_CONTAINER}" sh -ec '
   test "$(stat -c %u /app/totp-secrets/totp-master-key)" = "$(id -u termflow)"
   test "$(stat -c %u /app/data)" = "$(id -u termflow)"
   test "$(stat -c %u /app/totp-secrets)" = "$(id -u termflow)"
+  test "$(awk '\''/^CapEff:/ { print $2 }'\'' /proc/1/status)" = "0000000000000000"
+  if touch /app/rootfs-write-probe 2>/dev/null; then
+    echo "read-only root filesystem accepted a write" >&2
+    exit 1
+  fi
+  touch /tmp/tmpfs-write-probe
+  rm /tmp/tmpfs-write-probe
 '
 curl --fail --silent "${CONTROL_PLANE_HEALTH_URL}" >/dev/null

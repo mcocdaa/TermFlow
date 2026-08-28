@@ -48,6 +48,17 @@ def test_compose_is_single_worker_and_persists_only_metadata() -> None:
     compose = yaml.safe_load(Path("deploy/compose.yaml").read_text())
     service = compose["services"]["control-plane"]
     assert "--workers" not in " ".join(service["command"])
+    assert service["read_only"] is True
+    assert service["cap_drop"] == ["ALL"]
+    assert set(service["cap_add"]) == {
+        "CHOWN",
+        "DAC_OVERRIDE",
+        "SETUID",
+        "SETGID",
+        "SETPCAP",
+    }
+    assert service["security_opt"] == ["no-new-privileges:true"]
+    assert "/tmp:size=64m,mode=1777" in service["tmpfs"]
     assert service["volumes"] == [
         "termflow-data:/app/data",
         "termflow-totp-key:/app/totp-secrets",
@@ -116,6 +127,9 @@ def test_control_plane_image_uses_builders_and_a_source_free_runtime() -> None:
     assert "-L" in entrypoint  # refuse symlinked mount points
     assert "-xdev" in entrypoint  # never recurse across filesystems
     assert "setpriv" in entrypoint  # exec drop keeps PID 1 non-root
+    assert "--bounding-set=-all" in entrypoint
+    assert "--inh-caps=-all" in entrypoint
+    assert "--ambient-caps=-all" in entrypoint
 
     runtime = dockerfile.split("FROM python:3.12-slim AS runtime", maxsplit=1)[1]
     assert "COPY --from=python-wheels /opt/termflow /opt/termflow" in runtime

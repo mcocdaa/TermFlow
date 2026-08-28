@@ -7,6 +7,14 @@
 Rust、仓库源码、锁文件和测试都不进入最终 runtime。`scripts/verify-control-plane-image.sh`
 会在构建后检查这份文件与工具清单。
 
+生产 Compose 把镜像根文件系统设为只读，只有 `/app/data`、`/app/totp-secrets` 两个命名卷
+和上限 64 MiB 的 `/tmp` tmpfs 可写，并启用 `no-new-privileges`。入口初始化阶段临时获得的
+capability 仅有 `CHOWN`、`DAC_OVERRIDE`、`SETUID`、`SETGID`、`SETPCAP`：`CHOWN` 用于修复
+新挂载目录的所有权；`DAC_OVERRIDE` 只用于遍历新建的 root/宿主用户所有 bind mount；
+`SETUID`/`SETGID` 用于切换到 `termflow`；`SETPCAP` 只让 `setpriv` 能在 exec 前从自身的
+bounding、inheritable 和 ambient 集合删除这些临时权限。服务 PID 1 为非 root，effective
+capability 集合为空。
+
 Compose 默认只把 B 的 HTTP 端口绑定到宿主机 loopback。DNS、反向代理、TLS 终止和可选
 mTLS 的证书签发、校验与轮换不属于 TermFlow，也不会被默认镜像或 Compose 创建。生产环境
 应由部署者提供 HTTPS/WSS 入口，并把用户实际访问的 canonical URL 写入

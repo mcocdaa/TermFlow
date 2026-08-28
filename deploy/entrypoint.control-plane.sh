@@ -21,7 +21,14 @@ init_mount_points() {
 
 if [ "$(id -u)" = "0" ]; then
     init_mount_points
-    exec setpriv --reuid termflow --regid termflow --clear-groups -- "$@"
+    exec setpriv \
+        --reuid termflow \
+        --regid termflow \
+        --clear-groups \
+        --bounding-set=-all \
+        --inh-caps=-all \
+        --ambient-caps=-all \
+        -- "$@"
 fi
 
 exec "$@"
