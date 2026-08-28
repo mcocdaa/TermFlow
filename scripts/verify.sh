@@ -5,6 +5,10 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPOSITORY_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPOSITORY_ROOT}"
 
+# Keep the committed lock portable even when the caller configures a local mirror.
+export UV_DEFAULT_INDEX=https://pypi.org/simple
+unset UV_INDEX UV_EXTRA_INDEX_URL UV_INDEX_URL
+
 EXPECTED_NODE_VERSION="v22.23.2"
 if [[ "$(node --version)" != "${EXPECTED_NODE_VERSION}" ]]; then
   echo "TermFlow verification requires Node ${EXPECTED_NODE_VERSION}; found $(node --version)." >&2
