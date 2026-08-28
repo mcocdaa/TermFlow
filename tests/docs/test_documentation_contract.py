@@ -104,6 +104,20 @@ def test_operations_guide_lists_tunable_control_plane_resource_limits() -> None:
         assert variable in operations
 
 
+def test_security_guide_documents_patch_gated_rust_advisory() -> None:
+    security = " ".join(Path("docs/security.md").read_text().split())
+
+    for contract in (
+        "RUSTSEC-2024-0429",
+        "vendor/glib-0.18.5",
+        "GTK3 unmaintained advisories remain a residual risk",
+        "The vendor directory and audit ignore must be removed in the same change "
+        "once the resolved GTK/Tauri graph accepts glib >=0.20 for all Linux "
+        "WebView consumers.",
+    ):
+        assert contract in security
+
+
 def test_operator_docs_keep_current_install_release_and_native_contracts() -> None:
     current_docs = "\n".join(
         Path(path).read_text()

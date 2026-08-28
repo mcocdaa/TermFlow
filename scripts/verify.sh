@@ -21,6 +21,7 @@ uv run --all-packages python -m pytest -q
 uv run --all-packages ruff check .
 uv run --all-packages mypy packages/protocol/src apps/control-plane/src apps/node/src
 scripts/verify-tauri.sh
+scripts/security/verify-rust-dependencies.sh
 
 CONTROL_PLANE_IMAGE="${TERMFLOW_VERIFY_IMAGE:-termflow-control-plane:verify}"
 TERMFLOW_ADMIN_TOKEN="verify-admin-token-that-is-long-enough" \

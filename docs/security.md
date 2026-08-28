@@ -107,5 +107,13 @@ Rust 统一脱敏后落盘。
 以 cosign keyless 签名并附带 SBOM；`install-termflow-node.sh` 在有 GitHub CLI 时校验
 attestation。CI 引用完整 commit SHA 且权限最小化。
 
+Rust/Tauri 依赖中的 `RUSTSEC-2024-0429` 已在 `vendor/glib-0.18.5` 回补上游修复，但只按
+版本匹配的扫描器仍会报告它。仓库中的 audit ignore 是 patch-gated：门禁先核对修复行、运行
+优化模式迭代器回归，并确认 Cargo 实际从 vendor 路径解析 glib，之后才允许 cargo-audit 忽略
+该编号。GTK3 unmaintained advisories remain a residual risk；它们是 Linux Tauri/Wry 继承的
+供应链维护警告，不应被表述为已修复的内存安全问题。The vendor directory and audit ignore
+must be removed in the same change once the resolved GTK/Tauri graph accepts glib >=0.20
+for all Linux WebView consumers.
+
 容器默认只映射 loopback。需要远程访问时，应使用可信反向代理终止 TLS，并保护
 Admin Token。不要把数据库、A 配置、Bridge 日志或 tmux socket 上传为诊断附件。
