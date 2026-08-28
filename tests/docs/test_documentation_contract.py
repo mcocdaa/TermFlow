@@ -80,6 +80,30 @@ def test_security_guide_describes_the_mechanically_enforced_native_boundary() ->
     )
 
 
+def test_security_guide_publishes_resource_ceiling_contracts() -> None:
+    security = " ".join(Path("docs/security.md").read_text().split())
+
+    for contract in (
+        "Topology snapshots are limited to 64 windows and 64 panes per window.",
+        "Bridge ingress is limited to 256 KiB per frame and 1 MiB/s per connection.",
+        "Each event subscriber is limited to 512 messages and 1 MiB of serialized data.",
+        "Changing a resource ceiling requires a memory-budget review and boundary "
+        "tests at the configured maximum and maximum plus one.",
+    ):
+        assert contract in security
+
+
+def test_operations_guide_lists_tunable_control_plane_resource_limits() -> None:
+    operations = Path("docs/operations.md").read_text()
+
+    for variable in (
+        "TERMFLOW_BRIDGE_MAX_FRAME_BYTES",
+        "TERMFLOW_BRIDGE_INPUT_RATE_BYTES_PER_SECOND",
+        "TERMFLOW_EVENT_QUEUE_MAX_BYTES",
+    ):
+        assert variable in operations
+
+
 def test_operator_docs_keep_current_install_release_and_native_contracts() -> None:
     current_docs = "\n".join(
         Path(path).read_text()

@@ -176,6 +176,18 @@ Tauri 配置生成平台工程，再执行 debug/unsigned 编译。缺少 Tauri 
 
 源码测试通过不代表公网边缘已就绪；同样，边缘验收通过也不覆盖容器与源码层策略。
 
+### Control Plane 资源上限配置
+
+Compose 显式传入下列生产默认值：
+
+- `TERMFLOW_BRIDGE_MAX_FRAME_BYTES=262144`：Bridge 单帧 256 KiB；
+- `TERMFLOW_BRIDGE_INPUT_RATE_BYTES_PER_SECOND=1048576`：每条 Bridge 连接 1 MiB/s；
+- `TERMFLOW_EVENT_QUEUE_MAX_BYTES=1048576`：每个事件订阅者最多排队 1 MiB 序列化数据。
+
+这些值与代码内的消息数量、拓扑数量及字符串长度上限共同构成内存预算，不能只为解决单次
+大消息而任意提高。修改任何上限时，都需要先评估单连接和并发连接的最坏内存占用，并分别
+增加“等于上限”和“上限加一”的边界测试。
+
 ## 三套手动打包 Workflow 与正式 Release
 
 各 workflow 的文件名、输入、Artifact 名称和 Tag 依赖图见

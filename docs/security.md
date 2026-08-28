@@ -79,6 +79,20 @@ override。旧配置里的 `allow_insecure_http` 开关会在读取时被移除�
 64 KiB，并有输入速率、队列和背压上限。远程连接关闭只 detach 代理 client，不能结束
 tmux server/session 或 Pane 进程。
 
+### 资源上限
+
+Control Plane 在解析或排队前执行以下硬上限：Topology snapshots are limited to 64
+windows and 64 panes per window. window/pane ID 最长 32 个字符，名称、标题和当前命令
+最长 256 个字符；tmux index 最大 4095，行列尺寸最大 32767，revision 最大
+`2^63 - 1`。Bridge capabilities 最多 64 项且每项最长 64 个字符；terminal bindings
+最多 128 项且每个 key 最长 128 个字符。
+
+Bridge ingress is limited to 256 KiB per frame and 1 MiB/s per connection.
+Each event subscriber is limited to 512 messages and 1 MiB of serialized data.
+终端通道另有 64 KiB 单帧、256 KiB/s 输入、256 条消息和 1 MiB 队列的默认上限。
+Changing a resource ceiling requires a memory-budget review and boundary tests at the
+configured maximum and maximum plus one.
+
 原生 C 的所有 HTTP 与 WebSocket 流量都由 Rust 侧统一发出：The Tauri WebView never
 receives access tokens, refresh tokens, DPoP proofs, private-key signatures, or
 authorization headers. Rust returns only public-key metadata and tokenless
