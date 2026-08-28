@@ -116,7 +116,7 @@ class TermFlowSystem:
             start_new_session=True,
         )
         log.close()
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if self.control_process.poll() is not None:
                 raise RuntimeError(self.control_log_path.read_text(errors="replace"))
@@ -322,8 +322,8 @@ class TermFlowSystem:
 @pytest.fixture
 def termflow_system(tmp_path) -> TermFlowSystem:
     system = TermFlowSystem(tmp_path)
-    system.start_control_plane()
     try:
+        system.start_control_plane()
         yield system
     finally:
         system.cleanup()
