@@ -47,6 +47,12 @@ def test_full_verifier_cannot_rewrite_the_lock_from_a_caller_index() -> None:
     assert verifier.index(public_index) < verifier.index("npm ci")
 
 
+def test_client_ui_limits_vitest_worker_concurrency() -> None:
+    config = (ROOT / "packages/client-ui/vite.config.ts").read_text()
+
+    assert "maxWorkers: 4" in config
+
+
 def test_client_workspace_has_one_lock_and_fixed_dependency_direction() -> None:
     root = _manifest("package.json")
     workspace_version = root["version"]

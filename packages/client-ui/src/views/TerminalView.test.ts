@@ -79,7 +79,9 @@ describe('TerminalView', () => {
     await flushPromises()
     const ctrl = wrapper.find('.mobile-keybar').findAll('button')[0]!
     await ctrl.trigger('click')
-    expect(ctrl.attributes('aria-pressed')).toBe('true')
+    await vi.waitFor(() => {
+      expect(ctrl.attributes('aria-pressed')).toBe('true')
+    })
     const canvas = wrapper.findComponent(TerminalCanvas)
     canvas.vm.sendAction('split_left_right', { targetPaneId: '%1' })
     expect(terminal.sendAction).toHaveBeenCalledWith('split_left_right', { targetPaneId: '%1' })

@@ -47,10 +47,15 @@ describe('ComputersView', () => {
     expect(nameTrigger.text()).toBe('主工作站')
     expect(nameTrigger.attributes('aria-label')).toBe('修改 Computer 名称：主工作站')
     await nameTrigger.trigger('click')
+    await vi.waitFor(() => {
+      expect(wrapper.find('input[name="display-name"]').exists()).toBe(true)
+    })
     await wrapper.get('input[name="display-name"]').setValue('构建主机')
     await wrapper.get('[data-action="save-name"]').trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('构建主机')
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('构建主机')
+    })
     expect(rename).toHaveBeenCalledWith('machine-1', '构建主机')
   })
 
