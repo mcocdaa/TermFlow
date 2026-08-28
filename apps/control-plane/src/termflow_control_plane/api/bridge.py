@@ -30,12 +30,14 @@ from termflow_protocol import (
 )
 
 from termflow_control_plane.auth.tokens import hash_token
+from termflow_control_plane.config import Settings
 from termflow_control_plane.connections.event_hub import EventHub
 from termflow_control_plane.connections.registry import (
     InstanceRetired,
     LiveConnection,
     LiveInstanceRegistry,
 )
+from termflow_control_plane.connections.token_bucket import TokenBucket
 from termflow_control_plane.persistence.repositories import RepositoryBundle
 from termflow_control_plane.routing.terminal_router import TerminalRouter
 
@@ -63,9 +65,25 @@ async def _receive_messages(
     repositories: RepositoryBundle,
     registry: LiveInstanceRegistry,
     terminal_router: TerminalRouter,
+    settings: Settings,
 ) -> None:
+    bucket = TokenBucket.create(settings.bridge_input_rate_bytes_per_second)
     while True:
-        message = WireMessage.model_validate_json(await websocket.receive_text())
+        incoming = await websocket.receive()
+        if incoming["type"] == "websocket.disconnect":
+            return
+        text = incoming.get("text")
+        if text is None:
+            await websocket.close(code=1003, reason="Text frames required")
+            return
+        raw = text.encode("utf-8")
+        if len(raw) > settings.bridge_max_frame_bytes:
+            await websocket.close(code=1009, reason="Bridge frame too large")
+            return
+        if not bucket.consume(len(raw)):
+            await websocket.close(code=4429, reason="Bridge input rate exceeded")
+            return
+        message = WireMessage.model_validate_json(raw)
         if message.instance_id != connection.instance_id:
             await websocket.close(code=4403, reason="Instance identity mismatch")
             return
@@ -161,6 +179,7 @@ async def _close_when_replaced(websocket: WebSocket, connection: LiveConnection)
 
 @router.websocket("/connect")
 async def connect_bridge(websocket: WebSocket) -> None:
+    settings = cast(Settings, websocket.app.state.settings)
     repositories = cast(RepositoryBundle, websocket.app.state.repositories)
     registry = cast(LiveInstanceRegistry, websocket.app.state.registry)
     event_hub = cast(EventHub, websocket.app.state.event_hub)
@@ -203,6 +222,7 @@ async def connect_bridge(websocket: WebSocket) -> None:
                     repositories,
                     registry,
                     terminal_router,
+                    settings,
                 )
             ),
             asyncio.create_task(_close_when_replaced(websocket, connection)),
