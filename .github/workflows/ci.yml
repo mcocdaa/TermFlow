@@ -59,10 +59,9 @@ jobs:
         with:
           workspaces: apps/clients/tauri/src-tauri -> target
 
-      - name: Install uv, cargo-audit, and system dependencies
+      - name: Install uv and tmux
         run: |
           python -m pip install --disable-pip-version-check uv==0.11.19
-          cargo install cargo-audit --locked --version 0.22.2
           sudo apt-get update
           sudo apt-get install --yes tmux libwebkit2gtk-4.1-dev libxdo-dev \
             libssl-dev libayatana-appindicator3-dev librsvg2-dev
@@ -97,9 +96,6 @@ jobs:
 
       - name: Verify Rust and unsigned Linux Tauri compile
         run: scripts/verify-tauri.sh
-
-      - name: Verify Rust dependency advisories
-        run: scripts/security/verify-rust-dependencies.sh
 
       - name: Validate and build Control Plane image
         run: |

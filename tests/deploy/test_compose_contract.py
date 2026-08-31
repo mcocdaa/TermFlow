@@ -94,15 +94,6 @@ def test_compose_configures_same_origin_web_control_limits() -> None:
     assert "TERMFLOW_TERMINAL_QUEUE_MAX_MESSAGES" in environment
     assert "TERMFLOW_TERMINAL_QUEUE_MAX_BYTES" in environment
     assert "TERMFLOW_TERMINAL_RESUME_GRACE_SECONDS" in environment
-    assert environment["TERMFLOW_BRIDGE_MAX_FRAME_BYTES"] == (
-        "${TERMFLOW_BRIDGE_MAX_FRAME_BYTES:-262144}"
-    )
-    assert environment["TERMFLOW_BRIDGE_INPUT_RATE_BYTES_PER_SECOND"] == (
-        "${TERMFLOW_BRIDGE_INPUT_RATE_BYTES_PER_SECOND:-1048576}"
-    )
-    assert environment["TERMFLOW_EVENT_QUEUE_MAX_BYTES"] == (
-        "${TERMFLOW_EVENT_QUEUE_MAX_BYTES:-1048576}"
-    )
 
 
 def test_control_plane_image_uses_builders_and_a_source_free_runtime() -> None:
@@ -165,6 +156,7 @@ def test_node_image_initializes_managed_mounts_then_drops_privileges() -> None:
     for optional_environment in (
         "TERMFLOW_SERVER",
         "TERMFLOW_CODE",
+        "TERMFLOW_ALLOW_INSECURE_HTTP",
         "TERMFLOW_NEW",
     ):
         assert f"${{{optional_environment}:-}}" in entrypoint

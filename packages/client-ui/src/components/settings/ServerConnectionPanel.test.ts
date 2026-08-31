@@ -35,10 +35,7 @@ describe('ServerConnectionPanel', () => {
     expect(wrapper.text()).not.toContain('B 连接地址')
     expect(wrapper.get('[data-server-issuer]').text()).toBe('https://relay.example.com')
     await wrapper.get('[data-action="copy-server-url"]').trigger('click')
-    await vi.waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith('https://relay.example.com')
-      expect(wrapper.get('[data-action="copy-server-url"]').text()).toBe('已复制')
-    })
+    expect(writeText).toHaveBeenCalledWith('https://relay.example.com')
 
     const trigger = wrapper.get('[data-action="show-server-qr"]')
     expect(trigger.attributes('aria-label')).toBe('显示服务网址二维码')

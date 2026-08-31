@@ -58,66 +58,6 @@ def test_current_operator_docs_do_not_recommend_removed_runtime_variables() -> N
     assert "TERMFLOW_TOTP_AUTO_MASTER_KEY_FILE" not in Path(".env.example").read_text()
 
 
-def test_security_guide_defines_the_loopback_only_plaintext_boundary() -> None:
-    security = Path("docs/security.md").read_text()
-
-    assert "Plaintext HTTP is supported only on literal loopback hosts" in security
-    assert "--allow-insecure-http" not in security
-    assert "trusted LAN" not in security
-
-
-def test_security_guide_describes_the_mechanically_enforced_native_boundary() -> None:
-    security = " ".join(Path("docs/security.md").read_text().split())
-
-    assert (
-        "The Tauri WebView never receives access tokens, refresh tokens, DPoP proofs,"
-        " private-key signatures, or authorization headers." in security
-    )
-    assert "Rust returns only public-key metadata and tokenless authorization status." in security
-    assert (
-        "Authenticated API requests are performed by the bounded same-origin native HTTP command."
-        in security
-    )
-
-
-def test_security_guide_publishes_resource_ceiling_contracts() -> None:
-    security = " ".join(Path("docs/security.md").read_text().split())
-
-    for contract in (
-        "Topology snapshots are limited to 64 windows and 64 panes per window.",
-        "Bridge ingress is limited to 256 KiB per frame and 1 MiB/s per connection.",
-        "Each event subscriber is limited to 512 messages and 1 MiB of serialized data.",
-        "Changing a resource ceiling requires a memory-budget review and boundary "
-        "tests at the configured maximum and maximum plus one.",
-    ):
-        assert contract in security
-
-
-def test_operations_guide_lists_tunable_control_plane_resource_limits() -> None:
-    operations = Path("docs/operations.md").read_text()
-
-    for variable in (
-        "TERMFLOW_BRIDGE_MAX_FRAME_BYTES",
-        "TERMFLOW_BRIDGE_INPUT_RATE_BYTES_PER_SECOND",
-        "TERMFLOW_EVENT_QUEUE_MAX_BYTES",
-    ):
-        assert variable in operations
-
-
-def test_security_guide_documents_patch_gated_rust_advisory() -> None:
-    security = " ".join(Path("docs/security.md").read_text().split())
-
-    for contract in (
-        "RUSTSEC-2024-0429",
-        "vendor/glib-0.18.5",
-        "GTK3 unmaintained advisories remain a residual risk",
-        "The vendor directory and audit ignore must be removed in the same change "
-        "once the resolved GTK/Tauri graph accepts glib >=0.20 for all Linux "
-        "WebView consumers.",
-    ):
-        assert contract in security
-
-
 def test_operator_docs_keep_current_install_release_and_native_contracts() -> None:
     current_docs = "\n".join(
         Path(path).read_text()

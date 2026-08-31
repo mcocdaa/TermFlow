@@ -3,10 +3,13 @@ import { DeviceAuthorizationSession, NativeAuthorizationSession, createPkce, typ
 import type { OAuthScope } from '@termflow/client-contracts'
 import type { OAuthDeviceCodeResponse, OAuthPublicJwk } from '@termflow/client-contracts'
 import type { ClientRuntime } from '@termflow/client-ui'
-import { createTauriPublicKey, exchangeAuthorization, tauriAuthorizationBrowser } from './adapters/tauriAuthorization'
+import { createTauriKey, exchangeAuthorization, tauriAuthorizationBrowser } from './adapters/tauriAuthorization'
+import { createTauriCredentialVault } from './adapters/tauriCredentialVault'
 import { buildVersion } from './buildVersion'
 import { serverConfig } from './serverConfig'
 import { logNativeEvent, sanitizeNativeDetail } from './diagnostics'
+
+const vault = createTauriCredentialVault()
 
 const VERIFY_TIMEOUT_MS = 8_000
 
@@ -55,7 +58,7 @@ const cryptoPort = {
 export async function authorizeNativeClient(issuer: string, authorizeEndpoint: string, scopes: OAuthScope[]) {
   void logNativeEvent({ event: 'connect_started', issuer })
   await serverConfig.replace(issuer)
-  const key = createTauriPublicKey(serverConfig.current)
+  const key = createTauriKey(serverConfig.current)
   const session = new NativeAuthorizationSession({
     issuer: serverConfig.current,
     authorizeEndpoint,
@@ -65,15 +68,16 @@ export async function authorizeNativeClient(issuer: string, authorizeEndpoint: s
       issuer: serverConfig.current,
       loopback: usesLoopbackAuthorization(),
     }),
+    vault,
     key,
     createPkce: () => createPkce(cryptoPort),
     createId: () => globalThis.crypto.randomUUID(),
     exchange: ({ issuer: target, transaction, verifier, redirectUri }) => exchangeAuthorization({ issuer: target, transaction, verifier, redirectUri }),
   })
   try {
-    const status = await session.authorize()
+    const credential = await session.authorize()
     void logNativeEvent({ event: 'token_exchange_succeeded', issuer })
-    return status
+    return credential
   } catch (error) {
     void logNativeEvent({ event: 'token_exchange_failed', issuer, level: 'error', errorCode: 'authorization_failed', errorDetail: sanitizeNativeDetail(error) })
     throw error
@@ -98,7 +102,7 @@ export interface NativeDeviceAuthorizationInput {
 
 export async function beginNativeDeviceAuthorization(input: NativeDeviceAuthorizationInput) {
   await serverConfig.replace(input.issuer)
-  const key = createTauriPublicKey(serverConfig.current)
+  const key = createTauriKey(serverConfig.current)
   const [pkce, publicJwk, dpopJkt] = await Promise.all([createPkce(cryptoPort), key.publicJwk(), key.thumbprint()])
   let response: OAuthDeviceCodeResponse
   try {
@@ -122,6 +126,7 @@ export async function beginNativeDeviceAuthorization(input: NativeDeviceAuthoriz
     publicJwk,
     interval: response.interval,
     poll: input.poll,
+    vault,
     sleep,
   })
   return { response, session }

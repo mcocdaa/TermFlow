@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 vi.mock('@tauri-apps/plugin-deep-link', () => ({ onOpenUrl: mocks.onOpenUrl }))
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: mocks.openUrl }))
 
-import { createTauriPublicKey, exchangeAuthorization, pollDeviceAuthorization, tauriAuthorizationBrowser } from './tauriAuthorization'
+import { exchangeAuthorization, pollDeviceAuthorization, tauriAuthorizationBrowser } from './tauriAuthorization'
 
 const deepLinkBrowser = () => tauriAuthorizationBrowser({ issuer: 'https://b.example', loopback: false })
 const loopbackBrowser = () => tauriAuthorizationBrowser({ issuer: 'https://b.example', loopback: true })
@@ -201,26 +201,11 @@ function receiveDeepLink(state: string) {
   handler(['termflow://auth/callback?state=' + state + '&transaction_id=11111111-1111-4111-8111-111111111111'])
 }
 
-describe('createTauriPublicKey', () => {
-  it('exposes only public-key metadata through the two native commands', async () => {
-    const publicJwk = { kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' }
-    mocks.invoke.mockReset()
-    mocks.invoke.mockResolvedValueOnce(publicJwk).mockResolvedValueOnce('thumbprint')
-
-    const key = createTauriPublicKey('https://relay.example.com')
-
-    await expect(key.publicJwk()).resolves.toEqual(publicJwk)
-    await expect(key.thumbprint()).resolves.toBe('thumbprint')
-    expect(mocks.invoke).toHaveBeenNthCalledWith(1, 'native_public_jwk', { issuer: 'https://relay.example.com' })
-    expect(mocks.invoke).toHaveBeenNthCalledWith(2, 'native_key_thumbprint', { issuer: 'https://relay.example.com' })
-  })
-})
-
 describe('pollDeviceAuthorization', () => {
   it('uses the native device exchange command without opening a browser', async () => {
     mocks.openUrl.mockClear()
-    mocks.invoke.mockResolvedValue({ authorized: true, expiresAt: '2026-08-05T12:00:00Z', tokenType: 'DPoP' })
-    await expect(pollDeviceAuthorization({ issuer: 'https://relay.example.com', deviceCode: 'device', codeVerifier: 'verifier', publicJwk: { kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' } })).resolves.toEqual({ authorized: true, expiresAt: '2026-08-05T12:00:00Z', tokenType: 'DPoP' })
+    mocks.invoke.mockResolvedValue({ accessToken: 'a', expiresAt: '2026-08-05T12:00:00Z', tokenType: 'DPoP' })
+    await expect(pollDeviceAuthorization({ issuer: 'https://relay.example.com', deviceCode: 'device', codeVerifier: 'verifier', publicJwk: { kty: 'EC', crv: 'P-256', alg: 'ES256', x: 'x', y: 'y' } })).resolves.toMatchObject({ accessToken: 'a' })
     expect(mocks.invoke).toHaveBeenCalledWith('native_exchange_device_code', { request: { issuer: 'https://relay.example.com', deviceCode: 'device', codeVerifier: 'verifier', publicJwk: expect.any(Object) } })
     expect(mocks.openUrl).not.toHaveBeenCalled()
   })

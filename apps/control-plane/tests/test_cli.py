@@ -133,7 +133,6 @@ def test_serve_disables_uvicorn_proxy_header_rewriting(monkeypatch) -> None:
 
     assert result.exit_code == 0, result.output
     assert captured.get("proxy_headers") is False
-    assert captured.get("ws_max_size") == 256 * 1024
 
 
 def test_auth_totp_reset_aborts_without_explicit_interactive_confirmation(tmp_path: Path) -> None:

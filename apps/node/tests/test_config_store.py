@@ -1,6 +1,5 @@
 import json
 import stat
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -17,11 +16,6 @@ def test_config_is_atomic_private_and_round_trips(tmp_path) -> None:
     )
     store.save(expected)
     assert store.load() == expected
-    assert json.loads(store.path.read_text()) == {
-        "server_url": "https://termflow.example.com/",
-        "installation_id": str(expected.installation_id),
-        "installation_token": "secret-token",
-    }
     assert stat.S_IMODE(store.path.parent.stat().st_mode) == 0o700
     assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
     assert not list(store.path.parent.glob("*.tmp"))
@@ -43,43 +37,28 @@ def test_load_rejects_group_or_other_permissions(tmp_path) -> None:
         store.load()
 
 
-def test_load_migrates_legacy_false_insecure_http_field(tmp_path: Path) -> None:
-    path = tmp_path / "config.json"
-    path.write_text(
+def test_config_round_trips_allow_insecure_http(tmp_path) -> None:
+    store = ConfigStore(tmp_path / "config.json")
+    expected = InstallationConfig(
+        server_url="http://192.168.0.53:8765",
+        installation_id=uuid4(),
+        installation_token="secret-token",
+        allow_insecure_http=True,
+    )
+    store.save(expected)
+    assert store.load() == expected
+
+
+def test_config_without_flag_field_defaults_to_false(tmp_path) -> None:
+    store = ConfigStore(tmp_path / "config.json")
+    store.path.write_text(
         json.dumps(
             {
-                "server_url": "https://termflow.example",
+                "server_url": "http://192.168.0.53:8765",
                 "installation_id": str(uuid4()),
-                "installation_token": "secret",
-                "allow_insecure_http": False,
+                "installation_token": "secret-token",
             }
-        ),
-        encoding="utf-8",
+        )
     )
-    path.chmod(0o600)
-
-    loaded = ConfigStore(path).load()
-
-    assert not hasattr(loaded, "allow_insecure_http")
-
-
-def test_load_rejects_legacy_true_insecure_http_field(tmp_path: Path) -> None:
-    path = tmp_path / "config.json"
-    path.write_text(
-        json.dumps(
-            {
-                "server_url": "http://192.0.2.10:8080",
-                "installation_id": str(uuid4()),
-                "installation_token": "secret",
-                "allow_insecure_http": True,
-            }
-        ),
-        encoding="utf-8",
-    )
-    path.chmod(0o600)
-
-    with pytest.raises(
-        InsecureConfigError,
-        match="no longer supports public HTTP; run `termflow login` with an HTTPS URL",
-    ):
-        ConfigStore(path).load()
+    store.path.chmod(0o600)
+    assert store.load().allow_insecure_http is False

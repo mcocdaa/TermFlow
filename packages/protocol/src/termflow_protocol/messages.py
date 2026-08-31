@@ -5,37 +5,16 @@ from __future__ import annotations
 import base64
 import binascii
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Literal
 from uuid import UUID
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    StringConstraints,
-    field_validator,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .common import utc_now
-from .topology import MAX_TMUX_DIMENSION, PaneId, TopologySnapshot
+from .topology import PaneId, TopologySnapshot
 
 MAX_INPUT_BYTES = 16 * 1024
 MAX_TERMINAL_BYTES = 65_536
-MAX_BRIDGE_CAPABILITIES = 64
-MAX_CAPABILITY_CHARS = 64
-MAX_TERMINAL_BINDINGS = 128
-MAX_TERMINAL_DIMENSION = MAX_TMUX_DIMENSION
-MAX_BINDING_KEY_CHARS = 128
-
-Capability = Annotated[
-    str,
-    StringConstraints(
-        min_length=1,
-        max_length=MAX_CAPABILITY_CHARS,
-        pattern=r"^[a-z][a-z0-9_]*$",
-    ),
-]
 
 type TerminalAction = Literal[
     "split_left_right",
@@ -84,10 +63,7 @@ class PayloadModel(BaseModel):
 class BridgeHelloPayload(PayloadModel):
     protocol_version: Literal[1] = 1
     name: str = Field(min_length=1, max_length=128)
-    capabilities: Annotated[
-        tuple[Capability, ...],
-        Field(max_length=MAX_BRIDGE_CAPABILITIES),
-    ] = (
+    capabilities: tuple[str, ...] = (
         "plain_text_input",
         "topology",
         "pane_output",
@@ -207,8 +183,8 @@ class TerminalOpenPayload(TerminalPayload):
 
 class TerminalOpenedPayload(TerminalPayload):
     stream_id: UUID
-    rows: int = Field(ge=1, le=MAX_TERMINAL_DIMENSION)
-    cols: int = Field(ge=1, le=MAX_TERMINAL_DIMENSION)
+    rows: int = Field(ge=1)
+    cols: int = Field(ge=1)
 
 
 class TerminalInputPayload(TerminalPayload):
@@ -262,22 +238,20 @@ class TerminalOutputPayload(TerminalPayload):
 
 
 class TerminalSizePayload(TerminalPayload):
-    rows: int = Field(ge=1, le=MAX_TERMINAL_DIMENSION)
-    cols: int = Field(ge=1, le=MAX_TERMINAL_DIMENSION)
+    rows: int = Field(ge=1)
+    cols: int = Field(ge=1)
 
 
 class TerminalBinding(PayloadModel):
     action: TerminalAction
-    key: (
-        Annotated[str, StringConstraints(min_length=1, max_length=MAX_BINDING_KEY_CHARS)] | None
-    ) = None
+    key: str | None = None
     tooltip: str = Field(min_length=1, max_length=256)
 
 
 class TerminalBindingsPayload(TerminalPayload):
     prefix: str = Field(min_length=1, max_length=64)
     prefix2: str | None = Field(default=None, min_length=1, max_length=64)
-    bindings: list[TerminalBinding] = Field(max_length=MAX_TERMINAL_BINDINGS)
+    bindings: list[TerminalBinding]
 
 
 class TerminalActionPayload(TerminalPayload):

@@ -40,6 +40,7 @@ class ConfigStore:
                 "server_url": str(config.server_url),
                 "installation_id": str(config.installation_id),
                 "installation_token": config.installation_token.get_secret_value(),
+                "allow_insecure_http": config.allow_insecure_http,
             },
             separators=(",", ":"),
         ).encode("utf-8")
@@ -65,11 +66,4 @@ class ConfigStore:
             raise InsecureConfigError("Configuration is not owned by the current user")
         if stat.S_IMODE(metadata.st_mode) & 0o077:
             raise InsecureConfigError("Configuration permissions must not allow group or other")
-        raw = json.loads(self.path.read_bytes())
-        legacy_override = raw.pop("allow_insecure_http", False)
-        if legacy_override is not False:
-            raise InsecureConfigError(
-                "TermFlow no longer supports public HTTP; run `termflow login` "
-                "with an HTTPS URL"
-            )
-        return InstallationConfig.model_validate(raw)
+        return InstallationConfig.model_validate_json(self.path.read_bytes())

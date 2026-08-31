@@ -18,13 +18,21 @@ export function createTauriHttpTransport(): HttpTransport {
   return {
     async request(path: `/${string}`, request: HttpRequest) {
       const body = request.body === undefined ? undefined : JSON.parse(JSON.stringify(request.body))
+      const headers: Record<string, string> = {}
+      for (const [name, value] of Object.entries(request.headers ?? {})) headers[name] = value
+      const send = async (nonce?: string) => invoke<NativeHttpResponse>('native_http_request', {
+        issuer: serverConfig.current,
+        path,
+        method: request.method,
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
+        ...(body === undefined ? {} : { body }),
+        ...(nonce === undefined ? {} : { nonce }),
+      })
       try {
-        const response = await invoke<NativeHttpResponse>('native_http_request', {
-          issuer: serverConfig.current,
-          path,
-          method: request.method,
-          ...(body === undefined ? {} : { body }),
-        })
+        let response = await send()
+        if (response.status === 401 && response.headers['dpop-nonce'] !== undefined) {
+          response = await send(response.headers['dpop-nonce'])
+        }
         void logNativeEvent({
           event: 'http_response',
           issuer: serverConfig.current,

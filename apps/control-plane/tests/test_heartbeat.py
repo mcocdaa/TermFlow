@@ -12,7 +12,7 @@ from termflow_protocol import MessageType
 @pytest.mark.asyncio
 async def test_expiry_publishes_offline_and_fails_pending_command() -> None:
     registry = LiveInstanceRegistry(queue_size=2)
-    hub = EventHub(queue_size=2, queue_max_bytes=1024 * 1024)
+    hub = EventHub(queue_size=2)
     instance_id = uuid4()
     connection = await registry.register(instance_id)
     connection.last_heartbeat = datetime.now(UTC) - timedelta(seconds=60)

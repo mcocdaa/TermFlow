@@ -62,12 +62,13 @@ def test_websocket_url_policy() -> None:
     assert bridge_websocket_url("http://127.0.0.1:8000") == (
         "ws://127.0.0.1:8000/api/v1/bridge/connect"
     )
+    assert bridge_websocket_url("http://192.168.0.53:8765", allow_insecure_http=True) == (
+        "ws://192.168.0.53:8765/api/v1/bridge/connect"
+    )
     with pytest.raises(ValueError):
         bridge_websocket_url("http://example.com")
     with pytest.raises(ValueError):
         bridge_websocket_url("http://192.168.0.53:8765")
-    with pytest.raises(ValueError):
-        bridge_websocket_url("http://192.0.2.10")
 
 
 @pytest.mark.asyncio

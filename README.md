@@ -95,6 +95,7 @@ docker run -d \
   --volume "$PWD/termflow-node-work:/work" \
   --env TERMFLOW_SERVER=http://termflow-control-plane:8000 \
   --env TERMFLOW_CODE='<Web C 生成的一次性注册码>' \
+  --env TERMFLOW_ALLOW_INSECURE_HTTP=true \
   --env TERMFLOW_NEW=demo \
   ghcr.io/mcocdaa/termflow-node:v0.1.0
 ```

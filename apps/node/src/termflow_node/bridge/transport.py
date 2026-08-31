@@ -63,8 +63,8 @@ def _connect_websocket(
     )
 
 
-def bridge_websocket_url(server_url: str) -> str:
-    base_url = validate_server_url(server_url)
+def bridge_websocket_url(server_url: str, *, allow_insecure_http: bool = False) -> str:
+    base_url = validate_server_url(server_url, allow_insecure_http=allow_insecure_http)
     if base_url.startswith("https://"):
         return f"wss://{base_url.removeprefix('https://')}/api/v1/bridge/connect"
     if base_url.startswith("http://"):
@@ -215,7 +215,10 @@ class BridgeTransport:
         token = self._instance.instance_token
         if token is None:
             raise RuntimeError("Instance registration did not produce a credential")
-        websocket_url = bridge_websocket_url(str(self._installation.server_url))
+        websocket_url = bridge_websocket_url(
+            str(self._installation.server_url),
+            allow_insecure_http=self._installation.allow_insecure_http,
+        )
         if websocket_url.startswith("ws://"):
             log_event(
                 "bridge_insecure_transport",

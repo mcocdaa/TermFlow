@@ -135,7 +135,7 @@ async def test_epoch_watcher_syncs_hubs_when_cookie_request_advanced_store_first
     repositories = RepositoryBundle(database.session_factory)
     sessions = BrowserSessionStore(ttl=timedelta(minutes=5), capacity=2)
     terminal_hub = TerminalHub(queue_max_messages=2, queue_max_bytes=1024)
-    event_hub = EventHub(queue_size=2, queue_max_bytes=1024 * 1024)
+    event_hub = EventHub(queue_size=2)
     terminal = await terminal_hub.register(uuid4(), session_key=None, auth_epoch=1)
     subscriber = await event_hub.subscribe(instance_id=None, auth_epoch=1)
     stop = asyncio.Event()

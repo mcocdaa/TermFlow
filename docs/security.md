@@ -68,52 +68,23 @@ token 不放 URL。B 不持久化终端输入、输出、屏幕快照或录像�
 终端输入审计（来源会话、累计字节数）以聚合日志写入 stdout 并进入容器日志系统，不落
 SQLite；`docker logs` 由 Compose 的 `max-size` 配置轮转。
 
-A 端的明文传输边界：Plaintext HTTP is supported only on literal loopback hosts
-(`127.0.0.1`, `localhost`, and `::1`) for local development. Every non-loopback
-Control Plane URL requires HTTPS. There is no command-line or persisted-config
-override。旧配置里的 `allow_insecure_http` 开关会在读取时被移除或拒绝：值为
-`false` 的旧文件按新格式加载，值为 `true` 的旧文件报错并提示重新执行
-`termflow login`；该开关不再写入新配置。
+A 端 `--allow-insecure-http` 会以明文传输注册凭据与终端流量：该开关只输出警告并标记
+`status`/日志为 `insecure`，不会拒绝公网 HTTP 目标。仅应在受信任的专用局域网使用；公网
+部署必须使用 HTTPS。
 
 每个 Term 同时只有一个可输入的远程 tmux client，新连接显式替换旧连接。单帧最大
 64 KiB，并有输入速率、队列和背压上限。远程连接关闭只 detach 代理 client，不能结束
 tmux server/session 或 Pane 进程。
 
-### 资源上限
-
-Control Plane 在解析或排队前执行以下硬上限：Topology snapshots are limited to 64
-windows and 64 panes per window. window/pane ID 最长 32 个字符，名称、标题和当前命令
-最长 256 个字符；tmux index 最大 4095，行列尺寸最大 32767，revision 最大
-`2^63 - 1`。Bridge capabilities 最多 64 项且每项最长 64 个字符；terminal bindings
-最多 128 项且每个 key 最长 128 个字符。
-
-Bridge ingress is limited to 256 KiB per frame and 1 MiB/s per connection.
-Each event subscriber is limited to 512 messages and 1 MiB of serialized data.
-终端通道另有 64 KiB 单帧、256 KiB/s 输入、256 条消息和 1 MiB 队列的默认上限。
-Changing a resource ceiling requires a memory-budget review and boundary tests at the
-configured maximum and maximum plus one.
-
-原生 C 的所有 HTTP 与 WebSocket 流量都由 Rust 侧统一发出：The Tauri WebView never
-receives access tokens, refresh tokens, DPoP proofs, private-key signatures, or
-authorization headers. Rust returns only public-key metadata and tokenless
-authorization status. Authenticated API requests are performed by the bounded
-same-origin native HTTP command. Rust 侧把目标严格限定为配置 issuer 的 origin 与
-`/api/` 路径前缀（外加固定的公开 bootstrap 路径），不跟随重定向，请求/响应体分别
-限制在 256 KiB 与 1 MiB，响应头只透传 `content-type`、`dpop-nonce`、`retry-after`
-与 `x-request-id`，并按收到的 `DPoP-Nonce` 在原生侧完成唯一一次重试。客户端日志在
+原生 C 的所有 HTTP 与 WebSocket 流量都由 Rust 侧统一发出：WebView 不再持有
+`http`/`websocket` 插件权限，`native_request_headers`/`native_http_request`/
+`native_terminal_connect` 会把目标严格限定为配置 issuer 的 origin 与 `/api/` 路径前缀，
+Access Token 不进入 JavaScript 环境；DPoP 签名输入被限定为规范 JWT 结构。客户端日志在
 Rust 统一脱敏后落盘。
 
 安装与供应链：Release 产物携带 GitHub Artifact Attestations（build provenance），镜像
 以 cosign keyless 签名并附带 SBOM；`install-termflow-node.sh` 在有 GitHub CLI 时校验
 attestation。CI 引用完整 commit SHA 且权限最小化。
-
-Rust/Tauri 依赖中的 `RUSTSEC-2024-0429` 已在 `vendor/glib-0.18.5` 回补上游修复，但只按
-版本匹配的扫描器仍会报告它。仓库中的 audit ignore 是 patch-gated：门禁先核对修复行、运行
-优化模式迭代器回归，并确认 Cargo 实际从 vendor 路径解析 glib，之后才允许 cargo-audit 忽略
-该编号。GTK3 unmaintained advisories remain a residual risk；它们是 Linux Tauri/Wry 继承的
-供应链维护警告，不应被表述为已修复的内存安全问题。The vendor directory and audit ignore
-must be removed in the same change once the resolved GTK/Tauri graph accepts glib >=0.20
-for all Linux WebView consumers.
 
 容器默认只映射 loopback。需要远程访问时，应使用可信反向代理终止 TLS，并保护
 Admin Token。不要把数据库、A 配置、Bridge 日志或 tmux socket 上传为诊断附件。

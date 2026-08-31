@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({ writeText: vi.fn() }))
 vi.mock('@tauri-apps/plugin-os', () => ({ arch: () => 'x86_64', platform: () => 'windows' }))
 vi.mock('./adapters/tauriHttpTransport', () => ({ createTauriHttpTransport: () => ({ request: mocks.request }) }))
 vi.mock('./adapters/tauriTerminalTransport', () => ({ createTauriTerminalTransport: () => ({}) }))
-vi.mock('./adapters/tauriCredentialControl', () => ({ clearNativeCredentials: mocks.clearNativeCredentials }))
+vi.mock('./adapters/tauriCredentialVault', () => ({ clearNativeCredentials: mocks.clearNativeCredentials }))
 vi.mock('./serverConfig', () => ({
   serverConfig: { current: 'https://relay.example', load: mocks.load },
 }))

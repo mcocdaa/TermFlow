@@ -26,8 +26,6 @@ use std::sync::OnceLock;
 
 const KEYRING_SERVICE: &str = "io.termflow.client";
 const ACCESS_EARLY_SECONDS: i64 = 60;
-const NATIVE_HTTP_REQUEST_MAX_BYTES: usize = 256 * 1024;
-const NATIVE_HTTP_RESPONSE_MAX_BYTES: usize = 1024 * 1024;
 
 /// The protocol only accepts loopback HTTP callbacks on explicit ephemeral
 /// ports, so the listener must bind inside that range for the browser handoff
@@ -46,10 +44,10 @@ pub struct PublicJwk {
     y: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NativeAuthorizationStatus {
-    authorized: bool,
+pub struct AccessCredential {
+    access_token: String,
     expires_at: String,
     token_type: &'static str,
 }
@@ -60,29 +58,13 @@ struct AccessState {
     expires_at_unix: i64,
 }
 
+#[derive(Default)]
 pub struct NativeAuthState {
     access: Mutex<HashMap<String, AccessState>>,
     nonces: Mutex<HashMap<String, String>>,
     callback_listeners: Mutex<HashMap<String, PendingCallbackListener>>,
     refresh_gate: tokio::sync::Mutex<()>,
     http: Client,
-}
-
-impl Default for NativeAuthState {
-    fn default() -> Self {
-        let http = Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(std::time::Duration::from_secs(10))
-            .build()
-            .expect("native HTTP client configuration must be valid");
-        Self {
-            access: Mutex::new(HashMap::new()),
-            nonces: Mutex::new(HashMap::new()),
-            callback_listeners: Mutex::new(HashMap::new()),
-            refresh_gate: tokio::sync::Mutex::new(()),
-            http,
-        }
-    }
 }
 
 /// A bound loopback callback listener waiting for the browser handoff. The
@@ -152,6 +134,50 @@ pub(crate) fn canonical_issuer(value: &str) -> Result<String, String> {
     Ok(url.origin().ascii_serialization())
 }
 
+fn assert_api_target(issuer: &str, target: &str) -> Result<Url, String> {
+    let url = Url::parse(target).map_err(|_| safe_error("url_invalid"))?;
+    if url.username() != "" || url.password().is_some() {
+        return Err(safe_error("url_not_allowed"));
+    }
+    let base = Url::parse(issuer).map_err(|_| safe_error("issuer_invalid"))?;
+    if url.origin() != base.origin() {
+        return Err(safe_error("url_not_allowed"));
+    }
+    if !url.path().starts_with("/api/") {
+        return Err(safe_error("url_not_allowed"));
+    }
+    Ok(url)
+}
+
+fn validate_dpop_signing_input(input: &[u8]) -> Result<(), String> {
+    let text = std::str::from_utf8(input).map_err(|_| safe_error("signing_input_invalid"))?;
+    let mut parts = text.split('.');
+    let header_segment = parts.next().ok_or(safe_error("signing_input_invalid"))?;
+    let payload_segment = parts.next().ok_or(safe_error("signing_input_invalid"))?;
+    if parts.next().is_some() {
+        return Err(safe_error("signing_input_invalid"));
+    }
+    let header = decode_jwt_segment(header_segment)?;
+    if header.get("typ").and_then(Value::as_str) != Some("dpop+jwt")
+        || header.get("alg").and_then(Value::as_str) != Some("ES256")
+    {
+        return Err(safe_error("signing_input_invalid"));
+    }
+    let payload = decode_jwt_segment(payload_segment)?;
+    for field in ["jti", "htm", "htu"] {
+        if !payload.get(field).and_then(Value::as_str).is_some() {
+            return Err(safe_error("signing_input_invalid"));
+        }
+    }
+    Ok(())
+}
+
+fn decode_jwt_segment(segment: &str) -> Result<Value, String> {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(segment)
+        .map_err(|_| safe_error("signing_input_invalid"))?;
+    serde_json::from_slice(&bytes).map_err(|_| safe_error("signing_input_invalid"))
+}
 fn issuer_key(issuer: &str, kind: &str) -> String {
     format!(
         "{}.{}",
@@ -316,11 +342,11 @@ fn dpop_proof(
         URL_SAFE_NO_PAD.encode(signature.to_bytes())
     ))
 }
-fn authorization_status(value: &AccessState) -> NativeAuthorizationStatus {
+fn access_credential(value: &AccessState) -> AccessCredential {
     let timestamp = time::OffsetDateTime::from_unix_timestamp(value.expires_at_unix)
         .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-    NativeAuthorizationStatus {
-        authorized: true,
+    AccessCredential {
+        access_token: value.access_token.clone(),
         expires_at: timestamp
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_default(),
@@ -394,7 +420,7 @@ async fn store_token_response(
     state: &NativeAuthState,
     issuer: &str,
     response: TokenResponse,
-) -> Result<NativeAuthorizationStatus, String> {
+) -> Result<AccessCredential, String> {
     keyring_entry(issuer, "refresh")?
         .set_secret(response.refresh_token.as_bytes())
         .map_err(|_| safe_error("secure_store_unavailable"))?;
@@ -402,7 +428,7 @@ async fn store_token_response(
         access_token: response.access_token,
         expires_at_unix: now_unix()? + response.expires_in,
     };
-    let result = authorization_status(&access);
+    let result = access_credential(&access);
     state
         .access
         .lock()
@@ -410,10 +436,7 @@ async fn store_token_response(
         .insert(issuer.to_owned(), access);
     Ok(result)
 }
-async fn refresh_access(
-    state: &NativeAuthState,
-    issuer: &str,
-) -> Result<NativeAuthorizationStatus, String> {
+async fn refresh_access(state: &NativeAuthState, issuer: &str) -> Result<AccessCredential, String> {
     let refresh = keyring_entry(issuer, "refresh")?
         .get_secret()
         .map_err(|_| safe_error("authorization_required"))?;
@@ -467,10 +490,18 @@ pub fn native_key_thumbprint(issuer: String) -> Result<String, String> {
     Ok(thumbprint(&public_jwk(&signing_key(&issuer)?)?))
 }
 #[tauri::command]
+pub fn native_sign_jwt(issuer: String, signing_input: Vec<u8>) -> Result<Vec<u8>, String> {
+    let issuer = canonical_issuer(&issuer)?;
+    validate_dpop_signing_input(&signing_input)?;
+    let signature: Signature = signing_key(&issuer)?.sign(&signing_input);
+    Ok(signature.to_bytes().to_vec())
+}
+
+#[tauri::command]
 pub async fn native_exchange_authorization(
     state: State<'_, NativeAuthState>,
     request: NativeAuthorizationExchangeRequest,
-) -> Result<NativeAuthorizationStatus, String> {
+) -> Result<AccessCredential, String> {
     let NativeAuthorizationExchangeRequest {
         issuer,
         transaction_id,
@@ -489,7 +520,7 @@ pub async fn native_exchange_authorization(
 pub async fn native_exchange_device_code(
     state: State<'_, NativeAuthState>,
     request: NativeDeviceExchangeRequest,
-) -> Result<NativeAuthorizationStatus, String> {
+) -> Result<AccessCredential, String> {
     let NativeDeviceExchangeRequest {
         issuer,
         device_code,
@@ -736,6 +767,16 @@ async fn respond_http(
     stream.flush().await
 }
 
+#[tauri::command]
+pub async fn native_refresh_access(
+    state: State<'_, NativeAuthState>,
+    issuer: String,
+) -> Result<AccessCredential, String> {
+    let issuer = canonical_issuer(&issuer)?;
+    let _refresh_guard = state.refresh_gate.lock().await;
+    refresh_access(&state, &issuer).await
+}
+
 /// Removes the refresh credential for one canonical issuer. The device P-256
 /// key is intentionally retained so a later authorization keeps the same
 /// device identity without exposing that key to the WebView.
@@ -746,6 +787,47 @@ pub fn native_clear_credentials(
 ) -> Result<(), String> {
     let issuer = canonical_issuer(&issuer)?;
     clear_native_credentials(&state, &issuer)
+}
+
+#[tauri::command]
+pub async fn native_request_headers(
+    state: State<'_, NativeAuthState>,
+    issuer: String,
+    method: String,
+    url: String,
+    nonce: Option<String>,
+) -> Result<NativeHeaders, String> {
+    let issuer = canonical_issuer(&issuer)?;
+    assert_api_target(&issuer, &url)?;
+    let access = current_access(&state, &issuer).await?;
+    let nonce = match nonce {
+        Some(value) => {
+            remember_dpop_nonce(&state, &issuer, &value)?;
+            Some(value)
+        }
+        None => remembered_dpop_nonce(&state, &issuer)?,
+    };
+    let proof = dpop_proof(
+        &signing_key(&issuer)?,
+        &method,
+        &url,
+        nonce.as_deref(),
+        Some(&access.access_token),
+    )?;
+    Ok(NativeHeaders {
+        authorization: format!("DPoP {}", access.access_token),
+        dpop: proof,
+    })
+}
+
+#[tauri::command]
+pub fn native_remember_dpop_nonce(
+    state: State<'_, NativeAuthState>,
+    issuer: String,
+    nonce: String,
+) -> Result<(), String> {
+    let issuer = canonical_issuer(&issuer)?;
+    remember_dpop_nonce(&state, &issuer, &nonce)
 }
 
 fn is_public_api_path(path: &str) -> bool {
@@ -804,33 +886,18 @@ pub struct NativeHttpResponse {
     body: Option<Value>,
 }
 
-fn response_header_allowed(name: &str) -> bool {
-    matches!(
-        name,
-        "content-type" | "dpop-nonce" | "retry-after" | "x-request-id"
-    )
-}
-
-fn append_response_chunk(buffer: &mut Vec<u8>, chunk: &[u8]) -> Result<(), String> {
-    if chunk.len() > NATIVE_HTTP_RESPONSE_MAX_BYTES.saturating_sub(buffer.len()) {
-        return Err(safe_error("response_too_large"));
-    }
-    buffer.extend_from_slice(chunk);
-    Ok(())
-}
-
 /// The only WebView-visible HTTP channel. The Rust side pins the target to
 /// the configured issuer origin and `/api/` prefix (or the public bootstrap
 /// paths), signs DPoP locally, and never hands the raw access token to JS.
-/// It accepts no caller-supplied headers or nonce, follows no redirects, and
-/// caps request and response bodies in bytes before any JSON parsing.
 #[tauri::command]
 pub async fn native_http_request(
     state: State<'_, NativeAuthState>,
     issuer: String,
     path: String,
     method: String,
+    headers: Option<HashMap<String, String>>,
     body: Option<Value>,
+    nonce: Option<String>,
 ) -> Result<NativeHttpResponse, String> {
     let issuer = canonical_issuer(&issuer)?;
     let _ = assert_http_target(&issuer, &path)?;
@@ -847,17 +914,7 @@ pub async fn native_http_request(
     } else {
         remembered_dpop_nonce(&state, &issuer)?
     };
-    let body_bytes = match &body {
-        Some(value) => {
-            let bytes =
-                serde_json::to_vec(value).map_err(|_| safe_error("request_body_invalid"))?;
-            if bytes.len() > NATIVE_HTTP_REQUEST_MAX_BYTES {
-                return Err(safe_error("request_too_large"));
-            }
-            Some(bytes)
-        }
-        None => None,
-    };
+    let effective_nonce = nonce.or(remembered);
 
     let send = |request_nonce: Option<String>| -> Result<reqwest::RequestBuilder, String> {
         let mut builder = match method.as_str() {
@@ -867,6 +924,9 @@ pub async fn native_http_request(
             "DELETE" => state.http.delete(&url),
             _ => return Err(safe_error("method_not_allowed")),
         };
+        for (name, value) in headers.iter().flatten() {
+            builder = builder.header(name, value);
+        }
         if !is_public {
             let key = signing_key(&issuer)?;
             let proof = dpop_proof(
@@ -883,15 +943,13 @@ pub async fn native_http_request(
                 )
                 .header("DPoP", proof);
         }
-        if let Some(bytes) = &body_bytes {
-            builder = builder
-                .header("Content-Type", "application/json")
-                .body(bytes.clone());
+        if let Some(value) = &body {
+            builder = builder.json(value);
         }
         Ok(builder)
     };
 
-    let first = send(remembered.clone())?
+    let first = send(effective_nonce.clone())?
         .send()
         .await
         .map_err(|_| safe_error("request_failed"))?;
@@ -924,7 +982,6 @@ pub async fn native_http_request(
     let response_headers = response
         .headers()
         .iter()
-        .filter(|(name, _)| response_header_allowed(name.as_str()))
         .map(|(name, value)| {
             (
                 name.as_str().to_owned(),
@@ -932,23 +989,12 @@ pub async fn native_http_request(
             )
         })
         .collect::<HashMap<String, String>>();
-    let content_type = response_headers
+    let body_value = if response_headers
         .get("content-type")
-        .cloned()
-        .unwrap_or_default();
-    let mut body_buffer: Vec<u8> = Vec::new();
-    if content_type.contains("application/json") {
-        let mut stream = response.bytes_stream();
-        use futures_util::StreamExt;
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|_| safe_error("response_failed"))?;
-            append_response_chunk(&mut body_buffer, &chunk)?;
-        }
-    }
-    let body_value = if content_type.contains("application/json") {
-        serde_json::from_slice::<Value>(&body_buffer)
-            .map(Some)
-            .unwrap_or(None)
+        .unwrap_or(&String::new())
+        .contains("application/json")
+    {
+        response.json::<Value>().await.map(Some).unwrap_or(None)
     } else {
         None
     };
@@ -962,45 +1008,6 @@ pub async fn native_http_request(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn native_authorization_status_serializes_only_public_state() {
-        let value = serde_json::to_value(NativeAuthorizationStatus {
-            authorized: true,
-            expires_at: "2026-08-21T12:00:00Z".to_owned(),
-            token_type: "DPoP",
-        })
-        .unwrap();
-        assert_eq!(value["authorized"], true);
-        assert!(value.get("accessToken").is_none());
-        assert!(value.get("refreshToken").is_none());
-        assert!(value.get("authorization").is_none());
-        assert!(value.get("dpop").is_none());
-    }
-
-    #[test]
-    fn native_http_exposes_only_safe_response_headers() {
-        for allowed in ["content-type", "dpop-nonce", "retry-after", "x-request-id"] {
-            assert!(response_header_allowed(allowed));
-        }
-        for forbidden in [
-            "set-cookie",
-            "authorization",
-            "proxy-authenticate",
-            "location",
-        ] {
-            assert!(!response_header_allowed(forbidden));
-        }
-    }
-
-    #[test]
-    fn native_http_response_body_is_bounded_byte_by_byte() {
-        let mut buffer: Vec<u8> = Vec::new();
-        let chunk = vec![0_u8; NATIVE_HTTP_RESPONSE_MAX_BYTES];
-        append_response_chunk(&mut buffer, &chunk).unwrap();
-        let overflow = append_response_chunk(&mut buffer, &[1_u8]);
-        assert_eq!(overflow, Err("response_too_large".to_owned()));
-    }
 
     #[test]
     fn public_jwk_accepts_owned_ipc_payload() {
@@ -1057,6 +1064,16 @@ mod tests {
     }
 
     #[test]
+    fn api_target_must_match_issuer_origin_and_api_prefix() {
+        let issuer = "https://b.example";
+        assert!(assert_api_target(issuer, "https://b.example/api/v1/dashboard").is_ok());
+        assert!(assert_api_target(issuer, "https://attacker.example/api/v1/dashboard").is_err());
+        assert!(assert_api_target(issuer, "https://b.example/other").is_err());
+        assert!(assert_api_target(issuer, "https://b.example/").is_err());
+        assert!(assert_api_target(issuer, "https://user:pass@b.example/api/v1/dashboard").is_err());
+    }
+
+    #[test]
     fn http_target_allows_public_paths_without_api_prefix() {
         let issuer = "https://b.example";
         assert!(assert_http_target(issuer, "/api/v1/dashboard").is_ok());
@@ -1066,6 +1083,27 @@ mod tests {
         assert!(assert_http_target(issuer, "/not-api").is_err());
         assert!(assert_http_target(issuer, "//attacker.example/api/v1/x").is_err());
         assert!(assert_http_target(issuer, "/api/v1/../secret").is_ok());
+    }
+
+    #[test]
+    fn dpop_signing_input_must_be_two_part_dpop_jwt() {
+        let key = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
+        let jwk = public_jwk(&key).unwrap();
+        let header = jwt_segment(&json!({"typ": "dpop+jwt", "alg": "ES256", "jwk": jwk})).unwrap();
+        let claims =
+            jwt_segment(&json!({"jti": "abc", "htm": "GET", "htu": "https://b.example/api"}))
+                .unwrap();
+        let valid = format!("{header}.{claims}");
+        assert!(validate_dpop_signing_input(valid.as_bytes()).is_ok());
+        assert!(validate_dpop_signing_input(b"not-a-jwt".as_slice()).is_err());
+        let missing_htu = jwt_segment(&json!({"jti": "abc", "htm": "GET"})).unwrap();
+        assert!(validate_dpop_signing_input(format!("{header}.{missing_htu}").as_bytes()).is_err());
+        let wrong_alg =
+            jwt_segment(&json!({"typ": "dpop+jwt", "alg": "RS256", "jwk": {}})).unwrap();
+        assert!(validate_dpop_signing_input(format!("{wrong_alg}.{claims}").as_bytes()).is_err());
+        assert!(
+            validate_dpop_signing_input(format!("{header}.{claims}.extra").as_bytes()).is_err()
+        );
     }
 
     #[test]

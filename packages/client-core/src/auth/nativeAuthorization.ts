@@ -1,6 +1,6 @@
 import type { PkcePair } from './pkce'
 import { createAuthorizationStateMachine } from './authorizationState'
-import type { AuthorizationBrowserPort, AuthorizationStateListener, NativeAuthorizationStatus, NativeClientDescriptor, NativePublicKeyPort } from './ports'
+import type { AuthorizationBrowserPort, AuthorizationStateListener, CredentialVaultPort, NativeAccessCredential, NativeClientDescriptor, NativeKeyPort } from './ports'
 
 const transactionIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -81,7 +81,7 @@ export interface AuthorizationExchangeRequest {
   transaction: string
   verifier: string
   redirectUri: string
-  key: NativePublicKeyPort
+  key: NativeKeyPort
 }
 
 export interface NativeAuthorizationOptions extends AuthorizationStateListener {
@@ -90,17 +90,18 @@ export interface NativeAuthorizationOptions extends AuthorizationStateListener {
   client: NativeClientDescriptor
   scopes: string[]
   browser: AuthorizationBrowserPort
-  key: NativePublicKeyPort
+  vault: CredentialVaultPort
+  key: NativeKeyPort
   createPkce: () => Promise<PkcePair>
   createId: () => string
-  exchange(request: AuthorizationExchangeRequest): Promise<NativeAuthorizationStatus>
+  exchange(request: AuthorizationExchangeRequest): Promise<NativeAccessCredential>
   redirectUri?: string
 }
 
 export class NativeAuthorizationSession {
   constructor(private readonly options: NativeAuthorizationOptions) {}
 
-  async authorize(signal?: AbortSignal): Promise<NativeAuthorizationStatus> {
+  async authorize(signal?: AbortSignal): Promise<NativeAccessCredential> {
     const progress = createAuthorizationStateMachine({ onState: this.options.onState })
     progress.requesting()
     if (signal?.aborted) {
@@ -152,15 +153,16 @@ export class NativeAuthorizationSession {
         throw new Error('authorization_callback_invalid')
       }
       progress.approved()
-      const status = await this.options.exchange({
+      const credential = await this.options.exchange({
         issuer: this.options.issuer,
         transaction,
         verifier: pkce.verifier,
         redirectUri,
         key: this.options.key,
       })
+      await this.options.vault.replace(this.options.issuer, credential)
       progress.connected()
-      return status
+      return credential
     } catch (error) {
       if ((error as Error)?.name === 'AbortError' || (error as Error)?.message === 'authorization_cancelled') progress.cancelled()
       else progress.failed()

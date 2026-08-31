@@ -43,7 +43,11 @@ esac
 export SHELL
 
 if [ ! -f "${HOME}/.config/termflow/config.json" ] && [ -n "${TERMFLOW_SERVER:-}" ] && [ -n "${TERMFLOW_CODE:-}" ]; then
-    termflow login --server ${TERMFLOW_SERVER} --code ${TERMFLOW_CODE}
+    login_command="termflow login --server ${TERMFLOW_SERVER} --code ${TERMFLOW_CODE}"
+    if [ "${TERMFLOW_ALLOW_INSECURE_HTTP:-}" = "true" ]; then
+        login_command="${login_command} --allow-insecure-http"
+    fi
+    ${login_command}
 fi
 
 if [ -n "${TERMFLOW_NEW:-}" ]; then

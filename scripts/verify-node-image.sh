@@ -147,7 +147,7 @@ docker run --rm --user 0:0 \
   --volume "${NODE_VOLUME}:/home/termflow" \
   --entrypoint /bin/sh "${NODE_IMAGE}" -ec '
   mkdir -p /home/termflow/.config/termflow
-  printf "%s\n" "{\"server_url\":\"http://127.0.0.1:1\",\"installation_id\":\"00000000-0000-0000-0000-000000000001\",\"installation_token\":\"dummy-token\"}" > /home/termflow/.config/termflow/config.json
+  printf "%s\n" "{\"server_url\":\"http://127.0.0.1:1\",\"installation_id\":\"00000000-0000-0000-0000-000000000001\",\"installation_token\":\"dummy-token\",\"allow_insecure_http\":true}" > /home/termflow/.config/termflow/config.json
   chmod 600 /home/termflow/.config/termflow/config.json
 '
 

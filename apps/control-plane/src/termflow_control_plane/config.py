@@ -85,12 +85,6 @@ class Settings(BaseSettings):
     enrollment_token_ttl_seconds: int = Field(default=60, ge=10, le=600)
     terminal_max_frame_bytes: int = Field(default=65_536, ge=1, le=65_536)
     terminal_input_rate_bytes_per_second: int = Field(default=256 * 1024, ge=1)
-    bridge_max_frame_bytes: int = Field(default=256 * 1024, ge=1024, le=1024 * 1024)
-    bridge_input_rate_bytes_per_second: int = Field(
-        default=1024 * 1024,
-        ge=1024,
-        le=16 * 1024 * 1024,
-    )
     terminal_queue_max_messages: int = Field(default=256, ge=1)
     terminal_queue_max_bytes: int = Field(default=1024 * 1024, ge=1)
     terminal_resume_grace_seconds: float = Field(default=30.0, ge=1.0, le=300.0)
@@ -99,7 +93,6 @@ class Settings(BaseSettings):
     command_timeout_seconds: float = 5.0
     connection_queue_size: int = 256
     event_queue_size: int = 512
-    event_queue_max_bytes: int = Field(default=1024 * 1024, ge=1, le=16 * 1024 * 1024)
     max_input_bytes: int = 16 * 1024
 
     @field_validator("admin_token")

@@ -168,34 +168,6 @@ Tauri 配置生成平台工程，再执行 debug/unsigned 编译。缺少 Tauri 
 `TERMFLOW_DOCKER_BUILD_RETRY_DELAY_SECONDS` 调整。签名、notarization、商店上传和发布凭据
 属于单独受保护的 release 流程。
 
-### 传输安全的三种检查
-
-传输边界有三层互相独立的验收，不能互相替代：
-
-1. **源码测试**：`scripts/verify.sh` 中的 Node/协议/Control Plane/文档契约测试在仓库
-   内运行，验证 Node 只接受回环明文、Control Plane 与协议的资源上限等代码级策略；
-2. **容器检查**：`scripts/verify-control-plane-image.sh` 与
-   `scripts/verify-node-image.sh` 在构建出的镜像上运行，验证初始化、健康检查与
-   运行时权限边界，不依赖公网；
-3. **公网边缘验收**：`scripts/security/verify-public-edge.sh <域名>` 对已部署的
-   公网域名做现场检查（HTTP→HTTPS 308 重定向、HSTS 与安全响应头、OAuth
-   discovery 端点）。它使用真实网络，必须在部署之后执行，且只有它通过才算
-   本次部署被接受。
-
-源码测试通过不代表公网边缘已就绪；同样，边缘验收通过也不覆盖容器与源码层策略。
-
-### Control Plane 资源上限配置
-
-Compose 显式传入下列生产默认值：
-
-- `TERMFLOW_BRIDGE_MAX_FRAME_BYTES=262144`：Bridge 单帧 256 KiB；
-- `TERMFLOW_BRIDGE_INPUT_RATE_BYTES_PER_SECOND=1048576`：每条 Bridge 连接 1 MiB/s；
-- `TERMFLOW_EVENT_QUEUE_MAX_BYTES=1048576`：每个事件订阅者最多排队 1 MiB 序列化数据。
-
-这些值与代码内的消息数量、拓扑数量及字符串长度上限共同构成内存预算，不能只为解决单次
-大消息而任意提高。修改任何上限时，都需要先评估单连接和并发连接的最坏内存占用，并分别
-增加“等于上限”和“上限加一”的边界测试。
-
 ## 三套手动打包 Workflow 与正式 Release
 
 各 workflow 的文件名、输入、Artifact 名称和 Tag 依赖图见

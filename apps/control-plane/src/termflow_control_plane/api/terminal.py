@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
 
@@ -41,7 +43,6 @@ from termflow_control_plane.connections.terminal_hub import (
     BrowserTerminal,
     LocalTerminalClose,
 )
-from termflow_control_plane.connections.token_bucket import TokenBucket
 from termflow_control_plane.persistence.repositories import RepositoryBundle
 from termflow_control_plane.routing.terminal_router import (
     TerminalRouteError,
@@ -60,6 +61,29 @@ _ERROR_MESSAGES = {
     "stream_gap": "The retained terminal stream cannot be resumed.",
     "target_not_found": "The selected tmux target no longer exists.",
 }
+
+
+@dataclass(slots=True)
+class _TokenBucket:
+    rate: int
+    tokens: float
+    observed_at: float
+
+    @classmethod
+    def create(cls, rate: int) -> _TokenBucket:
+        return cls(rate=rate, tokens=float(rate), observed_at=time.monotonic())
+
+    def consume(self, byte_count: int) -> bool:
+        now = time.monotonic()
+        self.tokens = min(
+            float(self.rate),
+            self.tokens + (now - self.observed_at) * self.rate,
+        )
+        self.observed_at = now
+        if byte_count > self.tokens:
+            return False
+        self.tokens -= byte_count
+        return True
 
 
 def _error_frame(terminal_id: UUID, code: str) -> TerminalErrorFrame:
@@ -188,7 +212,7 @@ async def _receive_terminal_input(
     repositories: RepositoryBundle,
     auth_epoch: int,
 ) -> None:
-    bucket = TokenBucket.create(settings.terminal_input_rate_bytes_per_second)
+    bucket = _TokenBucket.create(settings.terminal_input_rate_bytes_per_second)
     while True:
         incoming = await websocket.receive()
         if incoming["type"] == "websocket.disconnect":

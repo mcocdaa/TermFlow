@@ -2,11 +2,7 @@ import time
 from uuid import uuid4
 
 import pytest
-from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
-from termflow_control_plane.app import create_app
-from termflow_control_plane.config import Settings
-from termflow_control_plane.persistence.database import Database
 from termflow_protocol import (
     BridgeHelloPayload,
     MessageType,
@@ -171,65 +167,3 @@ def test_bridge_authenticates_and_updates_live_topology(client, admin_headers) -
             time.sleep(0.01)
         assert connection is not None
         assert connection.topology == topology
-
-
-def _bounded_bridge_client(tmp_path, **limits: int) -> TestClient:
-    settings = Settings(
-        admin_token="admin-token-that-is-long-enough-for-tests",
-        database_url=f"sqlite+aiosqlite:///{tmp_path / 'bridge-limits.db'}",
-        allow_insecure_loopback=True,
-        **limits,
-    )
-    app = create_app(settings=settings, database=Database(settings.database_url))
-    return TestClient(app)
-
-
-def test_bridge_rejects_frame_above_raw_byte_limit(tmp_path) -> None:
-    with _bounded_bridge_client(tmp_path, bridge_max_frame_bytes=1024) as client:
-        admin_headers = {"Authorization": "Bearer admin-token-that-is-long-enough-for-tests"}
-        installation_token = _installation_token(client, admin_headers)
-        instance_id = uuid4()
-        token = _register(client, installation_token, instance_id)
-
-        with client.websocket_connect(
-            "/api/v1/bridge/connect",
-            headers={"Authorization": f"Bearer {token}"},
-        ) as websocket:
-            websocket.send_text("x" * 1025)
-            closed = websocket.receive()
-
-    assert closed["type"] == "websocket.close"
-    assert closed["code"] == 1009
-
-
-def test_bridge_rate_limits_sustained_input_bytes(tmp_path) -> None:
-    with _bounded_bridge_client(
-        tmp_path,
-        bridge_input_rate_bytes_per_second=1024,
-    ) as client:
-        admin_headers = {"Authorization": "Bearer admin-token-that-is-long-enough-for-tests"}
-        installation_token = _installation_token(client, admin_headers)
-        instance_id = uuid4()
-        token = _register(client, installation_token, instance_id)
-        oversized_rate_message = WireMessage(
-            type=MessageType.BRIDGE_HELLO,
-            instance_id=instance_id,
-            payload=BridgeHelloPayload(
-                name="rate-limit-probe",
-                capabilities=tuple(
-                    f"capability_{index:02d}_{'x' * 47}" for index in range(64)
-                ),
-            ).model_dump(mode="json"),
-        ).model_dump_json()
-        assert len(oversized_rate_message.encode("utf-8")) > 1024
-
-        with client.websocket_connect(
-            "/api/v1/bridge/connect",
-            headers={"Authorization": f"Bearer {token}"},
-        ) as websocket:
-            websocket.send_text(oversized_rate_message)
-            websocket.send_bytes(b"force-baseline-termination")
-            closed = websocket.receive()
-
-    assert closed["type"] == "websocket.close"
-    assert closed["code"] == 4429
