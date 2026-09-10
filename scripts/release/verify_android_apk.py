@@ -40,7 +40,10 @@ _PACKAGE = re.compile(
     r"^package: name='(?P<name>[^']+)' versionCode='(?P<code>[0-9]+)' "
     r"versionName='(?P<version>[^']+)'(?:\s|$)"
 )
-_SIGNER = re.compile(r"^Signer #[0-9]+ certificate SHA-256 digest:\s*(?P<digest>[0-9A-Fa-f:]+)\s*$")
+_SIGNER = re.compile(
+    r"^\s*(?:V[0-9]+(?:\.[0-9]+)?\s+)?Signer\b.* certificate SHA-256 digest:\s*"
+    r"(?P<digest>[0-9A-Fa-f:]+)\s*$"
+)
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -65,12 +68,27 @@ def parse_badging(output: str) -> AndroidPackageMetadata:
 
 def parse_signers(output: str) -> tuple[str, ...]:
     signers = tuple(
-        match.group("digest").replace(":", "").upper()
-        for line in output.splitlines()
-        if (match := _SIGNER.match(line))
+        dict.fromkeys(
+            match.group("digest").replace(":", "").upper()
+            for line in output.splitlines()
+            if (match := _SIGNER.match(line))
+        )
     )
     if len(signers) != 1:
-        raise ValueError("apksigner output must contain exactly one signer")
+        detail = f"found {len(signers)} unique certificate fingerprints"
+        if signers:
+            listed = ", ".join(signers[:5])
+            suffix = ", ..." if len(signers) > 5 else ""
+            detail = f"{detail}: {listed}{suffix}"
+        else:
+            related_lines = tuple(
+                " ".join(line.split())
+                for line in output.splitlines()
+                if "signer" in line.lower() or "certificate" in line.lower()
+            )
+            related = " | ".join(related_lines[:5]) or "<none>"
+            detail = f"{detail}; signer-related output: {related}"
+        raise ValueError(f"apksigner output must contain exactly one signer; {detail}")
     return signers
 
 
@@ -177,27 +195,35 @@ def verify_launcher_resources(apk: Path, generated_res: Path) -> None:
 
     with zipfile.ZipFile(apk) as archive:
         names = set(archive.namelist())
-        adaptive_apk = "res/mipmap-anydpi-v26/ic_launcher.xml"
-        if adaptive_apk not in names:
-            raise ValueError("APK is missing the compiled adaptive launcher resource")
+        if "resources.arsc" not in names:
+            raise ValueError("APK is missing the compiled Android resource table")
+        archive_pngs = [
+            (name, archive.read(name)) for name in names if name.endswith(".png")
+        ]
+        for apk_name, actual in archive_pngs:
+            digest = hashlib.sha256(actual).hexdigest()
+            if Path(apk_name).name in LAUNCHER_NAMES and digest in KNOWN_TEMPLATE_LAUNCHER_SHA256:
+                raise ValueError(f"APK contains the known template launcher: {apk_name}")
         for density in DENSITIES:
             for launcher_name in LAUNCHER_NAMES:
                 source = generated_res / f"mipmap-{density}" / launcher_name
                 if not source.is_file():
                     raise ValueError(f"missing generated launcher: {source}")
-                apk_name = f"res/mipmap-{density}-v4/{launcher_name}"
-                if apk_name not in names:
-                    raise ValueError(f"APK is missing launcher resource: {apk_name}")
                 expected = source.read_bytes()
-                actual = archive.read(apk_name)
-                digest = hashlib.sha256(actual).hexdigest()
-                if digest in KNOWN_TEMPLATE_LAUNCHER_SHA256:
-                    raise ValueError(f"APK contains the known template launcher: {apk_name}")
-                if not _same_image(expected, actual):
+                match_index = next(
+                    (
+                        index
+                        for index, (_, actual) in enumerate(archive_pngs)
+                        if _same_image(expected, actual)
+                    ),
+                    None,
+                )
+                if match_index is None:
                     raise ValueError(
-                        "APK launcher does not match generated TermFlow resource: "
-                        f"{apk_name}"
+                        "APK is missing generated launcher image: "
+                        f"{density}/{launcher_name}"
                     )
+                archive_pngs.pop(match_index)
 
 
 def _version_key(path: Path) -> tuple[int, ...]:
@@ -223,7 +249,7 @@ def _run_tool(command: list[str]) -> str:
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()
         raise ValueError(f"Android build tool failed: {detail}")
-    return result.stdout
+    return "\n".join(part for part in (result.stdout, result.stderr) if part)
 
 
 def read_badging(apk: Path) -> AndroidPackageMetadata:

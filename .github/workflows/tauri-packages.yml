@@ -187,8 +187,10 @@ jobs:
             libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
             libayatana-appindicator3-dev librsvg2-dev
       - run: npm ci
-      - name: Build deb and AppImage packages
-        run: npm run tauri:build --workspace @termflow/tauri-client -- --bundles deb,appimage --ci
+      - name: Build DEB package
+        run: npm run tauri:build --workspace @termflow/tauri-client -- --bundles deb --ci
+      - name: Build AppImage package with bounded retries
+        run: scripts/release/build_linux_appimage.sh
       - name: Require one package of each Linux format
         shell: bash
         run: |
@@ -307,8 +309,10 @@ jobs:
       - run: npm ci
       - name: Generate the Android project
         run: npm run tauri --workspace @termflow/tauri-client -- android init --ci
-      - name: Generate TermFlow launcher resources
-        run: npm run tauri --workspace @termflow/tauri-client -- icon app-icon.svg
+      - name: Configure Android orientation-aware system bars
+        run: python scripts/release/configure_android_system_bars.py --activity apps/clients/tauri/src-tauri/gen/android/app/src/main/java/io/termflow/client/MainActivity.kt
+      - name: Generate TermFlow mobile launcher resources
+        run: npm run tauri --workspace @termflow/tauri-client -- icon app-icon-mobile.svg
       - name: Configure Android release signing
         if: ${{ needs.validate-version.outputs.android_release_build == 'true' }}
         env:

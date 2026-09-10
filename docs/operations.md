@@ -7,6 +7,14 @@
 Rust、仓库源码、锁文件和测试都不进入最终 runtime。`scripts/verify-control-plane-image.sh`
 会在构建后检查这份文件与工具清单。
 
+生产 Compose 把镜像根文件系统设为只读，只有 `/app/data`、`/app/totp-secrets` 两个命名卷
+和上限 64 MiB 的 `/tmp` tmpfs 可写，并启用 `no-new-privileges`。入口初始化阶段临时获得的
+capability 仅有 `CHOWN`、`DAC_OVERRIDE`、`SETUID`、`SETGID`、`SETPCAP`：`CHOWN` 用于修复
+新挂载目录的所有权；`DAC_OVERRIDE` 只用于遍历新建的 root/宿主用户所有 bind mount；
+`SETUID`/`SETGID` 用于切换到 `termflow`；`SETPCAP` 只让 `setpriv` 能在 exec 前从自身的
+bounding、inheritable 和 ambient 集合删除这些临时权限。服务 PID 1 为非 root，effective
+capability 集合为空。
+
 Compose 默认只把 B 的 HTTP 端口绑定到宿主机 loopback。DNS、反向代理、TLS 终止和可选
 mTLS 的证书签发、校验与轮换不属于 TermFlow，也不会被默认镜像或 Compose 创建。生产环境
 应由部署者提供 HTTPS/WSS 入口，并把用户实际访问的 canonical URL 写入
@@ -262,6 +270,9 @@ Artifact，prerelease 的 Debian 版本排序不作为 apt 升级通道承诺。
   `android` 或 `ios`。Artifacts 分别包含 Windows NSIS `*-setup.exe`、Linux deb/AppImage、
   macOS app zip/DMG、Android APK 和 iOS simulator app zip。Android 手动运行默认走 debug；
   tag release 或显式 `signed_android_candidate=true` 走固定项目证书的 release APK。
+  Linux job 先构建一次 deb，再单独构建 AppImage。若 AppImage 的外部打包工具失败，job 最多
+  重试三次；每次重试只删除 AppImage 输出目录，保留 deb 和 Rust 编译缓存，并记录 Tauri 工具
+  缓存文件的名称、大小与 SHA-256 以便排查。最后一次仍失败时，job 返回该次构建的真实退出码。
 
 手动验证时，把目标 commit 推送到 GitHub，打开上述 workflow 的 Run workflow，等待所选 job
 成功后下载 Artifact，并在目标平台实际解包、安装和启动。workflow 成功本身不等于安装验收通过。

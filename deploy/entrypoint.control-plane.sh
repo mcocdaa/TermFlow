@@ -14,14 +14,21 @@ init_mount_points() {
             echo "mount point is not a directory: ${dir}" >&2
             exit 1
         fi
-        chown termflow:termflow "${dir}"
-        find "${dir}" -xdev -exec chown termflow:termflow {} +
+        chown -h termflow:termflow "${dir}"
+        find "${dir}" -xdev -exec chown -h termflow:termflow {} +
     done
 }
 
 if [ "$(id -u)" = "0" ]; then
     init_mount_points
-    exec setpriv --reuid termflow --regid termflow --clear-groups -- "$@"
+    exec setpriv \
+        --reuid termflow \
+        --regid termflow \
+        --clear-groups \
+        --bounding-set=-all \
+        --inh-caps=-all \
+        --ambient-caps=-all \
+        -- "$@"
 fi
 
 exec "$@"

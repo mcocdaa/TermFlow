@@ -14,7 +14,7 @@ from fastapi import Request, WebSocket
 
 from termflow_control_plane.auth.context import AdminAuthContext, as_utc
 from termflow_control_plane.auth.dpop import DpopInvalid, DpopVerifier
-from termflow_control_plane.auth.rate_limit import AuthRateLimiter
+from termflow_control_plane.auth.rate_limit import AuthRateLimiter, client_source
 from termflow_control_plane.auth.tokens import hash_token, secret_text_matches
 from termflow_control_plane.config import Settings
 from termflow_control_plane.errors import TermFlowError
@@ -280,7 +280,7 @@ async def authenticate_admin_websocket(
     """Apply the HTTP credential policy and return its exact persisted epoch."""
 
     limiter: AuthRateLimiter = websocket.app.state.auth_rate_limiter
-    source = websocket.client.host if websocket.client is not None else "unknown-peer"
+    source = client_source(websocket)
     try:
         limiter.check("protected_websocket", source)
     except TermFlowError:

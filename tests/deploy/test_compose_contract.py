@@ -28,6 +28,17 @@ def test_compose_keeps_the_hardened_single_worker_deployable_shape() -> None:
     }
     assert "image" not in service
     assert "--workers" not in " ".join(service["command"])
+    assert service["read_only"] is True
+    assert service["cap_drop"] == ["ALL"]
+    assert set(service["cap_add"]) == {
+        "CHOWN",
+        "DAC_OVERRIDE",
+        "SETUID",
+        "SETGID",
+        "SETPCAP",
+    }
+    assert service["security_opt"] == ["no-new-privileges:true"]
+    assert "/tmp:size=64m,mode=1777" in service["tmpfs"]
     assert service["volumes"] == [
         "termflow-data:/app/data",
         "termflow-totp-key:/app/totp-secrets",
@@ -184,7 +195,13 @@ def test_delivery_scripts_verify_artifact_contents_and_local_state() -> None:
 
     entrypoint = Path("deploy/entrypoint.control-plane.sh").read_text()
     assert "data_dir=/app/data" in entrypoint
-    assert "setpriv" in entrypoint
+    assert "totp_dir=/app/totp-secrets" in entrypoint
+    assert "-L" in entrypoint  # refuse symlinked mount points
+    assert "-xdev" in entrypoint  # never recurse across filesystems
+    assert "setpriv" in entrypoint  # exec drop keeps PID 1 non-root
+    assert "--bounding-set=-all" in entrypoint
+    assert "--inh-caps=-all" in entrypoint
+    assert "--ambient-caps=-all" in entrypoint
 
     node_entrypoint = Path("deploy/entrypoint.node.sh").read_text()
     assert "home_dir=/home/termflow" in node_entrypoint

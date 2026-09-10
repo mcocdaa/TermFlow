@@ -5,6 +5,19 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.control-plane
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - SETPCAP
+    security_opt:
+      - no-new-privileges:true
     command:
       - /opt/termflow/bin/termflow-control
       - serve
