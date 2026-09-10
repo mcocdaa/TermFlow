@@ -78,7 +78,7 @@ export function useFloatingPanel(options: FloatingPanelOptions) {
     height: `${geometry.value.height}px`,
     right: 'auto',
     bottom: 'auto',
-  } : {})
+  } : ({} as Record<string, string>))
 
   function hostBounds(): { rect: DOMRect; bounds: FloatingPanelBounds } | null {
     const container = options.container.value ?? options.panel.value?.parentElement ?? null

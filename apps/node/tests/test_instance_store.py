@@ -1,0 +1,203 @@
+import json
+import stat
+from datetime import UTC, datetime
+from uuid import uuid4
+
+import pytest
+from termflow_node.instances.models import (
+    InstanceLifecycle,
+    LocalInstance,
+    RemoteInstanceStatus,
+)
+from termflow_node.instances.store import InsecureInstanceMetadata, InstanceStore
+
+
+def test_instance_metadata_is_private_and_round_trips_secret(tmp_path) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    instance_id = uuid4()
+    record = LocalInstance(
+        instance_id=instance_id,
+        name="project-a",
+        socket_path=store.instance_dir(instance_id) / "tmux.sock",
+        created_at=datetime.now(UTC),
+        bridge_pid=123,
+        instance_token="instance-secret",
+        lifecycle=InstanceLifecycle.RUNNING,
+    )
+    store.save(record)
+    assert store.load(instance_id) == record
+    assert stat.S_IMODE(store.instance_dir(instance_id).stat().st_mode) == 0o700
+    metadata_path = store.metadata_path(instance_id)
+    assert stat.S_IMODE(metadata_path.stat().st_mode) == 0o600
+    assert b"instance-secret" in metadata_path.read_bytes()
+    assert "instance-secret" not in repr(record)
+
+
+def test_list_reports_malformed_records_without_deleting_them(tmp_path) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    malformed = store.root / str(uuid4())
+    malformed.mkdir(parents=True)
+    (malformed / "metadata.json").write_text("not json")
+    result = store.list()
+    assert result.instances == []
+    assert result.diagnostics == [malformed / "metadata.json"]
+    assert malformed.exists()
+
+
+def test_v1_metadata_loads_as_an_unmigrated_record(tmp_path) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    instance_id = uuid4()
+    directory = store.instance_dir(instance_id)
+    directory.mkdir(parents=True, mode=0o700)
+    path = store.metadata_path(instance_id)
+    path.write_text(
+        json.dumps(
+            {
+                "instance_id": str(instance_id),
+                "name": "legacy-display",
+                "session_name": "main",
+                "socket_path": str(directory / "tmux.sock"),
+                "created_at": datetime.now(UTC).isoformat(),
+                "bridge_pid": None,
+                "instance_token": None,
+                "lifecycle": "running",
+            }
+        )
+    )
+    path.chmod(0o600)
+
+    record = store.load(instance_id)
+
+    assert record.schema_version == 1
+    assert record.session_id is None
+    assert record.session_name == "main"
+    assert record.remote_access.value == "active"
+
+
+def test_v2_loads_active_and_next_save_writes_v4(tmp_path) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    instance_id = uuid4()
+    directory = store.instance_dir(instance_id)
+    directory.mkdir(parents=True, mode=0o700)
+    path = store.metadata_path(instance_id)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "instance_id": str(instance_id),
+                "name": "legacy-v2",
+                "session_id": "$7",
+                "session_name": "legacy-v2",
+                "socket_path": str(directory / "tmux.sock"),
+                "created_at": datetime.now(UTC).isoformat(),
+                "bridge_pid": None,
+                "instance_token": None,
+                "lifecycle": "running",
+            }
+        )
+    )
+    path.chmod(0o600)
+
+    record = store.load(instance_id)
+
+    assert record.remote_access.value == "active"
+    store.save(record)
+    dumped = json.loads(path.read_text())
+    assert dumped["schema_version"] == 4
+    assert dumped["session_id"] == "$7"
+    assert dumped["remote_access"] == "active"
+    assert store.load(instance_id).schema_version == 4
+
+
+def test_v3_metadata_gains_unknown_remote_state_and_saves_as_v4(tmp_path) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    instance_id = uuid4()
+    directory = store.instance_dir(instance_id)
+    directory.mkdir(parents=True, mode=0o700)
+    path = store.metadata_path(instance_id)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 3,
+                "instance_id": str(instance_id),
+                "name": "legacy-v3",
+                "session_id": "$8",
+                "session_name": "legacy-v3",
+                "socket_path": str(directory / "tmux.sock"),
+                "created_at": datetime.now(UTC).isoformat(),
+                "bridge_pid": None,
+                "instance_token": None,
+                "lifecycle": "stopped",
+                "remote_access": "active",
+            }
+        )
+    )
+    path.chmod(0o600)
+
+    record = store.load(instance_id)
+
+    assert record.remote_status is RemoteInstanceStatus.UNKNOWN
+    assert record.last_synced_at is None
+    assert record.last_sync_error is None
+    store.save(record)
+    dumped = json.loads(path.read_text())
+    assert dumped["schema_version"] == 4
+    assert dumped["remote_status"] == "unknown"
+    assert dumped["last_synced_at"] is None
+    assert dumped["last_sync_error"] is None
+
+
+def test_remove_deletes_only_the_validated_instance_directory(tmp_path) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    record = LocalInstance(
+        instance_id=uuid4(),
+        name="stale",
+        socket_path=tmp_path / "tmux.sock",
+        created_at=datetime.now(UTC),
+        lifecycle=InstanceLifecycle.STOPPED,
+    )
+    store.save(record)
+
+    store.remove(record.instance_id)
+
+    assert not store.instance_dir(record.instance_id).exists()
+
+
+def test_remove_deletes_validated_runtime_artifacts_with_metadata(tmp_path) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    record = LocalInstance(
+        instance_id=uuid4(),
+        name="stale-with-logs",
+        socket_path=tmp_path / "tmux.sock",
+        created_at=datetime.now(UTC),
+        lifecycle=InstanceLifecycle.STOPPED,
+    )
+    store.save(record)
+    bridge_log = store.instance_dir(record.instance_id) / "bridge.log"
+    bridge_log.write_text("bridge stopped\n")
+    bridge_log.chmod(0o600)
+
+    store.remove(record.instance_id)
+
+    assert not store.instance_dir(record.instance_id).exists()
+
+
+def test_remove_refuses_unknown_files_in_a_validated_instance_directory(tmp_path) -> None:
+    store = InstanceStore(tmp_path / "instances")
+    record = LocalInstance(
+        instance_id=uuid4(),
+        name="stale-with-unknown-file",
+        socket_path=tmp_path / "tmux.sock",
+        created_at=datetime.now(UTC),
+        lifecycle=InstanceLifecycle.STOPPED,
+    )
+    store.save(record)
+    unknown = store.instance_dir(record.instance_id) / "keep-me.txt"
+    unknown.write_text("not a TermFlow artifact\n")
+    unknown.chmod(0o600)
+
+    with pytest.raises(InsecureInstanceMetadata):
+        store.remove(record.instance_id)
+
+    assert store.metadata_path(record.instance_id).exists()
+    assert unknown.exists()

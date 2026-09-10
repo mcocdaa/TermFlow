@@ -1,0 +1,53 @@
+import { flushPromises, mount } from '@vue/test-utils'
+import QRCode from 'qrcode'
+import { describe, expect, it, vi } from 'vitest'
+import type { ClientRuntime } from '../../runtime'
+import { createClientUi } from '../../runtime'
+import { createFakeRuntime } from '../../test/fakeRuntime'
+import ServerConnectionPanel from './ServerConnectionPanel.vue'
+
+vi.mock('qrcode', () => ({
+  default: { toString: vi.fn().mockResolvedValue('<svg><path /></svg>') },
+}))
+
+describe('ServerConnectionPanel', () => {
+  it('shows, copies, and opens a credential-free relay URL QR', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const runtime = createFakeRuntime({ clipboard: { writeText } as ClientRuntime['clipboard'] })
+    const wrapper = mount(ServerConnectionPanel, {
+      attachTo: document.body,
+      props: { issuer: 'https://relay.example.com' },
+      global: { plugins: [createClientUi(runtime)] },
+    })
+
+    expect(wrapper.get('.eyebrow').text()).toBe('Server')
+    expect(wrapper.get('#server-heading').text()).toBe('中继服务器')
+    expect(wrapper.get('[data-server-label]').text()).toContain('服务网址')
+    const field = wrapper.get('[data-server-field]')
+    const label = field.get('[data-server-label]')
+    expect(label.element.tagName).toBe('SPAN')
+    expect(label.text()).toBe('服务网址')
+    expect(label.attributes('id')).toBe('server-url-label')
+    expect(field.find('h3').exists()).toBe(false)
+    expect(field.get('#server-url-value').text()).toBe('https://relay.example.com')
+    expect(field.element.children[0]?.classList).toContain('server-field-heading')
+    expect(field.element.children[1]?.classList).toContain('server-address-row')
+    expect(wrapper.text()).not.toContain('B 连接地址')
+    expect(wrapper.get('[data-server-issuer]').text()).toBe('https://relay.example.com')
+    await wrapper.get('[data-action="copy-server-url"]').trigger('click')
+    expect(writeText).toHaveBeenCalledWith('https://relay.example.com')
+
+    const trigger = wrapper.get('[data-action="show-server-qr"]')
+    expect(trigger.attributes('aria-label')).toBe('显示服务网址二维码')
+    await trigger.trigger('click')
+    await flushPromises()
+    const dialog = wrapper.get('[role="dialog"]')
+    expect(dialog).toBeTruthy()
+    expect(dialog.find('p').exists()).toBe(false)
+    expect(dialog.attributes('aria-describedby')).toBeUndefined()
+    const payload = String(vi.mocked(QRCode.toString).mock.calls.at(-1)?.[0])
+    expect(JSON.parse(payload)).toEqual({ protocol: 'termflow-connect-v1', issuer: 'https://relay.example.com' })
+    expect(payload).not.toMatch(/token|secret|access_token|refresh_token/i)
+    wrapper.unmount()
+  })
+})

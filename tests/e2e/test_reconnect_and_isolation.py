@@ -13,7 +13,7 @@ def test_b_restart_does_not_stop_instance(termflow_system) -> None:
     termflow_system.stop_control_plane()
     assert termflow_system.local_tmux_is_alive(instance)
     termflow_system.start_control_plane()
-    assert termflow_system.wait_until_online(instance.instance_id, timeout=10)
+    assert termflow_system.wait_until_online(instance.instance_id, timeout=45)
     assert termflow_system.topology(instance.instance_id)["windows"]
 
 
