@@ -39,7 +39,7 @@ def test_delete_offline_computer_revokes_credentials_and_removes_it(
 
     deleted = client.delete(f"/api/v1/computers/{installation_id}", headers=admin_headers)
 
-    assert deleted.status_code == 204
+    assert deleted.status_code == 202
     assert client.get("/api/v1/computers", headers=admin_headers).json()["computers"] == []
     rejected = client.post(
         "/api/v1/instances/register",
@@ -48,7 +48,7 @@ def test_delete_offline_computer_revokes_credentials_and_removes_it(
     )
     assert rejected.status_code == 401
 
-    # Deleting an unknown or already deleted computer reports not found.
+    # Repeating deletion retains its durable pending result.
     repeated = client.delete(f"/api/v1/computers/{installation_id}", headers=admin_headers)
-    assert repeated.status_code == 404
-    assert repeated.json()["error"]["code"] == "computer_not_found"
+    assert repeated.status_code == 202
+    assert repeated.json()["cleanup_job_id"] == deleted.json()["cleanup_job_id"]

@@ -38,8 +38,8 @@ use tauri::State;
 use tokio::sync::Notify;
 
 use crate::auth::{
-    assert_http_target, canonical_issuer, current_access_token, dpop_proof,
-    remember_dpop_nonce, remembered_dpop_nonce, safe_error, signing_key, NativeAuthState,
+    assert_http_target, canonical_issuer, current_access_token, dpop_proof, remember_dpop_nonce,
+    remembered_dpop_nonce, safe_error, signing_key, NativeAuthState,
 };
 
 /// The Agent stream endpoint (`termflow_control_plane.api.agent_stream`,
@@ -141,14 +141,9 @@ const MAX_FRAME_BYTES: usize = 256 * 1024;
 /// content is untrusted). An unterminated frame beyond `MAX_FRAME_BYTES` is
 /// dropped whole — it can never complete — and the splitter resynchronizes
 /// at the next terminator.
+#[derive(Default)]
 pub struct SseFrameSplitter {
     buffer: Vec<u8>,
-}
-
-impl Default for SseFrameSplitter {
-    fn default() -> Self {
-        Self { buffer: Vec::new() }
-    }
 }
 
 impl SseFrameSplitter {
@@ -414,7 +409,11 @@ async fn run_stream(
 /// channel. An explicit cancel is silent (mirror of the browser transport's
 /// `close()`); a body error or an EOF without a server `closed` frame is a
 /// transient transport error.
-async fn pump(channel: &Channel<AgentStreamFrame>, cancel: &Arc<Notify>, response: reqwest::Response) {
+async fn pump(
+    channel: &Channel<AgentStreamFrame>,
+    cancel: &Arc<Notify>,
+    response: reqwest::Response,
+) {
     let mut stream = response.bytes_stream();
     let mut splitter = SseFrameSplitter::new();
     'pump: loop {
@@ -426,7 +425,10 @@ async fn pump(channel: &Channel<AgentStreamFrame>, cancel: &Arc<Notify>, respons
             None => break, // cancelled
             Some(Some(Ok(bytes))) => {
                 for frame in splitter.push(&bytes) {
-                    if channel.send(AgentStreamFrame::Event { data: frame }).is_err() {
+                    if channel
+                        .send(AgentStreamFrame::Event { data: frame })
+                        .is_err()
+                    {
                         // The JS side dropped the channel: treat as cancel.
                         break 'pump;
                     }
@@ -580,7 +582,10 @@ mod tests {
     fn splitter_keeps_single_newlines_inside_one_frame() {
         let mut splitter = SseFrameSplitter::new();
         let frames = splitter.push(b"event: agent_event\ndata: {\"cursor\":\"7-3\"}\n\n");
-        assert_eq!(frames, vec!["event: agent_event\ndata: {\"cursor\":\"7-3\"}"]);
+        assert_eq!(
+            frames,
+            vec!["event: agent_event\ndata: {\"cursor\":\"7-3\"}"]
+        );
     }
 
     #[test]
@@ -634,7 +639,10 @@ mod tests {
         // The late registration must fail closed instead of opening an
         // uncancellable connection.
         let cancel = Arc::new(Notify::new());
-        assert_eq!(state.register("req-1", cancel), Err("stream_cancelled".to_owned()));
+        assert_eq!(
+            state.register("req-1", cancel),
+            Err("stream_cancelled".to_owned())
+        );
         // The tombstone is consumed, so a subsequent legit stream with the
         // same id can register.
         assert!(state.register("req-1", Arc::new(Notify::new())).is_ok());
@@ -646,7 +654,7 @@ mod tests {
         let cancel = Arc::new(Notify::new());
         state.register("req-2", cancel.clone()).unwrap();
         state.cancel("req-2");
-        assert_eq!(cancel.notified().now_or_never().is_some(), true);
+        assert!(cancel.notified().now_or_never().is_some());
         state.unregister("req-2");
         // After unregister a cancel becomes a tombstone again (id reused).
         state.cancel("req-2");
@@ -667,14 +675,16 @@ mod tests {
         }
         let cancelled_len = state.registry.lock().unwrap().cancelled.len();
         assert_eq!(
-            cancelled_len,
-            CANCELLED_TOMBSTONE_CAP,
+            cancelled_len, CANCELLED_TOMBSTONE_CAP,
             "the tombstone registry must stay bounded across cancel-after-unregister cycles"
         );
         // Duplicate cancels of one id collapse into a single entry.
         state.cancel("req-dup");
         state.cancel("req-dup");
-        assert_eq!(state.registry.lock().unwrap().cancelled.len(), CANCELLED_TOMBSTONE_CAP);
+        assert_eq!(
+            state.registry.lock().unwrap().cancelled.len(),
+            CANCELLED_TOMBSTONE_CAP
+        );
     }
 
     #[test]
@@ -699,8 +709,14 @@ mod tests {
     fn stream_dpop_proof_binds_get_and_the_query_free_stream_url() {
         let key = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
         let target = format!("https://b.example{AGENT_STREAM_PATH}?wire=agui");
-        let proof = dpop_proof(&key, "GET", &target, Some("challenge"), Some("access-value"))
-            .unwrap();
+        let proof = dpop_proof(
+            &key,
+            "GET",
+            &target,
+            Some("challenge"),
+            Some("access-value"),
+        )
+        .unwrap();
         let mut segments = proof.split('.');
         let _header = segments.next().unwrap();
         let payload = segments.next().unwrap();

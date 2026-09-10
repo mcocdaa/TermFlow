@@ -1,22 +1,30 @@
 //: Conversation list/create/delete plus per-conversation pending approval
 //: badges (M6b spec §4.7). Deleting a conversation clears its persisted
 //: cursor (M6b spec §4.4: cursor 清除时机 = 会话删除成功). The list is
-//: scoped by binding (B requires `binding_id`); the binding may be a plain
-//: value or a reactive source — the AgentView selector re-scopes the list
-//: by switching the ref, and a missing binding skips the fetch entirely.
+//: scoped by binding (B requires `binding_id`); callers may provide one
+//: binding or a reactive collection of bindings.  The directory view uses the
+//: collection form so product users never need to understand Binding records.
 import type { AgentConversationResponse } from '@termflow/client-contracts'
 import { ApiError, createApprovalsApi } from '@termflow/client-core'
 import { onBeforeUnmount, onMounted, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
 import { useClientRuntime } from '../runtime'
 import { useBottomToast } from './useBottomToast'
 
-export function useAgentConversations(bindingId?: MaybeRefOrGetter<string | undefined>) {
+type BindingScope = string | string[] | undefined
+
+function normalizeBindingIds(value: BindingScope): string[] {
+  if (Array.isArray(value)) return [...new Set(value.filter((id) => id.length > 0))]
+  return value === undefined ? [] : [value]
+}
+
+export function useAgentConversations(bindingId?: MaybeRefOrGetter<BindingScope>) {
   const runtime = useClientRuntime()
   const toast = useBottomToast()
   const conversations = ref<AgentConversationResponse[]>([])
   /** conversation_id → pending approval count (badge source). */
   const pendingCounts = ref<ReadonlyMap<string, number>>(new Map())
   const loading = ref(true)
+  const errorMessage = ref<string | null>(null)
   const approvalsApi = createApprovalsApi(runtime.api.request)
   // List loads and mutations keep separate controllers: load() aborts its
   // own in-flight list request on a binding switch, which must not cancel
@@ -32,11 +40,13 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<string | unde
     // let the older scope resolve last and overwrite the newer list.
     listController?.abort()
     listController = new AbortController()
+    const requestController = listController
     const generation = ++loadGeneration
-    const current = toValue(bindingId)
+    const current = normalizeBindingIds(toValue(bindingId))
     loading.value = true
-    if (current === undefined) {
-      // No binding selected yet: B requires the scope, nothing to list.
+    errorMessage.value = null
+    if (current.length === 0) {
+      // B requires a binding scope; an empty directory is a valid state.
       conversations.value = []
       pendingCounts.value = new Map()
       loading.value = false
@@ -47,17 +57,17 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<string | unde
     conversations.value = []
     pendingCounts.value = new Map()
     try {
-      const [list, approvals] = await Promise.all([
-        runtime.api.agents.listConversations({
-          bindingId: current,
-          signal: listController.signal,
-        }),
+      const [lists, approvals] = await Promise.all([
+        Promise.all(current.map((scope) => runtime.api.agents.listConversations({
+          bindingId: scope,
+          signal: requestController.signal,
+        }))),
         approvalsApi.list({
-          signal: listController.signal,
+          signal: requestController.signal,
         }),
       ])
       if (disposed || generation !== loadGeneration) return
-      conversations.value = list.conversations
+      conversations.value = lists.flatMap((list) => list.conversations)
       const counts = new Map<string, number>()
       for (const approval of approvals.approvals) {
         if (approval.state !== 'pending') continue
@@ -67,7 +77,8 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<string | unde
     } catch (error) {
       // Aborted = superseded by a newer load or unmount; not a failure.
       if (!disposed && !(error instanceof ApiError && error.kind === 'aborted')) {
-        toast.show({ text: '无法加载会话列表。', tone: 'error' })
+        errorMessage.value = '无法加载 Agent 会话数据。'
+        toast.show({ text: errorMessage.value, tone: 'error' })
       }
     } finally {
       if (!disposed && generation === loadGeneration) loading.value = false
@@ -81,6 +92,7 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<string | unde
         mutationController?.signal,
       )
       conversations.value = [created, ...conversations.value]
+      errorMessage.value = null
       toast.show({ text: '会话已创建。', tone: 'success' })
       return created
     } catch (error) {
@@ -88,7 +100,34 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<string | unde
       // load's aborted filter); the caller still sees null and keeps the
       // typed title for a retry.
       if (error instanceof ApiError && error.kind === 'aborted') return null
-      toast.show({ text: '创建会话失败。', tone: 'error' })
+      errorMessage.value = '创建会话失败，请稍后重试。'
+      toast.show({ text: errorMessage.value, tone: 'error' })
+      return null
+    }
+  }
+
+  async function rename(conversationId: string, title: string) {
+    const normalized = title.trim()
+    if (normalized.length < 1 || normalized.length > 255) {
+      errorMessage.value = '会话名称须为 1 至 255 个字符。'
+      return null
+    }
+    try {
+      const updated = await runtime.api.agents.renameConversation(
+        conversationId,
+        normalized,
+        mutationController?.signal,
+      )
+      conversations.value = conversations.value.map((conversation) =>
+        conversation.conversation_id === conversationId ? updated : conversation,
+      )
+      errorMessage.value = null
+      toast.show({ text: '会话名称已更新。', tone: 'success' })
+      return updated
+    } catch (requestError) {
+      if (requestError instanceof ApiError && requestError.kind === 'aborted') return null
+      errorMessage.value = '保存会话名称失败，请稍后重试。'
+      toast.show({ text: errorMessage.value, tone: 'error' })
       return null
     }
   }
@@ -99,12 +138,14 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<string | unde
       conversations.value = conversations.value.filter((conversation) => conversation.conversation_id !== conversationId)
       // Deleted conversations can never resume (M6b spec §4.4).
       runtime.agentCursorStore.clear(conversationId)
+      errorMessage.value = null
       toast.show({ text: '会话已删除。', tone: 'success' })
     } catch (error) {
       // An unmount abort is not a user-visible failure (mirrors the list
       // load's aborted filter).
       if (error instanceof ApiError && error.kind === 'aborted') return
-      toast.show({ text: '删除会话失败。', tone: 'error' })
+      errorMessage.value = '删除会话失败，请稍后重试。'
+      toast.show({ text: errorMessage.value, tone: 'error' })
     }
   }
 
@@ -128,5 +169,5 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<string | unde
     mutationController = null
   })
 
-  return { conversations, pendingCounts, loading, refresh: load, create, remove, pendingCount }
+  return { conversations, pendingCounts, loading, error: errorMessage, refresh: load, create, rename, remove, pendingCount }
 }

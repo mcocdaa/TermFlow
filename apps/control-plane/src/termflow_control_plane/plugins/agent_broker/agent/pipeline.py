@@ -188,6 +188,16 @@ def _canonical_payload_json(notification: BackendNotification) -> str:
     neutral carrier, so ``approval_request_id`` is written only when one
     exists.
     """
+    # Provider/tool error detail is an adapter-private diagnostic.  It may be
+    # inspected by ``_classify_provider_failure`` while this notification is in
+    # memory, but canonical B rows and every replay/API projection carry only a
+    # tiny stable code.  Keeping this sanitisation at the serializer boundary
+    # also protects future adapters that accidentally populate both fields.
+    safe_error_code = _safe_error_code(notification)
+    redact_error_detail = (
+        notification.kind is AgentEventKind.RUN_FAILED
+        or safe_error_code is not None
+    )
     payload: dict[str, object] = {
         "kind": notification.kind.value,
         "run_id": str(notification.run_id) if notification.run_id is not None else None,
@@ -196,10 +206,10 @@ def _canonical_payload_json(notification: BackendNotification) -> str:
         ),
         "part_id": notification.part_id,
         "tool_call_id": notification.tool_call_id,
-        "text": notification.payload.text,
-        "summary": notification.payload.summary,
-        "error_code": notification.payload.error_code,
-        "error_message": notification.payload.error_message,
+        "text": None if redact_error_detail else notification.payload.text,
+        "summary": None if redact_error_detail else notification.payload.summary,
+        "error_code": safe_error_code,
+        "error_message": None,
     }
     if notification.kind is AgentEventKind.TOOL_STARTED:
         # The adapter carries the tool name as the bounded summary; the AG-UI
@@ -210,7 +220,7 @@ def _canonical_payload_json(notification: BackendNotification) -> str:
         # anything else completed without error.
         payload["status"] = (
             "error"
-            if notification.payload.error_code or notification.payload.error_message
+            if safe_error_code is not None
             else "success"
         )
     elif notification.kind is AgentEventKind.BACKEND_STATE_CHANGED:
@@ -277,6 +287,71 @@ def _submit_error_code(outcome: BackendOutcome) -> str:
     return "submit_unknown"
 
 
+def _classify_provider_failure(notification: BackendNotification) -> str | None:
+    """Map provider rejection metadata to a tiny public reason vocabulary.
+
+    The adapter gives B only bounded code/message fields.  Their contents are
+    still provider-controlled, so they are inspected transiently and never
+    persisted as a provider reason.  Unknown failures intentionally return
+    ``None``: a generic backend failure is not proof of an authentication or
+    model problem.
+    """
+
+    if notification.kind is not AgentEventKind.RUN_FAILED:
+        return None
+    text = " ".join(
+        value.lower()
+        for value in (
+            notification.payload.error_code,
+            notification.payload.error_message,
+        )
+        if isinstance(value, str)
+    )
+    if not text:
+        return None
+    auth_markers = (
+        "401",
+        "403",
+        "unauthor",
+        "forbidden",
+        "authentication",
+        "invalid_api_key",
+        "invalid api key",
+        "api_key_invalid",
+        "credential",
+        "access_denied",
+        "access denied",
+    )
+    if any(marker in text for marker in auth_markers):
+        return "provider_auth_failed"
+    model_markers = (
+        "model_not_found",
+        "model not found",
+        "unknown_model",
+        "unknown model",
+        "invalid_model",
+        "invalid model",
+        "unsupported_model",
+        "unsupported model",
+        "model_rejected",
+        "model rejected",
+    )
+    if any(marker in text for marker in model_markers):
+        return "provider_model_rejected"
+    return None
+
+
+def _safe_error_code(notification: BackendNotification) -> str | None:
+    """Return the only error vocabulary allowed in canonical/API payloads."""
+
+    has_error = bool(notification.payload.error_code or notification.payload.error_message)
+    if notification.kind is AgentEventKind.RUN_FAILED:
+        return _classify_provider_failure(notification) or "run_failed"
+    if notification.kind is AgentEventKind.TOOL_COMPLETED and has_error:
+        return "tool_failed"
+    return None
+
+
 class AgentPipelineService:
     """Per-binding orchestration: inbox → adapter → canonical timeline.
 
@@ -299,6 +374,7 @@ class AgentPipelineService:
         supervisor: SupervisorConnector | None,
         runtime_ref: str,
         runtime_epoch: int,
+        applied_config_revision: int | None = None,
         now: Callable[[], datetime] | None = None,
         payload_grace_attempts: int = _PAYLOAD_GRACE_ATTEMPTS,
         payload_grace_delay: float = _PAYLOAD_GRACE_DELAY_SECONDS,
@@ -320,6 +396,11 @@ class AgentPipelineService:
         self._supervisor = supervisor
         self._runtime_ref = RuntimeRef(runtime_ref)
         self._runtime_epoch = runtime_epoch
+        # The controller/registry pins a candidate to the desired revision
+        # that was observed before activation.  It is copied onto each
+        # admitted run and used as the provider-verification CAS key.  The
+        # fallback lookup keeps isolated tests and older callers compatible.
+        self._applied_config_revision = applied_config_revision
         self._now = now or (lambda: datetime.now(UTC))
         # The adapter is pinned to one runtime and one workspace directory
         # (spec §6); both must be exposed for ownership checks and session
@@ -384,6 +465,7 @@ class AgentPipelineService:
         # terminal delivery state (delivered/cancelled/delivery_unknown) when
         # the run ends, while restart fencing remains run_agent_recovery's job.
         self._run_envelopes: dict[UUID, InboxEnvelope] = {}
+        self._run_config_revisions: dict[UUID, int] = {}
 
         self._tasks: list[asyncio.Task[None]] = []
         self._started = False
@@ -843,6 +925,20 @@ class AgentPipelineService:
 
         # 4) Create the run in queued.
         run_id = await self.run_machine.create_for_conversation(envelope.conversation_id)
+        revision = self._applied_config_revision
+        if revision is None:
+            binding_repo = getattr(self._repositories, "agent_bindings", None)
+            get_binding = getattr(binding_repo, "get_by_id", None)
+            if callable(get_binding):
+                try:
+                    binding = await get_binding(self.binding_id)
+                except Exception:
+                    binding = None
+                candidate_revision = getattr(binding, "config_revision", None)
+                if isinstance(candidate_revision, int) and candidate_revision >= 1:
+                    revision = candidate_revision
+        if revision is not None:
+            self._run_config_revisions[run_id] = revision
 
         # 5) Commit started before any network write (spec §2 step 5).
         started = await self.inbox_machine.mark_started(
@@ -935,6 +1031,7 @@ class AgentPipelineService:
         leak it (review m1).
         """
         self._run_envelopes.pop(run_id, None)
+        self._run_config_revisions.pop(run_id, None)
         self.diagnostics.submits_failed += 1
         try:
             await self.run_machine.start(run_id)
@@ -1104,6 +1201,7 @@ class AgentPipelineService:
 
     async def _park_run_delivery(self, run_id: UUID) -> None:
         envelope = self._run_envelopes.pop(run_id, None)
+        self._run_config_revisions.pop(run_id, None)
         if envelope is not None:
             await self.inbox_machine.mark_delivery_unknown(envelope)
 
@@ -1134,6 +1232,9 @@ class AgentPipelineService:
                 self.binding_id,
                 run_id,
             )
+        # Keep the captured revision until the terminal boundary's canonical
+        # event has been persisted and provider verification has run.  The
+        # caller clears it at the end of ``_handle_notification``.
 
     @staticmethod
     def _to_turns_ref(row: BackendConversationRefRow) -> BackendConversationRef:
@@ -1303,9 +1404,14 @@ class AgentPipelineService:
         elif boundary is RunBoundary.END:
             try:
                 if notification.kind is AgentEventKind.RUN_FAILED:
+                    safe_failure = _classify_provider_failure(notification)
                     await self.run_machine.fail(
                         run_id,
-                        error_code=notification.payload.error_code or "run_failed",
+                        # Provider-controlled detail must not become a durable
+                        # run/API error.  Classified failures use the stable
+                        # vocabulary; all other failures collapse to one safe
+                        # boundary code.
+                        error_code=safe_failure or "run_failed",
                     )
                 else:
                     await self.run_machine.complete(run_id)
@@ -1341,6 +1447,38 @@ class AgentPipelineService:
             payload_json=payload_json,
         )
 
+        # Provider verification is event-driven: the first non-empty,
+        # authenticated assistant content proves the configured path without
+        # issuing a separate paid probe.  A classified provider rejection is
+        # recorded similarly, but only for the captured revision and never
+        # with raw provider text.
+        if inserted:
+            expected_revision = self._run_config_revisions.get(run_id)
+            runtime_repo = getattr(self._repositories, "agent_runtime_bindings", None)
+            if expected_revision is not None and runtime_repo is not None:
+                try:
+                    text = notification.payload.text
+                    if notification.kind in (
+                        AgentEventKind.MESSAGE_DELTA,
+                        AgentEventKind.MESSAGE_COMPLETED,
+                    ) and isinstance(text, str) and bool(text.strip()):
+                        verify = getattr(runtime_repo, "compare_and_set_provider_verified", None)
+                        if callable(verify):
+                            await verify(self.binding_id, expected_revision)
+                    elif notification.kind is AgentEventKind.RUN_FAILED:
+                        reason = _classify_provider_failure(notification)
+                        fail = getattr(runtime_repo, "compare_and_set_provider_failed", None)
+                        if reason is not None and callable(fail):
+                            await fail(self.binding_id, expected_revision, reason)
+                except Exception:
+                    # Verification is advisory metadata; never let a failed
+                    # bookkeeping write interrupt canonical event delivery.
+                    logger.exception(
+                        "Agent pipeline %s: provider verification update failed for run %s",
+                        self.binding_id,
+                        run_id,
+                    )
+
         # 6) Message assembly: only the durable completed message lands in
         #    agent_messages (MESSAGE_DELTA stays ephemeral, spec §4 step 6).
         #    A redelivered dedup key must not re-assemble or re-publish
@@ -1349,6 +1487,7 @@ class AgentPipelineService:
             if not inserted:
                 # Dedup hit: the message was already assembled and published
                 # when the row was first inserted.
+                self._run_config_revisions.pop(run_id, None)
                 return
             text = notification.payload.text
             if text is None:
@@ -1364,9 +1503,21 @@ class AgentPipelineService:
                 role="assistant",
                 kind="text",
                 body_digest=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                body=text,
                 run_id=run_id,
                 is_final=True,
             )
+
+        # No later event for this run needs the captured revision once a
+        # canonical terminal/content notification has been handled.  Keeping
+        # this cleanup after the verification block also covers redelivered
+        # terminal events without changing their durable state.
+        if notification.kind in (
+            AgentEventKind.MESSAGE_COMPLETED,
+            AgentEventKind.RUN_COMPLETED,
+            AgentEventKind.RUN_FAILED,
+        ):
+            self._run_config_revisions.pop(run_id, None)
 
     async def _reconcile_and_reconnect(self) -> None:
         """Reconcile non-terminal runs, then resubscribe after bounded backoff."""

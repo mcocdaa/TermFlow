@@ -1,3 +1,5 @@
+name: termflow-v020-local
+
 services:
   control-plane:
     build:
@@ -30,10 +32,33 @@ services:
       # OPENCODE_SERVER_* values; both or neither).
       TERMFLOW_AGENT_OPENCODE_USERNAME: ${OPENCODE_SERVER_USERNAME:-}
       TERMFLOW_AGENT_OPENCODE_PASSWORD: ${OPENCODE_SERVER_PASSWORD:-}
+      # The hardened reference container has no /workspace mount. Its /tmp
+      # tmpfs is the isolated, writable session directory for this deployment.
+      TERMFLOW_AGENT_OPENCODE_DIRECTORY: ${TERMFLOW_AGENT_OPENCODE_DIRECTORY:-/tmp}
+      # B's simplified supervisor and OpenCode must observe the same
+      # binding-scoped MCP capability during an epoch restart.
+      TERMFLOW_AGENT_OPENCODE_MCP_TOKEN: ${OPENCODE_AGENT_MCP_TOKEN:?set OPENCODE_AGENT_MCP_TOKEN}
+      # Independent credential used only by the cleanup helper callback.  Keep
+      # it separate from the administrator and MCP capabilities.
+      TERMFLOW_AGENT_CLEANUP_HELPER_TOKEN: ${TERMFLOW_AGENT_CLEANUP_HELPER_TOKEN:-}
       # MCP endpoint DNS-rebinding allowlist (plan §10/§16): in-container
       # OpenCode reaches B over agent_internal by the service name, so the
       # loopback-only defaults would reject every request with 421.
       TERMFLOW_AGENT_MCP_ALLOWED_HOSTS: ${TERMFLOW_AGENT_MCP_ALLOWED_HOSTS:-control-plane:8000}
+      # Provider policy is server-owned.  The offline/base profile keeps the
+      # policy unset (and therefore the catalog fail-closed); the live profile
+      # below requires every disclosure field before activation.
+      TERMFLOW_AGENT_PROVIDER_DEEPSEEK_ENDPOINT_ORIGIN: ${TERMFLOW_AGENT_PROVIDER_DEEPSEEK_ENDPOINT_ORIGIN:-https://api.deepseek.com}
+      TERMFLOW_AGENT_PROVIDER_DEEPSEEK_MODEL_IDS: ${TERMFLOW_AGENT_PROVIDER_DEEPSEEK_MODEL_IDS:-deepseek-v4-flash}
+      TERMFLOW_AGENT_PROVIDER_DEEPSEEK_REGION: ${TERMFLOW_AGENT_PROVIDER_DEEPSEEK_REGION:-}
+      TERMFLOW_AGENT_PROVIDER_DEEPSEEK_RETENTION_TERMS: ${TERMFLOW_AGENT_PROVIDER_DEEPSEEK_RETENTION_TERMS:-}
+      TERMFLOW_AGENT_PROVIDER_DEEPSEEK_RETENTION_VERSION: ${TERMFLOW_AGENT_PROVIDER_DEEPSEEK_RETENTION_VERSION:-}
+      # An unset policy is represented as false (never as an invalid empty
+      # boolean) so the base/offline B can boot while ProviderCatalog remains
+      # fail-closed.  The live overlay requires an explicit, verified `true`.
+      TERMFLOW_AGENT_PROVIDER_DEEPSEEK_NO_TRAINING: ${TERMFLOW_AGENT_PROVIDER_DEEPSEEK_NO_TRAINING:-false}
+      TERMFLOW_AGENT_PROVIDER_DEEPSEEK_CREDENTIAL_SOURCE: ${TERMFLOW_AGENT_PROVIDER_DEEPSEEK_CREDENTIAL_SOURCE:-DEEPSEEK_API_KEY}
+      TERMFLOW_AGENT_PROVIDER_DEEPSEEK_POLICY_VERSION: ${TERMFLOW_AGENT_PROVIDER_DEEPSEEK_POLICY_VERSION:-}
     ports:
       # Bind address is configurable: deployments keep the loopback-only
       # default; Docker Desktop (WSL2) verification overrides it to 0.0.0.0
@@ -43,8 +68,9 @@ services:
       - termflow-data:/app/data
       - termflow-totp-key:/app/totp-secrets
     networks:
-      # B serves A/C on the public/LAN network and reaches the OpenCode runtime
-      # only over the internal agent network (plan §16).
+      # B serves Web C and the A/C API through the host-published endpoint on
+      # the normal default bridge, and reaches OpenCode only over the internal
+      # agent network (plan §16).
       - default
       - agent_internal
     restart: unless-stopped
@@ -64,13 +90,12 @@ services:
   #
   # One runtime per Agent Binding. B never drives Docker: the supervisor
   # connector (plugins.agent_broker.agent.runtime_supervisor) attests
-  # health/epoch and rotates the epoch-bound MCP capability through a
-  # deployment-owned runtime manager, which is how this container is started
-  # and reconfigured.
+  # health/epoch over HTTP while Compose/deployment tooling owns this
+  # container's lifecycle and configuration.
   #
-  # The TermFlow MCP server entry is NOT baked into the frozen config below:
-  # the supervisor injects it at runtime with the epoch-bound capability token
-  # (plan §6.2.1), so no static shared token ever lives in an image or volume.
+  # The TermFlow MCP server entry is kept in the frozen config below and uses
+  # OpenCode's native {env:} interpolation for the deployment URL/token, so
+  # no raw shared token is committed to an image or volume.
   # A fresh named volume is owned by root. This one-shot, networkless init
   # container grants only the pinned guest UID access to the dedicated data
   # volume before the long-running non-root service starts.
@@ -92,13 +117,14 @@ services:
     security_opt:
       - no-new-privileges:true
     read_only: true
+    mem_limit: 32m
+    cpus: "0.25"
+    pids_limit: 32
     restart: "no"
 
   opencode-agent:
-    # M4 exit verified against this exact image (2026-08-16): the CLI's
-    # `serve` subcommand was confirmed live (`/global/health` returns the
-    # version), non-root UID 405 (the image's `guest` user) and
-    # OPENCODE_SERVER_* basic auth are exercised by the M4 container tests.
+    # The pinned image, non-root UID 405, and OPENCODE_SERVER_* basic auth are
+    # exercised by the opt-in M4 container test when Docker is available.
     image: ghcr.io/anomalyco/opencode:1.18.18@sha256:f3e00f8e25500150373c817e24b13f2f08e2ccd4cafd53dc3ad4827d47863b6f
     command:
       - serve
@@ -117,14 +143,17 @@ services:
       # come from deployment secrets, never a committed file.
       OPENCODE_SERVER_USERNAME: ${OPENCODE_SERVER_USERNAME:?set OPENCODE_SERVER_USERNAME}
       OPENCODE_SERVER_PASSWORD: ${OPENCODE_SERVER_PASSWORD:?set OPENCODE_SERVER_PASSWORD}
-      # Model provider credentials pass through deployment secrets, not image
-      # layers or committed env files. M8 maps this to the pinned provider's
-      # credential env (e.g. ANTHROPIC_API_KEY) with the pinned image.
-      OPENCODE_MODEL_API_KEY: ${OPENCODE_MODEL_API_KEY:?set OPENCODE_MODEL_API_KEY}
       HOME: /home/opencode
       # Keep persistent OpenCode data outside HOME so Docker never creates
       # root-owned nested mountpoint parents inside the non-root HOME tmpfs.
       XDG_DATA_HOME: /data
+      # The TermFlow MCP server entry is interpolated from these values by
+      # OpenCode's native {env:} config substitution (spike-verified on the
+      # pinned image).  The token is a B-issued AgentToken (raw shown once)
+      # bound to the binding's runtime epoch; rotate it with the binding.
+      # An empty token keeps the stack bootable while MCP stays unreachable.
+      TERMFLOW_AGENT_MCP_URL: http://control-plane:8000/api/v1/agent/mcp
+      TERMFLOW_AGENT_MCP_TOKEN: ${OPENCODE_AGENT_MCP_TOKEN:?set OPENCODE_AGENT_MCP_TOKEN}
     depends_on:
       opencode-init:
         condition: service_completed_successfully
@@ -135,7 +164,12 @@ services:
       - opencode-data:/data
       # The frozen M0.3 config fixture (canonical in deploy/) is the only
       # host file mounted, read-only.
-      - ./opencode-config.yaml:/etc/termflow/opencode-config.yaml:ro
+      - type: bind
+        source: ./opencode-config.yaml
+        target: /etc/termflow/opencode-config.yaml
+        read_only: true
+        bind:
+          create_host_path: false
     expose:
       - "4096"
     networks:
@@ -175,8 +209,8 @@ services:
       test:
         - CMD-SHELL
         - >-
-          auth="$$(printf '%s:%s' "$$OPENCODE_SERVER_USERNAME" "$$OPENCODE_SERVER_PASSWORD" | base64)";
-          wget -q -O- --header "Authorization: Basic $$auth"
+          auth="$$(printf '%s:%s' "$$OPENCODE_SERVER_USERNAME" "$$OPENCODE_SERVER_PASSWORD" | base64 | tr -d '\n')";
+          wget -Y off -q -O- --header "Authorization: Basic $$auth"
           http://127.0.0.1:4096/global/health | grep -q healthy
       interval: 10s
       timeout: 3s
@@ -185,11 +219,15 @@ services:
 
 volumes:
   termflow-data:
-    name: ${TERMFLOW_DATA_VOLUME:-termflow-data}
+    name: termflow-v020-local-data
   termflow-totp-key:
-    name: ${TERMFLOW_TOTP_KEY_VOLUME:-termflow-totp-key}
+    name: termflow-v020-local-totp-key
   opencode-data:
-    name: ${OPENCODE_DATA_VOLUME:-opencode-data}
+    name: termflow-v020-local-opencode-data
 networks:
+  # Host-facing bridge for B's explicit port publish and same-host A/C.
+  # Keep capability-specific isolation in the networks below instead.
+  default:
+    internal: false
   agent_internal:
     internal: true

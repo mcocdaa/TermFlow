@@ -17,6 +17,7 @@
         <code class="delete-term-activation">termflow activate {{ term.instance_id }}</code>
       </div>
       <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+      <p v-if="cleanupJobId" role="status">清理待完成 · 任务 {{ cleanupJobId.slice(0, 64) }}</p>
       <div class="dialog-actions">
         <button
           ref="cancelButton"
@@ -30,7 +31,7 @@
           data-action="confirm-delete-term"
           class="danger-button"
           type="button"
-          :disabled="pending"
+          :disabled="pending || Boolean(cleanupJobId)"
           @click="$emit('confirm', term.instance_id)"
         >{{ pending ? '正在删除…' : '永久删除远程 Term' }}</button>
       </div>
@@ -42,7 +43,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { TermSummary } from '../../types'
 
-const props = defineProps<{ term: TermSummary; pending: boolean; error: string }>()
+const props = defineProps<{ term: TermSummary; pending: boolean; error: string; cleanupJobId?: string }>()
 const emit = defineEmits<{ confirm: [instanceId: string]; cancel: [] }>()
 const panel = ref<HTMLElement | null>(null)
 const cancelButton = ref<HTMLButtonElement | null>(null)

@@ -40,7 +40,7 @@ def _seed_binding(
         json={
             "display_name": "opencode",
             "backend_kind": "opencode",
-            "config": '{"model": "default"}',
+            "config": '{"model_id":"deepseek-v4-flash","provider_id":"deepseek"}',
         },
     )
     assert profile.status_code == 201, profile.text

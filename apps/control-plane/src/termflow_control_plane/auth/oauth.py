@@ -260,7 +260,20 @@ class OAuthService:
         )
         if authorization is None:
             raise TermFlowError("authorization_expired", 400, "Authorization is unavailable.")
-        if state.totp_enabled_at is not None:
+        if (
+            authorization.device_code_digest is None
+            and request.decision == "allow"
+            and request.admin_token is None
+        ):
+            # Authorization-code approval is a privileged root-auth boundary;
+            # a browser cookie alone is intentionally insufficient.  Device
+            # approval keeps its established Web C cookie flow below.
+            await self._record_decision_failure(request.transaction_id, state.epoch)
+            raise TermFlowError("authentication_failed", 401, "Authentication failed.")
+        # Denying a device authorization is a non-privileged cancellation and
+        # must remain possible when TOTP is enabled.  Device approval and all
+        # authorization-code approvals retain the existing TOTP gate.
+        if state.totp_enabled_at is not None and request.decision == "allow":
             code = request.totp_code
             if code is None or self._totp_verifier is None:
                 await self._record_decision_failure(request.transaction_id, state.epoch)

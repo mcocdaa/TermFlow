@@ -43,7 +43,7 @@ def _create_profile(
         json={
             "display_name": "opencode",
             "backend_kind": "opencode",
-            "config": '{"model": "default"}',
+            "config": '{"model_id":"deepseek-v4-flash","provider_id":"deepseek"}',
         },
     )
     assert response.status_code == 201, response.text

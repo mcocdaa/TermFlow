@@ -3,9 +3,10 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from termflow_protocol import TermRenameRequest, TermSummary
 
+from termflow_control_plane.api.agent_cleanup import pending_response
 from termflow_control_plane.api.dashboard import term_summary
 from termflow_control_plane.api.dependencies import (
     get_command_router,
@@ -20,6 +21,7 @@ from termflow_control_plane.connections.registry import (
 )
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.repositories import RepositoryBundle
+from termflow_control_plane.plugins.agent_broker.cleanup import create_deletion_manifest
 from termflow_control_plane.routing.router import CommandRouter
 
 router = APIRouter(prefix="/api/v1/terms", tags=["terms"])
@@ -49,10 +51,20 @@ async def cancel_agent_watches_for_term(
 )
 async def delete_term(
     instance_id: UUID,
+    http_request: Request,
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
     registry: Annotated[LiveInstanceRegistry, Depends(get_registry)],
 ) -> Response:
     if await repositories.instances.get(instance_id) is None:
+        job = await repositories.cleanup_jobs.get_by_target(
+            target_kind="term", target_ref=str(instance_id)
+        )
+        if job is not None:
+            return (
+                Response(status_code=204)
+                if job.state == "completed"
+                else pending_response(http_request, job.id)
+            )
         raise TermFlowError("instance_not_found", 404, "The Term does not exist.")
     try:
         await registry.begin_retirement(instance_id)
@@ -66,10 +78,8 @@ async def delete_term(
         # tombstone BEFORE deleting the parent, so the job survives the
         # deletion (SET NULL) and cleanup is retried until confirmed.
         await cancel_agent_watches_for_term(repositories, instance_id)
-        await repositories.cleanup_jobs.create(
-            target_kind="term",
-            target_ref=str(instance_id),
-            term_id=instance_id,
+        job = await create_deletion_manifest(
+            repositories, target_kind="term", target_id=instance_id, term_ids=[instance_id]
         )
         deleted = await repositories.instances.delete(instance_id)
     except BaseException:
@@ -87,7 +97,7 @@ async def delete_term(
         "ok",
         None,
     )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return pending_response(http_request, job.id)
 
 
 @router.patch(

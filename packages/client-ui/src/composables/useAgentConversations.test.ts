@@ -37,19 +37,22 @@ function deferred<T>(): Deferred<T> {
 interface ConversationsHarness {
   wrapper: VueWrapper
   clientUi: ClientUiPlugin
-  bindingId: ReturnType<typeof ref<string | undefined>>
+  bindingId: ReturnType<typeof ref<string | string[] | undefined>>
   state(): ReturnType<typeof useAgentConversations>
 }
 
 async function mounted(overrides: {
+  bindingId?: string | string[]
   listConversations?: ReturnType<typeof vi.fn>
   deleteConversation?: ReturnType<typeof vi.fn>
   createConversation?: ReturnType<typeof vi.fn>
+  renameConversation?: ReturnType<typeof vi.fn>
 } = {}): Promise<ConversationsHarness> {
-  const bindingId = ref<string | undefined>('b1')
+  const bindingId = ref<string | string[] | undefined>(overrides.bindingId ?? 'b1')
   const listConversations = overrides.listConversations ?? vi.fn(async () => ({ conversations: [] }))
   const deleteConversation = overrides.deleteConversation ?? vi.fn(async () => undefined)
   const createConversation = overrides.createConversation ?? vi.fn(async () => ({})) as never
+  const renameConversation = overrides.renameConversation ?? vi.fn(async (_id: string, title: string) => ({ ...conversation('renamed'), title }))
   const runtime = createFakeRuntime({
     api: {
       ...createFakeRuntime().api,
@@ -58,6 +61,7 @@ async function mounted(overrides: {
         listConversations,
         deleteConversation,
         createConversation,
+        renameConversation,
       },
       request: vi.fn(async () => ({ approvals: [] })),
     } as unknown as ClientRuntime['api'],
@@ -139,6 +143,31 @@ describe('useAgentConversations', () => {
     await createPromise
     expect(harness.clientUi.toast.current.value?.text).toBe('会话已创建。')
     expect(harness.state().conversations.value.map((entry) => entry.conversation_id)).toEqual(['c2'])
+    harness.wrapper.unmount()
+  })
+
+  it('aggregates conversation rows across all binding scopes', async () => {
+    const listConversations = vi.fn(async ({ bindingId }: { bindingId?: string }) => ({
+      conversations: [conversation(bindingId === 'b1' ? 'c1' : 'c2')],
+    }))
+    const harness = await mounted({ bindingId: ['b1', 'b2'], listConversations })
+
+    expect(listConversations).toHaveBeenCalledWith(expect.objectContaining({ bindingId: 'b1' }))
+    expect(listConversations).toHaveBeenCalledWith(expect.objectContaining({ bindingId: 'b2' }))
+    expect(harness.state().conversations.value.map((entry) => entry.conversation_id)).toEqual(['c1', 'c2'])
+    harness.wrapper.unmount()
+  })
+
+  it('renames a conversation through the API and updates its local row', async () => {
+    const renameConversation = vi.fn(async (_id: string, title: string) => ({ ...conversation('c1'), title }))
+    const harness = await mounted({
+      renameConversation,
+      listConversations: vi.fn(async () => ({ conversations: [conversation('c1')] })),
+    })
+    await harness.state().rename('c1', '新标题')
+
+    expect(renameConversation).toHaveBeenCalledWith('c1', '新标题', expect.anything())
+    expect(harness.state().conversations.value[0]?.title).toBe('新标题')
     harness.wrapper.unmount()
   })
 })

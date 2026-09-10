@@ -26,7 +26,19 @@ CONTROL_PLANE_IMAGE="${TERMFLOW_VERIFY_IMAGE:-termflow-control-plane:verify}"
 TERMFLOW_ADMIN_TOKEN="verify-admin-token-that-is-long-enough" \
   OPENCODE_SERVER_USERNAME="termflow" \
   OPENCODE_SERVER_PASSWORD="verify-opencode-password" \
-  OPENCODE_MODEL_API_KEY="verify-opencode-model-key" \
+  OPENCODE_AGENT_MCP_TOKEN="verify-agent-mcp-token" \
   docker compose -f deploy/compose.yaml config --quiet
 scripts/build-control-plane-image.sh "${CONTROL_PLANE_IMAGE}"
 scripts/verify-control-plane-image.sh "${CONTROL_PLANE_IMAGE}"
+
+# Runtime container inspection is intentionally opt-in: it requires a running
+# Compose project and must never start or remove user services as a side effect
+# of the normal static verification sweep.
+if [[ "${TERMFLOW_VERIFY_AGENT_CONTAINERS:-0}" == "1" ]]; then
+  if [[ -n "${TERMFLOW_SECURITY_PROJECT:-}" && -n "${TERMFLOW_SECURITY_MODE:-}" ]]; then
+    scripts/security/verify-agent-containers.sh --mode "${TERMFLOW_SECURITY_MODE}" "${TERMFLOW_SECURITY_PROJECT}"
+  else
+    echo "set TERMFLOW_SECURITY_PROJECT and TERMFLOW_SECURITY_MODE=offline|live" >&2
+    exit 2
+  fi
+fi

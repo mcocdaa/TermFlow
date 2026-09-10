@@ -1,5 +1,6 @@
 """Short-lived browser administrator sessions."""
 
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -49,8 +50,12 @@ def _set_browser_session_cookie(
     sessions: BrowserSessionStore,
     *,
     epoch: int,
+    authenticated_at: datetime | None,
 ) -> BrowserSessionResponse:
-    secret, expires_at = sessions.create(epoch=epoch)
+    secret, expires_at = sessions.create(
+        epoch=epoch,
+        authenticated_at=authenticated_at,
+    )
     policy = browser_cookie_policy(settings)
     response.set_cookie(
         key=policy.name,
@@ -115,7 +120,7 @@ async def create_browser_session(
     async with limiter.verification_slot():
         supplied = request.admin_token.get_secret_value()
         try:
-            challenge = await authentication.begin_web_login(supplied)
+            login = await authentication.begin_web_login_with_context(supplied)
         except AuthenticationRejected as exc:
             limiter.record_failure("web_session", source)
             await audit.record(
@@ -133,15 +138,21 @@ async def create_browser_session(
         AuthAuditResult.OK,
         source,
     )
-    if challenge is not None:
+    if login.challenge is not None:
         response.status_code = status.HTTP_202_ACCEPTED
         _no_store(response)
         return BrowserSessionChallengeResponse(
-            challenge_id=challenge.challenge_id,
-            expires_at=challenge.expires_at,
+            challenge_id=login.challenge.challenge_id,
+            expires_at=login.challenge.expires_at,
         )
     state = await repositories.auth_state.get()
-    return _set_browser_session_cookie(response, settings, sessions, epoch=state.epoch)
+    return _set_browser_session_cookie(
+        response,
+        settings,
+        sessions,
+        epoch=state.epoch,
+        authenticated_at=login.authenticated_at,
+    )
 
 
 @router.post(
@@ -182,13 +193,13 @@ async def complete_browser_session_totp(
         raise
     async with limiter.verification_slot():
         try:
-            accepted = await authentication.complete_web_login(
+            authenticated_at = await authentication.complete_web_login_with_context(
                 challenge_id,
                 request.code.get_secret_value(),
             )
         except AuthenticationRejected:
-            accepted = False
-    if not accepted:
+            authenticated_at = None
+    if authenticated_at is None:
         limiter.record_failure("web_session_totp", source)
         await audit.record(
             AuthAuditOperation.TOTP_VERIFICATION,
@@ -204,7 +215,13 @@ async def complete_browser_session_totp(
         source,
     )
     state = await repositories.auth_state.get()
-    return _set_browser_session_cookie(response, settings, sessions, epoch=state.epoch)
+    return _set_browser_session_cookie(
+        response,
+        settings,
+        sessions,
+        epoch=state.epoch,
+        authenticated_at=authenticated_at,
+    )
 
 
 @router.get(

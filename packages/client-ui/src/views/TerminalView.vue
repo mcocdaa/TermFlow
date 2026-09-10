@@ -3,18 +3,24 @@
     <h1 id="terminal-title" class="sr-only">远程终端</h1>
     <TerminalTitlebar :title="termName" :computer-name="computerName" :status="connectionStatus" :display-menu-open="openMenu === 'display'" v-model:display-mode="displayMode" v-model:viewport-locked="viewportLocked" @update:display-menu-open="setMenuOpen('display', $event)" @rename="updateTermName">
       <TmuxActionMenu :bindings="bindings" :active-pane-id="activePane?.pane_id ?? null" :disabled="connectionStatus !== 'connected'" :open="openMenu === 'tmux'" @update:open="setMenuOpen('tmux', $event)" @action="runAction" @request-close="requestClose" />
+      <TerminalAgentToggle v-if="agentBrokerEnabled" ref="agentToggle" :open="agentOpen" :pending-count="agentPendingCount" :readiness="agentReadiness" @toggle="toggleAgent" />
     </TerminalTitlebar>
-    <TerminalCanvas ref="terminalCanvas" :term-id="termId" :display-mode="displayMode" :viewport-locked="viewportLocked" :transform-input="transformInput" @bindings="bindings = $event" @reset-input="modifierResetKey = $event" @status="connectionStatus = $event" @authentication-required="handleAuthenticationRequired" @action-result="handleActionResult" />
-    <p v-if="renameError" class="terminal-error" role="alert">{{ renameError }}</p>
-    <MobileKeyBar :prefix="bindings.prefix" :controller="modifiers" :reset-key="modifierResetKey" :disabled="connectionStatus !== 'connected'" @input="terminalCanvas?.sendInput($event)" />
+    <div class="terminal-workspace">
+      <div class="terminal-interaction-host" data-terminal-interaction-host :inert="agentBrokerEnabled && agentOpen && mobileOverlay ? true : undefined">
+        <TerminalCanvas ref="terminalCanvas" :term-id="termId" :display-mode="displayMode" :viewport-locked="viewportLocked" :transform-input="transformInput" @bindings="bindings = $event" @reset-input="modifierResetKey = $event" @status="connectionStatus = $event" @authentication-required="handleAuthenticationRequired" @action-result="handleActionResult" />
+        <p v-if="renameError" class="terminal-error" role="alert">{{ renameError }}</p>
+        <MobileKeyBar :prefix="bindings.prefix" :controller="modifiers" :reset-key="modifierResetKey" :disabled="connectionStatus !== 'connected'" @input="terminalCanvas?.sendInput($event)" />
+      </div>
+      <TerminalAgentPanel v-if="agentBrokerEnabled" :open="agentOpen" :term-id="termId" :conversation-id="agentConversationId" :mobile-page="mobileOverlay" @close="closeAgent" @select-conversation="selectAgentConversation" @pending-count="agentPendingCount = $event" @readiness="agentReadiness = $event" />
+    </div>
     <ClosePaneDialog v-if="closePane" :pane-id="closePane.pane_id" :pane-name="closePane.title || closePane.pane_id" :return-focus="closeReturnFocus" @cancel="closePaneId = null" @confirm="confirmClose" />
   </section>
 </template>
 
 <script setup lang="ts">
 import { ApiError, MobileModifierController, type TerminalConnectionStatus } from '@termflow/client-core'
-import type { TerminalActionResultFrame as TerminalActionResultControl } from '@termflow/client-contracts'
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import type { AgentSetupResponse, TerminalActionResultFrame as TerminalActionResultControl } from '@termflow/client-contracts'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TerminalCanvas from '../components/terminal/TerminalCanvas.vue'
 import TerminalTitlebar from '../components/terminal/TerminalTitlebar.vue'
@@ -26,11 +32,34 @@ import { createOrientationViewState, orientationFor } from '../terminal/orientat
 import { useSession } from '../composables/useSession'
 import { useClientRuntime } from '../runtime'
 import type { BindingSnapshot, PaneTopology, TerminalActionId } from '../types'
+import TerminalAgentPanel from '../components/agent/TerminalAgentPanel.vue'
+import TerminalAgentToggle from '../components/agent/TerminalAgentToggle.vue'
+import { isAgentConversationId } from '../router/terminalQuery'
+import { useAgentBroker } from '../composables/useAgentBroker'
 const route = useRoute()
 const router = useRouter()
 const runtime = useClientRuntime()
 const { clearSessionState } = useSession()
 const termId = computed(() => String(route.params.termId))
+const { agentBrokerEnabled } = useAgentBroker()
+const agentConversationId = computed(() => isAgentConversationId(route.query.agent) ? route.query.agent : null)
+const agentOpen = ref(agentConversationId.value !== null)
+const agentPendingCount = ref(0), agentReadiness = ref<AgentSetupResponse['state'] | null>(null)
+const agentToggle = ref<InstanceType<typeof TerminalAgentToggle> | null>(null)
+const agentOverlayMedia = window.matchMedia('(max-width: 47.99rem), (pointer: coarse)')
+const mobileOverlay = ref(agentOverlayMedia.matches)
+function onAgentOverlayMediaChange(event: MediaQueryListEvent) { mobileOverlay.value = event.matches }
+watch(agentConversationId, (id) => { if (id) agentOpen.value = true })
+async function selectAgentConversation(id: string | null) {
+  const query = id && isAgentConversationId(id) ? { agent: id } : {}
+  await router.replace({ path: route.path, query, hash: route.hash })
+}
+async function closeAgent() {
+  agentOpen.value = false
+  await selectAgentConversation(null)
+  await nextTick(); agentToggle.value?.focus()
+}
+function toggleAgent() { if (agentOpen.value) void closeAgent(); else agentOpen.value = true }
 const orientation = ref(orientationFor(window.innerWidth, window.innerHeight))
 const orientationViews = reactive(createOrientationViewState())
 const displayMode = computed<DisplayMode>({
@@ -98,6 +127,7 @@ function handleActionResult(_result: TerminalActionResultControl) { void refresh
 const controller = new AbortController()
 onMounted(async () => {
   window.addEventListener('resize', onViewportResize)
+  agentOverlayMedia.addEventListener('change', onAgentOverlayMediaChange)
   const [, dashboardResult] = await Promise.allSettled([refreshTopology(), runtime.api.dashboard.get(controller.signal)])
   if (dashboardResult.status === 'fulfilled') {
     const computer = dashboardResult.value.computers.find((candidate) => candidate.terms.some((term) => term.instance_id === termId.value))
@@ -108,5 +138,5 @@ onMounted(async () => {
   await nextTick()
   restoreOrientationView()
 })
-onBeforeUnmount(() => { window.removeEventListener('resize', onViewportResize); controller.abort(); modifiers.reset() })
+onBeforeUnmount(() => { window.removeEventListener('resize', onViewportResize); agentOverlayMedia.removeEventListener('change', onAgentOverlayMediaChange); controller.abort(); modifiers.reset() })
 </script>

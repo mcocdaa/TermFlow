@@ -17,6 +17,9 @@ from termflow_control_plane.plugins.agent_broker.agent.permissions import (
     canonical_hash,
 )
 
+ADMIN_TOKEN = "admin-token-that-is-long-enough-for-tests"
+ORIGIN = "http://127.0.0.1:8000"
+
 
 def _hash_input(**overrides: object) -> ApprovalArgsHashInput:
     """A fully populated canonical-hash input; overrides replace any field."""
@@ -45,7 +48,7 @@ def _create_profile(client: TestClient, admin_headers: dict[str, str]) -> dict[s
         json={
             "display_name": "opencode",
             "backend_kind": "opencode",
-            "config": '{"model": "default"}',
+            "config": '{"model_id":"deepseek-v4-flash","provider_id":"deepseek"}',
         },
     )
     assert response.status_code == 201, response.text
@@ -124,6 +127,15 @@ def _seed_approval(
     return client.portal.call(_create)
 
 
+def _authenticate_browser(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/admin/sessions",
+        headers={"Origin": ORIGIN},
+        json={"admin_token": ADMIN_TOKEN},
+    )
+    assert response.status_code == 201, response.text
+
+
 def test_decide_approve_and_deny_via_api_with_double_decision_guard(
     client, admin_headers, provision_term
 ) -> None:
@@ -136,9 +148,10 @@ def test_decide_approve_and_deny_via_api_with_double_decision_guard(
         client, binding_id=binding_id, conversation_id=conversation_id
     )
 
+    _authenticate_browser(client)
     approved = client.post(
         f"/api/v1/agent/approvals/{approval_id}/decide",
-        headers=admin_headers,
+        headers={"Origin": ORIGIN},
         json={"decision": "approve"},
     )
     assert approved.status_code == 200
@@ -167,6 +180,59 @@ def test_decide_approve_and_deny_via_api_with_double_decision_guard(
     assert denied.status_code == 200
     assert denied.json()["state"] == "denied"
     assert denied.json()["decision"] == "denied"
+
+
+def test_approve_requires_fresh_auth_but_safe_deny_does_not(
+    client, admin_headers, provision_term
+) -> None:
+    binding_id = _seed_binding(client, admin_headers, provision_term)
+    conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+    conversation_id = UUID(str(conversation["conversation_id"]))
+    approval_id = _seed_approval(
+        client, binding_id=binding_id, conversation_id=conversation_id
+    )
+
+    blocked = client.post(
+        f"/api/v1/agent/approvals/{approval_id}/decide",
+        headers=admin_headers,
+        json={"decision": "approve"},
+    )
+    assert blocked.status_code == 428, blocked.text
+    assert blocked.json()["error"]["code"] == "approval_reauthentication_required"
+
+    unchanged = client.get(
+        f"/api/v1/agent/approvals/{approval_id}",
+        headers=admin_headers,
+    )
+    assert unchanged.status_code == 200, unchanged.text
+    assert unchanged.json()["state"] == "pending"
+
+    denied = client.post(
+        f"/api/v1/agent/approvals/{approval_id}/decide",
+        headers=admin_headers,
+        json={"decision": "deny"},
+    )
+    assert denied.status_code == 200, denied.text
+    assert denied.json()["state"] == "denied"
+
+
+def test_fresh_browser_auth_can_approve(client, admin_headers, provision_term) -> None:
+    binding_id = _seed_binding(client, admin_headers, provision_term)
+    conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
+    approval_id = _seed_approval(
+        client,
+        binding_id=binding_id,
+        conversation_id=UUID(str(conversation["conversation_id"])),
+    )
+
+    _authenticate_browser(client)
+    approved = client.post(
+        f"/api/v1/agent/approvals/{approval_id}/decide",
+        headers={"Origin": ORIGIN},
+        json={"decision": "approve"},
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["state"] == "approved"
 
 
 def test_revoke_and_conversation_listing_via_api(
@@ -206,9 +272,10 @@ def test_revoke_and_conversation_listing_via_api(
     assert revoked.json()["state"] == "revoked"
     assert revoked.json()["decision"] == "revoked"
 
+    _authenticate_browser(client)
     decided = client.post(
         f"/api/v1/agent/approvals/{approval_one}/decide",
-        headers=admin_headers,
+        headers={"Origin": ORIGIN},
         json={"decision": "approve"},
     )
     assert decided.status_code == 409

@@ -55,7 +55,7 @@ const cryptoPort = {
   async sha256(input: Uint8Array) { return new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', input.slice().buffer)) },
 }
 
-export async function authorizeNativeClient(issuer: string, authorizeEndpoint: string, scopes: OAuthScope[]) {
+export async function authorizeNativeClient(issuer: string, authorizeEndpoint: string, scopes: OAuthScope[], options: { forceLogin?: boolean; signal?: AbortSignal } = {}) {
   void logNativeEvent({ event: 'connect_started', issuer })
   await serverConfig.replace(issuer)
   const key = createTauriKey(serverConfig.current)
@@ -75,7 +75,7 @@ export async function authorizeNativeClient(issuer: string, authorizeEndpoint: s
     exchange: ({ issuer: target, transaction, verifier, redirectUri }) => exchangeAuthorization({ issuer: target, transaction, verifier, redirectUri }),
   })
   try {
-    const credential = await session.authorize()
+    const credential = await session.authorize(options.signal, options)
     void logNativeEvent({ event: 'token_exchange_succeeded', issuer })
     return credential
   } catch (error) {

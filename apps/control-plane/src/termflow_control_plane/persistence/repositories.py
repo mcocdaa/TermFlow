@@ -13,11 +13,14 @@ from typing import Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, case, delete, exists, func, insert, literal, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from termflow_control_plane.agent_contracts import RETENTION_MATRIX, DataClass
+from termflow_control_plane.auth.context import as_utc
 from termflow_control_plane.auth.pkce import create_s256_challenge
 from termflow_control_plane.auth.secret_box import EncryptedSecret
 
@@ -26,6 +29,7 @@ from .models import (
     MAX_AGENT_MESSAGE_BODY_BYTES,
     AgentBinding,
     AgentCleanupJob,
+    AgentCleanupReceipt,
     AgentConversation,
     AgentDiagnostic,
     AgentEvent,
@@ -33,8 +37,10 @@ from .models import (
     AgentMemoryScope,
     AgentMessage,
     AgentProfile,
+    AgentProviderDisclosureAcceptance,
     AgentRun,
     AgentRuntimeBinding,
+    AgentSetupReceipt,
     AgentToken,
     AgentToolRequest,
     ApprovalAuditEvent,
@@ -92,9 +98,7 @@ def _matrix_retention(data_class: DataClass, default: timedelta) -> timedelta:
 AGENT_ASSEMBLY_CHECKPOINT_RETENTION = _matrix_retention(
     DataClass.ASSEMBLY_CHECKPOINTS, timedelta(hours=24)
 )
-AGENT_FINAL_TIMELINE_RETENTION = _matrix_retention(
-    DataClass.FINAL_MESSAGES, timedelta(days=30)
-)
+AGENT_FINAL_TIMELINE_RETENTION = _matrix_retention(DataClass.FINAL_MESSAGES, timedelta(days=30))
 
 
 def _encode_scopes(scopes: tuple[str, ...]) -> str:
@@ -120,9 +124,11 @@ async def _insert_auth_token(
     client_id: UUID | None = None,
     family_id: UUID | None = None,
     parent_token_id: UUID | None = None,
+    authenticated_at: datetime | None = None,
     now: datetime | None = None,
 ) -> AuthToken | None:
-    observed_at = now or datetime.now(UTC)
+    observed_at = as_utc(now or datetime.now(UTC))
+    persisted_authenticated_at = as_utc(authenticated_at) if authenticated_at is not None else None
     token_id = uuid4()
     effective_family_id = family_id or (uuid4() if kind == "refresh" else None)
     conditions = [
@@ -154,6 +160,7 @@ async def _insert_auth_token(
         literal(parent_token_id),
         literal(epoch),
         literal(expires_at),
+        literal(persisted_authenticated_at),
         literal(observed_at),
     ).where(*conditions)
     result = await session.execute(
@@ -170,6 +177,7 @@ async def _insert_auth_token(
                 AuthToken.parent_token_id,
                 AuthToken.epoch,
                 AuthToken.expires_at,
+                AuthToken.authenticated_at,
                 AuthToken.created_at,
             ],
             source,
@@ -178,6 +186,11 @@ async def _insert_auth_token(
     )
     token = result.scalar_one_or_none()
     if token is not None:
+        # SQLite's DateTime type returns naive values even when timezone=True.
+        # Normalize the detached ORM view at this boundary so callers cannot
+        # accidentally compare a persisted UTC instant as local time.
+        if token.authenticated_at is not None:
+            token.authenticated_at = as_utc(token.authenticated_at)
         await session.execute(
             update(NativeClient)
             .where(NativeClient.id == client_id, NativeClient.revoked_at.is_(None))
@@ -1678,6 +1691,7 @@ class OAuthAuthorizationRepository:
                 epoch=epoch,
                 client_id=authorization.client_id,
                 family_id=family_id,
+                authenticated_at=authorization.approved_at,
                 now=observed_at,
             )
             refresh = await _insert_auth_token(
@@ -1690,6 +1704,7 @@ class OAuthAuthorizationRepository:
                 epoch=epoch,
                 client_id=authorization.client_id,
                 family_id=family_id,
+                authenticated_at=authorization.approved_at,
                 now=observed_at,
             )
             if access is None or refresh is None:
@@ -1917,6 +1932,7 @@ class OAuthAuthorizationRepository:
                 epoch=epoch,
                 client_id=authorization.client_id,
                 family_id=family_id,
+                authenticated_at=authorization.approved_at,
                 now=observed_at,
             )
             refresh = await _insert_auth_token(
@@ -1929,6 +1945,7 @@ class OAuthAuthorizationRepository:
                 epoch=epoch,
                 client_id=authorization.client_id,
                 family_id=family_id,
+                authenticated_at=authorization.approved_at,
                 now=observed_at,
             )
             if access is None or refresh is None:
@@ -2000,6 +2017,7 @@ class OAuthAuthorizationRepository:
                 epoch=epoch,
                 client_id=authorization.client_id,
                 family_id=family_id,
+                authenticated_at=authorization.approved_at,
                 now=observed_at,
             )
             refresh = await _insert_auth_token(
@@ -2012,6 +2030,7 @@ class OAuthAuthorizationRepository:
                 epoch=epoch,
                 client_id=authorization.client_id,
                 family_id=family_id,
+                authenticated_at=authorization.approved_at,
                 now=observed_at,
             )
             if access is None or refresh is None:
@@ -2037,6 +2056,7 @@ class AuthTokenRepository:
         client_id: UUID | None = None,
         family_id: UUID | None = None,
         parent_token_id: UUID | None = None,
+        authenticated_at: datetime | None = None,
     ) -> AuthToken:
         if kind not in {"access", "refresh", "cli"}:
             raise ValueError("unsupported authentication token kind")
@@ -2052,6 +2072,7 @@ class AuthTokenRepository:
                 client_id=client_id,
                 family_id=family_id,
                 parent_token_id=parent_token_id,
+                authenticated_at=authenticated_at,
             )
             if token is None:
                 state = await session.get(AuthenticationState, 1)
@@ -2101,6 +2122,8 @@ class AuthTokenRepository:
         )
         async with self._sessions() as session:
             token: AuthToken | None = await session.scalar(select(AuthToken).where(*conditions))
+            if token is not None and token.authenticated_at is not None:
+                token.authenticated_at = as_utc(token.authenticated_at)
             return token
 
     async def rotate_refresh(
@@ -2131,6 +2154,7 @@ class AuthTokenRepository:
                     AuthToken.scopes,
                     AuthToken.key_thumbprint,
                     AuthToken.family_id,
+                    AuthToken.authenticated_at,
                 )
             )
             row = result.one_or_none()
@@ -2165,6 +2189,7 @@ class AuthTokenRepository:
                 parent_token_id=row[0],
                 epoch=epoch,
                 expires_at=expires_at,
+                authenticated_at=row[5],
                 now=observed_at,
             )
             if token is None:
@@ -2209,6 +2234,7 @@ class AuthTokenRepository:
                     AuthToken.scopes,
                     AuthToken.key_thumbprint,
                     AuthToken.family_id,
+                    AuthToken.authenticated_at,
                 )
             )
             row = result.one_or_none()
@@ -2243,6 +2269,7 @@ class AuthTokenRepository:
                 family_id=row[4],
                 epoch=epoch,
                 expires_at=access_expires_at,
+                authenticated_at=row[5],
                 now=observed_at,
             )
             refresh = await _insert_auth_token(
@@ -2256,6 +2283,7 @@ class AuthTokenRepository:
                 parent_token_id=row[0],
                 epoch=epoch,
                 expires_at=refresh_expires_at,
+                authenticated_at=row[5],
                 now=observed_at,
             )
             if access is None or refresh is None:
@@ -2354,9 +2382,159 @@ class AgentToolRequestKeyConflict(RuntimeError):
     """The same side-effect request key was replayed with different arguments."""
 
 
-# Active binding states: a binding is "active" while it can be admitted to a
-# runtime.  Terminal states (revoked/disabled/failed/removed) retire it.
-_ACTIVE_BINDING_STATES = ("pending", "ready")
+class AgentProfileNameConflict(RuntimeError):
+    """An Agent Profile display name is already in use."""
+
+
+# Desired binding states that still occupy the one-profile/one-term slot.
+# ``disabled`` remains selectable/configured (and therefore must prevent a
+# duplicate binding); only terminal ``revoked`` rows are excluded.
+_ACTIVE_BINDING_STATES = ("disabled", "enabled")
+
+
+class AgentSetupReceiptRepository:
+    """Durable setup idempotency receipts.
+
+    ``claim_in_session`` is deliberately composable with the provisioning
+    transaction.  The unique database key, rather than process-local state,
+    arbitrates concurrent requests from independent workers.
+    """
+
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def get_by_idempotency_key(self, idempotency_key: UUID) -> AgentSetupReceipt | None:
+        async with self._sessions() as session:
+            return cast(
+                AgentSetupReceipt | None,
+                await session.scalar(
+                    select(AgentSetupReceipt).where(
+                        AgentSetupReceipt.idempotency_key == idempotency_key
+                    )
+                ),
+            )
+
+    async def get_latest_for_term(self, term_id: UUID) -> AgentSetupReceipt | None:
+        async with self._sessions() as session:
+            return cast(
+                AgentSetupReceipt | None,
+                await session.scalar(
+                    select(AgentSetupReceipt)
+                    .where(AgentSetupReceipt.term_id == term_id)
+                    .order_by(AgentSetupReceipt.created_at.desc())
+                    .limit(1)
+                ),
+            )
+
+    @staticmethod
+    async def claim_in_session(
+        session: AsyncSession,
+        *,
+        idempotency_key: UUID,
+        request_digest: str,
+        term_id: UUID,
+    ) -> tuple[AgentSetupReceipt, bool]:
+        """Claim a key, returning ``(receipt, is_owner)``.
+
+        SQLite and PostgreSQL use their native ``ON CONFLICT DO NOTHING``
+        forms.  The insert is the first write in the caller's transaction;
+        therefore a losing concurrent request can safely roll back and read
+        the committed winner without touching the aggregate.
+        """
+
+        values = {
+            "id": uuid4(),
+            "idempotency_key": idempotency_key,
+            "request_digest": request_digest,
+            "state": "activating",
+            "term_id": term_id,
+        }
+        dialect = session.get_bind().dialect.name
+        inserted_id: UUID | None = None
+        statement: Any
+        if dialect == "sqlite":
+            statement = sqlite_insert(AgentSetupReceipt).values(**values)
+            statement = statement.on_conflict_do_nothing(
+                index_elements=[AgentSetupReceipt.idempotency_key]
+            )
+            result = await session.execute(statement.returning(AgentSetupReceipt.id))
+            inserted_id = result.scalar_one_or_none()
+        elif dialect == "postgresql":
+            statement = postgresql_insert(AgentSetupReceipt).values(**values)
+            statement = statement.on_conflict_do_nothing(
+                index_elements=[AgentSetupReceipt.idempotency_key]
+            )
+            result = await session.execute(statement.returning(AgentSetupReceipt.id))
+            inserted_id = result.scalar_one_or_none()
+        else:
+            # Keep a portable fallback for test/dialect adapters that do not
+            # expose an ON CONFLICT builder.  This branch is only entered for
+            # dialects without native support.
+            candidate_receipt = AgentSetupReceipt(**values)
+            try:
+                session.add(candidate_receipt)
+                await session.flush()
+                return candidate_receipt, True
+            except IntegrityError:
+                await session.rollback()
+
+        receipt: AgentSetupReceipt | None
+        if inserted_id is not None:
+            receipt = cast(
+                AgentSetupReceipt | None,
+                await session.get(AgentSetupReceipt, inserted_id),
+            )
+        else:
+            receipt = cast(
+                AgentSetupReceipt | None,
+                await session.scalar(
+                    select(AgentSetupReceipt).where(
+                        AgentSetupReceipt.idempotency_key == idempotency_key
+                    )
+                ),
+            )
+        if receipt is None:
+            # A conflict can only be reported after the winner committed.  A
+            # missing row means the dialect violated that contract and must
+            # not be treated as a successful claim.
+            raise RuntimeError("setup receipt claim disappeared")
+        return receipt, inserted_id is not None
+
+    async def record_result(
+        self,
+        idempotency_key: UUID,
+        *,
+        state: str,
+        binding_id: UUID | None,
+        reason_code: str | None,
+    ) -> AgentSetupReceipt | None:
+        """Persist the public reconcile outcome exactly once."""
+
+        observed_at = datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentSetupReceipt)
+                .where(
+                    AgentSetupReceipt.idempotency_key == idempotency_key,
+                    AgentSetupReceipt.state == "activating",
+                )
+                .values(
+                    state=state,
+                    binding_id=binding_id,
+                    reason_code=reason_code,
+                    updated_at=observed_at,
+                )
+                .returning(AgentSetupReceipt)
+            )
+            receipt = result.scalar_one_or_none()
+            if receipt is None:
+                receipt = await session.scalar(
+                    select(AgentSetupReceipt).where(
+                        AgentSetupReceipt.idempotency_key == idempotency_key
+                    )
+                )
+            await session.commit()
+            return receipt
 
 
 class AgentProfileRepository:
@@ -2377,7 +2555,11 @@ class AgentProfileRepository:
                 config=config,
             )
             session.add(profile)
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError as exc:
+                await session.rollback()
+                raise AgentProfileNameConflict from exc
             return profile
 
     async def get_by_id(self, profile_id: UUID) -> AgentProfile | None:
@@ -2386,9 +2568,7 @@ class AgentProfileRepository:
 
     async def list(self) -> list[AgentProfile]:
         async with self._sessions() as session:
-            rows = await session.scalars(
-                select(AgentProfile).order_by(AgentProfile.created_at)
-            )
+            rows = await session.scalars(select(AgentProfile).order_by(AgentProfile.created_at))
             return list(rows)
 
     async def rename(self, profile_id: UUID, display_name: str) -> AgentProfile | None:
@@ -2407,9 +2587,7 @@ class AgentProfileRepository:
     async def delete(self, profile_id: UUID) -> bool:
         async with self._sessions() as session:
             result = await session.execute(
-                delete(AgentProfile)
-                .where(AgentProfile.id == profile_id)
-                .returning(AgentProfile.id)
+                delete(AgentProfile).where(AgentProfile.id == profile_id).returning(AgentProfile.id)
             )
             deleted = result.scalar_one_or_none() is not None
             await session.commit()
@@ -2425,7 +2603,7 @@ class AgentBindingRepository:
         *,
         profile_id: UUID,
         term_id: UUID,
-        status: str = "pending",
+        status: str = "disabled",
         runtime_ref: str | None = None,
         runtime_epoch: int | None = None,
         capability_ref: str | None = None,
@@ -2447,6 +2625,29 @@ class AgentBindingRepository:
         async with self._sessions() as session:
             return await session.get(AgentBinding, binding_id)
 
+    async def list_all(self) -> list[AgentBinding]:
+        """Return every desired Binding for startup/periodic reconciliation."""
+
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentBinding).order_by(
+                    AgentBinding.created_at,
+                    AgentBinding.id,
+                )
+            )
+            return list(rows)
+
+    async def get_by_runtime_ref(self, runtime_ref: str) -> AgentBinding | None:
+        """Latest binding provisioned for a runtime ref (epoch resolution)."""
+        async with self._sessions() as session:
+            binding: AgentBinding | None = await session.scalar(
+                select(AgentBinding)
+                .where(AgentBinding.runtime_ref == runtime_ref)
+                .order_by(AgentBinding.created_at.desc())
+                .limit(1)
+            )
+            return binding
+
     async def list_for_term(self, term_id: UUID) -> list[AgentBinding]:
         async with self._sessions() as session:
             rows = await session.scalars(
@@ -2465,9 +2666,7 @@ class AgentBindingRepository:
             )
             return list(rows)
 
-    async def active_binding_for(
-        self, profile_id: UUID, term_id: UUID
-    ) -> AgentBinding | None:
+    async def active_binding_for(self, profile_id: UUID, term_id: UUID) -> AgentBinding | None:
         async with self._sessions() as session:
             binding: AgentBinding | None = await session.scalar(
                 select(AgentBinding)
@@ -2487,17 +2686,30 @@ class AgentBindingRepository:
         status: str,
         *,
         expected_status: str | None = None,
+        advance_runtime_epoch: bool = False,
     ) -> AgentBinding | None:
         observed_at = datetime.now(UTC)
         conditions = [AgentBinding.id == binding_id]
         if expected_status is not None:
             conditions.append(AgentBinding.status == expected_status)
+        values: dict[str, object] = {
+            "status": status,
+            "updated_at": observed_at,
+        }
+        if advance_runtime_epoch:
+            # Closing an open binding invalidates every epoch-bound AgentToken.
+            # Repeating a closed-state patch is idempotent and nullable,
+            # not-yet-provisioned runtime epochs stay null.
+            values["runtime_epoch"] = case(
+                (
+                    ~AgentBinding.status.in_(("revoked", "disabled")),
+                    AgentBinding.runtime_epoch + 1,
+                ),
+                else_=AgentBinding.runtime_epoch,
+            )
         async with self._sessions() as session:
             result = await session.execute(
-                update(AgentBinding)
-                .where(*conditions)
-                .values(status=status, updated_at=observed_at)
-                .returning(AgentBinding)
+                update(AgentBinding).where(*conditions).values(**values).returning(AgentBinding)
             )
             binding = result.scalar_one_or_none()
             await session.commit()
@@ -2528,12 +2740,65 @@ class AgentBindingRepository:
             await session.commit()
             return binding
 
+    async def update_desired_runtime(
+        self,
+        binding_id: UUID,
+        runtime_ref: str,
+        capability_ref: str,
+        expected_revision: int,
+        rotate_epoch: bool,
+    ) -> AgentBinding | None:
+        """Atomically replace desired runtime configuration at one revision.
+
+        Runtime/capability identity is authority-bearing.  A caller that does
+        not request an epoch rotation may only advance the configuration
+        revision while retaining the exact existing identity (for example, a
+        model-only Profile change).  The revision predicate also makes a
+        retry of a successful authority rotation a no-op.
+        """
+
+        if not runtime_ref or len(runtime_ref) > 128:
+            raise ValueError("runtime_ref must be between 1 and 128 characters")
+        if not capability_ref or len(capability_ref) > 128:
+            raise ValueError("capability_ref must be between 1 and 128 characters")
+
+        observed_at = datetime.now(UTC)
+        conditions = [
+            AgentBinding.id == binding_id,
+            AgentBinding.config_revision == expected_revision,
+            AgentBinding.status != "revoked",
+        ]
+        if not rotate_epoch:
+            # These SQL predicates reject an authority-bearing identity change
+            # in the same atomic statement; no read/check/write window exists.
+            conditions.extend(
+                (
+                    AgentBinding.runtime_ref == runtime_ref,
+                    AgentBinding.capability_ref == capability_ref,
+                )
+            )
+
+        values: dict[str, object] = {
+            "runtime_ref": runtime_ref,
+            "capability_ref": capability_ref,
+            "config_revision": AgentBinding.config_revision + 1,
+            "updated_at": observed_at,
+        }
+        if rotate_epoch:
+            values["runtime_epoch"] = func.coalesce(AgentBinding.runtime_epoch, 0) + 1
+
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentBinding).where(*conditions).values(**values).returning(AgentBinding)
+            )
+            binding = result.scalar_one_or_none()
+            await session.commit()
+            return binding
+
     async def delete(self, binding_id: UUID) -> bool:
         async with self._sessions() as session:
             result = await session.execute(
-                delete(AgentBinding)
-                .where(AgentBinding.id == binding_id)
-                .returning(AgentBinding.id)
+                delete(AgentBinding).where(AgentBinding.id == binding_id).returning(AgentBinding.id)
             )
             deleted = result.scalar_one_or_none() is not None
             await session.commit()
@@ -2547,9 +2812,7 @@ class AgentMemoryScopeRepository:
     async def get_for_binding(self, binding_id: UUID) -> AgentMemoryScope | None:
         async with self._sessions() as session:
             scope: AgentMemoryScope | None = await session.scalar(
-                select(AgentMemoryScope).where(
-                    AgentMemoryScope.binding_id == binding_id
-                )
+                select(AgentMemoryScope).where(AgentMemoryScope.binding_id == binding_id)
             )
             return scope
 
@@ -2629,9 +2892,7 @@ class AgentMemoryScopeRepository:
         delta_count: int = 0,
     ) -> AgentMemoryScope | None:
         """Alias for :meth:`record_usage`."""
-        return await self.record_usage(
-            scope_id, delta_bytes=delta_bytes, delta_count=delta_count
-        )
+        return await self.record_usage(scope_id, delta_bytes=delta_bytes, delta_count=delta_count)
 
 
 class AgentConversationRepository:
@@ -2676,9 +2937,7 @@ class AgentConversationRepository:
             )
             return list(rows)
 
-    async def rename(
-        self, conversation_id: UUID, title: str
-    ) -> AgentConversation | None:
+    async def rename(self, conversation_id: UUID, title: str) -> AgentConversation | None:
         observed_at = datetime.now(UTC)
         async with self._sessions() as session:
             result = await session.execute(
@@ -2730,9 +2989,7 @@ class AgentBackendConversationRepository:
             await session.commit()
             return ref
 
-    async def get_by_conversation(
-        self, conversation_id: UUID
-    ) -> BackendConversationRef | None:
+    async def get_by_conversation(self, conversation_id: UUID) -> BackendConversationRef | None:
         async with self._sessions() as session:
             ref: BackendConversationRef | None = await session.scalar(
                 select(BackendConversationRef).where(
@@ -2741,9 +2998,7 @@ class AgentBackendConversationRepository:
             )
             return ref
 
-    async def get_by_provider_ref(
-        self, provider_ref: str
-    ) -> BackendConversationRef | None:
+    async def get_by_provider_ref(self, provider_ref: str) -> BackendConversationRef | None:
         async with self._sessions() as session:
             ref: BackendConversationRef | None = await session.scalar(
                 select(BackendConversationRef).where(
@@ -2764,6 +3019,101 @@ class AgentBackendConversationRepository:
             return deleted
 
 
+class AgentProviderDisclosureAcceptanceRepository:
+    """Append-only provider disclosure acceptance history.
+
+    Disclosure facts are inserted once and are never rewritten.  Revocation
+    only stamps ``revoked_at`` so the original consent record remains
+    auditable.  Deliberately, this API has no provider credential parameter.
+    """
+
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
+
+    async def create(
+        self,
+        *,
+        binding_id: UUID,
+        disclosure_fingerprint: str,
+        provider_id: str,
+        model_id: str,
+        endpoint_origin: str,
+        region: str,
+        retention_terms: str,
+        retention_version: str,
+        no_training: bool,
+        policy_version: str,
+        accepted_at: datetime,
+        accepted_auth_epoch: int,
+        actor_kind: str,
+        actor_ref: str,
+    ) -> AgentProviderDisclosureAcceptance:
+        async with self._sessions() as session:
+            acceptance = AgentProviderDisclosureAcceptance(
+                binding_id=binding_id,
+                disclosure_fingerprint=disclosure_fingerprint,
+                provider_id=provider_id,
+                model_id=model_id,
+                endpoint_origin=endpoint_origin,
+                region=region,
+                retention_terms=retention_terms,
+                retention_version=retention_version,
+                no_training=no_training,
+                policy_version=policy_version,
+                accepted_at=accepted_at,
+                accepted_auth_epoch=accepted_auth_epoch,
+                actor_kind=actor_kind,
+                actor_ref=actor_ref,
+            )
+            session.add(acceptance)
+            await session.commit()
+            return acceptance
+
+    async def get_current(
+        self,
+        binding_id: UUID,
+        disclosure_fingerprint: str,
+    ) -> AgentProviderDisclosureAcceptance | None:
+        async with self._sessions() as session:
+            acceptance: AgentProviderDisclosureAcceptance | None = await session.scalar(
+                select(AgentProviderDisclosureAcceptance)
+                .where(
+                    AgentProviderDisclosureAcceptance.binding_id == binding_id,
+                    AgentProviderDisclosureAcceptance.disclosure_fingerprint
+                    == disclosure_fingerprint,
+                    AgentProviderDisclosureAcceptance.revoked_at.is_(None),
+                )
+                .order_by(
+                    AgentProviderDisclosureAcceptance.accepted_at.desc(),
+                    AgentProviderDisclosureAcceptance.id.desc(),
+                )
+                .limit(1)
+            )
+            return acceptance
+
+    async def revoke_all_current(
+        self,
+        binding_id: UUID,
+        *,
+        now: datetime | None = None,
+    ) -> int:
+        observed_at = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    update(AgentProviderDisclosureAcceptance)
+                    .where(
+                        AgentProviderDisclosureAcceptance.binding_id == binding_id,
+                        AgentProviderDisclosureAcceptance.revoked_at.is_(None),
+                    )
+                    .values(revoked_at=observed_at)
+                ),
+            )
+            await session.commit()
+            return int(result.rowcount or 0)
+
+
 class AgentRuntimeBindingRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
@@ -2776,12 +3126,13 @@ class AgentRuntimeBindingRepository:
         runtime_epoch: int,
         readiness: str = "not_ready",
     ) -> AgentRuntimeBinding:
+        if readiness == "ready":
+            raise ValueError("ready may only be written by compare_and_set_ready")
         observed_at = datetime.now(UTC)
         async with self._sessions() as session:
             runtime = await session.scalar(
                 select(AgentRuntimeBinding).where(
-                    AgentRuntimeBinding.runtime_ref == runtime_ref,
-                    AgentRuntimeBinding.runtime_epoch == runtime_epoch,
+                    AgentRuntimeBinding.binding_id == binding_id,
                 )
             )
             if runtime is None:
@@ -2793,7 +3144,8 @@ class AgentRuntimeBindingRepository:
                 )
                 session.add(runtime)
             else:
-                runtime.binding_id = binding_id
+                runtime.runtime_ref = runtime_ref
+                runtime.runtime_epoch = runtime_epoch
                 runtime.readiness = readiness
                 runtime.updated_at = observed_at
             await session.commit()
@@ -2802,21 +3154,325 @@ class AgentRuntimeBindingRepository:
     async def get_by_binding(self, binding_id: UUID) -> AgentRuntimeBinding | None:
         async with self._sessions() as session:
             runtime: AgentRuntimeBinding | None = await session.scalar(
-                select(AgentRuntimeBinding).where(
-                    AgentRuntimeBinding.binding_id == binding_id
-                )
+                select(AgentRuntimeBinding).where(AgentRuntimeBinding.binding_id == binding_id)
             )
             return runtime
 
     async def set_readiness(
         self, runtime_binding_id: UUID, readiness: str
     ) -> AgentRuntimeBinding | None:
+        if readiness == "ready":
+            raise ValueError("ready may only be written by compare_and_set_ready")
         observed_at = datetime.now(UTC)
         async with self._sessions() as session:
             result = await session.execute(
                 update(AgentRuntimeBinding)
                 .where(AgentRuntimeBinding.id == runtime_binding_id)
                 .values(readiness=readiness, updated_at=observed_at)
+                .returning(AgentRuntimeBinding)
+            )
+            runtime = result.scalar_one_or_none()
+            await session.commit()
+            return runtime
+
+    async def mark_reconciling(
+        self,
+        binding_id: UUID,
+        expected_revision: int,
+        fingerprint: str,
+    ) -> AgentRuntimeBinding | None:
+        """Conditionally upsert one reconciling row for an enabled Binding.
+
+        The dialect-native conflict clause makes concurrent first reconcile
+        attempts converge on the unique ``binding_id`` row.  Both the INSERT
+        source and the conflict UPDATE re-check enabled state and revision in
+        the database.  Applied runtime identity columns are intentionally
+        absent from the update set.
+        """
+
+        observed_at = datetime.now(UTC)
+        desired_matches = exists(
+            select(AgentBinding.id).where(
+                AgentBinding.id == binding_id,
+                AgentBinding.status.in_(("enabled", "pending", "ready")),
+                AgentBinding.config_revision == expected_revision,
+            )
+        )
+        insert_columns = (
+            "id",
+            "binding_id",
+            "readiness",
+            "reason_code",
+            "config_fingerprint",
+            "transition_started_at",
+            "provider_readiness",
+            "created_at",
+            "updated_at",
+        )
+        source = select(
+            literal(uuid4(), type_=AgentRuntimeBinding.id.type),
+            AgentBinding.id,
+            literal("reconciling"),
+            literal(None, type_=AgentRuntimeBinding.reason_code.type),
+            literal(fingerprint),
+            literal(observed_at, type_=AgentRuntimeBinding.transition_started_at.type),
+            literal("configured_unverified"),
+            literal(observed_at, type_=AgentRuntimeBinding.created_at.type),
+            literal(observed_at, type_=AgentRuntimeBinding.updated_at.type),
+        ).where(
+            AgentBinding.id == binding_id,
+            AgentBinding.status.in_(("enabled", "pending", "ready")),
+            AgentBinding.config_revision == expected_revision,
+        )
+
+        async with self._sessions() as session:
+            bind = session.get_bind()
+            statement: Any
+            if bind.dialect.name == "sqlite":
+                statement = sqlite_insert(AgentRuntimeBinding).from_select(
+                    insert_columns,
+                    source,
+                )
+            elif bind.dialect.name == "postgresql":
+                statement = postgresql_insert(AgentRuntimeBinding).from_select(
+                    insert_columns,
+                    source,
+                )
+            else:
+                raise RuntimeError("unsupported database dialect for runtime upsert")
+            statement = statement.on_conflict_do_update(
+                index_elements=[AgentRuntimeBinding.binding_id],
+                set_={
+                    "readiness": "reconciling",
+                    "reason_code": None,
+                    "config_fingerprint": fingerprint,
+                    "transition_started_at": observed_at,
+                    "provider_readiness": "configured_unverified",
+                    "provider_verified_revision": None,
+                    "provider_last_checked_at": None,
+                    "provider_reason_code": None,
+                    "updated_at": observed_at,
+                },
+                where=desired_matches,
+            ).returning(AgentRuntimeBinding)
+            result = await session.execute(statement)
+            runtime = result.scalar_one_or_none()
+            await session.commit()
+            return runtime
+
+    async def compare_and_set_ready(
+        self,
+        binding_id: UUID,
+        expected_revision: int,
+        fingerprint: str,
+        observed_epoch: int,
+    ) -> bool:
+        """Publish observed ready state through one final atomic CAS."""
+
+        observed_at = datetime.now(UTC)
+        desired_matches = exists(
+            select(AgentBinding.id).where(
+                AgentBinding.id == binding_id,
+                AgentBinding.status.in_(("enabled", "pending", "ready")),
+                AgentBinding.config_revision == expected_revision,
+                AgentBinding.runtime_epoch == observed_epoch,
+                AgentBinding.runtime_ref.is_not(None),
+                AgentBinding.capability_ref.is_not(None),
+            )
+        )
+        disclosure_matches = exists(
+            select(AgentProviderDisclosureAcceptance.id).where(
+                AgentProviderDisclosureAcceptance.binding_id == binding_id,
+                AgentProviderDisclosureAcceptance.disclosure_fingerprint == fingerprint,
+                AgentProviderDisclosureAcceptance.revoked_at.is_(None),
+            )
+        )
+        desired_runtime_ref = (
+            select(AgentBinding.runtime_ref).where(AgentBinding.id == binding_id).scalar_subquery()
+        )
+        desired_capability_ref = (
+            select(AgentBinding.capability_ref)
+            .where(AgentBinding.id == binding_id)
+            .scalar_subquery()
+        )
+
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentRuntimeBinding)
+                .where(
+                    AgentRuntimeBinding.binding_id == binding_id,
+                    AgentRuntimeBinding.readiness == "reconciling",
+                    AgentRuntimeBinding.config_fingerprint == fingerprint,
+                    desired_matches,
+                    disclosure_matches,
+                )
+                .values(
+                    readiness="ready",
+                    reason_code=None,
+                    observed_runtime_ref=desired_runtime_ref,
+                    observed_runtime_epoch=observed_epoch,
+                    observed_capability_ref=desired_capability_ref,
+                    applied_revision=expected_revision,
+                    last_health_at=observed_at,
+                    updated_at=observed_at,
+                )
+                .returning(AgentRuntimeBinding.id)
+            )
+            changed = result.scalar_one_or_none() is not None
+            await session.commit()
+            return changed
+
+    async def compare_and_set_provider_verified(
+        self,
+        binding_id: UUID,
+        expected_revision: int,
+        *,
+        fingerprint: str | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        """Record one successful provider response for the current revision.
+
+        Runtime readiness and provider readiness are deliberately independent.
+        This CAS only succeeds when the desired Binding and the observed
+        runtime still point at ``expected_revision``.  A late event from a
+        stopped pipeline therefore cannot certify a newer configuration.
+        """
+
+        observed_at = now or datetime.now(UTC)
+        desired_matches = exists(
+            select(AgentBinding.id).where(
+                AgentBinding.id == binding_id,
+                AgentBinding.status.in_(("enabled", "pending", "ready")),
+                AgentBinding.config_revision == expected_revision,
+            )
+        )
+        conditions = [
+            AgentRuntimeBinding.binding_id == binding_id,
+            AgentRuntimeBinding.readiness == "ready",
+            AgentRuntimeBinding.applied_revision == expected_revision,
+            desired_matches,
+        ]
+        if fingerprint is not None:
+            conditions.append(AgentRuntimeBinding.config_fingerprint == fingerprint)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentRuntimeBinding)
+                .where(*conditions)
+                .values(
+                    provider_readiness="verified",
+                    provider_verified_revision=expected_revision,
+                    provider_last_checked_at=observed_at,
+                    provider_reason_code=None,
+                    updated_at=observed_at,
+                )
+                .returning(AgentRuntimeBinding.id)
+            )
+            changed = result.scalar_one_or_none() is not None
+            await session.commit()
+            return changed
+
+    async def mark_provider_verified(
+        self,
+        binding_id: UUID,
+        expected_revision: int,
+        *,
+        fingerprint: str | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        """Compatibility/readability alias for the provider verification CAS."""
+
+        return await self.compare_and_set_provider_verified(
+            binding_id,
+            expected_revision,
+            fingerprint=fingerprint,
+            now=now,
+        )
+
+    async def compare_and_set_provider_failed(
+        self,
+        binding_id: UUID,
+        expected_revision: int,
+        reason_code: str,
+        *,
+        fingerprint: str | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        """Record a classified provider rejection without storing its detail."""
+
+        if reason_code not in {"provider_auth_failed", "provider_model_rejected"}:
+            raise ValueError("unsupported provider failure reason")
+        observed_at = now or datetime.now(UTC)
+        desired_matches = exists(
+            select(AgentBinding.id).where(
+                AgentBinding.id == binding_id,
+                AgentBinding.status.in_(("enabled", "pending", "ready")),
+                AgentBinding.config_revision == expected_revision,
+            )
+        )
+        conditions = [
+            AgentRuntimeBinding.binding_id == binding_id,
+            AgentRuntimeBinding.applied_revision == expected_revision,
+            desired_matches,
+        ]
+        if fingerprint is not None:
+            conditions.append(AgentRuntimeBinding.config_fingerprint == fingerprint)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentRuntimeBinding)
+                .where(*conditions)
+                .values(
+                    provider_readiness="failed",
+                    provider_verified_revision=None,
+                    provider_last_checked_at=observed_at,
+                    provider_reason_code=reason_code,
+                    updated_at=observed_at,
+                )
+                .returning(AgentRuntimeBinding.id)
+            )
+            changed = result.scalar_one_or_none() is not None
+            await session.commit()
+            return changed
+
+    async def mark_provider_failed(
+        self,
+        binding_id: UUID,
+        expected_revision: int,
+        reason_code: str,
+        *,
+        fingerprint: str | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        """Compatibility/readability alias for the provider failure CAS."""
+
+        return await self.compare_and_set_provider_failed(
+            binding_id,
+            expected_revision,
+            reason_code,
+            fingerprint=fingerprint,
+            now=now,
+        )
+
+    async def mark_unavailable(
+        self,
+        binding_id: UUID,
+        readiness: str,
+        reason_code: str | None,
+    ) -> AgentRuntimeBinding | None:
+        if readiness == "ready":
+            raise ValueError("ready may only be written by compare_and_set_ready")
+        if readiness not in {"unprovisioned", "not_ready", "blocked", "disabled"}:
+            raise ValueError("unsupported unavailable readiness")
+
+        observed_at = datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentRuntimeBinding)
+                .where(AgentRuntimeBinding.binding_id == binding_id)
+                .values(
+                    readiness=readiness,
+                    reason_code=reason_code,
+                    updated_at=observed_at,
+                )
                 .returning(AgentRuntimeBinding)
             )
             runtime = result.scalar_one_or_none()
@@ -3098,9 +3754,7 @@ class AgentInboxRepository:
                 update(AgentInboxItem)
                 .where(
                     AgentInboxItem.id == item_id,
-                    AgentInboxItem.delivery_state.in_(
-                        ("pending", "retry_wait", "claimed")
-                    ),
+                    AgentInboxItem.delivery_state.in_(("pending", "retry_wait", "claimed")),
                     AgentInboxItem.next_attempt_at <= observed_at,
                     or_(
                         AgentInboxItem.claim_expires_at.is_(None),
@@ -3292,9 +3946,7 @@ class AgentInboxRepository:
             rows = await session.scalars(
                 select(AgentInboxItem)
                 .where(
-                    AgentInboxItem.delivery_state.in_(
-                        ("dispatched", "cancel_requested")
-                    ),
+                    AgentInboxItem.delivery_state.in_(("dispatched", "cancel_requested")),
                     AgentInboxItem.claim_expires_at.is_not(None),
                     AgentInboxItem.claim_expires_at <= observed_at,
                 )
@@ -3313,9 +3965,7 @@ class AgentInboxRepository:
                 update(AgentInboxItem)
                 .where(
                     AgentInboxItem.id == item_id,
-                    AgentInboxItem.delivery_state.in_(
-                        ("pending", "claimed", "retry_wait")
-                    ),
+                    AgentInboxItem.delivery_state.in_(("pending", "claimed", "retry_wait")),
                 )
                 .values(
                     delivery_state="retry_wait",
@@ -3339,9 +3989,7 @@ class AgentInboxRepository:
                 update(AgentInboxItem)
                 .where(
                     AgentInboxItem.id == item_id,
-                    AgentInboxItem.delivery_state.in_(
-                        ("pending", "claimed", "retry_wait")
-                    ),
+                    AgentInboxItem.delivery_state.in_(("pending", "claimed", "retry_wait")),
                 )
                 .values(
                     delivery_state="dead_letter",
@@ -3380,14 +4028,10 @@ class AgentInboxRepository:
             await session.commit()
             return item
 
-    async def get_by_idempotency_key(
-        self, idempotency_key: str
-    ) -> AgentInboxItem | None:
+    async def get_by_idempotency_key(self, idempotency_key: str) -> AgentInboxItem | None:
         async with self._sessions() as session:
             item: AgentInboxItem | None = await session.scalar(
-                select(AgentInboxItem).where(
-                    AgentInboxItem.idempotency_key == idempotency_key
-                )
+                select(AgentInboxItem).where(AgentInboxItem.idempotency_key == idempotency_key)
             )
             return item
 
@@ -3473,15 +4117,11 @@ class AgentToolRequestRepository:
     async def get_by_key(self, request_key: str) -> AgentToolRequest | None:
         async with self._sessions() as session:
             request: AgentToolRequest | None = await session.scalar(
-                select(AgentToolRequest).where(
-                    AgentToolRequest.request_key == request_key
-                )
+                select(AgentToolRequest).where(AgentToolRequest.request_key == request_key)
             )
             return request
 
-    async def record_result(
-        self, request_key: str, result_digest: str
-    ) -> AgentToolRequest | None:
+    async def record_result(self, request_key: str, result_digest: str) -> AgentToolRequest | None:
         async with self._sessions() as session:
             result = await session.execute(
                 update(AgentToolRequest)
@@ -3501,9 +4141,7 @@ class AgentToolRequestRepository:
         row; same key + a different digest is rejected."""
         async with self._sessions() as session:
             request: AgentToolRequest | None = await session.scalar(
-                select(AgentToolRequest).where(
-                    AgentToolRequest.request_key == request_key
-                )
+                select(AgentToolRequest).where(AgentToolRequest.request_key == request_key)
             )
             if request is None:
                 return None
@@ -3613,9 +4251,7 @@ class AgentRunRepository:
                 CursorResult[Any],
                 await session.execute(
                     delete(AgentRun).where(
-                        AgentRun.run_state.in_(
-                            ("completed", "failed", "cancelled", "unknown")
-                        ),
+                        AgentRun.run_state.in_(("completed", "failed", "cancelled", "unknown")),
                         AgentRun.completed_at <= cutoff,
                     )
                 ),
@@ -3650,9 +4286,7 @@ class AgentRunRepository:
             await session.commit()
             return run
 
-    async def set_backend_run_id(
-        self, run_id: UUID, backend_run_id: str
-    ) -> AgentRun | None:
+    async def set_backend_run_id(self, run_id: UUID, backend_run_id: str) -> AgentRun | None:
         async with self._sessions() as session:
             result = await session.execute(
                 update(AgentRun)
@@ -3689,13 +4323,10 @@ class AgentMessageRepository:
             body_bytes = body.encode("utf-8")
             if len(body_bytes) > MAX_AGENT_MESSAGE_BODY_BYTES:
                 raise ValueError(
-                    f"message body must not exceed {MAX_AGENT_MESSAGE_BODY_BYTES} "
-                    "bytes (64 KiB)"
+                    f"message body must not exceed {MAX_AGENT_MESSAGE_BODY_BYTES} bytes (64 KiB)"
                 )
             if hashlib.sha256(body_bytes).hexdigest() != body_digest:
-                raise ValueError(
-                    "body_digest must equal sha256(body) when a body is provided"
-                )
+                raise ValueError("body_digest must equal sha256(body) when a body is provided")
         observed_at = datetime.now(UTC)
         if assembly_revision is None:
             # Auto-assign the next revision atomically: the aggregate subquery
@@ -3906,16 +4537,14 @@ class AgentEventRepository:
             payload_bytes = payload_json.encode("utf-8")
             if len(payload_bytes) > MAX_AGENT_EVENT_PAYLOAD_BYTES:
                 raise ValueError(
-                    f"event payload must not exceed {MAX_AGENT_EVENT_PAYLOAD_BYTES} "
-                    "bytes (64 KiB)"
+                    f"event payload must not exceed {MAX_AGENT_EVENT_PAYLOAD_BYTES} bytes (64 KiB)"
                 )
             # Digest invariant (M6a spec §4.2): storage and hash are the same
             # byte string, so the digest stays verifiable and payload/digest
             # drift fails fast instead of corrupting the projection silently.
             if hashlib.sha256(payload_bytes).hexdigest() != payload_digest:
                 raise ValueError(
-                    "payload_digest must equal sha256(payload_json) when a payload "
-                    "is provided"
+                    "payload_digest must equal sha256(payload_json) when a payload is provided"
                 )
         observed_at = datetime.now(UTC)
         next_seq = (
@@ -4109,9 +4738,7 @@ class AgentTokenRepository:
             result = cast(
                 CursorResult[Any],
                 await session.execute(
-                    delete(AgentToken).where(
-                        AgentToken.expiry_epoch <= cutoff_epoch
-                    )
+                    delete(AgentToken).where(AgentToken.expiry_epoch <= cutoff_epoch)
                 ),
             )
             count = int(result.rowcount or 0)
@@ -4439,9 +5066,7 @@ class WatchRepository:
     async def list_for_binding(self, binding_id: UUID) -> list[Watch]:
         async with self._sessions() as session:
             rows = await session.scalars(
-                select(Watch)
-                .where(Watch.binding_id == binding_id)
-                .order_by(Watch.created_at)
+                select(Watch).where(Watch.binding_id == binding_id).order_by(Watch.created_at)
             )
             return list(rows)
 
@@ -4552,14 +5177,21 @@ class WatchDeliveryRepository:
                 await session.commit()
                 return delivery
         except IntegrityError:
-            return await self.get_by_key(delivery_key)
+            existing = await self.get_by_key(delivery_key)
+            if existing is None:
+                # A uniqueness race normally means another transaction won
+                # and its row is immediately readable.  Treat a missing row
+                # as an invariant violation instead of returning ``None``
+                # through a repository method whose contract is non-optional.
+                raise RuntimeError(
+                    "watch delivery uniqueness conflict but the existing row was not found"
+                ) from None
+            return existing
 
     async def get_by_key(self, delivery_key: str) -> WatchDelivery | None:
         async with self._sessions() as session:
             delivery: WatchDelivery | None = await session.scalar(
-                select(WatchDelivery).where(
-                    WatchDelivery.delivery_key == delivery_key
-                )
+                select(WatchDelivery).where(WatchDelivery.delivery_key == delivery_key)
             )
             return delivery
 
@@ -4590,6 +5222,132 @@ class CleanupJobRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
+    @staticmethod
+    def _receipt_values(
+        *,
+        artifact_kind: str,
+        artifact_ref: str,
+        state: str = "pending",
+        policy_reason: str | None = None,
+        policy_version: str | None = None,
+        evidence_digest: str | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, object]:
+        observed = now or datetime.now(UTC)
+        return {
+            "artifact_kind": artifact_kind,
+            "artifact_ref": artifact_ref,
+            "state": state,
+            "attempt_count": 0,
+            "last_error": None,
+            "next_attempt_at": None,
+            "evidence_digest": evidence_digest,
+            "policy_reason": policy_reason,
+            "policy_version": policy_version,
+            "confirmed_at": observed if state in {"confirmed", "not_applicable"} else None,
+            "created_at": observed,
+            "updated_at": observed,
+        }
+
+    async def _claim_job(
+        self,
+        session: AsyncSession,
+        *,
+        target_kind: str,
+        target_ref: str,
+        term_id: UUID | None,
+        installation_id: UUID | None,
+        state: str,
+        manifest_version: int,
+        next_attempt_at: datetime | None,
+    ) -> tuple[AgentCleanupJob, bool]:
+        observed = datetime.now(UTC)
+        values: dict[str, object] = {
+            "term_id": term_id,
+            "installation_id": installation_id,
+            "target_kind": target_kind,
+            "target_ref": target_ref,
+            "state": state,
+            "manifest_version": manifest_version,
+            "attempt_count": 0,
+            "last_error": None,
+            "next_attempt_at": next_attempt_at,
+            "completed_at": observed if state == "completed" else None,
+            "created_at": observed,
+            "updated_at": observed,
+        }
+        bind = session.get_bind()
+        dialect = bind.dialect.name
+        inserted_id: UUID | None = None
+        statement: Any
+        if dialect == "sqlite":
+            statement = sqlite_insert(AgentCleanupJob).values(**values)
+            statement = statement.on_conflict_do_nothing(
+                index_elements=[AgentCleanupJob.target_kind, AgentCleanupJob.target_ref]
+            ).returning(AgentCleanupJob.id)
+            inserted_id = cast(UUID | None, (await session.execute(statement)).scalar_one_or_none())
+        elif dialect == "postgresql":
+            statement = postgresql_insert(AgentCleanupJob).values(**values)
+            statement = statement.on_conflict_do_nothing(
+                index_elements=[AgentCleanupJob.target_kind, AgentCleanupJob.target_ref]
+            ).returning(AgentCleanupJob.id)
+            inserted_id = cast(UUID | None, (await session.execute(statement)).scalar_one_or_none())
+        else:
+            try:
+                candidate = AgentCleanupJob(**values)
+                session.add(candidate)
+                await session.flush()
+                inserted_id = candidate.id
+            except IntegrityError:
+                await session.rollback()
+
+        if inserted_id is not None:
+            job = await session.get(AgentCleanupJob, inserted_id)
+            if job is None:
+                raise RuntimeError("cleanup manifest insert returned no row")
+            return job, True
+        job = await session.scalar(
+            select(AgentCleanupJob).where(
+                AgentCleanupJob.target_kind == target_kind,
+                AgentCleanupJob.target_ref == target_ref,
+            )
+        )
+        if job is None:
+            raise RuntimeError("cleanup manifest claim lost without an existing row")
+        return job, False
+
+    async def create_manifest(
+        self,
+        *,
+        target_kind: str,
+        target_ref: str,
+        receipts: list[dict[str, object]],
+        term_id: UUID | None = None,
+        installation_id: UUID | None = None,
+        manifest_version: int = 1,
+        state: str = "pending",
+        next_attempt_at: datetime | None = None,
+    ) -> tuple[AgentCleanupJob, bool]:
+        """Atomically create or reuse a target's cleanup manifest."""
+
+        async with self._sessions() as session:
+            job, owner = await self._claim_job(
+                session,
+                target_kind=target_kind,
+                target_ref=target_ref,
+                term_id=term_id,
+                installation_id=installation_id,
+                state=state,
+                manifest_version=manifest_version,
+                next_attempt_at=next_attempt_at,
+            )
+            if owner:
+                for values in receipts:
+                    session.add(AgentCleanupReceipt(cleanup_job_id=job.id, **values))
+                await session.flush()
+            await session.commit()
+            return job, owner
+
     async def create(
         self,
         *,
@@ -4600,18 +5358,351 @@ class CleanupJobRepository:
         state: str = "pending",
         next_attempt_at: datetime | None = None,
     ) -> AgentCleanupJob:
+        # Keep the legacy call shape while ensuring every new job has at
+        # least one auditable manifest entry.
+        receipt = self._receipt_values(
+            artifact_kind=target_kind,
+            artifact_ref=target_ref,
+            state="confirmed" if state == "completed" else "pending",
+            evidence_digest=(
+                digest_secret(f"legacy:{target_kind}:{target_ref}")
+                if state == "completed"
+                else None
+            ),
+        )
+        job, _ = await self.create_manifest(
+            target_kind=target_kind,
+            target_ref=target_ref,
+            receipts=[receipt],
+            term_id=term_id,
+            installation_id=installation_id,
+            state=state,
+            next_attempt_at=next_attempt_at,
+        )
+        return job
+
+    async def get(self, job_id: UUID) -> AgentCleanupJob | None:
         async with self._sessions() as session:
-            job = AgentCleanupJob(
-                term_id=term_id,
-                installation_id=installation_id,
-                target_kind=target_kind,
-                target_ref=target_ref,
-                state=state,
-                next_attempt_at=next_attempt_at,
+            return await session.get(AgentCleanupJob, job_id)
+
+    async def get_by_target(
+        self,
+        *,
+        target_kind: str,
+        target_ref: str,
+    ) -> AgentCleanupJob | None:
+        async with self._sessions() as session:
+            return cast(
+                AgentCleanupJob | None,
+                await session.scalar(
+                    select(AgentCleanupJob).where(
+                        AgentCleanupJob.target_kind == target_kind,
+                        AgentCleanupJob.target_ref == target_ref,
+                    )
+                ),
             )
-            session.add(job)
+
+    async def list_receipts(self, job_id: UUID) -> list[AgentCleanupReceipt]:
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(AgentCleanupReceipt)
+                .where(AgentCleanupReceipt.cleanup_job_id == job_id)
+                .order_by(AgentCleanupReceipt.created_at, AgentCleanupReceipt.id)
+            )
+            return list(rows)
+
+    async def _refresh_job_state(
+        self,
+        session: AsyncSession,
+        job_id: UUID,
+        *,
+        now: datetime,
+    ) -> AgentCleanupJob | None:
+        job = await session.get(AgentCleanupJob, job_id)
+        if job is None:
+            return None
+        receipts = list(
+            await session.scalars(
+                select(AgentCleanupReceipt).where(AgentCleanupReceipt.cleanup_job_id == job_id)
+            )
+        )
+        if not receipts:
+            # Empty manifests are never successful.  This also repairs a
+            # pre-0012 row that was incorrectly marked completed.
+            if job.state == "completed":
+                job.state = "pending"
+                job.completed_at = None
+            return job
+        if any(receipt.state == "dead_letter" for receipt in receipts):
+            job.state = "dead_letter"
+            job.completed_at = None
+        elif all(
+            receipt.state == "confirmed"
+            or (
+                receipt.state == "not_applicable"
+                and receipt.policy_reason
+                and receipt.policy_reason.strip()
+                and receipt.policy_version
+                and receipt.policy_version.strip()
+            )
+            for receipt in receipts
+        ):
+            job.state = "completed"
+            job.completed_at = job.completed_at or now
+        else:
+            job.state = "pending"
+            job.completed_at = None
+        job.updated_at = now
+        return job
+
+    async def refresh_state(
+        self,
+        job_id: UUID,
+        *,
+        now: datetime | None = None,
+    ) -> AgentCleanupJob | None:
+        observed = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            job = await self._refresh_job_state(session, job_id, now=observed)
             await session.commit()
             return job
+
+    async def mark_receipt_attempt(
+        self,
+        receipt_id: UUID,
+        *,
+        next_attempt_at: datetime,
+        last_error: str | None = None,
+        now: datetime | None = None,
+    ) -> AgentCleanupReceipt | None:
+        observed = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentCleanupReceipt)
+                .where(
+                    AgentCleanupReceipt.id == receipt_id,
+                    AgentCleanupReceipt.state == "pending",
+                )
+                .values(
+                    attempt_count=AgentCleanupReceipt.attempt_count + 1,
+                    next_attempt_at=next_attempt_at,
+                    last_error=last_error,
+                    updated_at=observed,
+                )
+                .returning(AgentCleanupReceipt)
+            )
+            receipt = result.scalar_one_or_none()
+            if receipt is not None:
+                await self._refresh_job_state(session, receipt.cleanup_job_id, now=observed)
+            await session.commit()
+            return receipt
+
+    async def mark_receipt_confirmed(
+        self,
+        receipt_id: UUID,
+        *,
+        evidence_digest: str,
+        now: datetime | None = None,
+    ) -> AgentCleanupReceipt | None:
+        observed = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            receipt = await session.get(AgentCleanupReceipt, receipt_id)
+            if receipt is None:
+                return None
+            if receipt.state == "confirmed":
+                if receipt.evidence_digest != evidence_digest:
+                    raise ValueError("receipt evidence conflicts with prior confirmation")
+                return receipt
+            if receipt.state != "pending":
+                raise ValueError("receipt is not confirmable")
+            receipt.state = "confirmed"
+            receipt.evidence_digest = evidence_digest
+            receipt.confirmed_at = observed
+            receipt.next_attempt_at = None
+            receipt.last_error = None
+            receipt.updated_at = observed
+            await self._refresh_job_state(session, receipt.cleanup_job_id, now=observed)
+            await session.commit()
+            return receipt
+
+    async def mark_receipt_not_applicable(
+        self,
+        receipt_id: UUID,
+        *,
+        policy_reason: str,
+        policy_version: str,
+        now: datetime | None = None,
+    ) -> AgentCleanupReceipt | None:
+        if not policy_reason.strip() or not policy_version.strip():
+            raise ValueError("not_applicable receipts require policy reason and version")
+        observed = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            receipt = await session.get(AgentCleanupReceipt, receipt_id)
+            if receipt is None:
+                return None
+            if receipt.state == "not_applicable":
+                if (
+                    receipt.policy_reason != policy_reason
+                    or receipt.policy_version != policy_version
+                ):
+                    raise ValueError("receipt policy conflicts with prior decision")
+                return receipt
+            if receipt.state != "pending":
+                raise ValueError("receipt is not transitionable")
+            receipt.state = "not_applicable"
+            receipt.policy_reason = policy_reason
+            receipt.policy_version = policy_version
+            receipt.confirmed_at = observed
+            receipt.next_attempt_at = None
+            receipt.last_error = None
+            receipt.updated_at = observed
+            await self._refresh_job_state(session, receipt.cleanup_job_id, now=observed)
+            await session.commit()
+            return receipt
+
+    async def mark_receipt_dead_letter(
+        self,
+        receipt_id: UUID,
+        *,
+        reason: str,
+        now: datetime | None = None,
+    ) -> AgentCleanupReceipt | None:
+        if not reason.strip():
+            raise ValueError("dead-letter reason must not be empty")
+        observed = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            receipt = await session.get(AgentCleanupReceipt, receipt_id)
+            if receipt is None:
+                return None
+            if receipt.state == "dead_letter":
+                return receipt
+            if receipt.state in {"confirmed", "not_applicable"}:
+                raise ValueError("terminal receipt cannot become dead-letter")
+            receipt.state = "dead_letter"
+            receipt.last_error = reason[:1024]
+            receipt.policy_reason = reason[:128]
+            receipt.next_attempt_at = None
+            receipt.updated_at = observed
+            await self._refresh_job_state(session, receipt.cleanup_job_id, now=observed)
+            await session.commit()
+            return receipt
+
+    async def confirm_pending_internal(
+        self,
+        job_id: UUID,
+        *,
+        evidence_digest: str | None = None,
+        now: datetime | None = None,
+    ) -> int:
+        """Confirm all pending receipts after a B-owned cleanup handler."""
+
+        observed = now or datetime.now(UTC)
+        async with self._sessions() as session:
+            receipts = list(
+                await session.scalars(
+                    select(AgentCleanupReceipt).where(
+                        AgentCleanupReceipt.cleanup_job_id == job_id,
+                        AgentCleanupReceipt.state == "pending",
+                        AgentCleanupReceipt.artifact_kind.in_(
+                            [
+                                "conversation",
+                                "binding",
+                                "profile",
+                                "term",
+                                "installation",
+                                "b_row",
+                                "watch",
+                                "approval",
+                                "agent_token",
+                                "pane_policy",
+                                "agent_event",
+                                "agent_message",
+                                "agent_inbox",
+                                "agent_run",
+                                "agent_tool_request",
+                                "backend_session",
+                            ]
+                        ),
+                    )
+                )
+            )
+            for receipt in receipts:
+                receipt.state = "confirmed"
+                receipt.evidence_digest = evidence_digest or digest_secret(
+                    f"cleanup:{job_id}:{receipt.artifact_kind}:{receipt.artifact_ref}"
+                )
+                receipt.confirmed_at = observed
+                receipt.next_attempt_at = None
+                receipt.last_error = None
+                receipt.updated_at = observed
+            await self._refresh_job_state(session, job_id, now=observed)
+            await session.commit()
+            return len(receipts)
+
+    async def confirm_helper(
+        self,
+        *,
+        job_id: UUID,
+        receipt_id: UUID,
+        artifact_ref: str,
+        result: str,
+        evidence_digest: str | None,
+        reason_code: str | None,
+        idempotency_key: UUID,
+    ) -> AgentCleanupReceipt:
+        observed = datetime.now(UTC)
+        async with self._sessions() as session:
+            changed = await session.scalar(
+                update(AgentCleanupReceipt)
+                .where(
+                    AgentCleanupReceipt.id == receipt_id,
+                    AgentCleanupReceipt.cleanup_job_id == job_id,
+                    AgentCleanupReceipt.artifact_ref == artifact_ref,
+                    AgentCleanupReceipt.artifact_kind.in_(
+                        [
+                            "container",
+                            "volume",
+                            "log",
+                            "provider",
+                            "runtime",
+                            "runtime_attestation",
+                            "runtime_volume",
+                            "container_log",
+                            "provider_retention",
+                            "sqlite_wal_backup",
+                        ]
+                    ),
+                    AgentCleanupReceipt.state == "pending",
+                    AgentCleanupReceipt.confirmation_key.is_(None),
+                )
+                .values(
+                    state=result,
+                    evidence_digest=evidence_digest,
+                    policy_reason=reason_code,
+                    confirmation_key=idempotency_key,
+                    confirmed_at=observed if result == "confirmed" else None,
+                    last_error=reason_code,
+                    next_attempt_at=None,
+                    updated_at=observed,
+                )
+                .returning(AgentCleanupReceipt)
+            )
+            if changed is None:
+                existing = await session.get(AgentCleanupReceipt, receipt_id)
+                if existing is None or existing.cleanup_job_id != job_id:
+                    raise KeyError(receipt_id)
+                if (
+                    existing.artifact_ref != artifact_ref
+                    or existing.state != result
+                    or existing.confirmation_key != idempotency_key
+                    or existing.evidence_digest != evidence_digest
+                    or existing.policy_reason != reason_code
+                ):
+                    raise ValueError("cleanup confirmation conflict")
+                return existing
+            await self._refresh_job_state(session, job_id, now=observed)
+            await session.commit()
+            return changed
 
     async def list_pending(
         self,
@@ -4659,9 +5750,7 @@ class CleanupJobRepository:
                     or_(
                         AgentCleanupJob.next_attempt_at.is_(None),
                         AgentCleanupJob.next_attempt_at <= observed_at,
-                        AgentCleanupJob.last_error.like(
-                            "no cleanup handler registered%"
-                        ),
+                        AgentCleanupJob.last_error.like("no cleanup handler registered%"),
                     ),
                 )
                 .order_by(AgentCleanupJob.created_at)
@@ -4690,6 +5779,20 @@ class CleanupJobRepository:
                 .returning(AgentCleanupJob)
             )
             job = result.scalar_one_or_none()
+            if job is not None:
+                await session.execute(
+                    update(AgentCleanupReceipt)
+                    .where(
+                        AgentCleanupReceipt.cleanup_job_id == job_id,
+                        AgentCleanupReceipt.state == "pending",
+                    )
+                    .values(
+                        attempt_count=AgentCleanupReceipt.attempt_count + 1,
+                        next_attempt_at=next_attempt_at,
+                        last_error=last_error,
+                        updated_at=observed_at,
+                    )
+                )
             await session.commit()
             return job
 
@@ -4701,16 +5804,10 @@ class CleanupJobRepository:
     ) -> AgentCleanupJob | None:
         observed_at = now or datetime.now(UTC)
         async with self._sessions() as session:
-            result = await session.execute(
-                update(AgentCleanupJob)
-                .where(
-                    AgentCleanupJob.id == job_id,
-                    AgentCleanupJob.state == "pending",
-                )
-                .values(state="completed", updated_at=observed_at)
-                .returning(AgentCleanupJob)
-            )
-            job = result.scalar_one_or_none()
+            job = await self._refresh_job_state(session, job_id, now=observed_at)
+            if job is None or job.state != "completed":
+                await session.rollback()
+                return None
             await session.commit()
             return job
 
@@ -4732,6 +5829,7 @@ class CleanupJobRepository:
                 .values(
                     state="dead_letter",
                     last_error=last_error,
+                    completed_at=None,
                     updated_at=observed_at,
                 )
                 .returning(AgentCleanupJob)
@@ -4808,9 +5906,7 @@ class DiagnosticsRepository:
             result = cast(
                 CursorResult[Any],
                 await session.execute(
-                    delete(AgentDiagnostic).where(
-                        AgentDiagnostic.ttl_expires_at <= observed_at
-                    )
+                    delete(AgentDiagnostic).where(AgentDiagnostic.ttl_expires_at <= observed_at)
                 ),
             )
             count = int(result.rowcount or 0)
@@ -4835,9 +5931,11 @@ class RepositoryBundle:
         # Agent Broker domain repositories (plan §15).
         self.agent_profiles = AgentProfileRepository(sessions)
         self.agent_bindings = AgentBindingRepository(sessions)
+        self.agent_setup_receipts = AgentSetupReceiptRepository(sessions)
         self.agent_memory_scopes = AgentMemoryScopeRepository(sessions)
         self.agent_conversations = AgentConversationRepository(sessions)
         self.agent_backend_conversations = AgentBackendConversationRepository(sessions)
+        self.agent_provider_disclosures = AgentProviderDisclosureAcceptanceRepository(sessions)
         self.agent_runtime_bindings = AgentRuntimeBindingRepository(sessions)
         self.agent_inbox = AgentInboxRepository(sessions)
         self.agent_tool_requests = AgentToolRequestRepository(sessions)
@@ -4853,6 +5951,32 @@ class RepositoryBundle:
         self.cleanup_jobs = CleanupJobRepository(sessions)
         self.diagnostics = DiagnosticsRepository(sessions)
 
+    async def purge_core_expired(self, *, now: datetime) -> dict[str, int]:
+        """Purge only core-owned expiring rows.
+
+        This is used during a degraded startup when the Agent migration stage
+        could not be established.  It deliberately never touches an Agent
+        table, allowing authentication and terminal APIs to remain available
+        while the Agent stage is retried on the next startup.
+        """
+
+        counts: dict[str, int] = {}
+        async with self._sessions() as session:
+            for name, model in (
+                ("enrollment_tokens", EnrollmentToken),
+                ("auth_tokens", AuthToken),
+                ("totp_setups", TotpSetup),
+                ("auth_challenges", AuthChallenge),
+                ("oauth_authorizations", OAuthAuthorization),
+            ):
+                result = cast(
+                    CursorResult[Any],
+                    await session.execute(delete(model).where(model.expires_at < now)),
+                )
+                counts[name] = int(result.rowcount or 0)
+            await session.commit()
+        return counts
+
     async def purge_expired(self, *, now: datetime) -> dict[str, int]:
         """Delete rows past their expiry; native clients are retained forever.
 
@@ -4867,23 +5991,7 @@ class RepositoryBundle:
         swept row records an ``expired`` audit event (spec §5/§7).
         """
 
-        counts: dict[str, int] = {}
-        async with self._sessions() as session:
-            for name, model in (
-                ("enrollment_tokens", EnrollmentToken),
-                ("auth_tokens", AuthToken),
-                ("totp_setups", TotpSetup),
-                ("auth_challenges", AuthChallenge),
-                ("oauth_authorizations", OAuthAuthorization),
-            ):
-                result = cast(
-                    CursorResult[Any],
-                    await session.execute(
-                        delete(model).where(model.expires_at < now)
-                    ),
-                )
-                counts[name] = int(result.rowcount or 0)
-            await session.commit()
+        counts = await self.purge_core_expired(now=now)
         counts["agent_tokens"] = await self.agent_tokens.purge_expired(now=now)
         counts["approval_audit"] = await self.approval_audit.purge_expired(now=now)
         counts["diagnostics"] = await self.diagnostics.prune_expired(now=now)

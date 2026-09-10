@@ -30,9 +30,11 @@ Run boundaries
 decision of whether a normalized ``BackendNotification`` marks the start or
 end of a run.  When the backend advertises ``explicit_run_boundaries`` B
 trusts only the explicit ``run_started``/``run_completed``/``run_failed``
-boundary events.  Otherwise B infers an end boundary from content events
-(a ``message_completed`` proves the active run ended) while treating
-streaming/tool/permission events as mid-run noise.
+    boundary events.  Otherwise B infers boundaries from normalized backend
+    progress state: ``busy`` starts a run and ``idle`` ends it.  A
+    ``message_completed`` event is also an end proof for backends that do not
+    emit state transitions, while streaming/tool/permission events remain
+    mid-run noise.
 """
 
 from __future__ import annotations
@@ -60,6 +62,8 @@ _END_EVENTS = (AgentEventKind.RUN_COMPLETED, AgentEventKind.RUN_FAILED)
 # Content event that proves an active run ended when the backend does not
 # declare explicit run boundaries.
 _INFERRED_END_EVENT = AgentEventKind.MESSAGE_COMPLETED
+_INFERRED_START_SUMMARY = "busy"
+_INFERRED_END_SUMMARY = "idle"
 
 # The only legal source state for each transition.
 _SOURCE_STATE_FOR_TRANSITION = {
@@ -178,15 +182,21 @@ class AgentRunStateMachine:
 
         Pure and deterministic: no database access and no clock.  With
         ``explicit_run_boundaries`` B trusts the backend's declared boundary
-        events; otherwise B additionally infers an end from
-        ``message_completed`` (proof the active run finished) and treats
-        streaming/tool/permission events as mid-run noise.
+        events; otherwise B infers ``busy``/``idle`` state boundaries and
+        additionally accepts ``message_completed`` as proof the active run
+        ended. Streaming/tool/permission events remain mid-run noise.
         """
         kind = notification.kind
         if kind is _START_EVENT:
             return RunBoundary.START
         if kind in _END_EVENTS:
             return RunBoundary.END
+        if not caps.explicit_run_boundaries and kind is AgentEventKind.BACKEND_STATE_CHANGED:
+            summary = notification.payload.summary
+            if summary == _INFERRED_START_SUMMARY:
+                return RunBoundary.START
+            if summary == _INFERRED_END_SUMMARY:
+                return RunBoundary.END
         if not caps.explicit_run_boundaries and kind is _INFERRED_END_EVENT:
             return RunBoundary.END
         return RunBoundary.NONE
@@ -247,7 +257,10 @@ class AgentRunStateMachine:
 
     def _normalize(self, run: AgentRun) -> AgentRun:
         """Return a run whose datetime columns are aware UTC datetimes."""
-        run.started_at = self._aware(run.started_at)
+        started_at = self._aware(run.started_at)
+        if started_at is None:  # pragma: no cover - non-null database invariant
+            raise RunStateError(f"run {run.id} has no started_at timestamp")
+        run.started_at = started_at
         run.completed_at = self._aware(run.completed_at)
         return run
 

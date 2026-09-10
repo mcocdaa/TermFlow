@@ -20,7 +20,7 @@ M1.1 model; they surface with the tool-call context in M5.2+.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal, cast
 from uuid import UUID
 
@@ -33,9 +33,12 @@ from termflow_protocol.agent import ApprovalDecision
 from termflow_control_plane.api.dependencies import (
     get_repositories,
     get_session_factory,
+    get_settings,
     require_admin,
 )
+from termflow_control_plane.auth.context import AdminAuthContext
 from termflow_control_plane.auth.epoch import persisted_authentication_epoch
+from termflow_control_plane.config import Settings
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.models import (
     AgentBinding,
@@ -260,9 +263,22 @@ async def decide_approval(
     approval_id: UUID,
     request: ApprovalDecisionRequest,
     http_request: Request,
+    auth: Annotated[AdminAuthContext, Depends(require_admin)],
+    settings: Annotated[Settings, Depends(get_settings)],
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
     sessions: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> ApprovalDetailResponse:
+    if request.decision == "approve" and not auth.is_fresh(
+        now=datetime.now(UTC),
+        maximum_age=timedelta(
+            seconds=settings.agent_sensitive_action_max_age_seconds
+        ),
+    ):
+        raise TermFlowError(
+            "approval_reauthentication_required",
+            428,
+            "Recent administrator authentication is required to approve.",
+        )
     policy = _shared_policy(http_request, repositories, sessions)
     epoch = await persisted_authentication_epoch(repositories)
     decision = (

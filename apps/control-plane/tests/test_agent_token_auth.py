@@ -129,6 +129,23 @@ async def test_valid_token_authenticates_with_binding_scope(repositories) -> Non
 
 
 @pytest.mark.asyncio
+async def test_enabled_binding_authenticates_with_binding_scope(repositories) -> None:
+    """The 0011 desired state ``enabled`` is an active token state.
+
+    Setup provisions enabled Bindings before the runtime controller has
+    published readiness; the token gate must not retain the pre-0011-only
+    ``pending``/``ready`` allowlist.
+    """
+    binding = await _seed_binding(repositories, runtime_epoch=2, status="enabled")
+    raw_token = await _seed_token(repositories, binding, binding_epoch=2)
+
+    principal = await AgentTokenAuthenticator(repositories).authenticate(raw_token)
+
+    assert principal.binding_id == binding.id
+    assert principal.runtime_epoch == 2
+
+
+@pytest.mark.asyncio
 async def test_invalid_token_variants_fail_closed(repositories) -> None:
     authenticator = AgentTokenAuthenticator(repositories)
 

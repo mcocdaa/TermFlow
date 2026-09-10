@@ -103,7 +103,8 @@ def test_tool_completed_derives_status_from_error_for_legacy_payload() -> None:
     assert drops == ProjectionDropCounts()
     content = json.loads(projected[0]["content"])
     assert content["status"] == "error"
-    assert content["error_code"] == "E_TOOL"
+    assert content["error_code"] == "tool_failed"
+    assert "boom" not in json.dumps(content)
 
 
 def test_tool_completed_legacy_success_derives_status() -> None:

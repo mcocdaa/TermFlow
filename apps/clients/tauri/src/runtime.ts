@@ -6,7 +6,8 @@ import { createTauriAgentStreamTransport } from './adapters/tauriAgentStreamTran
 import { createTauriHttpTransport } from './adapters/tauriHttpTransport'
 import { createTauriTerminalTransport } from './adapters/tauriTerminalTransport'
 import { clearNativeCredentials } from './adapters/tauriCredentialVault'
-import { serverConfig } from './serverConfig'
+import { serverConfig, canonicalAuthorizeEndpoint } from './serverConfig'
+import { authorizeNativeClient } from './nativeAuth'
 
 export async function createTauriRuntime(): Promise<ClientRuntime> {
   await serverConfig.load()
@@ -15,6 +16,17 @@ export async function createTauriRuntime(): Promise<ClientRuntime> {
   const api = createApiClient(createTauriHttpTransport())
   const currentPlatform = platform()
   return {
+    sensitiveAuthorization: {
+      mode: 'native-oauth',
+      async authorizeNative(signal) {
+        try {
+          const issuer = serverConfig.current
+          const metadata = await api.oauth.metadata(signal)
+          await authorizeNativeClient(issuer, canonicalAuthorizeEndpoint(issuer, metadata.authorization_endpoint), metadata.scopes_supported, { forceLogin: true, ...(signal ? { signal } : {}) })
+          return signal?.aborted ? 'cancelled' : 'authenticated'
+        } catch { return 'cancelled' }
+      },
+    },
     api: {
       ...api,
       sessions: {

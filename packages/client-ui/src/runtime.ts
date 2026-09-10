@@ -38,7 +38,13 @@ export interface AuthorizationCompletionPort {
   navigate(callbackUri: string): void
 }
 
+export interface SensitiveAuthorizationPort {
+  readonly mode: 'browser-session' | 'native-oauth'
+  authorizeNative?(signal?: AbortSignal): Promise<'authenticated' | 'cancelled'>
+}
+
 export interface ClientRuntime {
+  readonly sensitiveAuthorization: SensitiveAuthorizationPort
   readonly api: ApiClient
   readonly createTerminal: (termId: string, callbacks: TerminalSessionCallbacks) => TerminalSessionLike
   /**

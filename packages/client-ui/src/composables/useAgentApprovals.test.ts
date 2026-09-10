@@ -53,9 +53,10 @@ interface ApprovalsHarness {
   state(): ReturnType<typeof useAgentApprovals>
 }
 
-async function mounted(options: { request?: ReturnType<typeof vi.fn> } = {}): Promise<ApprovalsHarness> {
+async function mounted(options: { request?: ReturnType<typeof vi.fn>; authorizeNative?: ReturnType<typeof vi.fn> } = {}): Promise<ApprovalsHarness> {
   const request = options.request ?? vi.fn(async () => ({ approvals: [] }))
   const runtime = createFakeRuntime({
+    sensitiveAuthorization: { mode: 'native-oauth', authorizeNative: options.authorizeNative ?? vi.fn(async () => 'cancelled') },
     api: {
       ...createFakeRuntime().api,
       request,
@@ -89,6 +90,34 @@ afterEach(() => {
 })
 
 describe('useAgentApprovals', () => {
+  it.each(['authenticated', 'cancelled'] as const)('reauthenticates approval once with %s outcome', async (outcome) => {
+    let decisions = 0
+    const request = vi.fn(async (path: string) => {
+      if (path.includes('/decide')) {
+        decisions++
+        throw Object.assign(new ApiError('server', { status: 428, code: 'approval_reauthentication_required' }), { message: 'secret server detail' })
+      }
+      return { approvals: [] }
+    })
+    const authorizeNative = vi.fn(async () => outcome)
+    const harness = await mounted({ request, authorizeNative })
+    await harness.state().decide('a1', 'approve')
+    expect(authorizeNative).toHaveBeenCalledTimes(1)
+    expect(decisions).toBe(outcome === 'authenticated' ? 2 : 1)
+    expect(harness.clientUi.toast.current.value?.text ?? '').not.toContain('secret server detail')
+    harness.wrapper.unmount()
+  })
+  it('deny and revoke never request freshness', async () => {
+    const authorizeNative = vi.fn(async () => 'authenticated')
+    const harness = await mounted({ authorizeNative, request: vi.fn(async (path: string) => {
+      if (path.includes('/decide') || path.includes('/revoke')) throw new ApiError('server', { status: 428, code: 'approval_reauthentication_required' })
+      return { approvals: [] }
+    }) })
+    await harness.state().decide('a1', 'deny')
+    await harness.state().revoke('a1')
+    expect(authorizeNative).not.toHaveBeenCalled()
+    harness.wrapper.unmount()
+  })
   it('ignores a stale mount-time list that resolves after a newer refresh', async () => {
     const listCalls: Array<Deferred<{ approvals: ApprovalResponse[] }>> = []
     const request = vi.fn(async (path: unknown) => {

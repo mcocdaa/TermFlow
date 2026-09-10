@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import Table, inspect, text
+from sqlalchemy import Table, event, inspect, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
@@ -19,6 +21,8 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from .models import AuditEvent, Base, EnrollmentToken, Installation, Instance
+
+logger = logging.getLogger(__name__)
 
 
 class UnrecognizedDatabaseSchema(RuntimeError):
@@ -31,6 +35,29 @@ _CORE_TABLES: dict[str, Table] = {
     "instances": cast(Table, Instance.__table__),
     "audit_events": cast(Table, AuditEvent.__table__),
 }
+# Revisions through 0005 are owned by the core product.  Agent migrations are
+# deliberately run as a second stage so a bad/temporarily unavailable Agent
+# migration cannot take the terminal and Web C process down with it.
+_CORE_REVISION = "0005"
+_CORE_SCHEMA_TABLES = frozenset(
+    {
+        "enrollment_tokens",
+        "installations",
+        "instances",
+        "audit_events",
+        "authentication_state",
+        "totp_setups",
+        "auth_challenges",
+        "native_clients",
+        "oauth_authorizations",
+        "auth_tokens",
+        "auth_audit_events",
+    }
+)
+# 0011 adds this one column to a core-owned table.  It is allowed when the
+# database is already past the Agent stage, but is not required for the core
+# 0005 validation itself.
+_POST_CORE_COLUMNS = {"auth_tokens": frozenset({"authenticated_at"})}
 _REQUIRED_UNVERSIONED_TABLES = {"enrollment_tokens", "installations", "instances"}
 _V1_REQUIRED_COLUMNS: dict[str, set[str]] = {
     "enrollment_tokens": {"id", "token_hash", "expires_at", "used_at", "created_at"},
@@ -83,6 +110,20 @@ _V1_NOT_NULL: dict[str, set[str]] = {
     "installations": {"token_hash", "created_at"},
     "instances": {"installation_id", "name", "token_hash", "created_at"},
 }
+
+
+@dataclass(frozen=True, slots=True)
+class DatabaseInitializationResult:
+    """Outcome of the two-stage database startup.
+
+    Core migration/integrity failures still raise and prevent an unsafe
+    process from starting.  Agent-stage failures are returned as a degraded
+    result so callers can keep the core terminal surface available and fence
+    Agent routes/work until a later retry succeeds.
+    """
+
+    agent_ready: bool = True
+    agent_reason_code: str | None = None
 
 
 def _migration_config(connection: Connection) -> Config:
@@ -313,7 +354,111 @@ def _validate_head_schema(connection: Connection) -> None:
         )
 
 
-def _upgrade(connection: Connection) -> None:
+def _validate_core_schema(connection: Connection) -> None:
+    """Validate the core schema at the 0005 boundary.
+
+    The full metadata contains Agent tables and the post-0005
+    ``auth_tokens.authenticated_at`` column, so the strict head validator
+    cannot be used between the two migration stages.  Core validation is
+    intentionally strict for the tables/columns it owns while allowing the
+    known Agent-owned tables and the one later auth column to remain present
+    on an already-upgraded database.
+    """
+
+    inspector = inspect(connection)
+    actual_tables = set(inspector.get_table_names())
+    expected_tables = _CORE_SCHEMA_TABLES | {"alembic_version"}
+    if not expected_tables <= actual_tables:
+        raise UnrecognizedDatabaseSchema(
+            "unrecognized core Control Plane database schema; refusing to start"
+        )
+
+    for table_name in _CORE_SCHEMA_TABLES:
+        table = Base.metadata.tables.get(table_name)
+        if table is None:  # pragma: no cover - a packaging/programming error
+            raise UnrecognizedDatabaseSchema(
+                "core schema metadata is incomplete; refusing to start"
+            )
+        inspected_columns = {
+            column["name"]: column for column in inspector.get_columns(table_name)
+        }
+        expected_columns = {column.name for column in table.columns}
+        optional_later = set(_POST_CORE_COLUMNS.get(table_name, ()))
+        required_columns = expected_columns - optional_later
+        if not required_columns <= set(inspected_columns) <= expected_columns:
+            raise UnrecognizedDatabaseSchema(
+                "unrecognized core Control Plane database schema; refusing to start"
+            )
+        for column in table.columns:
+            if column.name in optional_later and column.name not in inspected_columns:
+                continue
+            inspected_column = inspected_columns[column.name]
+            if str(inspected_column["type"]).upper() != str(column.type).upper():
+                raise UnrecognizedDatabaseSchema(
+                    "unrecognized core Control Plane database schema; refusing to start"
+                )
+            if not column.primary_key and inspected_column["nullable"] != column.nullable:
+                raise UnrecognizedDatabaseSchema(
+                    "unrecognized core Control Plane database schema; refusing to start"
+                )
+        primary_key = inspector.get_pk_constraint(table_name).get("constrained_columns")
+        expected_primary_key = [column.name for column in table.primary_key.columns]
+        if primary_key != expected_primary_key:
+            raise UnrecognizedDatabaseSchema(
+                "unrecognized core Control Plane database schema; refusing to start"
+            )
+        expected_foreign_keys = {
+            (
+                tuple(element.parent.name for element in constraint.elements),
+                constraint.referred_table.name,
+                tuple(element.column.name for element in constraint.elements),
+            )
+            for constraint in table.foreign_key_constraints
+        }
+        actual_foreign_keys = {
+            (
+                tuple(foreign_key["constrained_columns"] or ()),
+                str(foreign_key["referred_table"]),
+                tuple(foreign_key["referred_columns"] or ()),
+            )
+            for foreign_key in inspector.get_foreign_keys(table_name)
+        }
+        if actual_foreign_keys != expected_foreign_keys:
+            raise UnrecognizedDatabaseSchema(
+                "unrecognized core Control Plane database schema; refusing to start"
+            )
+        expected_indexes = {
+            index.name: (tuple(column.name for column in index.columns), index.unique)
+            for index in table.indexes
+            if index.name is not None
+        }
+        actual_indexes = {
+            index["name"]: (tuple(index["column_names"]), bool(index["unique"]))
+            for index in inspector.get_indexes(table_name)
+        }
+        if any(
+            actual_indexes.get(name) != signature
+            for name, signature in expected_indexes.items()
+        ):
+            raise UnrecognizedDatabaseSchema(
+                "unrecognized core Control Plane database schema; refusing to start"
+            )
+
+    state_rows = connection.execute(
+        text("SELECT id, epoch FROM authentication_state")
+    ).all()
+    if len(state_rows) != 1 or state_rows[0][0] != 1 or state_rows[0][1] < 1:
+        raise UnrecognizedDatabaseSchema(
+            "unrecognized authentication state; refusing to start"
+        )
+
+
+def _upgrade(
+    connection: Connection,
+    target: str = "head",
+    *,
+    validator: Any | None = None,
+) -> None:
     table_names = set(inspect(connection).get_table_names())
     config = _migration_config(connection)
     if table_names and "alembic_version" not in table_names:
@@ -324,30 +469,95 @@ def _upgrade(connection: Connection) -> None:
                 "unrecognized unversioned Control Plane database schema; "
                 "refusing automatic upgrade"
             ) from exc
+        if connection.dialect.name == "sqlite":
+            connection.commit()
         command.stamp(config, "0001")
-    command.upgrade(config, "head")
-    _validate_head_schema(connection)
+    elif connection.dialect.name == "sqlite" and connection.in_transaction():
+        # SQLite's Alembic runner must toggle foreign-key enforcement before
+        # opening its DDL transaction.  Schema inspection creates a SQLAlchemy
+        # autobegin transaction even though it only reads metadata.
+        connection.commit()
+    config.attributes["post_migration_validate"] = validator or (
+        _validate_core_schema if target == _CORE_REVISION else _validate_head_schema
+    )
+    command.upgrade(config, target)
+
+
+def _upgrade_core(connection: Connection) -> None:
+    """Apply and validate only the core migration chain (0001 through 0005)."""
+
+    _upgrade(connection, _CORE_REVISION, validator=_validate_core_schema)
+
+
+def _upgrade_agent(connection: Connection) -> None:
+    """Apply and validate the Agent-owned chain after core is healthy."""
+
+    _upgrade(connection, "head", validator=_validate_head_schema)
 
 
 class Database:
     def __init__(self, url: str) -> None:
         self.engine: AsyncEngine = create_async_engine(url)
+        if self.engine.url.get_backend_name() == "sqlite":
+            @event.listens_for(self.engine.sync_engine, "connect")
+            def enable_foreign_keys(connection: Any, _record: Any) -> None:
+                cursor = connection.cursor()
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.close()
         self.session_factory = async_sessionmaker(
             self.engine,
             class_=AsyncSession,
             expire_on_commit=False,
         )
 
-    async def initialize(self) -> None:
-        if self.engine.url.get_backend_name() == "sqlite":
+    async def initialize(self) -> DatabaseInitializationResult:
+        """Initialize core first, then attempt the Agent migration stage.
+
+        The stages intentionally have separate transaction boundaries.  A
+        failed Agent migration is rolled back by Alembic and reported to the
+        composition root; the already-validated core schema remains usable and
+        the next process/retry can attempt the Agent chain again.
+        """
+
+        is_sqlite = self.engine.url.get_backend_name() == "sqlite"
+        if is_sqlite:
             database_path = self.engine.url.database
             if database_path and database_path != ":memory:":
                 Path(database_path).parent.mkdir(parents=True, exist_ok=True)
-        async with self.engine.begin() as connection:
-            if self.engine.url.get_backend_name() == "sqlite":
+            async with self.engine.connect() as connection:
                 await connection.execute(text("PRAGMA journal_mode=WAL"))
                 await connection.execute(text("PRAGMA foreign_keys=ON"))
-            await connection.run_sync(_upgrade)
+                # End the SQLAlchemy autobegin transaction created by PRAGMA
+                # statements before Alembic takes ownership of migration
+                # transaction and temporary foreign-key mode.
+                await connection.commit()
+                await connection.run_sync(_upgrade_core)
+                try:
+                    await connection.run_sync(_upgrade_agent)
+                except Exception:
+                    # Alembic's SQLite runner has already rolled back the
+                    # Agent transaction before propagating the exception.
+                    logger.exception("Agent migration stage failed; core remains available")
+                    return DatabaseInitializationResult(
+                        agent_ready=False,
+                        agent_reason_code="recovery_failed",
+                    )
+            return DatabaseInitializationResult()
+
+        # Keep the non-SQLite stages in separate engine transactions as well;
+        # a failed transaction cannot be safely committed after an exception.
+        async with self.engine.begin() as connection:
+            await connection.run_sync(_upgrade_core)
+        try:
+            async with self.engine.begin() as connection:
+                await connection.run_sync(_upgrade_agent)
+        except Exception:
+            logger.exception("Agent migration stage failed; core remains available")
+            return DatabaseInitializationResult(
+                agent_ready=False,
+                agent_reason_code="recovery_failed",
+            )
+        return DatabaseInitializationResult()
 
     async def dispose(self) -> None:
         await self.engine.dispose()

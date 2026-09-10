@@ -1,12 +1,11 @@
 <template>
-  <!--
-    Multiple roots on purpose: these nodes are the direct flex children of
-    .agent-chat-view in the parent, so no wrapper div may be introduced
-    (it would collapse the column layout).
-  -->
-  <header class="agent-chat-header" data-agent-chat-header>
+  <section class="agent-chat-session" :class="`agent-chat-session--${variant}`">
+  <header v-if="variant !== 'floating'" class="agent-chat-header" data-agent-chat-header>
     <div class="agent-chat-header__left">
-      <RouterLink to="/agent" class="text-button agent-chat-header__back" data-action="back-to-overview">← Agent 总览</RouterLink>
+      <RouterLink v-if="variant === 'page'" to="/agent" class="text-button agent-chat-header__back" data-testid="agent-overview-link" data-action="back-to-overview">
+        <ArrowLeft :size="16" aria-hidden="true" />
+        <span>Agent 总览</span>
+      </RouterLink>
       <div>
         <p class="eyebrow">Agent Chat</p>
         <h1 data-agent-chat-title>{{ title }}</h1>
@@ -29,13 +28,32 @@
     </div>
   </header>
 
+  <div v-if="variant === 'floating'" class="agent-floating-session-status" data-agent-floating-session-status>
+    <AgentBackendStatus :state="backendState" />
+    <button
+      v-if="hasActiveRun"
+      type="button"
+      class="text-button compact"
+      :disabled="canceling"
+      :aria-busy="canceling ? 'true' : undefined"
+      data-action="cancel-run"
+      @click="cancelRun"
+    >
+      {{ canceling ? '正在取消…' : '取消运行' }}
+    </button>
+  </div>
+
   <div v-if="bindingRevoked" class="agent-chat-banner" role="alert" data-agent-revoked-banner>
     {{ revokedBannerText }}
   </div>
 
   <div class="agent-chat-body">
     <AgentMessageList :history="displayHistory" @focus-approval="focusApproval" />
-    <AgentApprovalPanel :conversation-id="conversationId" :history="conversation.history.value" />
+    <details v-if="variant !== 'page'" ref="approvalTray" class="agent-approval-tray">
+      <summary>待处理审批 {{ pendingCount }}</summary>
+      <AgentApprovalPanel ref="approvalPanel" :conversation-id="conversationId" :history="conversation.history.value" @pending-count="updatePendingCount" />
+    </details>
+    <AgentApprovalPanel v-else ref="approvalPanel" :conversation-id="conversationId" :history="conversation.history.value" @pending-count="updatePendingCount" />
   </div>
 
   <AgentComposer
@@ -44,6 +62,7 @@
     :backend-state="backendState"
     @submitted="echoUserMessage"
   />
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -63,6 +82,7 @@ import { ApiError, type AgentHistoryState, type AgentUserMessageState } from '@t
 import type { AgentConversationDetailResponse } from '@termflow/client-contracts'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
+import { ArrowLeft } from '@lucide/vue'
 import AgentApprovalPanel from './AgentApprovalPanel.vue'
 import AgentBackendStatus from './AgentBackendStatus.vue'
 import AgentComposer from './AgentComposer.vue'
@@ -71,12 +91,18 @@ import { useAgentConversation } from '../../composables/useAgentConversation'
 import { useBottomToast } from '../../composables/useBottomToast'
 import { useClientRuntime } from '../../runtime'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** Conversation scope; the parent keys this component on it (remount = re-scope). */
   conversationId: string
   /** Capability gate forwarded from the parent — always true while mounted. */
   enabled: boolean
-}>()
+  variant?: 'page' | 'sidecar' | 'floating'
+}>(), { variant: 'page' })
+const emit = defineEmits<{ close: []; pendingCount: [count: number] }>()
+const approvalTray = ref<HTMLDetailsElement | null>(null)
+const approvalPanel = ref<InstanceType<typeof AgentApprovalPanel> | null>(null)
+const pendingCount = ref(0)
+function updatePendingCount(count: number) { pendingCount.value = count; emit('pendingCount', count) }
 
 const runtime = useClientRuntime()
 const toast = useBottomToast()
@@ -168,25 +194,12 @@ async function cancelRun() {
   }
 }
 
-/**
- * Escape a value for a double-quoted CSS attribute selector value.
- * Only `"` and `\` need escaping there; B-generated ids are safe, this is
- * defensive (kept local because `CSS.escape` is not available in jsdom).
- */
-function escapeCssAttr(value: string): string {
-  return value.replace(/["\\]/g, (char) => `\\${char}`)
-}
-
 /** The approval card asked to handle its request: focus the panel entry. */
 function focusApproval(approvalId: string) {
-  void nextTick(() => {
-    const entry = document.querySelector(
-      `[data-agent-approval-item][data-agent-approval-id="${escapeCssAttr(approvalId)}"]`,
-    )
-    const firstButton = entry?.querySelector('button')
-    if (firstButton instanceof HTMLElement) firstButton.focus()
-  })
+  if (approvalTray.value) approvalTray.value.open = true
+  void nextTick(() => approvalPanel.value?.focusApproval(approvalId))
 }
+defineExpose({ focusApproval })
 
 async function loadDetail() {
   try {

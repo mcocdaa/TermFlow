@@ -108,14 +108,45 @@ class Settings(BaseSettings):
     # and the adapter client-level auth). Both or neither must be set.
     agent_opencode_username: str | None = None
     agent_opencode_password: SecretStr | None = None
+    # 2026-08-22 scope decision: the production runtime gate is an
+    # authenticated /global/health probe (http_runtime_client); deployment
+    # tooling owns container lifecycle. This capability secret backs the
+    # supervisor restart ceremony only; it is shared with the container
+    # through OpenCode's native {env:} config interpolation and is never
+    # persisted by B.
+    agent_opencode_mcp_token: SecretStr | None = None
+    agent_cleanup_helper_token: SecretStr | None = None
+    # Server-owned DeepSeek provider catalog.  Endpoint/model/source names
+    # have reference defaults, but policy claims do not: a catalog entry is
+    # activatable only when the deployment owner explicitly supplies complete
+    # retention/region metadata and verifies ``no_training=true``.
+    agent_provider_deepseek_endpoint_origin: str = "https://api.deepseek.com"
+    agent_provider_deepseek_model_ids: Annotated[tuple[str, ...], NoDecode] = (
+        "deepseek-v4-flash",
+    )
+    agent_provider_deepseek_region: str | None = None
+    agent_provider_deepseek_retention_terms: str | None = None
+    agent_provider_deepseek_retention_version: str | None = None
+    agent_provider_deepseek_no_training: bool | None = None
+    # This is an environment-variable/source label, never the credential.
+    agent_provider_deepseek_credential_source: str | None = "OPENAI_API_KEY"
+    agent_provider_deepseek_policy_version: str | None = None
     agent_pipeline_reconcile_attempts: int = Field(default=5, ge=1)
     # M4.5 watch wiring (spec §3a): the lifespan watch deadline task sweeps due
     # ``output_idle`` deadlines every tick and hands each FiredTrigger to its
     # binding pipeline.  Tests inject a short period (or drive the tick
     # manually) to avoid real-time waits.
     agent_watch_deadline_tick_seconds: float = Field(default=1.0, gt=0)
+    # Runtime-controller health/reconciliation sweep.  A short bounded tick
+    # detects OpenCode/MCP drift without coupling the core terminal heartbeat
+    # to Agent availability.
+    agent_runtime_health_tick_seconds: float = Field(default=5.0, gt=0)
     browser_session_ttl_seconds: int = Field(default=8 * 60 * 60, ge=60)
     browser_session_capacity: int = Field(default=4096, ge=1)
+    # Sensitive administrator actions must be backed by a recent strong
+    # authentication.  Keep the deployment knob bounded by the contract so a
+    # misconfigured instance cannot silently widen the freshness window.
+    agent_sensitive_action_max_age_seconds: int = Field(default=300, ge=0, le=300)
     totp_master_key: SecretStr | None = None
     totp_master_key_file: Path | None = None
     totp_auto_master_key_file: Path | None = None
@@ -183,6 +214,18 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return tuple(part.strip() for part in value.split(",") if part.strip())
         return value
+
+    @field_validator("agent_provider_deepseek_model_ids", mode="before")
+    @classmethod
+    def parse_agent_provider_model_ids(cls, value: object) -> object:
+        if isinstance(value, str):
+            return tuple(part.strip() for part in value.split(",") if part.strip())
+        return value
+
+    @field_validator("agent_provider_deepseek_endpoint_origin")
+    @classmethod
+    def validate_agent_provider_endpoint_origin(cls, value: str) -> str:
+        return _web_origin(value)
 
     @field_validator("agent_mcp_allowed_hosts")
     @classmethod

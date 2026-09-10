@@ -4,10 +4,9 @@
 authority without any Docker control inside B.  The connector is a pure
 attestation/orchestration layer over two injected dependencies:
 
-- a *runtime client*: an async adapter for the deployment-owned runtime
-  manager that actually starts/stops/reconfigures the OpenCode container
-  (production wiring would be HTTP to that manager, which is out of scope for
-  0.2.0; tests inject a fake), and
+- a *runtime client*: an async adapter for the deployment-owned OpenCode
+  endpoint (production uses an authenticated HTTP health client; tests inject
+  a fake), and
 - a *secret provider*: a callable returning the binding-scoped MCP capability
   secret on demand.  B never stores the raw token long-term; only its digest
   is retained by :class:`EpochBoundCapability`, and the raw token is handed to
@@ -15,12 +14,10 @@ attestation/orchestration layer over two injected dependencies:
   is ever written into a shared image or volume by B (plan §16, §6.2.1).
 
 A ``LocalDockerSupervisorFixture`` that shells out to ``docker`` is
-deliberately NOT provided: Docker control belongs to the deployment-owned
-runtime manager, not to B (plan §6.2.1: "not a reason to put Docker control
-inside B"; the reference Compose profile provides the one-binding runtime and
-the injected client is the connector's test fixture).  The M4.3 tests use an
-injected ``FakeRuntimeClient`` and the ``deploy/compose.yaml`` OpenCode service
-is verified by static + ``docker compose config`` assertions.
+deliberately NOT provided: Docker control belongs to deployment tooling, not
+to B (plan §6.2.1).  Unit tests use an injected ``FakeRuntimeClient``; the
+reference Compose service has a separate opt-in real-container smoke test and
+an inspect-only security evidence script.
 
 Fail-closed semantics mirrored from ``tests/fakes.py``:
 
@@ -40,6 +37,7 @@ import hmac
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from inspect import isawaitable
 from typing import Protocol, runtime_checkable
 
 from termflow_control_plane.plugins.protocol import (
@@ -96,8 +94,8 @@ def _hash_secret(value: str) -> str:
 class RuntimeClient(Protocol):
     """Deployment-owned runtime manager adapter injected into the connector.
 
-    The connector never drives Docker itself; production wiring would be an
-    HTTP client for the deployment-owned runtime manager (out of 0.2.0 scope).
+    The connector never drives Docker itself; production wiring uses an
+    authenticated HTTP client for the deployment-owned OpenCode endpoint.
     """
 
     async def health(self, runtime_ref: RuntimeRef) -> RuntimeHealth: ...
@@ -256,7 +254,11 @@ class SupervisorConnector:
         attested = self._runtimes.get(runtime_ref)
         if attested is None:
             return observed
-        if observed.status is RuntimeStatus.READY and observed.epoch == attested.epoch:
+        if (
+            attested.ready
+            and observed.status is RuntimeStatus.READY
+            and observed.epoch == attested.epoch
+        ):
             return observed
         attested.ready = False
         return RuntimeHealth(
@@ -307,6 +309,12 @@ class SupervisorConnector:
             raise EpochAttestationError(
                 f"restart epoch regression for {runtime_ref}: {epoch} < {attested.epoch}"
             )
+        # Fence the currently attested epoch before any injected provider or
+        # runtime operation can fail.  A failed restart must never leave the
+        # old epoch eligible for tool calls while the runtime transition is
+        # unknown.
+        attested.ready = False
+        attested.drain_status = DrainStatus.NOT_ATTEMPTED
         raw_secret = self._secret_provider(capability_ref, epoch)
         if not raw_secret or not raw_secret.strip():
             raise SecretUnavailableError(
@@ -314,12 +322,14 @@ class SupervisorConnector:
                 "restart fails closed without a fresh capability"
             )
         self._capabilities.provision(capability_ref, epoch, raw_secret)
-        await self._client.restart(runtime_ref, epoch, raw_secret)
-        # The raw token has now been delivered; nothing retains it here.
+        # The capability was provisioned for the requested transition.  Move
+        # the attestation identity before awaiting the deployment operation so
+        # a client exception leaves an explicit, fenced not-ready state for
+        # the new epoch rather than making the old epoch appear healthy.
         attested.epoch = epoch
         attested.capability_ref = capability_ref
-        attested.ready = False
-        attested.drain_status = DrainStatus.NOT_ATTEMPTED
+        await self._client.restart(runtime_ref, epoch, raw_secret)
+        # The raw token has now been delivered; nothing retains it here.
 
         observed: RuntimeHealth | None = None
         for _ in range(self._health_poll_attempts):
@@ -340,6 +350,21 @@ class SupervisorConnector:
         result = await self._client.cleanup(runtime_ref)
         self._runtimes.pop(runtime_ref, None)
         return result
+
+    async def aclose(self) -> None:
+        """Close an optional async transport owned by the runtime client.
+
+        Runtime clients such as :class:`HttpHealthRuntimeClient` own an
+        ``httpx.AsyncClient``.  Test doubles and deployment adapters that do
+        not hold resources need no close hook, so this remains an optional
+        capability rather than part of the lifecycle protocol.
+        """
+        closer = getattr(self._client, "aclose", None)
+        if closer is None:
+            return
+        result = closer()
+        if isawaitable(result):
+            await result
 
     # -- Fail-closed gates (same semantics as tests/fakes.py) -------------------
 

@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import quote, urlencode, urlsplit
 from uuid import UUID
 
+from termflow_control_plane.auth.context import as_utc
 from termflow_control_plane.auth.secret_box import AesGcmSecretBox, EncryptedSecret
 from termflow_control_plane.auth.tokens import issue_token, secret_text_matches
 from termflow_control_plane.auth.totp import match_totp_counter
@@ -40,6 +41,14 @@ class TotpUnavailable(Exception):
 class WebLoginChallenge:
     challenge_id: UUID
     expires_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class WebLoginAuthentication:
+    """Result of a root login attempt without exposing authentication time."""
+
+    challenge: WebLoginChallenge | None
+    authenticated_at: datetime | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,18 +103,37 @@ class AuthenticationService:
         return configured, state.totp_enabled_at is not None, self._secret_box is not None
 
     async def begin_web_login(self, admin_token: str) -> WebLoginChallenge | None:
+        """Start browser login while retaining the historical return shape."""
+
+        result = await self.begin_web_login_with_context(admin_token)
+        return result.challenge
+
+    async def begin_web_login_with_context(
+        self,
+        admin_token: str,
+    ) -> WebLoginAuthentication:
+        """Start browser login and return server-only strong-auth evidence.
+
+        The timestamp is returned to the composition layer, never serialized
+        into the browser response.  A TOTP challenge has no authenticated time
+        until its code is accepted.
+        """
+
         state = await self._repositories.auth_state.get()
         primary_matches = self.primary_token_matches(admin_token)
         if state.totp_enabled_at is None:
             if not primary_matches:
                 raise AuthenticationRejected
-            return None
+            return WebLoginAuthentication(
+                challenge=None,
+                authenticated_at=as_utc(self._clock()),
+            )
         box = self._required_box(authentication=True)
         if self._configured_secret(state, box) is None:
             raise AuthenticationRejected
         if not primary_matches:
             raise AuthenticationRejected
-        expires_at = self._clock() + timedelta(
+        expires_at = as_utc(self._clock()) + timedelta(
             seconds=self._settings.auth_challenge_ttl_seconds
         )
         context = box.encrypt(
@@ -118,9 +146,25 @@ class AuthenticationService:
             expires_at=expires_at,
             epoch=state.epoch,
         )
-        return WebLoginChallenge(challenge_id=challenge_id, expires_at=expires_at)
+        return WebLoginAuthentication(
+            challenge=WebLoginChallenge(challenge_id=challenge_id, expires_at=expires_at),
+            authenticated_at=None,
+        )
 
     async def complete_web_login(self, challenge_id: UUID, code: str) -> bool:
+        """Complete a TOTP challenge, preserving the legacy boolean contract."""
+
+        return (
+            await self.complete_web_login_with_context(challenge_id, code)
+        ) is not None
+
+    async def complete_web_login_with_context(
+        self,
+        challenge_id: UUID,
+        code: str,
+    ) -> datetime | None:
+        """Complete a TOTP challenge and return its original auth timestamp."""
+
         state = await self._repositories.auth_state.get()
         box = self._required_box(authentication=True)
         encrypted_context = await self._repositories.auth_challenges.get_active(
@@ -131,14 +175,14 @@ class AuthenticationService:
         )
         secret = self._configured_secret(state, box)
         if state.totp_enabled_at is None or encrypted_context is None or secret is None:
-            return False
+            return None
         try:
             context = box.decrypt(encrypted_context, purpose=_WEB_LOGIN_PURPOSE)
             (generation,) = struct.unpack(">Q", context)
         except (ValueError, struct.error):
-            return False
+            return None
         if generation != state.totp_generation:
-            return False
+            return None
         counter = match_totp_counter(secret, code, self._clock())
         if counter is None:
             await self._repositories.auth_challenges.fail_attempt(
@@ -146,7 +190,7 @@ class AuthenticationService:
                 maximum=self._settings.auth_max_challenge_attempts,
                 now=self._clock(),
             )
-            return False
+            return None
         accepted = await self._repositories.auth_state.accept_totp_counter(
             counter,
             epoch=state.epoch,
@@ -158,14 +202,16 @@ class AuthenticationService:
                 maximum=self._settings.auth_max_challenge_attempts,
                 now=self._clock(),
             )
-            return False
+            return None
         consumed = await self._repositories.auth_challenges.consume(
             challenge_id,
             _WEB_LOGIN_KIND,
             epoch=state.epoch,
             now=self._clock(),
         )
-        return consumed is not None
+        if consumed is None:
+            return None
+        return as_utc(self._clock())
 
     async def verify_fresh_totp(self, code: str) -> bool:
         state = await self._repositories.auth_state.get()
@@ -190,6 +236,7 @@ class AuthenticationService:
         if not scopes or len(scopes) != len(set(scopes)):
             raise AuthenticationRejected
         raw_token = issue_token()
+        authenticated_at = as_utc(self._clock())
         expires_at = self._clock() + timedelta(
             seconds=self._settings.auth_cli_token_ttl_seconds
         )
@@ -201,6 +248,7 @@ class AuthenticationService:
                 key_thumbprint=None,
                 expires_at=expires_at,
                 epoch=state.epoch,
+                authenticated_at=authenticated_at,
             )
         except AuthenticationStateChanged as exc:
             raise AuthenticationRejected from exc

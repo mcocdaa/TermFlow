@@ -101,7 +101,7 @@ export interface NativeAuthorizationOptions extends AuthorizationStateListener {
 export class NativeAuthorizationSession {
   constructor(private readonly options: NativeAuthorizationOptions) {}
 
-  async authorize(signal?: AbortSignal): Promise<NativeAccessCredential> {
+  async authorize(signal?: AbortSignal, options: { forceLogin?: boolean } = {}): Promise<NativeAccessCredential> {
     const progress = createAuthorizationStateMachine({ onState: this.options.onState })
     progress.requesting()
     if (signal?.aborted) {
@@ -115,6 +115,7 @@ export class NativeAuthorizationSession {
       const redirectUri = prepared ?? this.options.redirectUri ?? 'termflow://auth/callback'
       const url = new URL(this.options.authorizeEndpoint)
       url.searchParams.set('response_type', 'code')
+      if (options.forceLogin) url.searchParams.set('prompt', 'login')
       url.searchParams.set('redirect_uri', redirectUri)
       url.searchParams.set('state', state)
       url.searchParams.set('code_challenge', pkce.challenge)

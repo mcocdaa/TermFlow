@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyAguiEvent, createAgentHistoryState, type AgentHistoryState } from './history'
+import { applyAguiEvent, createAgentHistoryState, seedUserMessages, type AgentHistoryState } from './history'
 import type { AguiEvent } from './agui'
 
 const now = () => 1_000_000
@@ -44,5 +44,18 @@ describe('applyAguiEvent purity and idempotency', () => {
     const twice = apply(once, ...events)
     expect(initial.messages.size).toBe(0)
     expect(twice).toEqual(once)
+  })
+})
+
+describe('seedUserMessages', () => {
+  it('keeps a server-provided system message as a collapsed-ready timeline item', () => {
+    const next = seedUserMessages(createAgentHistoryState(), [
+      {
+        message_id: 'system-1', conversation_id: 'c', run_id: null, role: 'system', kind: 'prompt',
+        assembly_revision: 1, is_final: true, body_digest: 'digest', body: 'system prompt', created_at: '2026-01-01T00:00:00Z',
+      },
+    ] as never, now)
+    expect(next.messages.get('system-1')).toMatchObject({ role: 'system', text: 'system prompt', status: 'complete' })
+    expect(next.timeline).toContainEqual({ type: 'message', refId: 'system-1', at: Date.parse('2026-01-01T00:00:00Z') })
   })
 })

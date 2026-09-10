@@ -1,12 +1,14 @@
 """FastAPI dependency boundaries for settings, repositories, and credentials."""
 
 import json
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, cast
 
 from fastapi import Depends, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from termflow_control_plane.auth.context import AdminAuthContext
 from termflow_control_plane.auth.dpop import DpopInvalid, DpopNonceRequired, DpopVerifier
 from termflow_control_plane.auth.service import AuthenticationService
 from termflow_control_plane.auth.sessions import (
@@ -27,6 +29,32 @@ bearer = HTTPBearer(auto_error=False)
 
 def get_settings(request: Request) -> Settings:
     return cast(Settings, request.app.state.settings)
+
+
+def require_agent_schema(request: Request) -> None:
+    """Fence every functional Agent API while its schema is unavailable."""
+
+    if not getattr(request.app.state, "agent_schema_ready", True):
+        raise TermFlowError(
+            "recovery_failed",
+            503,
+            "Agent recovery is incomplete.",
+        )
+
+
+async def require_cleanup_helper(
+    settings: Annotated[Settings, Depends(get_settings)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+) -> None:
+    supplied = _raw_bearer(credentials)
+    expected = settings.agent_cleanup_helper_token
+    if (
+        expected is None
+        or not expected.get_secret_value()
+        or secret_text_matches(supplied, settings.admin_token.get_secret_value())
+        or not secret_text_matches(supplied, expected.get_secret_value())
+    ):
+        raise TermFlowError("unauthorized", 401, "Cleanup helper authentication is required.")
 
 
 def get_repositories(request: Request) -> RepositoryBundle:
@@ -74,11 +102,7 @@ def _required_scope(request: Request) -> str | None:
         return "computers.write" if mutating else "computers.read"
     if path.startswith("/api/v1/instances/") and path.endswith("/topology"):
         return "terminal.read"
-    if (
-        path.startswith("/api/v1/instances/")
-        and "/panes/" in path
-        and path.endswith("/input")
-    ):
+    if path.startswith("/api/v1/instances/") and "/panes/" in path and path.endswith("/input"):
         return "terminal.write"
     if path == "/api/v1/enrollment-tokens" or path.startswith("/api/v1/instances"):
         return "computers.write" if mutating else "computers.read"
@@ -114,7 +138,7 @@ async def require_admin(
     settings: Annotated[Settings, Depends(get_settings)],
     sessions: Annotated[BrowserSessionStore, Depends(get_browser_sessions)],
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
-) -> None:
+) -> AdminAuthContext:
     credentials = credentials or _dpop_credentials(request)
     expected = settings.admin_token.get_secret_value()
     if credentials is not None:
@@ -128,7 +152,7 @@ async def require_admin(
             and secret_text_matches(supplied, expected)
             and state.totp_enabled_at is None
         ):
-            return
+            return AdminAuthContext("root", "root", state.epoch, None)
         if scheme == "bearer":
             cli_token = await repositories.auth_tokens.get_active(
                 supplied,
@@ -140,7 +164,9 @@ async def require_admin(
                     raise TermFlowError(
                         "insufficient_scope", 403, "The credential lacks the required scope."
                     )
-                return
+                return AdminAuthContext(
+                    "cli", hash_token(supplied), cli_token.epoch, cli_token.authenticated_at
+                )
         access_token = await repositories.auth_tokens.get_active(
             supplied,
             epoch=state.epoch,
@@ -176,17 +202,47 @@ async def require_admin(
             request.state.native_client_id = access_token.client_id
             request.state.native_key_thumbprint = access_token.key_thumbprint
             response.headers["DPoP-Nonce"] = verified.next_nonce
-            return
+            return AdminAuthContext(
+                "native",
+                str(access_token.client_id),
+                access_token.epoch,
+                access_token.authenticated_at,
+            )
         raise TermFlowError("unauthorized", 401, "Authentication is required.")
     state = await repositories.auth_state.get()
     policy = browser_cookie_policy(settings)
-    if sessions.authenticate(request.cookies.get(policy.name), epoch=state.epoch) is None:
+    context = sessions.get_context(request.cookies.get(policy.name), epoch=state.epoch)
+    if context is None:
         raise TermFlowError("unauthorized", 401, "Authentication is required.")
     if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not origin_allowed(
         request.headers.get("origin"),
         settings,
     ):
         raise TermFlowError("origin_not_allowed", 403, "The browser Origin is not allowed.")
+    return context
+
+
+async def require_fresh_admin(
+    request: Request,
+    response: Response,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    sessions: Annotated[BrowserSessionStore, Depends(get_browser_sessions)],
+    repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
+) -> AdminAuthContext:
+    """Require an administrator credential backed by recent strong auth."""
+
+    context = await require_admin(request, response, credentials, settings, sessions, repositories)
+    if not context.is_fresh(
+        now=datetime.now(UTC),
+        maximum_age=timedelta(seconds=settings.agent_sensitive_action_max_age_seconds),
+    ):
+        raise TermFlowError(
+            "sensitive_action_reauthentication_required",
+            428,
+            "Recent administrator authentication is required.",
+        )
+    return context
 
 
 async def require_web_admin(

@@ -12,7 +12,7 @@
       </div>
       <div class="computer-grid"><ComputerCard v-for="computer in snapshot.computers" :key="computer.installation_id" :computer="computer" @request-delete="requestDelete" /></div>
     </template>
-    <DeleteTermDialog v-if="selectedForDeletion" :term="selectedForDeletion" :pending="deletePending" :error="deleteError" @confirm="confirmDelete" @cancel="cancelDelete" />
+    <DeleteTermDialog v-if="selectedForDeletion" :term="selectedForDeletion" :pending="deletePending" :error="deleteError" :cleanup-job-id="cleanupJobId" @confirm="confirmDelete" @cancel="cancelDelete" />
   </section>
 </template>
 
@@ -31,8 +31,10 @@ const onlineComputerCount = computed(() => snapshot.value?.computers.filter((com
 const selectedForDeletion = ref<TermSummary | null>(null)
 const deletePending = ref(false)
 const deleteError = ref('')
+const cleanupJobId = ref('')
 
 function requestDelete(term: TermSummary) {
+  cleanupJobId.value = ''
   selectedForDeletion.value = term
   deleteError.value = ''
 }
@@ -54,8 +56,12 @@ async function confirmDelete(instanceId: string) {
   deletePending.value = true
   deleteError.value = ''
   try {
-    await runtime.api.terms.remove(instanceId)
+    const result = await runtime.api.terms.remove(instanceId)
     await refresh()
+    if (result.state === 'deletion_pending') {
+      cleanupJobId.value = result.cleanupJobId
+      return
+    }
     selectedForDeletion.value = null
   } catch (error) {
     deleteError.value = deleteMessage(error)

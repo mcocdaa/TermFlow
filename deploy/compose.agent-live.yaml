@@ -1,0 +1,94 @@
+services:
+  control-plane:
+    environment:
+      # A live deployment is not considered provider-configured until the
+      # operator supplies the complete, verified disclosure policy.  The
+      # credential source is a fixed *name*, never a credential value.
+      TERMFLOW_AGENT_PROVIDER_DEEPSEEK_ENDPOINT_ORIGIN: ${TERMFLOW_AGENT_PROVIDER_DEEPSEEK_ENDPOINT_ORIGIN:?set TERMFLOW_AGENT_PROVIDER_DEEPSEEK_ENDPOINT_ORIGIN}
+      TERMFLOW_AGENT_PROVIDER_DEEPSEEK_MODEL_IDS: ${TERMFLOW_AGENT_PROVIDER_DEEPSEEK_MODEL_IDS:?set TERMFLOW_AGENT_PROVIDER_DEEPSEEK_MODEL_IDS}
+      TERMFLOW_AGENT_PROVIDER_DEEPSEEK_REGION: ${TERMFLOW_AGENT_PROVIDER_DEEPSEEK_REGION:?set TERMFLOW_AGENT_PROVIDER_DEEPSEEK_REGION}
+      TERMFLOW_AGENT_PROVIDER_DEEPSEEK_RETENTION_TERMS: ${TERMFLOW_AGENT_PROVIDER_DEEPSEEK_RETENTION_TERMS:?set TERMFLOW_AGENT_PROVIDER_DEEPSEEK_RETENTION_TERMS}
+      TERMFLOW_AGENT_PROVIDER_DEEPSEEK_RETENTION_VERSION: ${TERMFLOW_AGENT_PROVIDER_DEEPSEEK_RETENTION_VERSION:?set TERMFLOW_AGENT_PROVIDER_DEEPSEEK_RETENTION_VERSION}
+      TERMFLOW_AGENT_PROVIDER_DEEPSEEK_NO_TRAINING: ${TERMFLOW_AGENT_PROVIDER_DEEPSEEK_NO_TRAINING:?set TERMFLOW_AGENT_PROVIDER_DEEPSEEK_NO_TRAINING}
+      TERMFLOW_AGENT_PROVIDER_DEEPSEEK_CREDENTIAL_SOURCE: DEEPSEEK_API_KEY
+      TERMFLOW_AGENT_PROVIDER_DEEPSEEK_POLICY_VERSION: ${TERMFLOW_AGENT_PROVIDER_DEEPSEEK_POLICY_VERSION:?set TERMFLOW_AGENT_PROVIDER_DEEPSEEK_POLICY_VERSION}
+
+  # The base file remains fully offline.  This override is the only place
+  # where the model runtime gains a provider-facing network, and it can reach
+  # that network only through the allowlist proxy below.
+  opencode-agent:
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY}
+      HTTPS_PROXY: http://provider-egress-proxy:3128
+      NO_PROXY: control-plane,opencode-agent,localhost,127.0.0.1
+      # BusyBox wget (used by the pinned runtime image's diagnostics) reads
+      # lowercase http_proxy even for HTTPS URLs; keep the conventional
+      # HTTPS variants too so the runtime and probes share the same boundary.
+      http_proxy: http://provider-egress-proxy:3128
+      https_proxy: http://provider-egress-proxy:3128
+      no_proxy: control-plane,opencode-agent,localhost,127.0.0.1
+    networks:
+      - agent_internal
+      - provider_egress
+
+  # `ubuntu/squid:6.10-24.10_beta` index digest, resolved from Canonical's
+  # verified Docker Hub publisher page on 2026-09-07.  Runtime compatibility
+  # with this rootless/read-only profile must be checked before live rollout.
+  provider-egress-proxy:
+    image: ubuntu/squid:6.10-24.10_beta@sha256:c9f5212b147a766529c7b026e2bebed37b998d33d0066b658596af5eba7cc65c
+    user: "13:13"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - type: bind
+        source: ./provider-egress/squid.conf
+        target: /etc/squid/squid.conf
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /run/squid:size=8m,mode=0750,uid=13,gid=13
+      - /var/log/squid:size=8m,mode=0750,uid=13,gid=13
+      - /var/spool/squid:size=16m,mode=0750,uid=13,gid=13
+    expose:
+      - "3128"
+    networks:
+      - provider_egress
+      - provider_uplink
+    mem_limit: 128m
+    cpus: "0.50"
+    pids_limit: 128
+    healthcheck:
+      # The pinned Ubuntu image does not ship squidclient/curl/wget.  Bash's
+      # /dev/tcp is available in the image and verifies that Squid is
+      # accepting an HTTP request without contacting an external provider.
+      test:
+        - CMD
+        - bash
+        - -ec
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/3128;
+          printf 'GET http://127.0.0.1/ HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3;
+          IFS= read -r status <&3;
+          case "$$status" in HTTP/*) ;; *) exit 1 ;; esac
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+networks:
+  agent_internal:
+    internal: true
+  provider_egress:
+    internal: true
+  provider_uplink:
+    internal: false

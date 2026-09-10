@@ -1,5 +1,5 @@
 import { createMemoryHistory, createRouter, createWebHistory, type RouterHistory } from 'vue-router'
-import { clientRoutes } from '@termflow/client-ui'
+import { canonicalTerminalQuery, clientRoutes, isCanonicalTerminalQuery } from '@termflow/client-ui'
 
 export interface RouterDependencies {
   sessionStatus: () => Promise<{ authenticated: boolean }>
@@ -12,6 +12,9 @@ export function createAppRouter(dependencies: RouterDependencies) {
     routes: clientRoutes,
   })
   router.beforeEach(async (to) => {
+    if (to.meta.terminal && !isCanonicalTerminalQuery(to.query)) {
+      return { path: to.path, query: canonicalTerminalQuery(to.query), hash: to.hash, replace: true }
+    }
     if (!to.meta.requiresAuth) return true
     const session = await dependencies.sessionStatus()
     return session.authenticated ? true : { path: '/login', query: { redirect: to.fullPath } }

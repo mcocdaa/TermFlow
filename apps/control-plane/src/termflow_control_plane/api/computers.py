@@ -3,9 +3,10 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from termflow_protocol import ComputerListResponse, ComputerRenameRequest, ComputerSummary
 
+from termflow_control_plane.api.agent_cleanup import pending_response
 from termflow_control_plane.api.dashboard import computer_summaries
 from termflow_control_plane.api.dependencies import (
     get_registry,
@@ -20,6 +21,7 @@ from termflow_control_plane.connections.registry import (
 )
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.repositories import RepositoryBundle
+from termflow_control_plane.plugins.agent_broker.cleanup import create_deletion_manifest
 
 router = APIRouter(prefix="/api/v1/computers", tags=["computers"])
 
@@ -83,11 +85,21 @@ async def rename_computer(
 )
 async def delete_computer(
     installation_id: UUID,
+    http_request: Request,
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
     registry: Annotated[LiveInstanceRegistry, Depends(get_registry)],
 ) -> Response:
     installation = await repositories.installations.get(installation_id)
     if installation is None or installation.revoked_at is not None:
+        job = await repositories.cleanup_jobs.get_by_target(
+            target_kind="installation", target_ref=str(installation_id)
+        )
+        if job is not None:
+            return (
+                Response(status_code=204)
+                if job.state == "completed"
+                else pending_response(http_request, job.id)
+            )
         raise TermFlowError("computer_not_found", 404, "The Computer does not exist.")
 
     instances = [
@@ -120,10 +132,11 @@ async def delete_computer(
         # retried until confirmed.
         for instance in instances:
             await cancel_agent_watches_for_term(repositories, instance.id)
-        await repositories.cleanup_jobs.create(
+        job = await create_deletion_manifest(
+            repositories,
             target_kind="installation",
-            target_ref=str(installation_id),
-            installation_id=installation_id,
+            target_id=installation_id,
+            term_ids=[instance.id for instance in instances],
         )
         deleted = await repositories.installations.delete(installation_id)
         if not deleted:
@@ -133,4 +146,4 @@ async def delete_computer(
             await registry.cancel_retirement(instance_id)
 
     await repositories.audit.record("computer.delete", None, None, None, "ok", None)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return pending_response(http_request, job.id)

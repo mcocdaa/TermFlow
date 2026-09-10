@@ -2,7 +2,7 @@ export interface HeaderReader {
   get(name: string): string | null
 }
 
-export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE'
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 export interface HttpRequest {
   method: HttpMethod

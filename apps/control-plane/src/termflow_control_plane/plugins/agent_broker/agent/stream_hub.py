@@ -40,7 +40,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
@@ -255,7 +254,7 @@ class AgentEventCursor:
                     AgentEvent.conversation_id == conversation_id
                 )
             )
-            return int(cast(int | None, value) or 0)
+            return int(value or 0)
 
     async def list_since_cursor(
         self,

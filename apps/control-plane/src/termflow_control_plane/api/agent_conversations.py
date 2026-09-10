@@ -1,7 +1,8 @@
 """Product-facing Agent Broker conversation API (plan §13.1, task M1.5).
 
-Endpoints under ``/api/v1/agent/conversations`` create/list/delete durable
-product conversations and page historical messages and canonical events.
+Endpoints under ``/api/v1/agent/conversations`` create/list/rename/delete
+durable product conversations and page historical messages and canonical
+events.
 
 Backend opacity contract: product responses expose only conversation-scoped
 data.  Backend session internals (``BackendConversationRef.provider_ref``,
@@ -21,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from termflow_protocol.agent import MAX_AGENT_TEXT_BYTES
 from termflow_protocol.messages import validate_plain_text
 
+from termflow_control_plane.api.agent_cleanup import existing_deletion_response, pending_response
 from termflow_control_plane.api.dependencies import get_repositories, require_admin
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.models import (
@@ -45,6 +47,7 @@ from termflow_control_plane.plugins.agent_broker.agent.runtime_registry import (
 )
 from termflow_control_plane.plugins.agent_broker.agent.stream_hub import binding_is_closed
 from termflow_control_plane.plugins.agent_broker.agent.turns import BackendOutcome
+from termflow_control_plane.plugins.agent_broker.cleanup import create_deletion_manifest
 
 router = APIRouter(
     prefix="/api/v1/agent/conversations",
@@ -58,6 +61,20 @@ class AgentConversationCreateRequest(BaseModel):
 
     binding_id: UUID
     title: str | None = Field(default=None, max_length=255)
+
+
+class AgentConversationUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=255)
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str) -> str:
+        title = value.strip()
+        if not title:
+            raise ValueError("title must not be blank")
+        return title
 
 
 class AgentConversationResponse(BaseModel):
@@ -346,6 +363,25 @@ async def get_agent_conversation(
     )
 
 
+@router.patch("/{conversation_id}", response_model=AgentConversationResponse)
+async def rename_agent_conversation(
+    conversation_id: UUID,
+    request: AgentConversationUpdateRequest,
+    repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
+) -> AgentConversationResponse:
+    conversation = await repositories.agent_conversations.rename(
+        conversation_id,
+        request.title,
+    )
+    if conversation is None:
+        raise TermFlowError(
+            "conversation_not_found",
+            404,
+            "The Agent Conversation does not exist.",
+        )
+    return _conversation_response(conversation)
+
+
 def _binding_info(binding: AgentBinding) -> AgentConversationBindingInfo:
     return AgentConversationBindingInfo(
         binding_id=binding.id,
@@ -377,6 +413,12 @@ async def delete_agent_conversation(
         record_cleanup_failure,
     )
 
+    if await repositories.agent_conversations.get_by_id(conversation_id) is None:
+        existing = await existing_deletion_response(
+            http_request, repositories, "conversation", conversation_id
+        )
+        if existing is not None:
+            return existing
     await _require_conversation(conversation_id, repositories)
     registry = get_agent_runtime_registry(http_request)
 
@@ -386,41 +428,31 @@ async def delete_agent_conversation(
 
     # 2) Durable cleanup tombstone BEFORE the row deletion (plan §15), so a
     #    crash mid-delete leaves a retryable job instead of orphaned rows.
-    job = await repositories.cleanup_jobs.create(
-        target_kind="conversation",
-        target_ref=str(conversation_id),
+    job = await create_deletion_manifest(
+        repositories, target_kind="conversation", target_id=conversation_id
     )
 
     # 3) Prove the backend session is gone before deleting the rows.
     try:
-        result = await delete_backend_conversation(
-            repositories, registry, conversation_id
-        )
+        result = await delete_backend_conversation(repositories, registry, conversation_id)
     except BackendRuntimeUnavailableError as exc:
         await record_cleanup_failure(job, repositories, str(exc))
-        raise TermFlowError(
-            "binding_runtime_unavailable",
-            503,
-            "The conversation has a backend session but its runtime is not "
-            "available; the cleanup job stays pending.",
-        ) from exc
+        return pending_response(http_request, job.id)
     if result is not None and result.outcome is not BackendOutcome.CONFIRMED:
         await record_cleanup_failure(
             job,
             repositories,
             result.message or "backend deletion unconfirmed",
         )
-        raise TermFlowError(
-            "deletion_pending",
-            503,
-            "The conversation's backend session could not be deleted; the "
-            "cleanup job stays pending and will retry.",
-        )
+        return pending_response(http_request, job.id)
 
     # 4) The durable work is proven (or never existed): delete the rows.
     await repositories.agent_conversations.delete(conversation_id)
+    await repositories.cleanup_jobs.confirm_pending_internal(job.id)
     await repositories.cleanup_jobs.complete(job.id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return await existing_deletion_response(
+        http_request, repositories, "conversation", conversation_id
+    ) or Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{conversation_id}/messages", response_model=AgentMessageListResponse)
@@ -438,9 +470,7 @@ async def list_agent_messages(
     )
     # Messages are returned in conversation-assembly order, which is the
     # canonical creation order (DB-assigned assembly_revision).
-    return AgentMessageListResponse(
-        messages=[_message_response(message) for message in messages]
-    )
+    return AgentMessageListResponse(messages=[_message_response(message) for message in messages])
 
 
 @router.get("/{conversation_id}/events", response_model=AgentEventListResponse)
@@ -462,6 +492,7 @@ async def list_agent_events(
     """
     validate_wire(wire)
     await _require_conversation(conversation_id, repositories)
+    next_cursor: int | None
     if since is not None:
         events = await repositories.agent_events.list_since_cursor(
             conversation_id,
@@ -483,9 +514,7 @@ async def list_agent_events(
         agui_events: list[dict[str, object]] = []
         for event in events:
             agui_events.extend(projector.project(event))
-        return JSONResponse(
-            content={"events": agui_events, "next_cursor": next_cursor}
-        )
+        return JSONResponse(content={"events": agui_events, "next_cursor": next_cursor})
     return AgentEventListResponse(
         events=[_event_response(event) for event in events],
         next_cursor=next_cursor,
@@ -553,9 +582,7 @@ async def cancel_agent_conversation(
     binding = await _require_open_binding(conversation, repositories)
     pipeline = _require_pipeline(binding, get_agent_runtime_registry(http_request))
     try:
-        result = await pipeline.cancel_conversation(
-            conversation_id, reason=request.reason
-        )
+        result = await pipeline.cancel_conversation(conversation_id, reason=request.reason)
     except NoActiveRunError:
         raise TermFlowError(
             "no_active_run",

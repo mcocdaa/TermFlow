@@ -50,6 +50,31 @@ WIRE_CANONICAL = "canonical"
 WIRE_AGUI = "agui"
 _KNOWN_WIRES = frozenset({WIRE_CANONICAL, WIRE_AGUI})
 
+_STABLE_ERROR_CODES = frozenset(
+    {
+        "provider_auth_failed",
+        "provider_model_rejected",
+        "run_failed",
+        "tool_failed",
+    }
+)
+
+
+def _safe_error_code(payload: dict[str, object], *, kind: str) -> str | None:
+    """Collapse legacy/provider-controlled error fields to stable codes.
+
+    Older rows can contain an adapter error string.  Replay must remain safe
+    even for those rows, so neither ``error_message`` nor an arbitrary code is
+    copied onto the C-facing AG-UI wire.
+    """
+
+    raw_code = payload.get("error_code")
+    if raw_code in _STABLE_ERROR_CODES:
+        return str(raw_code)
+    if payload.get("error_code") is not None or payload.get("error_message") is not None:
+        return "tool_failed" if kind == "tool_completed" else "run_failed"
+    return None
+
 
 def validate_wire(wire: str) -> None:
     """Fail closed on unknown wire values (spec §5: 400 ``invalid_wire``)."""
@@ -200,10 +225,9 @@ def _project_tool_completed(
         value = payload.get(key)
         if isinstance(value, int):
             summary[key] = value
-    for optional in ("error_code", "error_message"):
-        item = payload.get(optional)
-        if item is not None:
-            summary[optional] = item
+    error_code = _safe_error_code(payload, kind="tool_completed")
+    if error_code is not None:
+        summary["error_code"] = error_code
     content = json.dumps(summary, separators=(",", ":"))
     return [
         {
@@ -258,11 +282,14 @@ def _project_run_failed(
 ) -> tuple[list[dict[str, object]], ProjectionDropCounts]:
     if payload is None:
         return [], ProjectionDropCounts(missing_payload=1)
-    error_code = payload.get("error_code")
-    error_message = payload.get("error_message")
-    message = error_message or error_code
-    if message is None:
+    error_code = _safe_error_code(payload, kind="run_failed")
+    if error_code is None:
         raise ValueError("run_failed payload requires error_code or error_message")
+    message = {
+        "provider_auth_failed": "Provider authentication failed.",
+        "provider_model_rejected": "Provider model rejected.",
+        "run_failed": "Agent run failed.",
+    }.get(error_code, "Agent run failed.")
     out: dict[str, object] = {
         "type": "RUN_ERROR",
         "message": message,

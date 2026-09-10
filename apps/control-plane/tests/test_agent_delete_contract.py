@@ -76,7 +76,7 @@ def _seed_binding(
         json={
             "display_name": "opencode",
             "backend_kind": "opencode",
-            "config": '{"model": "default"}',
+            "config": '{"model_id":"deepseek-v4-flash","provider_id":"deepseek"}',
         },
     )
     assert profile.status_code == 201, profile.text
@@ -147,7 +147,7 @@ async def _cleanup_job(
 # ---------------------------------------------------------------------------
 
 
-def test_delete_conversation_cancels_runs_deletes_backend_session_and_completes(
+def test_delete_conversation_cancels_runs_and_waits_for_provider_retention_receipt(
     client: TestClient, admin_headers: dict[str, str], provision_term
 ) -> None:
     _, binding_id = _seed_binding(client, admin_headers, provision_term)
@@ -166,7 +166,8 @@ def test_delete_conversation_cancels_runs_deletes_backend_session_and_completes(
     deleted = client.delete(
         f"/api/v1/agent/conversations/{conversation_id}", headers=admin_headers
     )
-    assert deleted.status_code == 204, deleted.text
+    assert deleted.status_code == 202, deleted.text
+    assert deleted.json()["state"] == "deletion_pending"
 
     async def verify() -> None:
         repositories: RepositoryBundle = client.app.state.repositories
@@ -175,8 +176,16 @@ def test_delete_conversation_cancels_runs_deletes_backend_session_and_completes(
         assert [
             ref.provider_ref for ref in adapter.deleted_refs
         ] == ["sess_abc123"]
-        # The tombstone was completed, so nothing stays deletion_pending.
-        assert await repositories.cleanup_jobs.list_pending() == []
+        # The provider-owned retention receipt still requires independent
+        # confirmation even though B proved the backend session deletion.
+        pending = await repositories.cleanup_jobs.list_pending()
+        assert len(pending) == 1
+        receipts = await repositories.cleanup_jobs.list_receipts(pending[0].id)
+        assert [
+            row.artifact_kind
+            for row in receipts
+            if row.state == "pending"
+        ] == ["provider_retention"]
 
     client.portal.call(verify)
 
@@ -226,8 +235,8 @@ def test_delete_conversation_backend_unconfirmed_keeps_rows_and_marks_pending(
     deleted = client.delete(
         f"/api/v1/agent/conversations/{conversation_id}", headers=admin_headers
     )
-    assert deleted.status_code == 503, deleted.text
-    assert deleted.json()["error"]["code"] == "deletion_pending"
+    assert deleted.status_code == 202, deleted.text
+    assert deleted.json()["state"] == "deletion_pending"
 
     async def verify() -> None:
         repositories: RepositoryBundle = client.app.state.repositories
@@ -263,8 +272,8 @@ def test_delete_conversation_without_pipeline_fails_closed(
     deleted = client.delete(
         f"/api/v1/agent/conversations/{conversation_id}", headers=admin_headers
     )
-    assert deleted.status_code == 503, deleted.text
-    assert deleted.json()["error"]["code"] == "binding_runtime_unavailable"
+    assert deleted.status_code == 202, deleted.text
+    assert deleted.json()["state"] == "deletion_pending"
 
     async def verify() -> None:
         repositories: RepositoryBundle = client.app.state.repositories
@@ -295,7 +304,7 @@ def test_delete_missing_conversation_is_404(
 # ---------------------------------------------------------------------------
 
 
-def test_delete_binding_cancels_runs_deletes_backend_sessions_and_completes(
+def test_delete_binding_cancels_runs_and_waits_for_provider_retention_receipts(
     client: TestClient, admin_headers: dict[str, str], provision_term
 ) -> None:
     _, binding_id = _seed_binding(client, admin_headers, provision_term)
@@ -316,7 +325,8 @@ def test_delete_binding_cancels_runs_deletes_backend_sessions_and_completes(
     deleted = client.delete(
         f"/api/v1/agent/admin/bindings/{binding_id}", headers=admin_headers
     )
-    assert deleted.status_code == 204, deleted.text
+    assert deleted.status_code == 202, deleted.text
+    assert deleted.json()["state"] == "deletion_pending"
 
     async def verify() -> None:
         repositories: RepositoryBundle = client.app.state.repositories
@@ -327,7 +337,12 @@ def test_delete_binding_cancels_runs_deletes_backend_sessions_and_completes(
             "sess_1",
             "sess_2",
         }
-        assert await repositories.cleanup_jobs.list_pending() == []
+        pending = await repositories.cleanup_jobs.list_pending()
+        assert len(pending) == 1
+        receipts = await repositories.cleanup_jobs.list_receipts(pending[0].id)
+        assert {
+            row.artifact_ref for row in receipts if row.artifact_kind == "provider_retention"
+        } == {"provider:sess_1", "provider:sess_2"}
 
     client.portal.call(verify)
 
@@ -350,8 +365,8 @@ def test_delete_binding_backend_unconfirmed_keeps_rows_and_marks_pending(
     deleted = client.delete(
         f"/api/v1/agent/admin/bindings/{binding_id}", headers=admin_headers
     )
-    assert deleted.status_code == 503, deleted.text
-    assert deleted.json()["error"]["code"] == "deletion_pending"
+    assert deleted.status_code == 202, deleted.text
+    assert deleted.json()["state"] == "deletion_pending"
 
     async def verify() -> None:
         repositories: RepositoryBundle = client.app.state.repositories
@@ -381,7 +396,7 @@ def test_delete_missing_binding_is_404(
 # ---------------------------------------------------------------------------
 
 
-def test_delete_profile_sweeps_binding_sessions_and_completes(
+def test_delete_profile_sweeps_sessions_and_waits_for_provider_retention_receipt(
     client: TestClient, admin_headers: dict[str, str], provision_term
 ) -> None:
     profile_id, binding_id = _seed_binding(client, admin_headers, provision_term)
@@ -400,7 +415,8 @@ def test_delete_profile_sweeps_binding_sessions_and_completes(
     deleted = client.delete(
         f"/api/v1/agent/admin/profiles/{profile_id}", headers=admin_headers
     )
-    assert deleted.status_code == 204, deleted.text
+    assert deleted.status_code == 202, deleted.text
+    assert deleted.json()["state"] == "deletion_pending"
 
     async def verify() -> None:
         repositories: RepositoryBundle = client.app.state.repositories
@@ -408,7 +424,14 @@ def test_delete_profile_sweeps_binding_sessions_and_completes(
         assert await repositories.agent_bindings.get_by_id(binding_id) is None
         assert await repositories.agent_conversations.get_by_id(conversation_id) is None
         assert [ref.provider_ref for ref in adapter.deleted_refs] == ["sess_p"]
-        assert await repositories.cleanup_jobs.list_pending() == []
+        pending = await repositories.cleanup_jobs.list_pending()
+        assert len(pending) == 1
+        receipts = await repositories.cleanup_jobs.list_receipts(pending[0].id)
+        assert [
+            row.artifact_ref
+            for row in receipts
+            if row.artifact_kind == "provider_retention"
+        ] == ["provider:sess_p"]
 
     client.portal.call(verify)
 
@@ -431,8 +454,8 @@ def test_delete_profile_backend_unconfirmed_keeps_rows_and_marks_pending(
     deleted = client.delete(
         f"/api/v1/agent/admin/profiles/{profile_id}", headers=admin_headers
     )
-    assert deleted.status_code == 503, deleted.text
-    assert deleted.json()["error"]["code"] == "deletion_pending"
+    assert deleted.status_code == 202, deleted.text
+    assert deleted.json()["state"] == "deletion_pending"
 
     async def verify() -> None:
         repositories: RepositoryBundle = client.app.state.repositories

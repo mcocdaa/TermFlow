@@ -55,25 +55,77 @@ B + Web C 的默认 Compose 从当前 checkout 构建，不绑定 GitHub 所有�
 
 ```bash
 cp .env.example .env
-# 编辑 TERMFLOW_ADMIN_TOKEN 和实际的 TERMFLOW_PUBLIC_BASE_URL。
+# 生成所有独立 secret，核实 provider policy，并编辑实际 PUBLIC_BASE_URL。
 docker compose --env-file .env -f deploy/compose.yaml up -d --build
 ```
 
+### v0.2.0 Agent Broker durable local profile
+
+Agent Broker 的本地参考部署是固定、可审计的 Compose project：
+`termflow-v020-local`。先复制 `.env.example` 为仓库根目录的 `.env`，为每个
+secret 生成独立随机值，并将文件权限设为 `0600`。只读 preflight 会检查权限、
+必填变量、配置文件、渲染后的网络/卷契约和 Docker 可用性；它不会启动、重启、
+停止或删除任何资源：
+
+```bash
+cp .env.example .env
+chmod 0600 .env
+scripts/deploy/agent-local-preflight.sh --env-file "$PWD/.env"
+```
+
+通过 preflight 后，启动 B + Web C + OpenCode + provider allowlist proxy（完整动态
+验证步骤另见 [live-model runbook](runbooks/agent-broker-live-model.md)）：
+
+```bash
+docker compose -p termflow-v020-local --env-file .env \
+  -f deploy/compose.yaml -f deploy/compose.agent-live.yaml up -d --build
+```
+
+Compose 固定使用以下卷名，并且不会被旧的 `*_VOLUME` 环境变量覆盖：
+`termflow-v020-local-data`（B metadata）、`termflow-v020-local-totp-key`（TOTP
+主密钥）和 `termflow-v020-local-opencode-data`（OpenCode 会话）。升级或重建服务时
+保留这些卷；不要对该 project 使用 `down --volumes`，也不要把临时 E2E project 的
+卷名改成这些固定名称。B 的 host port 默认只绑定 `127.0.0.1:8765`；B 的默认网络是供
+宿主机端口发布以及 A/C 连接的普通 bridge。OpenCode 不加入这个网络，只在
+`agent_internal`（live overlay 另加 `provider_egress`）；这些 capability 网络保持
+`internal: true`，模型出口只能经 allowlist proxy。
+
+`.env` 中的 `OPENCODE_AGENT_MCP_TOKEN` 是 B 与 OpenCode 共用的部署 bootstrap
+capability，必须由 binding/API 流程签发，并独立于管理员、provider、cleanup token。
+`DEEPSEEK_API_KEY` 只注入 live OpenCode 容器；不写入镜像、配置文件、日志或文档。
+live overlay 还要求完整的 `TERMFLOW_AGENT_PROVIDER_DEEPSEEK_*` disclosure 字段。
+官方公开资料不足以替部署者证明 DeepSeek 的 `no_training` 条款，所以样例该字段
+留空，preflight 会 fail closed；只有账户/合同等可核验证据存在时才可填入精确的
+`true`，不得为了启动而猜测或伪称。
+
+启动后只输出脱敏状态进行检查：
+
+```bash
+scripts/security/verify-agent-containers.sh --mode live termflow-v020-local
+curl -fsS http://127.0.0.1:8765/healthz
+```
+
+base-only 命令只用于 core/offline 配置检查；它不是 Agent live 部署证明。所有动态
+provider egress、模型、MCP、A 命令和 approval 结果都必须单独记录为
+未验证/已验证证据，静态测试或 OpenCode health 不能替代 live gate。
+
 回退 B 时切换到已验证的旧源码 tag 或 commit，重复 `up -d --build`；不要执行 `down --volumes`，
-也不要删除 `termflow-data`。GitHub Actions 或 Fork 可以使用同一个 Dockerfile 构建、标记和发布镜像，
+也不要删除 `termflow-v020-local-data`、`termflow-v020-local-totp-key` 或
+`termflow-v020-local-opencode-data`。GitHub Actions 或 Fork 可以使用同一个 Dockerfile 构建、标记和发布镜像，
 但镜像来源不属于普通 Compose 的运行时配置。
 
-TOTP 主密钥迁移（升级到独立密钥卷时）：新版 Compose 把自动生成的 TOTP 主密钥放在独立的
-`termflow-totp-key` 卷，与数据库卷分离。若旧部署已在 `termflow-data` 卷中生成
+TOTP 主密钥迁移（升级到独立密钥卷时）：新版 Compose 把自动生成的 TOTP 主密钥放在固定的
+`termflow-v020-local-totp-key` 卷，与 `termflow-v020-local-data` 数据库卷分离。若旧部署已在
+旧的 `termflow-data` 卷中生成
 `totp-master-key`，先停容器，把旧密钥文件复制进新卷再启动，避免已绑定的验证器全部失效：
 
 ```bash
-docker compose --env-file .env -f deploy/compose.yaml stop
+docker compose -p termflow-v020-local --env-file .env -f deploy/compose.yaml stop
 docker run --rm \
   --mount "source=termflow-data,target=/from" \
-  --mount "source=termflow-totp-key,target=/to" \
+  --mount "source=termflow-v020-local-totp-key,target=/to" \
   alpine sh -c 'test -f /from/totp-master-key && cp /from/totp-master-key /to/totp-master-key || echo "no legacy key file"'
-docker compose --env-file .env -f deploy/compose.yaml up -d
+docker compose -p termflow-v020-local --env-file .env -f deploy/compose.yaml up -d
 ```
 
 如果要直接运行正式 GHCR 镜像，镜像地址必须由部署者明确选择；它不是 `.env` 的必填项，也不会
@@ -83,8 +135,8 @@ docker compose --env-file .env -f deploy/compose.yaml up -d
 set -a; source .env; set +a
 docker run -d --name termflow-control-plane --restart unless-stopped \
   --publish "127.0.0.1:${TERMFLOW_HOST_PORT:-8765}:8000" \
-  --volume "${TERMFLOW_DATA_VOLUME:-termflow-data}:/app/data" \
-  --volume "${TERMFLOW_TOTP_KEY_VOLUME:-termflow-totp-key}:/app/totp-secrets" \
+  --volume "termflow-v020-local-data:/app/data" \
+  --volume "termflow-v020-local-totp-key:/app/totp-secrets" \
   --env TERMFLOW_ADMIN_TOKEN="$TERMFLOW_ADMIN_TOKEN" \
   --env TERMFLOW_DATABASE_URL=sqlite+aiosqlite:////app/data/termflow.db \
   --env TERMFLOW_PUBLIC_BASE_URL="$TERMFLOW_PUBLIC_BASE_URL" \
@@ -107,7 +159,7 @@ iPhone。签名、notarization、TestFlight 与应用商店上传仍是后续独
 ## 管理凭据与 TOTP 密钥
 
 `TERMFLOW_ADMIN_TOKEN` 必须由部署者生成。默认单实例 Compose 会在独立的
-`termflow-totp-key` 数据卷中自动创建权限为 `0600` 的 TOTP 主密钥文件，并在后续启动中复用；
+`termflow-v020-local-totp-key` 数据卷中自动创建权限为 `0600` 的 TOTP 主密钥文件，并在后续启动中复用；
 密钥不会进入镜像、日志或仓库，且与数据库卷分离，卷快照不会同时泄露密文与密钥。显式设置的
 `TERMFLOW_TOTP_MASTER_KEY` 或 `TERMFLOW_TOTP_MASTER_KEY_FILE` 始终优先于这个自动文件。
 
@@ -205,7 +257,7 @@ Artifact，prerelease 的 Debian 版本排序不作为 apt 升级通道承诺。
   docker load -i termflow-control-plane.tar
   ```
 
-  手动导入不会覆盖 Compose 配置、重启服务或删除 `termflow-data`；部署者应显式选择镜像运行方式。
+  手动导入不会覆盖 Compose 配置、重启服务或删除 `termflow-v020-local-data`；部署者应显式选择镜像运行方式。
 - `Package C · Native Clients` 的 `platform` 可选 `all`、`windows`、`linux`、`macos`、
   `android` 或 `ios`。Artifacts 分别包含 Windows NSIS `*-setup.exe`、Linux deb/AppImage、
   macOS app zip/DMG、Android APK 和 iOS simulator app zip。Android 手动运行默认走 debug；

@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 from fastapi import Request, WebSocket
 
+from termflow_control_plane.auth.context import AdminAuthContext, as_utc
 from termflow_control_plane.auth.dpop import DpopInvalid, DpopVerifier
 from termflow_control_plane.auth.rate_limit import AuthRateLimiter
 from termflow_control_plane.auth.tokens import hash_token, secret_text_matches
@@ -37,9 +38,19 @@ class WebSocketAuthentication:
 
 
 @dataclass(frozen=True, slots=True)
+class BrowserSessionRecord:
+    """Safe, read-only view of a browser session's authentication evidence."""
+
+    expires_at: datetime
+    epoch: int
+    authenticated_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
 class _BrowserSession:
     expires_at: datetime
     epoch: int
+    authenticated_at: datetime | None
 
 
 class BrowserSessionStore:
@@ -83,7 +94,19 @@ class BrowserSessionStore:
             self._on_revoke(digest)
         return True
 
-    def create(self, *, epoch: int | None = None) -> tuple[str, datetime]:
+    def create(
+        self,
+        *,
+        epoch: int | None = None,
+        authenticated_at: datetime | None = None,
+    ) -> tuple[str, datetime]:
+        """Create a bounded session and optionally attach strong-auth evidence.
+
+        ``authenticated_at`` is supplied only by the successful root/TOTP
+        login path.  Keeping the argument optional preserves callers that use
+        a session as a non-fresh administrative credential while making it
+        impossible for a read of an existing cookie to slide the timestamp.
+        """
         now = self._clock()
         self._prune(now)
         effective_epoch = self._epoch if epoch is None else epoch
@@ -93,7 +116,11 @@ class BrowserSessionStore:
             self._remove(oldest)
         secret = secrets.token_urlsafe(32)
         expires_at = now + self._ttl
-        self._sessions[hash_token(secret)] = _BrowserSession(expires_at, effective_epoch)
+        self._sessions[hash_token(secret)] = _BrowserSession(
+            expires_at,
+            effective_epoch,
+            as_utc(authenticated_at) if authenticated_at is not None else None,
+        )
         return secret, expires_at
 
     def authenticate(self, secret: str | None, *, epoch: int | None = None) -> datetime | None:
@@ -108,6 +135,66 @@ class BrowserSessionStore:
             return None
         return session.expires_at
 
+    def get_record(
+        self,
+        secret: str | None,
+        *,
+        epoch: int | None = None,
+    ) -> BrowserSessionRecord | None:
+        """Return authentication evidence without extending the session.
+
+        The legacy :meth:`authenticate` method intentionally keeps returning
+        only ``expires_at``.  New callers that need a sensitive-action gate use
+        this explicit record accessor instead.
+        """
+
+        now = self._clock()
+        self._prune(now)
+        if epoch is not None:
+            self.synchronize_epoch(epoch)
+        if not secret:
+            return None
+        session = self._sessions.get(hash_token(secret))
+        if session is None or session.epoch != self._epoch:
+            return None
+        return BrowserSessionRecord(
+            expires_at=session.expires_at,
+            epoch=session.epoch,
+            authenticated_at=session.authenticated_at,
+        )
+
+    # Explicit aliases make the safe record boundary discoverable to callers
+    # while retaining one implementation and the old ``authenticate`` return
+    # contract.
+    def record(
+        self,
+        secret: str | None,
+        *,
+        epoch: int | None = None,
+    ) -> BrowserSessionRecord | None:
+        return self.get_record(secret, epoch=epoch)
+
+    def get_context(
+        self,
+        secret: str | None,
+        *,
+        epoch: int | None = None,
+    ) -> AdminAuthContext | None:
+        record = self.get_record(secret, epoch=epoch)
+        if record is None or secret is None:
+            return None
+        return AdminAuthContext(
+            credential_kind="browser",
+            actor_ref=hash_token(secret),
+            auth_epoch=record.epoch,
+            authenticated_at=record.authenticated_at,
+        )
+
+    def now(self) -> datetime:
+        """Return the store clock value for dependency-level consistency."""
+
+        return self._clock()
+
     def invalidate(self, secret: str | None) -> bool:
         if not secret:
             return False
@@ -116,7 +203,7 @@ class BrowserSessionStore:
     def session_key(self, secret: str | None) -> str | None:
         """Return an authenticated digest suitable for in-memory ownership only."""
 
-        if self.authenticate(secret) is None or secret is None:
+        if self.get_record(secret) is None or secret is None:
             return None
         return hash_token(secret)
 

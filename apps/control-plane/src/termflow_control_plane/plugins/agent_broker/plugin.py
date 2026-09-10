@@ -33,12 +33,14 @@ from datetime import UTC, datetime, timedelta
 from typing import cast
 from uuid import UUID
 
+from fastapi.routing import APIRoute
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from termflow_control_plane.api.agent_admin import router as agent_admin_router
 from termflow_control_plane.api.agent_approvals import router as agent_approvals_router
 from termflow_control_plane.api.agent_capabilities import get_agent_capabilities
+from termflow_control_plane.api.agent_cleanup import router as agent_cleanup_router
 from termflow_control_plane.api.agent_conversations import router as agent_conversations_router
 from termflow_control_plane.api.agent_stream import router as agent_stream_router
 from termflow_control_plane.persistence.models import (
@@ -54,6 +56,9 @@ from termflow_control_plane.plugins.agent_broker.agent.inbox import (
 )
 from termflow_control_plane.plugins.agent_broker.agent.permissions import ApprovalPolicy
 from termflow_control_plane.plugins.agent_broker.agent.runs import AgentRunStateMachine
+from termflow_control_plane.plugins.agent_broker.agent.runtime_controller import (
+    AgentRuntimeController,
+)
 from termflow_control_plane.plugins.agent_broker.agent.runtime_registry import (
     AgentRuntimeRegistry,
 )
@@ -67,6 +72,11 @@ from termflow_control_plane.plugins.agent_broker.agent.turns import (
 from termflow_control_plane.plugins.agent_broker.agent.watches import (
     FiredTrigger,
     WatchEngine,
+)
+from termflow_control_plane.plugins.agent_broker.startup import (
+    AgentStartupCoordinator,
+    AgentStartupState,
+    Hook,
 )
 from termflow_control_plane.plugins.protocol import (
     BFeatureContext,
@@ -119,6 +129,7 @@ class AgentRecoveryReport:
     cleanup_jobs_completed: int = 0
     approvals_revoked: int = 0
     approvals_marked_unknown: int = 0
+    critical_failures: tuple[str, ...] = ()
 
 
 async def run_agent_recovery(
@@ -158,9 +169,9 @@ async def run_agent_recovery(
 
     # 1) Stale inbox claims: expired leases are fenced before anything else.
     try:
-        recovered = await (inbox_machine or InboxDeliveryStateMachine(
-            repositories.agent_inbox
-        )).recover_stale(now=observed)
+        recovered = await (
+            inbox_machine or InboxDeliveryStateMachine(repositories.agent_inbox)
+        ).recover_stale(now=observed)
         for envelope in recovered:
             if envelope.delivery_state == "pending":
                 report.inbox_recovered += 1
@@ -173,6 +184,7 @@ async def run_agent_recovery(
                 report.inbox_reconciled += 1
     except Exception as exc:
         logger.exception("Agent inbox recovery failed: %s", exc)
+        report.critical_failures += ("inbox_fencing",)
 
     # 2) Runs stuck mid-flight are fenced to unknown.
     run_state_machine = run_machine or AgentRunStateMachine(repositories.agent_runs)
@@ -182,11 +194,11 @@ async def run_agent_recovery(
                 await run_state_machine.mark_unknown(run.id)
                 report.runs_marked_unknown += 1
             except Exception as exc:
-                logger.exception(
-                    "Agent run %s could not be marked unknown: %s", run.id, exc
-                )
+                logger.exception("Agent run %s could not be marked unknown: %s", run.id, exc)
+                report.critical_failures += ("run_fencing",)
     except Exception as exc:
         logger.exception("Agent run recovery scan failed: %s", exc)
+        report.critical_failures += ("run_scan",)
 
     # 3) Pending cleanup tombstones are retried (or completed) in order.
     try:
@@ -203,13 +215,12 @@ async def run_agent_recovery(
     # 4) Orphaned approvals: pending -> revoked, approved -> unknown.
     if approval_policy is not None:
         try:
-            revoked, unknown = await approval_policy.recover_orphaned_approvals(
-                now=observed
-            )
+            revoked, unknown = await approval_policy.recover_orphaned_approvals(now=observed)
             report.approvals_revoked = revoked
             report.approvals_marked_unknown = unknown
         except Exception as exc:
             logger.exception("Agent approval recovery failed: %s", exc)
+            report.critical_failures += ("approval_fencing",)
 
     return report
 
@@ -244,8 +255,7 @@ async def run_cleanup_retry(
         try:
             if handler is None:
                 raise RuntimeError(
-                    "no cleanup handler registered for "
-                    f"target_kind={job.target_kind!r}"
+                    f"no cleanup handler registered for target_kind={job.target_kind!r}"
                 )
             await handler(job)
         except Exception as exc:
@@ -263,8 +273,18 @@ async def run_cleanup_retry(
             )
             retried += 1
         else:
-            await repositories.cleanup_jobs.complete(job.id, now=observed)
-            completed += 1
+            # A handler is B-owned evidence for every pending receipt in the
+            # legacy target-level tombstone path.  Mark those receipts before
+            # asking the repository to advance the aggregate; ``complete``
+            # now refuses a zero/pending-receipt false success.
+            await repositories.cleanup_jobs.confirm_pending_internal(
+                job.id,
+                now=observed,
+            )
+            if await repositories.cleanup_jobs.complete(job.id, now=observed) is not None:
+                completed += 1
+            else:
+                retried += 1
     return retried, completed
 
 
@@ -387,9 +407,7 @@ async def delete_backend_conversation(
     so the tombstone retry can attempt again.  Otherwise returns the
     adapter's outcome (``CONFIRMED`` or not).
     """
-    ref_row = await repositories.agent_backend_conversations.get_by_conversation(
-        conversation_id
-    )
+    ref_row = await repositories.agent_backend_conversations.get_by_conversation(conversation_id)
     if ref_row is None:
         return None
     conversation = await repositories.agent_conversations.get_by_id(conversation_id)
@@ -400,8 +418,7 @@ async def delete_backend_conversation(
     )
     if pipeline is None:
         raise BackendRuntimeUnavailableError(
-            f"conversation {conversation_id} has a backend session but no "
-            "mapped runtime pipeline"
+            f"conversation {conversation_id} has a backend session but no mapped runtime pipeline"
         )
     return await pipeline.adapter.delete_conversation(backend_ref_from_row(ref_row))
 
@@ -426,10 +443,8 @@ async def delete_binding_backend_sessions(
             binding_id, limit=200, offset=offset
         )
         for conversation in page:
-            ref_row = (
-                await repositories.agent_backend_conversations.get_by_conversation(
-                    conversation.id
-                )
+            ref_row = await repositories.agent_backend_conversations.get_by_conversation(
+                conversation.id
             )
             if ref_row is not None:
                 refs.append(backend_ref_from_row(ref_row))
@@ -441,23 +456,19 @@ async def delete_binding_backend_sessions(
     pipeline = registry.pipeline_for(binding_id) if registry is not None else None
     if pipeline is None:
         raise BackendRuntimeUnavailableError(
-            f"binding {binding_id} has backend sessions but no mapped "
-            "runtime pipeline"
+            f"binding {binding_id} has backend sessions but no mapped runtime pipeline"
         )
     failures: list[str] = []
     for ref in refs:
         result = await pipeline.adapter.delete_conversation(ref)
         if result.outcome is not BackendOutcome.CONFIRMED:
             failures.append(
-                result.message
-                or f"backend session {ref.provider_ref} deletion unconfirmed"
+                result.message or f"backend session {ref.provider_ref} deletion unconfirmed"
             )
     return failures
 
 
-async def _sweep_binding_agent_rows(
-    repositories: RepositoryBundle, binding_id: UUID
-) -> None:
+async def _sweep_binding_agent_rows(repositories: RepositoryBundle, binding_id: UUID) -> None:
     """Defensive sweep for the tombstone retry path: cancel a binding's
     watches (plan §17 cancels them on Term deletion; the retry path repeats
     the cancellation so a crash mid-delete never leaves a live watch)."""
@@ -645,8 +656,7 @@ async def deliver_fired_trigger(
     pipeline = registry.pipeline_for(trigger.watch.binding_id)
     if pipeline is None:
         logger.warning(
-            "Agent watch trigger %s: binding %s has no pipeline; "
-            "the inbox item stays pending",
+            "Agent watch trigger %s: binding %s has no pipeline; the inbox item stays pending",
             trigger.delivery.delivery_key,
             trigger.watch.binding_id,
         )
@@ -669,9 +679,7 @@ def build_watch_trigger_sink(
     clock = now or (lambda: datetime.now(UTC))
 
     async def on_fired(trigger: FiredTrigger) -> None:
-        await deliver_fired_trigger(
-            watch_engine, registry, trigger, observed_at=clock()
-        )
+        await deliver_fired_trigger(watch_engine, registry, trigger, observed_at=clock())
 
     return on_fired
 
@@ -719,6 +727,35 @@ async def watch_deadline_loop(
             return
 
 
+async def runtime_health_loop(
+    controller: AgentRuntimeController,
+    *,
+    tick_seconds: float,
+    stop: asyncio.Event,
+) -> None:
+    """Periodically reconcile runtime health and authority drift.
+
+    The controller's health cycle also revisits transiently unavailable
+    mappings after OpenCode/MCP reconnects.  It owns the fail-closed ordering
+    (unpublish, fence, then persist observed state).  This task remains a thin
+    retry loop so one unreachable runtime cannot kill the Agent plugin or the
+    core B process.
+    """
+    while True:
+        try:
+            await controller.run_health_cycle()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Agent runtime health sweep failed; retrying next tick")
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=tick_seconds)
+        except TimeoutError:
+            pass
+        if stop.is_set():
+            return
+
+
 class AgentBrokerPlugin:
     """First-party Agent Broker feature plugin.
 
@@ -751,10 +788,17 @@ class AgentBrokerPlugin:
     def __init__(self, *, cleanup_tick_seconds: float = _CLEANUP_TICK_SECONDS) -> None:
         self._watch_engine: WatchEngine | None = None
         self._runtime_registry: AgentRuntimeRegistry | None = None
+        self._runtime_controller: AgentRuntimeController | None = None
         self._sessions: async_sessionmaker[AsyncSession] | None = None
         self._watch_tick_seconds: float = 1.0
         self._watch_tick_task: asyncio.Task[None] | None = None
         self._watch_tick_stop: asyncio.Event | None = None
+        self._runtime_health_tick_seconds: float = 5.0
+        self._runtime_health_tick_task: asyncio.Task[None] | None = None
+        self._runtime_health_tick_stop: asyncio.Event | None = None
+        self._runtime_degraded_reason: str | None = None
+        self.startup_coordinator: AgentStartupCoordinator | None = None
+        self._startup_fencing: Hook | None = None
         self._repositories: RepositoryBundle | None = None
         self._cleanup_handlers: dict[str, CleanupJobHandler] = {}
         self._cleanup_tick_seconds: float = cleanup_tick_seconds
@@ -766,8 +810,10 @@ class AgentBrokerPlugin:
         *,
         watch_engine: WatchEngine,
         registry: AgentRuntimeRegistry,
+        controller: AgentRuntimeController | None = None,
         sessions: async_sessionmaker[AsyncSession],
         watch_tick_seconds: float,
+        runtime_health_tick_seconds: float = 5.0,
     ) -> None:
         """Receive the composition-root-built runtime services (M4.5 wiring).
 
@@ -777,8 +823,12 @@ class AgentBrokerPlugin:
         """
         self._watch_engine = watch_engine
         self._runtime_registry = registry
+        self._runtime_controller = controller
         self._sessions = sessions
         self._watch_tick_seconds = watch_tick_seconds
+        if runtime_health_tick_seconds <= 0:
+            raise ValueError("runtime_health_tick_seconds must be positive")
+        self._runtime_health_tick_seconds = runtime_health_tick_seconds
         # The cleanup handlers need the persistence bundle; it is rebuilt
         # from the same session factory the composition root used, so it
         # shares the same database (repositories are stateless wrappers).
@@ -815,11 +865,16 @@ class AgentBrokerPlugin:
         )
         for feature_router in (
             agent_admin_router,
+            agent_cleanup_router,
             agent_conversations_router,
             agent_stream_router,
             agent_approvals_router,
         ):
             for route in feature_router.routes:
+                if not isinstance(route, APIRoute):
+                    raise TypeError(f"Agent Broker router contains unsupported route {route!r}")
+                if route.methods is None:
+                    raise TypeError(f"Agent Broker route {route.path!r} has no HTTP method")
                 for method in route.methods:
                     routes.add_route(
                         route.path,
@@ -833,9 +888,7 @@ class AgentBrokerPlugin:
         """No event handlers yet; watch/inbox handlers land with M3."""
 
     def register_migrations(self, manifest: MigrationManifest) -> None:
-        manifest.add_revision(
-            MigrationRevision(id="0006", owner="agent_broker", dependencies=())
-        )
+        manifest.add_revision(MigrationRevision(id="0006", owner="agent_broker", dependencies=()))
         manifest.add_revision(
             MigrationRevision(id="0007", owner="agent_broker", dependencies=("0006",))
         )
@@ -848,8 +901,53 @@ class AgentBrokerPlugin:
         manifest.add_revision(
             MigrationRevision(id="0010", owner="agent_broker", dependencies=("0009",))
         )
+        manifest.add_revision(
+            MigrationRevision(id="0011", owner="agent_broker", dependencies=("0010",))
+        )
+        manifest.add_revision(
+            MigrationRevision(id="0012", owner="agent_broker", dependencies=("0011",))
+        )
+
+    def bind_startup_fencing(self, fencing: Hook) -> None:
+        self._startup_fencing = fencing
 
     async def startup(self, context: BFeatureContext) -> None:
+        if (
+            self._cleanup_handlers
+            and self._repositories is not None
+            and self._cleanup_tick_task is None
+        ):
+            self._cleanup_tick_stop = asyncio.Event()
+            self._cleanup_tick_task = asyncio.create_task(
+                cleanup_retry_loop(
+                    self._repositories,
+                    self._cleanup_handlers,
+                    tick_seconds=self._cleanup_tick_seconds,
+                    stop=self._cleanup_tick_stop,
+                ),
+                name="agent-cleanup-retry",
+            )
+        if self.startup_coordinator is None:
+
+            async def fence() -> object:
+                if self._startup_fencing is not None:
+                    return await self._startup_fencing()
+                if self._repositories is not None:
+                    return await run_agent_recovery(self._repositories)
+                return None
+
+            async def activate() -> object:
+                await self._activate_runtime_services(context)
+                return None
+
+            self.startup_coordinator = AgentStartupCoordinator(fence, backend=activate)
+        await self.startup_coordinator.recover()
+        result = await self.startup_coordinator.activate()
+        self._runtime_degraded_reason = result.reason_code
+        if result.state == AgentStartupState.DEGRADED and self._runtime_registry is not None:
+            await self._runtime_registry.stop_all()
+
+    async def _activate_runtime_services(self, context: BFeatureContext) -> None:
         """Start the attached runtime services in the spec §3a/§7 order.
 
         Restart recovery already fenced stale inbox claims and stuck runs
@@ -864,9 +962,49 @@ class AgentBrokerPlugin:
         if self._watch_engine is None or self._runtime_registry is None:
             return
         assert self._sessions is not None
+        self._runtime_degraded_reason = None
+        if self._runtime_controller is not None:
+            # Runtime authority is the startup gate: it performs the same
+            # desired/observed CAS and fail-closed checks as an API-triggered
+            # reconcile.  Individual offline runtimes become ``not_ready``;
+            # an unexpected controller/database failure leaves the Agent
+            # plugin degraded and prevents watch/pipeline activation.
+            try:
+                reconcile_results = await self._runtime_controller.reconcile_all()
+                for result in reconcile_results:
+                    if result.readiness != "ready":
+                        # Keep the registry's diagnostic surface compatible
+                        # with the pre-controller startup path.  The public
+                        # API exposes the bounded reason_code from observed
+                        # state; this value is internal/logging only.
+                        self._runtime_registry.unavailable_bindings[result.binding_id] = (
+                            f"attestation failed: {result.reason_code or result.readiness}"
+                        )
+            except Exception:
+                self._runtime_degraded_reason = "recovery_failed"
+                logger.exception("Agent runtime startup reconciliation failed")
+                try:
+                    await self._runtime_registry.stop_all()
+                except Exception:
+                    logger.exception("Agent runtime degraded cleanup failed")
+                raise
         await self._watch_engine.rebuild()
         await self._watch_engine.start()
-        await self._runtime_registry.start_all(await _list_active_bindings(self._sessions))
+        if self._runtime_controller is None:
+            # Compatibility path for isolated plugin tests/compositions that
+            # have not supplied the controller yet.  Production app wiring
+            # always takes the controller branch above.
+            await self._runtime_registry.start_all(await _list_active_bindings(self._sessions))
+        elif self._runtime_controller is not None:
+            self._runtime_health_tick_stop = asyncio.Event()
+            self._runtime_health_tick_task = asyncio.create_task(
+                runtime_health_loop(
+                    self._runtime_controller,
+                    tick_seconds=self._runtime_health_tick_seconds,
+                    stop=self._runtime_health_tick_stop,
+                ),
+                name="agent-runtime-health",
+            )
         self._watch_tick_stop = asyncio.Event()
         self._watch_tick_task = asyncio.create_task(
             watch_deadline_loop(
@@ -876,7 +1014,11 @@ class AgentBrokerPlugin:
             ),
             name="agent-watch-deadlines",
         )
-        if self._cleanup_handlers and self._repositories is not None:
+        if (
+            self._cleanup_handlers
+            and self._repositories is not None
+            and self._cleanup_tick_task is None
+        ):
             self._cleanup_tick_stop = asyncio.Event()
             self._cleanup_tick_task = asyncio.create_task(
                 cleanup_retry_loop(
@@ -897,6 +1039,18 @@ class AgentBrokerPlugin:
             cleanup_stop.set()
             try:
                 await cleanup_task
+            except asyncio.CancelledError:
+                pass
+        health_task, health_stop = (
+            self._runtime_health_tick_task,
+            self._runtime_health_tick_stop,
+        )
+        self._runtime_health_tick_task = None
+        self._runtime_health_tick_stop = None
+        if health_task is not None and health_stop is not None:
+            health_stop.set()
+            try:
+                await health_task
             except asyncio.CancelledError:
                 pass
         tick_task, tick_stop = self._watch_tick_task, self._watch_tick_stop

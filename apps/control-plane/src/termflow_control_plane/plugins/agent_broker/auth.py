@@ -31,7 +31,11 @@ SCOPE_TERMINAL_WRITE = "terminal.write"
 SCOPE_PATH_OBSERVE = "terminal.path_observe"
 
 #: Binding states under which the binding's MCP capability may serve tokens.
-_ACTIVE_BINDING_STATES = frozenset({"pending", "ready"})
+# ``enabled`` is the canonical 0011 desired state.  Keep the legacy values
+# during the compatibility window so pre-migration rows and direct callers
+# continue to fail/serve according to their existing state until migration
+# maps them explicitly.
+_ACTIVE_BINDING_STATES = frozenset({"pending", "ready", "enabled"})
 
 
 class AgentTokenAuthError(Exception):

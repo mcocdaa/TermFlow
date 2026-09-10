@@ -531,6 +531,7 @@ async def test_sse_events_advance_run_and_persist_canonical_events(
         assert len(assistant_messages) == 1
         assert assistant_messages[0].kind == "text"
         assert assistant_messages[0].is_final is True
+        assert assistant_messages[0].body == completed_text
         assert (
             assistant_messages[0].body_digest
             == hashlib.sha256(completed_text.encode("utf-8")).hexdigest()

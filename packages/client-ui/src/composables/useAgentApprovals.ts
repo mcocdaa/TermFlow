@@ -10,6 +10,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useClientRuntime } from '../runtime'
 import { useBottomToast } from './useBottomToast'
 import { useSession } from './useSession'
+import { useSensitiveAuthorization } from './useSensitiveAuthorization'
 
 export interface UseAgentApprovalsOptions {
   /** Restrict the list to one conversation (conversation-scoped panel). */
@@ -75,6 +76,7 @@ export function resetApprovalEntryCache(): void {
 
 export function useAgentApprovals(options: UseAgentApprovalsOptions = {}) {
   const runtime = useClientRuntime()
+  const authorization = useSensitiveAuthorization()
   const toast = useBottomToast()
   const { clearSessionState } = useSession()
   const router = useRouter()
@@ -131,6 +133,7 @@ export function useAgentApprovals(options: UseAgentApprovalsOptions = {}) {
 
   /** 409/410 → refresh + toast; 404 → drop the entry; auth epoch → re-login. */
   async function handleError(error: unknown, approvalId: string) {
+    if (error instanceof Error && error.message === 'sensitive_authorization_cancelled') return
     if (!(error instanceof ApiError)) {
       toast.show({ text: '操作失败，请稍后重试。', tone: 'error' })
       return
@@ -156,14 +159,17 @@ export function useAgentApprovals(options: UseAgentApprovalsOptions = {}) {
       await load()
       return
     }
-    toast.show({ text: error.message, tone: 'error' })
+    toast.show({ text: error.status === 428 ? '身份验证已失效，请重新操作。' : '操作失败，请稍后重试。', tone: 'error' })
   }
 
   async function decide(approvalId: string, decision: 'approve' | 'deny') {
     if (isBusy(approvalId)) return
     setBusy(approvalId, true)
     try {
-      await approvalsApi.decide(approvalId, decision, controller?.signal)
+      const signal = controller?.signal
+      const operation = () => approvalsApi.decide(approvalId, decision, signal)
+      if (decision === 'approve') await authorization.run(operation, 'approval_reauthentication_required', signal)
+      else await operation()
       toast.show({ text: decision === 'approve' ? '已批准。' : '已拒绝。', tone: 'success' })
       await load()
     } catch (error) {

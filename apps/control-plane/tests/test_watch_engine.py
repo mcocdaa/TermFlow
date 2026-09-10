@@ -32,6 +32,7 @@ from termflow_control_plane.persistence.repositories import (
 )
 from termflow_control_plane.plugins.agent_broker.agent.watches import (
     CursorAcceptance,
+    GapReconciliation,
     ObservationCursorStore,
     WatchContract,
     WatchEngine,
@@ -40,6 +41,7 @@ from termflow_control_plane.plugins.agent_broker.agent.watches import (
 from termflow_protocol.common import MessageType, WireMessage
 from termflow_protocol.mcp import PaneCursor, WatchCondition, WatchConditionKind
 from termflow_protocol.messages import PaneOutputPayload
+from termflow_protocol.topology import PaneSnapshot, TopologySnapshot, WindowSnapshot
 
 
 class Clock:
@@ -124,6 +126,39 @@ def _condition(kind: WatchConditionKind, **overrides) -> WatchCondition:
         values["idle_after_seconds"] = 60
     values.update(overrides)
     return WatchCondition(**values)
+
+
+def _topology(*, dead: bool = False, include_pane: bool = True) -> TopologySnapshot:
+    panes = (
+        [
+            PaneSnapshot(
+                pane_id="%0",
+                window_id="@0",
+                index=0,
+                title="test",
+                width=80,
+                height=24,
+                active=True,
+                dead=dead,
+            )
+        ]
+        if include_pane
+        else []
+    )
+    return TopologySnapshot(
+        session_id="$0",
+        session_name="test",
+        revision=2 if dead or not include_pane else 1,
+        windows=[
+            WindowSnapshot(
+                window_id="@0",
+                index=0,
+                name="test",
+                active=True,
+                panes=panes,
+            )
+        ],
+    )
 
 
 async def _seed_watch(
@@ -288,6 +323,90 @@ async def test_engine_edge_triggers_from_creation_cursor(
         )
         assert acceptance is CursorAcceptance.DUPLICATE
         await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_gap_reconciliation_calls_the_capture_port_and_wakes_to_inspect(
+    repositories: RepositoryBundle,
+) -> None:
+    binding, conversation_id = await _seed_binding_and_conversation(repositories)
+    stream = uuid4()
+    start = _cursor(binding.term_id, seq=1, stream_id=stream)
+    await _seed_watch(
+        repositories,
+        binding,
+        conversation_id,
+        condition=_condition(WatchConditionKind.OUTPUT_CONTAINS, match="never"),
+        start_cursor=start,
+    )
+    calls: list[tuple[UUID, str]] = []
+
+    async def capture(instance_id: UUID, pane_id: str) -> GapReconciliation:
+        calls.append((instance_id, pane_id))
+        return GapReconciliation(
+            cursor=_cursor(instance_id, pane_id, seq=4, stream_id=stream),
+            content="bounded snapshot",
+            byte_count=16,
+        )
+
+    clock = Clock()
+    engine = _engine(repositories, clock=clock, capture=capture)
+    await engine.rebuild()
+    assert await engine.evaluate_live_event(
+        instance_id=binding.term_id,
+        pane_id="%0",
+        stream_id=stream,
+        seq=2,
+        data=b"ordinary output",
+        observed_at=clock(),
+    ) == []
+
+    triggers = await engine.evaluate_live_event(
+        instance_id=binding.term_id,
+        pane_id="%0",
+        stream_id=stream,
+        seq=4,
+        data=b"skipped seq 3",
+        observed_at=clock(),
+    )
+
+    assert calls == [(binding.term_id, "%0")]
+    assert len(triggers) == 1
+    assert triggers[0].evidence.source == "gap_snapshot"
+    assert triggers[0].evidence.cursor is not None
+    assert triggers[0].evidence.cursor.seq == 4
+
+
+@pytest.mark.asyncio
+async def test_pane_exit_trigger_builds_typed_input_without_an_output_cursor(
+    repositories: RepositoryBundle,
+) -> None:
+    binding, conversation_id = await _seed_binding_and_conversation(repositories)
+    await _seed_watch(
+        repositories,
+        binding,
+        conversation_id,
+        condition=_condition(WatchConditionKind.PANE_EXITED),
+        start_cursor=None,
+    )
+    clock = Clock()
+    engine = _engine(repositories, clock=clock)
+    await engine.rebuild()
+    assert await engine.evaluate_topology_change(
+        binding.term_id, _topology(), clock()
+    ) == []
+
+    triggers = await engine.evaluate_topology_change(
+        binding.term_id,
+        _topology(dead=True),
+        clock(),
+    )
+
+    assert len(triggers) == 1
+    assert triggers[0].evidence.cursor is None
+    input_item = engine.build_input(triggers[0], observed_at=clock())
+    assert input_item is not None
+    assert str(binding.term_id) in (input_item.payload.continuation or "")
 
 
 # ---------------------------------------------------------------------------

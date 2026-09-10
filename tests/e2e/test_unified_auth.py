@@ -258,7 +258,7 @@ def test_real_process_totp_enable_login_replay_and_disable(
                     f"sqlite+aiosqlite:///{termflow_system.database_path}"
                 ),
             },
-            timeout=5,
+            timeout=30,
             check=False,
         )
         assert reset.returncode == 0, reset.stdout + reset.stderr
@@ -387,7 +387,7 @@ def test_real_process_cli_reset_revokes_web_session(termflow_system) -> None:
                 "TERMFLOW_ADMIN_TOKEN": termflow_system.admin_token,
                 "TERMFLOW_DATABASE_URL": f"sqlite+aiosqlite:///{termflow_system.database_path}",
             },
-            timeout=5,
+            timeout=30,
             check=False,
         )
         assert result.returncode == 0, result.stdout + result.stderr

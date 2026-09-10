@@ -1,16 +1,17 @@
 import type { ComputerListResponse, ComputerSummary, EnrollmentCreateResponse } from '@termflow/client-contracts'
-import type { ApiRequest, ApiRequestOptions } from '../http/types'
+import type { ApiRequest, ApiRequestOptions, ApiRequestResponse } from '../http/types'
+import { deleteResource } from './cleanup'
 
 function withSignal(options: ApiRequestOptions, signal: AbortSignal | undefined): ApiRequestOptions {
   if (signal !== undefined) options.signal = signal
   return options
 }
 
-export function createComputersApi(request: ApiRequest) {
+export function createComputersApi(request: ApiRequest, requestResponse: ApiRequestResponse) {
   return {
     list: (signal?: AbortSignal) => request<ComputerListResponse>('/api/v1/computers', withSignal({}, signal)),
     get: (id: string, signal?: AbortSignal) => request<ComputerSummary>(`/api/v1/computers/${encodeURIComponent(id)}`, withSignal({}, signal)),
-    remove: (id: string, signal?: AbortSignal) => request<void>(`/api/v1/computers/${encodeURIComponent(id)}`, withSignal({
+    remove: (id: string, signal?: AbortSignal) => deleteResource(requestResponse, `/api/v1/computers/${encodeURIComponent(id)}`, withSignal({
       method: 'DELETE',
     }, signal)),
     rename: (id: string, displayName: string, signal?: AbortSignal) => request<ComputerSummary>(`/api/v1/computers/${encodeURIComponent(id)}`, withSignal({

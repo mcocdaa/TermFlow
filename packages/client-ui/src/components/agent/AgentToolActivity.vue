@@ -11,7 +11,10 @@
     >
       <span class="agent-tool-activity__name">{{ displayName }}</span>
       <span class="agent-tool-activity__status" data-agent-tool-status-label>{{ statusLabel }}</span>
-      <span class="agent-tool-activity__chevron" aria-hidden="true">{{ expanded ? '▾' : '▸' }}</span>
+      <span class="agent-tool-activity__chevron" aria-hidden="true">
+        <ChevronDown v-if="expanded" :size="15" />
+        <ChevronRight v-else :size="15" />
+      </span>
     </button>
     <div v-else class="agent-tool-activity__row">
       <span class="agent-tool-activity__name">{{ displayName }}</span>
@@ -32,6 +35,7 @@
 //: become elements (§6.2). Calls still running carry no summary and render
 //: a static row (nothing to expand).
 import { computed, ref, useId } from 'vue'
+import { ChevronDown, ChevronRight } from '@lucide/vue'
 import { stripAnsiOsc, type AgentToolCallState } from '@termflow/client-core'
 
 const props = defineProps<{

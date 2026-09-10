@@ -1,4 +1,4 @@
-import { clientRoutes, type ClientRuntime } from '@termflow/client-ui'
+import { canonicalTerminalQuery, clientRoutes, isCanonicalTerminalQuery, type ClientRuntime } from '@termflow/client-ui'
 import { createMemoryHistory, createRouter, createWebHashHistory } from 'vue-router'
 import NativeConnectView from './views/NativeConnectView.vue'
 import NativeDeviceAuthorizeView from './views/NativeDeviceAuthorizeView.vue'
@@ -24,6 +24,9 @@ export function createTauriRouter(runtime: ClientRuntime) {
   ]
   const router = createRouter({ history: import.meta.env.VITEST ? createMemoryHistory() : createWebHashHistory(), routes })
   router.beforeEach(async (to) => {
+    if (to.meta.terminal && !isCanonicalTerminalQuery(to.query)) {
+      return { path: to.path, query: canonicalTerminalQuery(to.query), hash: to.hash, replace: true }
+    }
     if (!to.meta.requiresAuth) return true
     try {
       // A hung native command must never leave the app on a blank page: if the

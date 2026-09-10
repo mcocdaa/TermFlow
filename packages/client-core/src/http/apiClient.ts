@@ -94,14 +94,14 @@ export function createApiClient(transport: HttpTransport) {
   return {
     request,
     requestResponse,
-    agents: createAgentsApi(request),
+    agents: createAgentsApi(request, requestResponse),
     sessions: createSessionApi(request),
     dashboard: createDashboardApi(request),
-    computers: createComputersApi(request),
+    computers: createComputersApi(request, requestResponse),
     security: createSecurityApi(request),
     oauth: createOAuthApi(request),
     clients: createClientsApi(request),
-    terms: createTermsApi(request),
+    terms: createTermsApi(request, requestResponse),
   }
 }
 

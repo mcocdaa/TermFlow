@@ -35,6 +35,7 @@ from termflow_control_plane.plugins.agent_broker.agent.terminal_ports import (
 from termflow_control_plane.plugins.agent_broker.api.mcp_server import (
     MCP_STREAMABLE_HTTP_PATH,
     build_mcp_server,
+    check_tool_config_drift,
     principal_override,
 )
 from termflow_control_plane.plugins.agent_broker.auth import (
@@ -377,6 +378,18 @@ def _build_server(repositories: RepositoryBundle, commands: FakeCommands) -> MCP
         token_auth=AgentTokenAuthenticator(repositories),
         sessions=repositories.session_factory,  # type: ignore[attr-defined]
         commands=commands,
+    )
+
+
+def test_tool_config_drift_accepts_namespaced_wildcard_allowlist() -> None:
+    """The OpenCode server prefix is covered by the frozen wildcard policy."""
+    check_tool_config_drift(
+        {
+            "termflow_list_panes",
+            "termflow_pane_read",
+            "termflow_pane_send_text",
+        },
+        {"termflow_*"},
     )
 
 

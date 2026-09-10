@@ -10,6 +10,7 @@ and owns the per-binding ``AgentPipelineService`` lifecycle (``start_all`` /
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -17,6 +18,7 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 from pydantic import SecretStr
+from sqlalchemy.exc import SQLAlchemyError
 from termflow_control_plane.config import Settings
 from termflow_control_plane.persistence.database import Database
 from termflow_control_plane.persistence.models import AgentBinding
@@ -34,9 +36,14 @@ from termflow_control_plane.plugins.agent_broker.agent.backend import (
 from termflow_control_plane.plugins.agent_broker.agent.pipeline import (
     AgentPipelineService,
 )
+from termflow_control_plane.plugins.agent_broker.agent.provider_catalog import (
+    ProviderCatalog,
+    ProviderCatalogEntry,
+)
 from termflow_control_plane.plugins.agent_broker.agent.runtime_registry import (
     PINNED_OPENCODE_BACKEND_VERSION,
     AgentRuntimeRegistry,
+    RuntimeShutdownError,
 )
 from termflow_control_plane.plugins.agent_broker.agent.runtime_supervisor import (
     RuntimeNotReadyError,
@@ -54,6 +61,31 @@ from termflow_control_plane.plugins.protocol import (
 
 RUNTIME_REF = "runtime-1"
 CAPABILITY_REF = "capability-1"
+CANONICAL_PROFILE_CONFIG = (
+    '{"model_id":"deepseek-v4-flash","provider_id":"deepseek"}'
+)
+TEST_PROVIDER_CATALOG = ProviderCatalog(
+    (
+        ProviderCatalogEntry(
+            provider_id="deepseek",
+            model_ids=frozenset(
+                {"deepseek-v4-flash", "deepseek-reasoner"}
+            ),
+            endpoint_origin="https://api.deepseek.com",
+            region="global",
+            retention_terms="no more than 30 days",
+            retention_version="2026-09-01",
+            no_training=True,
+            credential_source="OPENAI_API_KEY",
+            policy_version="2026-09-01",
+        ),
+    )
+)
+
+
+async def valid_profile_config(profile_id: UUID) -> object | None:
+    del profile_id
+    return CANONICAL_PROFILE_CONFIG
 
 
 # ---------------------------------------------------------------------------
@@ -82,13 +114,14 @@ def hub() -> AgentStreamHub:
 def make_binding(
     *,
     binding_id: UUID | None = None,
+    profile_id: UUID | None = None,
     runtime_ref: str | None = RUNTIME_REF,
     runtime_epoch: int | None = 1,
     capability_ref: str | None = CAPABILITY_REF,
 ) -> AgentBinding:
     return AgentBinding(
         id=binding_id or uuid4(),
-        profile_id=uuid4(),
+        profile_id=profile_id or uuid4(),
         term_id=uuid4(),
         status="ready",
         runtime_ref=runtime_ref,
@@ -183,6 +216,8 @@ def make_registry(
     supervisor: SupervisorConnector | None = None,
     endpoint_provider=None,
     adapter_factory=None,
+    profile_config_provider=valid_profile_config,
+    provider_catalog: ProviderCatalog = TEST_PROVIDER_CATALOG,
 ) -> AgentRuntimeRegistry:
     return AgentRuntimeRegistry(
         settings=settings,
@@ -192,12 +227,404 @@ def make_registry(
         supervisor=supervisor,
         endpoint_provider=endpoint_provider,
         adapter_factory=adapter_factory,
+        profile_config_provider=profile_config_provider,
+        provider_catalog=provider_catalog,
     )
 
 
 # ---------------------------------------------------------------------------
 # Tests: binding -> adapter mapping.
 # ---------------------------------------------------------------------------
+
+
+async def test_production_profile_provider_loads_selected_config_from_repository(
+    settings: Settings,
+    repositories: RepositoryBundle,
+    hub: AgentStreamHub,
+) -> None:
+    profile = await repositories.agent_profiles.create(
+        display_name="repository-backed-profile",
+        backend_kind="opencode",
+        config=CANONICAL_PROFILE_CONFIG,
+    )
+    received: dict[str, Any] = {}
+
+    def factory(**kwargs: Any) -> FakeAdapter:
+        received.update(kwargs)
+        return FakeAdapter(**kwargs)
+
+    registry = AgentRuntimeRegistry(
+        settings=settings,
+        repositories=repositories,
+        sessions=repositories.session_factory,
+        hub=hub,
+        supervisor=None,
+        adapter_factory=factory,
+        provider_catalog=TEST_PROVIDER_CATALOG,
+    )
+
+    await registry.build_pipeline(make_binding(profile_id=profile.id))
+
+    assert received["provider_id"] == "deepseek"
+    assert received["model_id"] == "deepseek-v4-flash"
+    await registry.stop_all()
+
+
+async def test_selected_profile_config_is_forwarded_to_adapter_factory(
+    settings: Settings,
+    repositories: RepositoryBundle,
+    hub: AgentStreamHub,
+) -> None:
+    profile_id = uuid4()
+    requested_profile_ids: list[UUID] = []
+    received: dict[str, Any] = {}
+
+    async def selected_profile_config(selected_profile_id: UUID) -> object | None:
+        requested_profile_ids.append(selected_profile_id)
+        return {"provider_id": "deepseek", "model_id": "deepseek-reasoner"}
+
+    def factory(**kwargs: Any) -> FakeAdapter:
+        received.update(kwargs)
+        return FakeAdapter(**kwargs)
+
+    registry = make_registry(
+        settings,
+        repositories,
+        hub,
+        profile_config_provider=selected_profile_config,
+        adapter_factory=factory,
+    )
+
+    await registry.build_pipeline(make_binding(profile_id=profile_id))
+
+    assert requested_profile_ids == [profile_id]
+    assert received["provider_id"] == "deepseek"
+    assert received["model_id"] == "deepseek-reasoner"
+    await registry.stop_all()
+
+
+async def test_missing_repository_profile_fails_before_adapter_or_publish(
+    settings: Settings,
+    repositories: RepositoryBundle,
+    hub: AgentStreamHub,
+) -> None:
+    created: list[FakeAdapter] = []
+
+    def factory(**kwargs: Any) -> FakeAdapter:
+        adapter = FakeAdapter(**kwargs)
+        created.append(adapter)
+        return adapter
+
+    registry = AgentRuntimeRegistry(
+        settings=settings,
+        repositories=repositories,
+        sessions=repositories.session_factory,
+        hub=hub,
+        supervisor=None,
+        adapter_factory=factory,
+        provider_catalog=TEST_PROVIDER_CATALOG,
+    )
+    binding = make_binding()
+
+    with pytest.raises(
+        RuntimeNotReadyError,
+        match=r"^agent profile is missing; activation fails closed$",
+    ):
+        await registry.build_pipeline(binding)
+
+    assert created == []
+    assert registry.pipeline_for(binding.id) is None
+
+
+async def test_unexpected_profile_provider_error_propagates_without_publish(
+    settings: Settings,
+    repositories: RepositoryBundle,
+    hub: AgentStreamHub,
+) -> None:
+    created: list[FakeAdapter] = []
+    programming_error = RuntimeError("programming-secret-placeholder")
+
+    async def failed_profile_config(profile_id: UUID) -> object | None:
+        del profile_id
+        raise programming_error
+
+    def factory(**kwargs: Any) -> FakeAdapter:
+        adapter = FakeAdapter(**kwargs)
+        created.append(adapter)
+        return adapter
+
+    registry = make_registry(
+        settings,
+        repositories,
+        hub,
+        profile_config_provider=failed_profile_config,
+        adapter_factory=factory,
+    )
+    binding = make_binding()
+
+    with pytest.raises(RuntimeError) as captured:
+        await registry.build_pipeline(binding)
+
+    assert captured.value is programming_error
+    assert not isinstance(captured.value, RuntimeNotReadyError)
+    assert created == []
+    assert registry.pipeline_for(binding.id) is None
+
+
+async def test_sqlalchemy_profile_lookup_failure_is_stable_without_publish(
+    settings: Settings,
+    repositories: RepositoryBundle,
+    hub: AgentStreamHub,
+) -> None:
+    created: list[FakeAdapter] = []
+    database_error = SQLAlchemyError("database-secret-placeholder")
+
+    async def failed_profile_config(profile_id: UUID) -> object | None:
+        del profile_id
+        raise database_error
+
+    def factory(**kwargs: Any) -> FakeAdapter:
+        adapter = FakeAdapter(**kwargs)
+        created.append(adapter)
+        return adapter
+
+    registry = make_registry(
+        settings,
+        repositories,
+        hub,
+        profile_config_provider=failed_profile_config,
+        adapter_factory=factory,
+    )
+    binding = make_binding()
+
+    with pytest.raises(
+        RuntimeNotReadyError,
+        match=r"^agent profile lookup failed; activation fails closed$",
+    ) as captured:
+        await registry.build_pipeline(binding)
+
+    assert "database-secret-placeholder" not in str(captured.value)
+    assert created == []
+    assert registry.pipeline_for(binding.id) is None
+
+
+async def test_legacy_profile_config_fails_before_adapter_or_publish(
+    settings: Settings,
+    repositories: RepositoryBundle,
+    hub: AgentStreamHub,
+) -> None:
+    created: list[FakeAdapter] = []
+    secret = "legacy-secret-placeholder"
+
+    async def legacy_profile_config(profile_id: UUID) -> object | None:
+        del profile_id
+        return f'{{"model":"default","credential":"{secret}"}}'
+
+    def factory(**kwargs: Any) -> FakeAdapter:
+        adapter = FakeAdapter(**kwargs)
+        created.append(adapter)
+        return adapter
+
+    registry = make_registry(
+        settings,
+        repositories,
+        hub,
+        profile_config_provider=legacy_profile_config,
+        adapter_factory=factory,
+    )
+    binding = make_binding()
+
+    with pytest.raises(
+        RuntimeNotReadyError,
+        match=(
+            r"^agent profile configuration is invalid; activation fails closed$"
+        ),
+    ) as captured:
+        await registry.build_pipeline(binding)
+
+    assert secret not in str(captured.value)
+    assert created == []
+    assert registry.pipeline_for(binding.id) is None
+
+
+@pytest.mark.parametrize(
+    "profile_config",
+    [
+        {"provider_id": "unknown-provider", "model_id": "deepseek-v4-flash"},
+        {"provider_id": "deepseek", "model_id": "unknown-model"},
+    ],
+)
+async def test_unknown_profile_provider_or_model_fails_before_adapter_or_publish(
+    settings: Settings,
+    repositories: RepositoryBundle,
+    hub: AgentStreamHub,
+    profile_config: dict[str, str],
+) -> None:
+    created: list[FakeAdapter] = []
+
+    async def selected_profile_config(profile_id: UUID) -> object | None:
+        del profile_id
+        return profile_config
+
+    def factory(**kwargs: Any) -> FakeAdapter:
+        adapter = FakeAdapter(**kwargs)
+        created.append(adapter)
+        return adapter
+
+    registry = make_registry(
+        settings,
+        repositories,
+        hub,
+        profile_config_provider=selected_profile_config,
+        adapter_factory=factory,
+    )
+    binding = make_binding()
+
+    with pytest.raises(
+        RuntimeNotReadyError,
+        match=(
+            r"^agent profile provider or model is unavailable; "
+            r"activation fails closed$"
+        ),
+    ):
+        await registry.build_pipeline(binding)
+
+    assert created == []
+    assert registry.pipeline_for(binding.id) is None
+
+
+async def test_incomplete_provider_catalog_fails_before_adapter_or_publish(
+    settings: Settings,
+    repositories: RepositoryBundle,
+    hub: AgentStreamHub,
+) -> None:
+    created: list[FakeAdapter] = []
+
+    def factory(**kwargs: Any) -> FakeAdapter:
+        adapter = FakeAdapter(**kwargs)
+        created.append(adapter)
+        return adapter
+
+    registry = make_registry(
+        settings,
+        repositories,
+        hub,
+        provider_catalog=ProviderCatalog(()),
+        adapter_factory=factory,
+    )
+    binding = make_binding()
+
+    with pytest.raises(
+        RuntimeNotReadyError,
+        match=(
+            r"^agent profile provider or model is unavailable; "
+            r"activation fails closed$"
+        ),
+    ):
+        await registry.build_pipeline(binding)
+
+    assert created == []
+    assert registry.pipeline_for(binding.id) is None
+
+
+async def test_default_incomplete_settings_catalog_fails_closed(
+    settings: Settings,
+    repositories: RepositoryBundle,
+    hub: AgentStreamHub,
+) -> None:
+    profile = await repositories.agent_profiles.create(
+        display_name="profile-with-incomplete-deployment-catalog",
+        backend_kind="opencode",
+        config=CANONICAL_PROFILE_CONFIG,
+    )
+    created: list[FakeAdapter] = []
+
+    def factory(**kwargs: Any) -> FakeAdapter:
+        adapter = FakeAdapter(**kwargs)
+        created.append(adapter)
+        return adapter
+
+    registry = AgentRuntimeRegistry(
+        settings=settings,
+        repositories=repositories,
+        sessions=repositories.session_factory,
+        hub=hub,
+        supervisor=None,
+        adapter_factory=factory,
+    )
+    binding = make_binding(profile_id=profile.id)
+
+    with pytest.raises(
+        RuntimeNotReadyError,
+        match=(
+            r"^agent profile provider or model is unavailable; "
+            r"activation fails closed$"
+        ),
+    ):
+        await registry.build_pipeline(binding)
+
+    assert created == []
+    assert registry.pipeline_for(binding.id) is None
+
+
+async def test_different_profile_configs_produce_different_adapter_model_kwargs(
+    settings: Settings,
+    repositories: RepositoryBundle,
+    hub: AgentStreamHub,
+) -> None:
+    first_profile_id = uuid4()
+    second_profile_id = uuid4()
+    configs: dict[UUID, object] = {
+        first_profile_id: {
+            "provider_id": "deepseek",
+            "model_id": "deepseek-v4-flash",
+        },
+        second_profile_id: {
+            "provider_id": "deepseek",
+            "model_id": "deepseek-reasoner",
+        },
+    }
+    created: list[FakeAdapter] = []
+
+    async def selected_profile_config(profile_id: UUID) -> object | None:
+        return configs.get(profile_id)
+
+    def factory(**kwargs: Any) -> FakeAdapter:
+        adapter = FakeAdapter(**kwargs)
+        created.append(adapter)
+        return adapter
+
+    def endpoint_provider(runtime_ref: RuntimeRef) -> tuple[str, str]:
+        return (
+            f"http://endpoint/{runtime_ref}",
+            f"/workspaces/{runtime_ref}",
+        )
+
+    registry = make_registry(
+        settings,
+        repositories,
+        hub,
+        profile_config_provider=selected_profile_config,
+        endpoint_provider=endpoint_provider,
+        adapter_factory=factory,
+    )
+
+    await registry.build_pipeline(
+        make_binding(profile_id=first_profile_id, runtime_ref="runtime-flash")
+    )
+    await registry.build_pipeline(
+        make_binding(profile_id=second_profile_id, runtime_ref="runtime-reasoner")
+    )
+
+    assert [adapter.kwargs["provider_id"] for adapter in created] == [
+        "deepseek",
+        "deepseek",
+    ]
+    assert [adapter.kwargs["model_id"] for adapter in created] == [
+        "deepseek-v4-flash",
+        "deepseek-reasoner",
+    ]
+    await registry.stop_all()
 
 
 async def test_build_pipeline_maps_binding_to_adapter(
@@ -589,6 +1016,133 @@ async def test_stop_all_stops_pipelines_and_closes_every_adapter(
     assert registry.pipeline_for(uuid4()) is None
 
 
+async def test_stop_binding_only_stops_the_selected_pipeline(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    created: list[FakeAdapter] = []
+
+    def factory(**kwargs: Any) -> FakeAdapter:
+        adapter = FakeAdapter(**kwargs)
+        created.append(adapter)
+        return adapter
+
+    def provider(runtime_ref: RuntimeRef) -> tuple[str, str]:
+        return (f"http://endpoint/{runtime_ref}", f"/workspaces/{runtime_ref}")
+
+    registry = make_registry(
+        settings,
+        repositories,
+        hub,
+        endpoint_provider=provider,
+        adapter_factory=factory,
+    )
+    first = make_binding()
+    second = make_binding(runtime_ref="runtime-2")
+    await registry.start_all([first, second])
+
+    assert await registry.stop_binding(first.id) is True
+    assert created[0].closed is True
+    assert created[1].closed is False
+    assert registry.pipeline_for(first.id) is None
+    assert registry.pipeline_for(second.id) is not None
+    assert await registry.stop_binding(uuid4()) is False
+
+    await registry.stop_all()
+    assert created[1].closed is True
+
+
+async def test_stop_bindings_unmaps_all_and_continues_after_one_shutdown_failure(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    created: list[FakeAdapter] = []
+
+    class FailingCloseAdapter(FakeAdapter):
+        async def close(self) -> None:
+            self.closed = True
+            raise RuntimeError("shutdown-secret-placeholder")
+
+    def factory(**kwargs: Any) -> FakeAdapter:
+        adapter: FakeAdapter
+        if not created:
+            adapter = FailingCloseAdapter(**kwargs)
+        else:
+            adapter = FakeAdapter(**kwargs)
+        created.append(adapter)
+        return adapter
+
+    def provider(runtime_ref: RuntimeRef) -> tuple[str, str]:
+        return (f"http://endpoint/{runtime_ref}", f"/workspaces/{runtime_ref}")
+
+    registry = make_registry(
+        settings,
+        repositories,
+        hub,
+        endpoint_provider=provider,
+        adapter_factory=factory,
+    )
+    first = make_binding()
+    second = make_binding(runtime_ref="runtime-2")
+    await registry.start_all([first, second])
+    registry.unavailable_bindings[first.id] = "stale"
+    registry.unavailable_bindings[second.id] = "stale"
+
+    with pytest.raises(RuntimeShutdownError) as captured:
+        await registry.stop_bindings((first.id, second.id))
+
+    assert captured.value.failure_count == 1
+    assert "shutdown-secret-placeholder" not in str(captured.value)
+    assert registry.pipeline_for(first.id) is None
+    assert registry.pipeline_for(second.id) is None
+    assert first.id not in registry.unavailable_bindings
+    assert second.id not in registry.unavailable_bindings
+    assert created[0].closed is True
+    assert created[1].closed is True
+
+
+async def test_stop_all_continues_after_one_shutdown_failure(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    created: list[FakeAdapter] = []
+
+    class FailingCloseAdapter(FakeAdapter):
+        async def close(self) -> None:
+            self.closed = True
+            raise RuntimeError("shutdown-secret-placeholder")
+
+    def factory(**kwargs: Any) -> FakeAdapter:
+        adapter: FakeAdapter
+        if not created:
+            adapter = FailingCloseAdapter(**kwargs)
+        else:
+            adapter = FakeAdapter(**kwargs)
+        created.append(adapter)
+        return adapter
+
+    def provider(runtime_ref: RuntimeRef) -> tuple[str, str]:
+        return (f"http://endpoint/{runtime_ref}", f"/workspaces/{runtime_ref}")
+
+    registry = make_registry(
+        settings,
+        repositories,
+        hub,
+        endpoint_provider=provider,
+        adapter_factory=factory,
+    )
+    first = make_binding()
+    second = make_binding(runtime_ref="runtime-2")
+    await registry.start_all([first, second])
+
+    with pytest.raises(RuntimeShutdownError) as captured:
+        await registry.stop_all()
+
+    assert captured.value.failure_count == 1
+    assert "shutdown-secret-placeholder" not in str(captured.value)
+    assert registry.pipeline_for(first.id) is None
+    assert registry.pipeline_for(second.id) is None
+    assert created[0].closed is True
+    assert created[1].closed is True
+
+
 async def test_fake_adapter_receives_expected_constructor_kwargs(
     settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
 ) -> None:
@@ -606,6 +1160,8 @@ async def test_fake_adapter_receives_expected_constructor_kwargs(
     assert received["base_url"] == settings.agent_opencode_base_url
     assert received["directory"] == settings.agent_opencode_directory
     assert received["backend_version"] == PINNED_OPENCODE_BACKEND_VERSION
+    assert received["provider_id"] == "deepseek"
+    assert received["model_id"] == "deepseek-v4-flash"
     assert received["runtime_id"] == RUNTIME_REF
     assert received["binding_capability_epoch"] == 7
     await registry.stop_all()
@@ -646,4 +1202,159 @@ async def test_supervisor_register_receives_binding_identity(
     # The connector attested the runtime under the binding's own identity
     # (register is the one-binding-per-runtime enforcement point).
     assert supervisor.accept_activation(RuntimeRef(RUNTIME_REF), 1) is True
+    await registry.stop_all()
+
+
+# ---------------------------------------------------------------------------
+# Tests: atomic candidate construction/start/publication (v0.2.0 Task 7).
+# ---------------------------------------------------------------------------
+
+
+async def test_candidate_is_not_visible_until_pipeline_started(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    registry = make_registry(settings, repositories, hub)
+    binding = make_binding()
+
+    candidate = await registry.build_candidate(binding)
+
+    assert registry.pipeline_for(binding.id) is None
+    assert candidate.pipeline.started is False
+
+    await registry.start_candidate(candidate)
+    assert registry.pipeline_for(binding.id) is None
+
+    await registry.publish_started(binding.id, candidate)
+    assert registry.pipeline_for(binding.id) is candidate.pipeline
+    await registry.stop_all()
+
+
+async def test_start_failure_closes_candidate_and_keeps_old_mapping(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    created: list[FakeAdapter] = []
+
+    def factory(**kwargs: Any) -> FakeAdapter:
+        adapter = FakeAdapter(**kwargs)
+        created.append(adapter)
+        return adapter
+
+    registry = make_registry(settings, repositories, hub, adapter_factory=factory)
+    binding = make_binding()
+    await registry.start_all([binding])
+    old_pipeline = registry.pipeline_for(binding.id)
+    assert old_pipeline is not None
+
+    candidate = await registry.build_candidate(binding)
+
+    async def fail_start() -> None:
+        raise RuntimeError("candidate-start-failed")
+
+    candidate.pipeline.start = fail_start  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="candidate-start-failed"):
+        await registry.start_candidate(candidate)
+
+    assert registry.pipeline_for(binding.id) is old_pipeline
+    assert created[-1].closed is True
+    await registry.stop_all()
+
+
+async def test_same_binding_replace_stops_old_runtime_after_publish(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    created: list[FakeAdapter] = []
+
+    def factory(**kwargs: Any) -> FakeAdapter:
+        adapter = FakeAdapter(**kwargs)
+        created.append(adapter)
+        return adapter
+
+    registry = make_registry(settings, repositories, hub, adapter_factory=factory)
+    binding = make_binding()
+    await registry.start_all([binding])
+    old_pipeline = registry.pipeline_for(binding.id)
+    assert old_pipeline is not None
+
+    old_adapter = created[0]
+    candidate = await registry.build_candidate(binding)
+    await candidate.pipeline.start()
+
+    observed_mapping_during_old_close: list[object | None] = []
+    original_close = old_adapter.close
+
+    async def close_old() -> None:
+        observed_mapping_during_old_close.append(registry.pipeline_for(binding.id))
+        await original_close()
+
+    old_adapter.close = close_old  # type: ignore[method-assign]
+    await registry.publish_started(binding.id, candidate)
+
+    assert registry.pipeline_for(binding.id) is candidate.pipeline
+    assert observed_mapping_during_old_close == [candidate.pipeline]
+    assert old_adapter.closed is True
+    await registry.stop_all()
+
+
+async def test_stop_all_closes_started_unpublished_candidate(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    created: list[FakeAdapter] = []
+
+    def factory(**kwargs: Any) -> FakeAdapter:
+        adapter = FakeAdapter(**kwargs)
+        created.append(adapter)
+        return adapter
+
+    registry = make_registry(settings, repositories, hub, adapter_factory=factory)
+    binding = make_binding()
+    candidate = await registry.build_candidate(binding)
+    await registry.start_candidate(candidate)
+
+    assert registry.pipeline_for(binding.id) is None
+    assert created[0].closed is False
+    await registry.stop_all()
+
+    assert created[0].closed is True
+
+
+async def test_publish_failure_discards_and_closes_candidate(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    created: list[FakeAdapter] = []
+
+    def factory(**kwargs: Any) -> FakeAdapter:
+        adapter = FakeAdapter(**kwargs)
+        created.append(adapter)
+        return adapter
+
+    registry = make_registry(settings, repositories, hub, adapter_factory=factory)
+    binding = make_binding()
+    candidate = await registry.build_candidate(binding)
+
+    with pytest.raises(RuntimeError, match="must be started"):
+        await registry.publish_started(binding.id, candidate)
+
+    assert created[0].closed is True
+    assert registry.pipeline_for(binding.id) is None
+    await registry.stop_all()
+
+
+async def test_duplicate_publish_does_not_stop_already_live_candidate(
+    settings: Settings, repositories: RepositoryBundle, hub: AgentStreamHub
+) -> None:
+    registry = make_registry(settings, repositories, hub)
+    binding = make_binding()
+    candidate = await registry.build_candidate(binding)
+    await registry.start_candidate(candidate)
+
+    results = await asyncio.gather(
+        registry.publish_started(binding.id, candidate),
+        registry.publish_started(binding.id, candidate),
+        return_exceptions=True,
+    )
+
+    assert sum(isinstance(result, AgentPipelineService) for result in results) == 1
+    assert sum(isinstance(result, RuntimeError) for result in results) == 1
+    assert registry.pipeline_for(binding.id) is candidate.pipeline
+    assert candidate.pipeline.started is True
     await registry.stop_all()

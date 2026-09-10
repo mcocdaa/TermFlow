@@ -42,6 +42,7 @@ export type FakeRuntimeOverrides = Partial<ClientRuntime>
 
 export function createFakeRuntime(overrides: FakeRuntimeOverrides = {}): ClientRuntime {
   return {
+    sensitiveAuthorization: { mode: 'browser-session' },
     api: {
       sessions: {
         status: async () => ({ authenticated: true, expires_at: null }),
@@ -59,7 +60,8 @@ export function createFakeRuntime(overrides: FakeRuntimeOverrides = {}): ClientR
       // App.vue gates the Agent navigation on this capability; disabled by
       // default so unrelated suites keep the fail-closed shell.
       agents: {
-        capabilities: async () => ({ agent_broker_enabled: false, delegated_write_grants_enabled: false }),
+        capabilities: async () => ({ agent_broker_enabled: false, delegated_write_grants_enabled: false, state: 'disabled', reason_code: null }),
+        renameConversation: async (id: string, title: string) => ({ conversation_id: id, binding_id: 'binding-1', title, status: 'active', created_at: '', updated_at: '' }),
       },
     } as unknown as ClientRuntime['api'],
     createTerminal: () => ({ async connect() {}, async sendInput() {}, async sendAction() {}, async dispose() {} }),

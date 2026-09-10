@@ -24,6 +24,7 @@
               type="button"
               class="agent-approval-button agent-approval-button--approve"
               data-action="approve-approval"
+              :ref="(element) => setApprovalControl(approval.approval_id, element)"
               :disabled="isBusy(approval.approval_id)"
               @click="openConfirm(approval.approval_id)"
             >批准</button>
@@ -110,12 +111,38 @@ const props = defineProps<{
 }>()
 
 const runtime = useClientRuntime()
+const emit = defineEmits<{ pendingCount: [count: number] }>()
+const approvalControls = new Map<string, HTMLButtonElement>()
+function setApprovalControl(id: string, element: unknown) {
+  if (element instanceof HTMLButtonElement) approvalControls.set(id, element)
+  else approvalControls.delete(id)
+}
+// A timeline card can request focus before the authoritative approvals REST
+// list returns. Keep that request until the row/control is actually mounted;
+// this avoids a lost focus handoff on slow networks.
+const requestedFocusId = ref<string | null>(null)
+async function focusRequestedApproval() {
+  const id = requestedFocusId.value
+  if (id === null) return
+  await nextTick()
+  const control = approvalControls.get(id)
+  if (control === undefined) return
+  control.focus()
+  requestedFocusId.value = null
+}
+function focusApproval(id: string) {
+  requestedFocusId.value = id
+  void focusRequestedApproval()
+}
+defineExpose({ focusApproval })
 const { approvals, loading, isBusy, refresh, decide, revoke } = useAgentApprovals({
   conversationId: props.conversationId,
 })
 
 /** The panel is the pending list; decided/expired rows fall away after refresh. */
 const visibleApprovals = computed(() => approvals.value.filter((approval) => approval.state === 'pending'))
+watch(() => visibleApprovals.value.length, (count) => emit('pendingCount', count), { immediate: true })
+watch(() => visibleApprovals.value.map((approval) => approval.approval_id).join(','), () => { void focusRequestedApproval() }, { flush: 'post' })
 
 // Countdown ticks once per second on the injected clock port (the browser
 // adapter wires the platform timer; tests inject a controllable one).

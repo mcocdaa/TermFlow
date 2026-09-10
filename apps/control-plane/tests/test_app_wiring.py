@@ -2,10 +2,9 @@
 
 Covers the composition root's supervisor wiring:
 
-- production ``create_app`` wires a real ``SupervisorConnector`` whose
-  runtime client fails closed (the reference compose profile has no
-  deployment-owned runtime manager, so no runtime can be attested and every
-  binding stays disabled);
+- production ``create_app`` wires a real ``SupervisorConnector`` backed by an
+  authenticated OpenCode ``/global/health`` client; an unavailable endpoint
+  still fails closed and leaves the binding disabled;
 - a pre-existing binding is left unmapped at startup with its fail-closed
   reason recorded in ``unavailable_bindings``;
 - the MCP tool-call gate rejects every tool invocation whose binding runtime
@@ -59,6 +58,14 @@ def _settings(tmp_path: Path) -> Settings:
         # TestClient sends ``Host: testserver``; name it like deployment
         # wiring names the agent-internal hosts (plan §16).
         agent_mcp_allowed_hosts=("testserver",),
+        # This module exercises the downstream runtime-supervisor gate, so
+        # provide a complete deployment-owned catalog instead of stopping at
+        # the earlier Profile validation gate added by Runtime Authority Task 2.
+        agent_provider_deepseek_region="global",
+        agent_provider_deepseek_retention_terms="no more than 30 days",
+        agent_provider_deepseek_retention_version="2026-09-01",
+        agent_provider_deepseek_no_training=True,
+        agent_provider_deepseek_policy_version="2026-09-01",
     )
 
 
@@ -66,7 +73,7 @@ async def _seed_binding(repositories: RepositoryBundle, *, runtime_epoch: int = 
     profile = await repositories.agent_profiles.create(
         display_name=f"profile-{uuid4().hex[:8]}",
         backend_kind="opencode",
-        config='{"model": "default"}',
+        config='{"model_id":"deepseek-v4-flash","provider_id":"deepseek"}',
     )
     display_name = f"term-{uuid4().hex[:8]}"
     installation = await repositories.installations.create(digest_secret(f"computer-{uuid4().hex}"))
@@ -224,8 +231,8 @@ def test_production_wiring_constructs_the_real_supervisor(tmp_path) -> None:
 def test_preexisting_binding_fails_closed_at_startup(tmp_path) -> None:
     """A binding with runtime fields stays unmapped when nothing can attest it.
 
-    The reference compose profile has no deployment-owned runtime manager,
-    so register attestation fails closed: the binding is recorded in
+    The HTTP health gate cannot reach its configured endpoint in this unit
+    test, so register attestation fails closed: the binding is recorded in
     ``unavailable_bindings`` and its MCP tool calls are rejected.
     """
     settings = _settings(tmp_path)
@@ -351,3 +358,57 @@ def test_env_example_documents_container_mcp_allowed_hosts() -> None:
         "sk-proj-",
     ):
         assert forbidden not in text
+
+
+# ---------------------------------------------------------------------------
+# Epoch ceremony audit (2026-08-22 scope decision).
+# ---------------------------------------------------------------------------
+
+
+def test_plain_b_restart_does_not_rotate_the_binding_epoch(tmp_path) -> None:
+    """A plain B restart must not invalidate rendered agent credentials.
+
+    The 2026-08-22 scope decision removed the per-startup epoch rotation
+    ceremony: the OpenCode container config carries a B-issued AgentToken
+    interpolated at deploy time, so bumping ``binding.runtime_epoch`` on
+    every startup would force re-issue + config re-render + container
+    restart after each restart.  Epoch bumps stay with explicit admin
+    runtime updates (and revoke/profile changes), so the token issued
+    before the restart still authenticates afterwards.
+    """
+    settings = _settings(tmp_path)
+
+    async def seed() -> str:
+        database = Database(settings.database_url)
+        await database.initialize()
+        bundle = RepositoryBundle(database.session_factory)
+        binding = await _seed_binding(bundle, runtime_epoch=2)
+        raw_token = await _seed_token(bundle, binding)
+        await database.dispose()
+        return raw_token
+
+    raw_token = asyncio.run(seed())
+
+    for _ in range(2):
+        app = create_app(settings=settings, database=Database(settings.database_url))
+        with TestClient(app):
+            pass
+
+    async def verify() -> tuple[int | None, object]:
+        database = Database(settings.database_url)
+        await database.initialize()
+        bundle = RepositoryBundle(database.session_factory)
+        binding = await bundle.agent_bindings.get_by_runtime_ref("runtime-1")
+        assert binding is not None
+
+        from termflow_control_plane.plugins.agent_broker.auth import (
+            AgentTokenAuthenticator,
+        )
+
+        principal = await AgentTokenAuthenticator(bundle).authenticate(raw_token)
+        await database.dispose()
+        return binding.runtime_epoch, principal
+
+    epoch, principal = asyncio.run(verify())
+    assert epoch == 2
+    assert principal.runtime_epoch == 2

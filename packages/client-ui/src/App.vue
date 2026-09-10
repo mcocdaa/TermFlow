@@ -19,19 +19,20 @@
       </button>
     </header>
     <aside v-if="!terminalLayout && !bareLayout" class="side-nav" aria-label="主导航">
-      <RouterLink to="/"><LayoutDashboard :size="18" aria-hidden="true" />控制中心</RouterLink>
-      <RouterLink to="/computers"><MonitorCog :size="18" aria-hidden="true" />电脑管理</RouterLink>
-      <RouterLink to="/settings"><Settings :size="18" aria-hidden="true" />设置</RouterLink>
-      <RouterLink v-if="agentBrokerEnabled" to="/agent"><Bot :size="18" aria-hidden="true" />Agent 控制台</RouterLink>
+      <RouterLink to="/" aria-label="控制中心"><LayoutDashboard :size="18" aria-hidden="true" /><span class="nav-label">控制中心</span></RouterLink>
+      <RouterLink to="/computers" aria-label="电脑管理"><MonitorCog :size="18" aria-hidden="true" /><span class="nav-label">电脑管理</span></RouterLink>
+      <RouterLink to="/settings" aria-label="设置"><Settings :size="18" aria-hidden="true" /><span class="nav-label">设置</span></RouterLink>
+      <RouterLink v-if="agentBrokerEnabled" to="/agent" aria-label="Agent 控制台"><Bot :size="18" aria-hidden="true" /><span class="nav-label">Agent 控制台</span></RouterLink>
     </aside>
     <main id="main-content" tabindex="-1"><RouterView :key="routeViewKey" /></main>
-    <nav v-if="!terminalLayout && !bareLayout" class="mobile-nav" aria-label="移动端导航">
-      <RouterLink to="/"><LayoutDashboard :size="18" aria-hidden="true" />控制中心</RouterLink>
-      <RouterLink to="/computers"><MonitorCog :size="18" aria-hidden="true" />电脑管理</RouterLink>
-      <RouterLink to="/settings"><Settings :size="18" aria-hidden="true" />设置</RouterLink>
-      <RouterLink v-if="agentBrokerEnabled" to="/agent"><Bot :size="18" aria-hidden="true" />Agent 控制台</RouterLink>
+    <nav v-if="!terminalLayout && !bareLayout" class="mobile-nav" :class="{ 'mobile-nav--agent': agentBrokerEnabled }" aria-label="移动端导航">
+      <RouterLink to="/" aria-label="控制中心"><LayoutDashboard :size="18" aria-hidden="true" /><span class="nav-label">控制中心</span></RouterLink>
+      <RouterLink to="/computers" aria-label="电脑管理"><MonitorCog :size="18" aria-hidden="true" /><span class="nav-label">电脑管理</span></RouterLink>
+      <RouterLink to="/settings" aria-label="设置"><Settings :size="18" aria-hidden="true" /><span class="nav-label">设置</span></RouterLink>
+      <RouterLink v-if="agentBrokerEnabled" to="/agent" aria-label="Agent 控制台"><Bot :size="18" aria-hidden="true" /><span class="nav-label">Agent 控制台</span></RouterLink>
     </nav>
     <BottomToast />
+    <AgentSensitiveReauthDialog />
   </div>
 </template>
 
@@ -41,6 +42,7 @@ import { computed, onMounted, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import ThemePicker from './components/settings/ThemePicker.vue'
 import BottomToast from './components/common/BottomToast.vue'
+import AgentSensitiveReauthDialog from './components/agent/AgentSensitiveReauthDialog.vue'
 import { useAgentBroker } from './composables/useAgentBroker'
 import { useSession } from './composables/useSession'
 import { useTerminalPageLock } from './composables/useTerminalPageLock'

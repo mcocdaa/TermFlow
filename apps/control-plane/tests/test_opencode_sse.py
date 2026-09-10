@@ -25,6 +25,10 @@ from termflow_control_plane.plugins.agent_broker.agent.opencode import (
     BACKEND_KIND,
     OpenCodeAdapter,
 )
+from termflow_control_plane.plugins.agent_broker.agent.runs import (
+    AgentRunStateMachine,
+    RunBoundary,
+)
 from termflow_control_plane.plugins.agent_broker.agent.turns import (
     BackendEventScope,
     NotificationPayload,
@@ -36,6 +40,8 @@ DIRECTORY = "/srv/termflow/workspace-1"
 BACKEND_VERSION = "0.1.0"
 RUNTIME_ID = "runtime://opencode-1"
 CAPABILITY_EPOCH = 3
+PROVIDER_ID = "deepseek"
+MODEL_ID = "deepseek-v4-flash"
 SESSION_ID = "ses_opencode_1"
 ASSISTANT_MESSAGE_ID = "msg_asst_1"
 
@@ -107,6 +113,8 @@ def _adapter(
         base_url=BASE_URL,
         directory=DIRECTORY,
         backend_version=BACKEND_VERSION,
+        provider_id=PROVIDER_ID,
+        model_id=MODEL_ID,
         client=client,
         runtime_id=RUNTIME_ID,
         binding_capability_epoch=CAPABILITY_EPOCH,
@@ -267,3 +275,167 @@ async def test_event_mapping_and_bounded_visibility_freeze() -> None:
     # Bounded text is truncated.
     assert bounded.payload.text is not None
     assert len(bounded.payload.text) <= 8192
+
+
+async def test_current_opencode_message_events_reconstruct_text_and_boundaries() -> None:
+    """Pin the event shapes emitted by the current 1.18.x runtime.
+
+    OpenCode emits ``session.status``/``session.idle`` around
+    ``message.part.delta`` and a completed ``message.updated`` record.  The
+    adapter must expose the text and inferred run boundaries so B can release
+    its serialized inbox after a real turn.
+    """
+    body = _sse(
+        _envelope(
+            _event(
+                "session.status",
+                {"sessionID": SESSION_ID, "status": {"type": "busy"}},
+            )
+        ),
+        _envelope(
+            _event(
+                "message.part.updated",
+                {
+                    "sessionID": SESSION_ID,
+                    "part": {
+                        "id": "prt_text",
+                        "messageID": ASSISTANT_MESSAGE_ID,
+                        "sessionID": SESSION_ID,
+                        "type": "text",
+                        "text": "hello",
+                    },
+                },
+            )
+        ),
+        _envelope(
+            _event(
+                "message.part.delta",
+                {
+                    "sessionID": SESSION_ID,
+                    "messageID": ASSISTANT_MESSAGE_ID,
+                    "partID": "prt_text",
+                    "field": "text",
+                    "delta": " world",
+                },
+            )
+        ),
+        _envelope(
+            _event(
+                "message.updated",
+                {
+                    "sessionID": SESSION_ID,
+                    "info": {
+                        "id": ASSISTANT_MESSAGE_ID,
+                        "role": "assistant",
+                        "time": {"created": 1, "completed": 2},
+                    },
+                },
+            )
+        ),
+        _envelope(_event("session.idle", {"sessionID": SESSION_ID})),
+    )
+    adapter, _ = _adapter(_stream_handler(body))
+    notifications = await _collect(adapter, _scope())
+
+    caps = await adapter.capabilities()
+    assert not caps.explicit_run_boundaries
+    assert AgentRunStateMachine.infer_run_boundary(caps, notifications[0]) is RunBoundary.START
+    assert AgentRunStateMachine.infer_run_boundary(caps, notifications[4]) is RunBoundary.END
+    assert [item.kind for item in notifications] == [
+        AgentEventKind.BACKEND_STATE_CHANGED,
+        AgentEventKind.MESSAGE_DELTA,
+        AgentEventKind.MESSAGE_DELTA,
+        AgentEventKind.MESSAGE_COMPLETED,
+        AgentEventKind.BACKEND_STATE_CHANGED,
+    ]
+    assert notifications[0].payload.summary == "busy"
+    assert notifications[1].payload.text == "hello"
+    assert notifications[2].payload.text == " world"
+    assert notifications[3].payload.text == "hello world"
+    assert notifications[4].payload.summary == "idle"
+
+
+async def test_current_opencode_tool_parts_are_lifecycle_events() -> None:
+    """Normalize current tool parts without exposing input or output."""
+    tool_part = {
+        "id": "prt_tool",
+        "messageID": ASSISTANT_MESSAGE_ID,
+        "sessionID": SESSION_ID,
+        "type": "tool",
+        "tool": "termflow_termflow_list_panes",
+        "callID": "call_live",
+    }
+    body = _sse(
+        _envelope(_event("session.status", {"sessionID": SESSION_ID, "status": {"type": "busy"}})),
+        _envelope(
+            _event(
+                "message.part.updated",
+                {
+                    "sessionID": SESSION_ID,
+                    "part": {
+                        **tool_part,
+                        "state": {"status": "pending", "input": {"secret": "x"}},
+                    },
+                },
+            )
+        ),
+        _envelope(
+            _event(
+                "message.part.updated",
+                {
+                    "sessionID": SESSION_ID,
+                    "part": {
+                        **tool_part,
+                        "state": {"status": "running", "input": {"secret": "x"}},
+                    },
+                },
+            )
+        ),
+        _envelope(
+            _event(
+                "message.part.updated",
+                {
+                    "sessionID": SESSION_ID,
+                    "part": {
+                        **tool_part,
+                        "state": {
+                            "status": "completed",
+                            "input": {"secret": "x"},
+                            "output": "sensitive pane data",
+                        },
+                    },
+                },
+            )
+        ),
+        _envelope(
+            _event(
+                "message.updated",
+                {
+                    "sessionID": SESSION_ID,
+                    "info": {
+                        "id": ASSISTANT_MESSAGE_ID,
+                        "role": "assistant",
+                        "time": {"created": 1, "completed": 2},
+                        "finish": "tool-calls",
+                    },
+                },
+            )
+        ),
+        _envelope(_event("session.idle", {"sessionID": SESSION_ID})),
+    )
+    adapter, _ = _adapter(_stream_handler(body))
+    notifications = await _collect(adapter, _scope())
+
+    assert [item.kind for item in notifications] == [
+        AgentEventKind.BACKEND_STATE_CHANGED,
+        AgentEventKind.TOOL_STARTED,
+        AgentEventKind.TOOL_COMPLETED,
+        AgentEventKind.BACKEND_STATE_CHANGED,
+    ]
+    started, completed = notifications[1:3]
+    assert started.tool_call_id == completed.tool_call_id == "call_live"
+    assert started.payload.summary == "termflow_termflow_list_panes"
+    assert started.payload.text is None
+    assert completed.payload.text is None
+    assert completed.payload.error_code is None
+    assert adapter.stats.unmapped_events == 0

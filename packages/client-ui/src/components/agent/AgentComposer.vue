@@ -6,25 +6,29 @@
     data-agent-composer
   >
     <div class="agent-composer__row">
-      <textarea
-        ref="textEl"
-        v-model="text"
-        class="agent-composer__input"
-        rows="3"
-        :maxlength="MAX_AGENT_TEXT_BYTES"
-        :disabled="unavailable"
-        aria-label="发送给 Agent 的消息"
-        data-agent-composer-input
-      />
-      <button
-        type="button"
-        class="primary-button agent-composer__send"
-        :disabled="!canSend"
-        data-action="send-message"
-        @click="submit"
-      >
-        {{ submitting ? '发送中…' : '发送' }}
-      </button>
+      <div class="agent-composer__input-shell" data-agent-composer-input-shell>
+        <textarea
+          ref="textEl"
+          v-model="text"
+          class="agent-composer__input"
+          rows="3"
+          :maxlength="MAX_AGENT_TEXT_BYTES"
+          :disabled="unavailable"
+          aria-label="发送给 Agent 的消息"
+          data-agent-composer-input
+        />
+        <button
+          type="button"
+          class="icon-button icon-only agent-composer__send"
+          :disabled="!canSend"
+          data-action="send-message"
+          aria-label="发送消息"
+          title="发送消息"
+          @click="submit"
+        >
+          <Send :size="18" aria-hidden="true" />
+        </button>
+      </div>
       <button
         v-if="hasActiveRun"
         type="button"
@@ -61,6 +65,7 @@
 //: cancel button appears while a run is active; a 409 ``no_active_run`` is
 //: a silent UI-stale refresh, not an error.
 import { computed, nextTick, ref, watch } from 'vue'
+import { Send } from '@lucide/vue'
 import { ApiError } from '@termflow/client-core'
 import { useClientRuntime } from '../../runtime'
 import { useBottomToast } from '../../composables/useBottomToast'

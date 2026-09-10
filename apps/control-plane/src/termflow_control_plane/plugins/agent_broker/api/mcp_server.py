@@ -36,6 +36,7 @@ served tool surface drifts from the pinned OpenCode allowlist.
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import json
 import logging
 import time
@@ -750,26 +751,38 @@ def check_tool_config_drift(
 ) -> None:
     """Fail closed when the served tool surface drifts from the pinned config.
 
-    The M0.3 frozen OpenCode config allowlists the exact TermFlow MCP tools.
-    Since M5.2 the deferred set is empty, so the registered surface must
-    equal the pinned allowlist exactly - an un-reviewed tool, a missing
+    The M0.3 frozen OpenCode config allowlists the TermFlow MCP tools with
+    OpenCode glob patterns.  Since M5.2 the deferred set is empty, every
+    registered tool must match a non-deferred pattern and every pattern must
+    match at least one registered tool.  An un-reviewed tool, a missing
     served tool, or an allowlist losing a served tool all refuse startup.
     """
     registered = frozenset(registered_tools)
     allowlist = frozenset(pinned_allowlist)
-    unreviewed = registered - allowlist
+    # OpenCode permission keys are glob patterns.  In particular, the
+    # canonical ``termflow_*`` entry covers the runtime's namespaced
+    # ``termflow_termflow_*`` tool names.  Keep matching anchored to the
+    # pattern (``fnmatchcase``) and require every registered tool to match at
+    # least one non-deferred pattern.
+    expected = allowlist - frozenset(deferred_tools)
+    unreviewed = frozenset(
+        name
+        for name in registered
+        if not any(fnmatch.fnmatchcase(name, pattern) for pattern in expected)
+    )
     if unreviewed:
         raise ToolConfigDriftError(
             "the MCP server would serve tools that are not in the pinned "
             f"OpenCode allowlist: {sorted(unreviewed)}"
         )
-    expected = allowlist - frozenset(deferred_tools)
-    if registered != expected:
+    missing = frozenset(
+        pattern
+        for pattern in expected
+        if not any(fnmatch.fnmatchcase(name, pattern) for name in registered)
+    )
+    if missing:
         detail: list[str] = []
-        if expected - registered:
-            detail.append(f"missing {sorted(expected - registered)}")
-        if registered - expected:
-            detail.append(f"unexpected {sorted(registered - expected)}")
+        detail.append(f"missing {sorted(missing)}")
         raise ToolConfigDriftError(
             "the registered MCP tool surface drifted from the pinned OpenCode "
             f"allowlist: {'; '.join(detail)}"

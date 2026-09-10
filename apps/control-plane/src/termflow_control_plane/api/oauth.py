@@ -34,7 +34,7 @@ from termflow_control_plane.auth.audit import (
 from termflow_control_plane.auth.dpop import DpopInvalid, DpopNonceRequired, DpopVerifier
 from termflow_control_plane.auth.oauth import FreshTotpVerifier, OAuthService
 from termflow_control_plane.auth.rate_limit import AuthRateLimiter, client_source
-from termflow_control_plane.auth.sessions import BrowserSessionStore
+from termflow_control_plane.auth.sessions import BrowserSessionStore, browser_cookie_policy
 from termflow_control_plane.config import Settings
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.repositories import RepositoryBundle
@@ -61,8 +61,9 @@ _AUTHORIZATION_QUERY_FIELDS = {
     "dpop_jkt",
     "public_jwk",
     "scopes",
+    "prompt",
 }
-_AUTHORIZATION_REQUIRED_QUERY_FIELDS = _AUTHORIZATION_QUERY_FIELDS - {"client_version"}
+_AUTHORIZATION_REQUIRED_QUERY_FIELDS = _AUTHORIZATION_QUERY_FIELDS - {"client_version", "prompt"}
 
 
 def _service(
@@ -96,6 +97,9 @@ def _parse_authorization_request(request: Request) -> OAuthAuthorizationRequest:
             or not query_fields <= _AUTHORIZATION_QUERY_FIELDS
             or any(len(query.getlist(name)) != 1 for name in query_fields - {"scopes"})
         ):
+            raise ValueError
+        prompt = query.get("prompt")
+        if prompt is not None and prompt != "login":
             raise ValueError
         public_raw = query.get("public_jwk")
         if public_raw is None:
@@ -188,7 +192,16 @@ async def authorize_native_client(
     limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
     source = client_source(request)
     limiter.check("native_authorization", source)
-    transaction = await service.begin(_parse_authorization_request(request))
+    authorization_request = _parse_authorization_request(request)
+    # ``prompt=login`` is deliberately enforced through the existing bounded
+    # browser-session store: revoke the current cookie before the consent POST.
+    # This leaves no per-request prompt flag in process memory and forces the
+    # caller through root/TOTP authentication for this authorization attempt.
+    if request.query_params.get("prompt") == "login":
+        policy = browser_cookie_policy(settings)
+        sessions = cast(BrowserSessionStore, request.app.state.browser_sessions)
+        sessions.invalidate(request.cookies.get(policy.name))
+    transaction = await service.begin(authorization_request)
     return RedirectResponse(
         url=f"/authorize?{urlencode({'transaction_id': str(transaction)})}",
         status_code=307,
@@ -225,7 +238,26 @@ async def decide_native_authorization(
     try:
         async with limiter.verification_slot():
             if body.admin_token is None:
-                await require_web_admin(request, settings, sessions, repositories)
+                try:
+                    await require_web_admin(request, settings, sessions, repositories)
+                except TermFlowError as exc:
+                    # OAuth consent has one public authentication failure
+                    # shape regardless of whether the browser cookie is
+                    # absent, expired, or revoked by prompt=login.
+                    if exc.code == "unauthorized":
+                        raise TermFlowError(
+                            "authentication_failed", 401, "Authentication failed."
+                        ) from exc
+                    if exc.code == "origin_not_allowed" and request.headers.get("origin") is None:
+                        state = await repositories.auth_state.get()
+                        policy = browser_cookie_policy(settings)
+                        if sessions.get_record(
+                            request.cookies.get(policy.name), epoch=state.epoch
+                        ) is None:
+                            raise TermFlowError(
+                                "authentication_failed", 401, "Authentication failed."
+                            ) from exc
+                    raise
                 session_authenticated = True
             result = await _service(request, repositories, settings).decide(
                 body,

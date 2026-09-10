@@ -18,6 +18,7 @@ function browserDependencies(): ClientRuntime {
     clear: (handle) => clock.clearTimeout(handle),
   }
   return {
+    sensitiveAuthorization: { mode: 'browser-session' },
     api: createApiClient(createBrowserHttpTransport()),
     createTerminal: (termId, callbacks) => new TerminalSession(termId, callbacks, {
       transport: terminalTransport,

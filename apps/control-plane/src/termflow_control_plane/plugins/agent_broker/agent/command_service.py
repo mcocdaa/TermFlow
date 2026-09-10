@@ -76,7 +76,9 @@ from termflow_control_plane.routing.router import CommandRouter
 logger = logging.getLogger(__name__)
 
 #: Binding states under which an approved write may still execute (spec §4.3).
-_ACTIVE_BINDING_STATES = frozenset({"pending", "ready"})
+# 0011 uses ``enabled`` as the desired active state.  Legacy pending/ready
+# rows remain accepted until all older data has migrated.
+_ACTIVE_BINDING_STATES = frozenset({"pending", "ready", "enabled"})
 
 #: Wait states that exit the poll loop without executing (all but pending).
 _FINAL_WAIT_STATES = frozenset(
@@ -425,7 +427,43 @@ class CommandService:
                 TermFlowErrorCode.POLICY_DENIED,
                 "the binding is no longer active; the write was not executed",
             )
-        # 4) Recomputed hash against the CURRENT ledger must still match the
+        # 4) The desired Binding is only executable while the controller's
+        # observed row proves that this exact revision/epoch/identity is
+        # ready.  The MCP handler performs an early pane-policy check, but
+        # this final gate deliberately reloads every authority-bearing row
+        # after the human decision so a health/config/disclosure drift cannot
+        # turn an approved write into a send.  ``pending``/``ready`` remain in
+        # ``_ACTIVE_BINDING_STATES`` for pre-0011 compatibility, but they must
+        # still have a modern observed-ready row before execution.
+        runtime = await self._repositories.agent_runtime_bindings.get_by_binding(
+            binding.id
+        )
+        runtime_ready = (
+            runtime is not None
+            and runtime.readiness == "ready"
+            and runtime.applied_revision == binding.config_revision
+            and runtime.observed_runtime_ref == binding.runtime_ref
+            and runtime.observed_runtime_epoch == binding.runtime_epoch
+            and runtime.observed_capability_ref == binding.capability_ref
+            and runtime.config_fingerprint is not None
+            and await self._repositories.agent_provider_disclosures.get_current(
+                binding.id, runtime.config_fingerprint
+            )
+            is not None
+        )
+        pane_allowed = await self._pane_is_allowed(binding.id, params.pane_id)
+        if (
+            not runtime_ready
+            or not pane_allowed
+            or principal.runtime_epoch != binding.runtime_epoch
+        ):
+            await self._best_effort_revoke(approval.id, actor="system:runtime_not_ready")
+            raise TermFlowToolError(
+                TermFlowErrorCode.POLICY_DENIED,
+                "the Agent runtime is not ready for this Binding revision; "
+                "the write was not executed",
+            )
+        # 5) Recomputed hash against the CURRENT ledger must still match the
         #    stored hash; any drift (text, pane, incarnation, cursor, run,
         #    epoch) means the reviewed target changed.  The expiry used for
         #    the recomputation is the stored ``expires_at`` frozen at
@@ -444,6 +482,22 @@ class CommandService:
                 data={"approval_id": str(approval.id)},
             )
         return context.pane_incarnation
+
+    async def _pane_is_allowed(self, binding_id: UUID, pane_id: str) -> bool:
+        """Resolve the current pane policy, including explicit all-pane consent.
+
+        Keeping this final check in the command service avoids relying on the
+        earlier MCP handler check: administrators may replace policy rows
+        while an approval is waiting.  An explicit pane row always wins over
+        the ``*`` consent sentinel and an absent row denies by default.
+        """
+        explicit = await self._repositories.pane_policies.pane_allowed(
+            binding_id, pane_id
+        )
+        if explicit is not None:
+            return explicit is True
+        consent = await self._repositories.pane_policies.pane_allowed(binding_id, "*")
+        return consent is True
 
     async def _send_and_settle(
         self,

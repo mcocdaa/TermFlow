@@ -39,7 +39,7 @@ def _seed_binding(
         json={
             "display_name": "opencode",
             "backend_kind": "opencode",
-            "config": '{"model": "default"}',
+            "config": '{"model_id":"deepseek-v4-flash","provider_id":"deepseek"}',
         },
     )
     assert profile.status_code == 201, profile.text
@@ -65,7 +65,7 @@ def test_migration_manifest_declares_the_full_alembic_chain(
     client: TestClient,
 ) -> None:
     """The manifest must own every agent_broker migration through the head
-    (review fix: 0009/0010 were missing while the alembic chain was at 0010)."""
+    (review fix: every revision must be declared as the chain advances)."""
     migrations = [
         (revision.id, revision.owner, revision.dependencies)
         for revision in client.app.state.feature_registry.migrations
@@ -76,6 +76,8 @@ def test_migration_manifest_declares_the_full_alembic_chain(
         ("0008", "agent_broker", ("0007",)),
         ("0009", "agent_broker", ("0008",)),
         ("0010", "agent_broker", ("0009",)),
+        ("0011", "agent_broker", ("0010",)),
+        ("0012", "agent_broker", ("0011",)),
     ]
 
 

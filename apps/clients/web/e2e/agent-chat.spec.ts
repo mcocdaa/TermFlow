@@ -1,8 +1,11 @@
+import { randomUUID } from 'node:crypto'
+
 import { expect, test, type Page } from '@playwright/test'
 
 const adminToken = process.env.TERMFLOW_E2E_ADMIN_TOKEN ?? ''
 const baseUrl = process.env.TERMFLOW_E2E_BASE_URL ?? ''
 const termId = process.env.TERMFLOW_E2E_TERM_ID ?? ''
+const screenshotDir = process.env.TERMFLOW_E2E_SCREENSHOT_DIR
 
 test.skip(
   !adminToken || !baseUrl || !termId,
@@ -26,6 +29,7 @@ async function login(page: Page) {
 }
 
 test('smokes the Agent chat: capability gate, conversation creation, fail-closed composer', async ({ page }, testInfo) => {
+  const runKey = `${testInfo.project.name}-${randomUUID()}`
   const consoleErrors: string[] = []
   const pageErrors: string[] = []
   page.on('console', (message) => {
@@ -60,6 +64,9 @@ test('smokes the Agent chat: capability gate, conversation creation, fail-closed
   await page.getByRole('link', { name: 'Agent 控制台' }).first().click()
   await expect(page.getByRole('heading', { name: 'Agent 控制台' })).toBeVisible()
   await expect(page.locator('[data-agent-disabled]')).toHaveCount(0)
+  if (screenshotDir) {
+    await page.screenshot({ path: `${screenshotDir}/agent-console-${testInfo.project.name}.png` })
+  }
   // Spec smoke gate: /agent renders without console errors.
   expect(consoleErrors).toEqual([])
 
@@ -68,7 +75,11 @@ test('smokes the Agent chat: capability gate, conversation creation, fail-closed
   // risk 6 / M4.5 fail-closed pipeline mapping).
   const profile = await page.request.post('/api/v1/agent/admin/profiles', {
     headers: { Authorization: `Bearer ${adminToken}` },
-    data: { display_name: `browser-profile-${testInfo.project.name}`, backend_kind: 'opencode', config: '{"model": "default"}' },
+    data: {
+      display_name: `browser-profile-${runKey}`,
+      backend_kind: 'opencode',
+      config: '{"model_id":"deepseek-v4-flash","provider_id":"deepseek"}',
+    },
   })
   expect(profile.status()).toBe(201)
   const profileId = (await profile.json() as { profile_id: string }).profile_id
@@ -80,9 +91,9 @@ test('smokes the Agent chat: capability gate, conversation creation, fail-closed
   const bindingId = (await binding.json() as { binding_id: string }).binding_id
 
   await page.reload()
-  const bindingOption = page.locator(`[data-agent-binding-id="${bindingId}"]`)
-  await expect(bindingOption).toBeVisible()
-  await bindingOption.click()
+  // The overview resolves the binding to a product-facing Term row; Binding
+  // ids are no longer exposed as a selector in the page.
+  await expect(page.locator('[data-agent-create-term]')).toHaveValue(bindingId)
 
   await page.locator('[data-agent-create-title]').fill(`smoke-${testInfo.project.name}`)
   const created = page.waitForResponse((response) =>
@@ -96,7 +107,7 @@ test('smokes the Agent chat: capability gate, conversation creation, fail-closed
 
   const conversationRow = page.locator(`[data-agent-conversation-id="${conversationId}"]`)
   await expect(conversationRow).toBeVisible()
-  await conversationRow.locator('.agent-conversation-row__open').click()
+  await conversationRow.locator('[data-action="open-conversation"]').click()
   await expect(page).toHaveURL(new RegExp(`/agent/${conversationId}$`))
 
   // Without a runtime the composer is reachable, but submitting greys it
@@ -112,6 +123,19 @@ test('smokes the Agent chat: capability gate, conversation creation, fail-closed
   await rejected
   await expect(page.locator('[data-agent-composer-unavailable]')).toContainText('后端运行时未就绪')
   await expect(page.locator('[data-agent-composer-input]')).toBeDisabled()
+  if (screenshotDir) {
+    await page.screenshot({ path: `${screenshotDir}/agent-runtime-unavailable-${testInfo.project.name}.png` })
+  }
+
+  // Reload through the production HTTP boundary before claiming the created
+  // conversation persisted. Runtime-unavailable is a transient delivery
+  // result; the durable assertion here is the same conversation route/title.
+  await page.reload()
+  await expect(page).toHaveURL(new RegExp(`/agent/${conversationId}$`))
+  await expect(page.locator('[data-agent-chat-title]')).toHaveText(`smoke-${testInfo.project.name}`)
+  if (screenshotDir) {
+    await page.screenshot({ path: `${screenshotDir}/agent-reloaded-${testInfo.project.name}.png` })
+  }
 
   // The deliberate 503 surfaces as a browser resource-load console message,
   // so only runtime exceptions are asserted at the end of the flow.

@@ -15,6 +15,7 @@
         <p>删除后，这台电脑需要重新注册才能恢复远程控制。</p>
       </div>
       <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+      <p v-if="cleanupJobId" role="status">清理待完成 · 任务 {{ cleanupJobId.slice(0, 64) }}</p>
       <div class="dialog-actions">
         <button
           ref="cancelButton"
@@ -28,7 +29,7 @@
           data-action="confirm-delete-computer"
           class="danger-button"
           type="button"
-          :disabled="pending"
+          :disabled="pending || Boolean(cleanupJobId)"
           @click="$emit('confirm', computer.installation_id)"
         >{{ pending ? '正在删除…' : '永久删除电脑' }}</button>
       </div>
@@ -40,7 +41,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { ComputerSummary } from '../../types'
 
-const props = defineProps<{ computer: ComputerSummary; pending: boolean; error: string }>()
+const props = defineProps<{ computer: ComputerSummary; pending: boolean; error: string; cleanupJobId?: string }>()
 const emit = defineEmits<{ confirm: [installationId: string]; cancel: [] }>()
 const panel = ref<HTMLElement | null>(null)
 const cancelButton = ref<HTMLButtonElement | null>(null)

@@ -37,7 +37,8 @@ describe('NativeAuthorizationSession', () => {
       onState: (state) => states.push(state),
     })
 
-    await expect(session.authorize()).resolves.toMatchObject({ accessToken: 'access' })
+    await expect(session.authorize(undefined, { forceLogin: true })).resolves.toMatchObject({ accessToken: 'access' })
+    expect(new URL(vi.mocked(port.open).mock.calls[0]![0]).searchParams.get('prompt')).toBe('login')
     expect(port.open).toHaveBeenCalledOnce()
     expect(vi.mocked(port.waitForCallback).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(port.open).mock.invocationCallOrder[0]!)
     expect(exchange).toHaveBeenCalledWith(expect.objectContaining({ transaction: '11111111-1111-4111-8111-111111111111', verifier: 'v'.repeat(43) }))

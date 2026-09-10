@@ -10,6 +10,7 @@
       :computer="selectedForDeletion"
       :pending="deletingId !== null"
       :error="deleteError"
+      :cleanup-job-id="cleanupJobId"
       @confirm="confirmRemove"
       @cancel="cancelRemove"
     />
@@ -35,6 +36,7 @@ const showEnrollment = ref(false)
 const deletingId = ref<string | null>(null)
 const selectedForDeletion = ref<ComputerSummary | null>(null)
 const deleteError = ref('')
+const cleanupJobId = ref('')
 const controller = new AbortController()
 async function loadComputers() {
   loading.value = true
@@ -43,6 +45,7 @@ async function loadComputers() {
   finally { loading.value = false }
 }
 function requestRemove(computer: ComputerSummary) {
+  cleanupJobId.value = ''
   if (deletingId.value !== null) return
   selectedForDeletion.value = computer
   deleteError.value = ''
@@ -57,8 +60,12 @@ async function confirmRemove(installationId: string) {
   deletingId.value = installationId
   deleteError.value = ''
   try {
-    await runtime.api.computers.remove(installationId)
+    const result = await runtime.api.computers.remove(installationId)
     computers.value = computers.value.filter((candidate) => candidate.installation_id !== installationId)
+    if (result.state === 'deletion_pending') {
+      cleanupJobId.value = result.cleanupJobId
+      return
+    }
     selectedForDeletion.value = null
     toast.show({ text: '已删除', tone: 'success' })
   } catch (error) {

@@ -29,6 +29,14 @@ def test_operator_docs_keep_current_boundaries_install_and_native_contracts() ->
         assert name in readme
     assert "docs/superpowers/README.md" in readme
     assert ".env.example" in Path("docs/operations.md").read_text()
+    architecture = Path("docs/architecture.md").read_text()
+    for network_contract in (
+        "B 的普通 default bridge",
+        "A 是客户端，主动向 B 建立 WebSocket/WSS",
+        "不是 B 的\n网关",
+        "OpenCode 不加入这个 default bridge",
+    ):
+        assert network_contract in architecture
 
     current_docs = "\n".join(
         Path(path).read_text()

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import secrets
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
@@ -9,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from mcp.server.auth.middleware.auth_context import get_access_token
@@ -35,12 +36,14 @@ from termflow_control_plane import __version__
 from termflow_control_plane.api.agent_admin import router as agent_admin_router
 from termflow_control_plane.api.agent_approvals import router as agent_approvals_router
 from termflow_control_plane.api.agent_capabilities import router as agent_capabilities_router
+from termflow_control_plane.api.agent_cleanup import router as agent_cleanup_router
 from termflow_control_plane.api.agent_conversations import router as agent_conversations_router
 from termflow_control_plane.api.agent_stream import router as agent_stream_router
 from termflow_control_plane.api.bridge import router as bridge_router
 from termflow_control_plane.api.clients import router as clients_router
 from termflow_control_plane.api.computers import router as computers_router
 from termflow_control_plane.api.dashboard import router as dashboard_router
+from termflow_control_plane.api.dependencies import require_agent_schema
 from termflow_control_plane.api.enrollment import router as enrollment_router
 from termflow_control_plane.api.events import router as events_router
 from termflow_control_plane.api.instances import router as instances_router
@@ -63,7 +66,7 @@ from termflow_control_plane.connections.registry import LiveConnection, LiveInst
 from termflow_control_plane.connections.terminal_hub import TerminalHub
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.database import Database
-from termflow_control_plane.persistence.repositories import RepositoryBundle
+from termflow_control_plane.persistence.repositories import RepositoryBundle, digest_secret
 from termflow_control_plane.plugins.agent_broker.agent.approval_audit import (
     ApprovalAuditWriter,
 )
@@ -71,14 +74,22 @@ from termflow_control_plane.plugins.agent_broker.agent.command_service import (
     CommandRouterGateway,
     CommandService,
 )
+from termflow_control_plane.plugins.agent_broker.agent.http_runtime_client import (
+    HttpHealthRuntimeClient,
+    resolve_binding_runtime_epoch,
+    settings_capability_secret_provider,
+)
 from termflow_control_plane.plugins.agent_broker.agent.permissions import ApprovalPolicy
+from termflow_control_plane.plugins.agent_broker.agent.provider_catalog import ProviderCatalog
+from termflow_control_plane.plugins.agent_broker.agent.provisioning import AgentProvisioningService
+from termflow_control_plane.plugins.agent_broker.agent.runtime_controller import (
+    AgentRuntimeController,
+)
 from termflow_control_plane.plugins.agent_broker.agent.runtime_registry import (
     AgentRuntimeRegistry,
 )
 from termflow_control_plane.plugins.agent_broker.agent.runtime_supervisor import (
-    SecretUnavailableError,
     SupervisorConnector,
-    UnknownRuntimeError,
 )
 from termflow_control_plane.plugins.agent_broker.agent.stream_hub import (
     AGENT_STREAM_QUEUE_SIZE,
@@ -107,17 +118,16 @@ from termflow_control_plane.plugins.agent_broker.plugin import (
     build_watch_trigger_sink,
     run_agent_recovery,
 )
+from termflow_control_plane.plugins.agent_broker.startup import (
+    AgentStartupCoordinator,
+    AgentStartupResult,
+    AgentStartupState,
+)
 from termflow_control_plane.plugins.context import build_feature_context
 from termflow_control_plane.plugins.protocol import (
     AuthPort,
-    BackendOperationOutcome,
-    BackendOperationResult,
-    CapabilityRef,
-    DrainStatus,
     LifecyclePort,
-    RuntimeHealth,
     RuntimeRef,
-    RuntimeStatus,
     TerminalCommandPort,
     TerminalObservationPort,
     TermPort,
@@ -367,75 +377,42 @@ def _unimplemented_port(_port: object) -> Any:
     return object()
 
 
-class _UnattestedRuntimeClient:
-    """Production ``RuntimeClient`` for deployments without a runtime manager.
+class _ProductionRuntimeGate:
+    """Build the production supervisor from the simplified HTTP-health gate.
 
-    Plan §6.2.1: the reference Compose profile ships no deployment-owned
-    runtime manager, and B must never attest a runtime it cannot observe
-    (the runtime_supervisor connector's production wiring to such a manager
-    is out of 0.2.0 scope).  Every health probe therefore reports
-    ``UNKNOWN`` so ``SupervisorConnector.register`` fails closed: no binding
-    is admitted and MCP tool calls stay gated until a deployment injects a
-    real runtime-manager client.  This is honest fail-closed wiring, never a
-    fabricated "ready" attestation.
+    Scope decision (2026-08-22): the reference deployment performs no
+    deployment-owned runtime-manager orchestration.  Admission is an
+    authenticated ``/global/health`` probe against the configured OpenCode
+    endpoint; the epoch is resolved from the binding provisioned for the
+    runtime ref so the supervisor's register/attest semantics stay intact.
     """
 
-    async def health(self, runtime_ref: RuntimeRef) -> RuntimeHealth:
-        del runtime_ref  # every runtime is unattested
-        return RuntimeHealth(
-            status=RuntimeStatus.UNKNOWN,
-            epoch=1,
-            observed_at=datetime.now(UTC),
-            detail=(
-                "no deployment-owned runtime manager is wired; runtime "
-                "attestation fails closed (plan §6.2.1)"
-            ),
+    @staticmethod
+    def build(
+        *, settings: Settings, repositories: RepositoryBundle
+    ) -> SupervisorConnector:
+        async def resolve_epoch(runtime_ref: RuntimeRef) -> int:
+            return await resolve_binding_runtime_epoch(
+                runtime_ref,
+                get_by_runtime_ref=repositories.agent_bindings.get_by_runtime_ref,
+            )
+
+        password = settings.agent_opencode_password
+        client = HttpHealthRuntimeClient(
+            base_url=settings.agent_opencode_base_url,
+            username=settings.agent_opencode_username,
+            password=password.get_secret_value() if password is not None else None,
+            epoch_resolver=resolve_epoch,
         )
 
-    async def quiesce(self, runtime_ref: RuntimeRef, deadline: datetime) -> DrainStatus:
-        del runtime_ref, deadline
-        # A drain that can never complete blocks activation (fail closed).
-        return DrainStatus.DRAIN_TIMEOUT
+        def token_getter() -> str | None:
+            token = settings.agent_opencode_mcp_token
+            return token.get_secret_value() if token is not None else None
 
-    async def restart(
-        self, runtime_ref: RuntimeRef, epoch: int, capability_secret: str
-    ) -> RuntimeHealth:
-        del epoch, capability_secret
-        raise UnknownRuntimeError(
-            f"runtime {runtime_ref} cannot be restarted: no deployment-owned "
-            "runtime manager is wired (plan §6.2.1)"
+        return SupervisorConnector(
+            client,
+            settings_capability_secret_provider(token_getter),
         )
-
-    async def cleanup(self, runtime_ref: RuntimeRef) -> BackendOperationResult:
-        return BackendOperationResult(
-            outcome=BackendOperationOutcome.UNKNOWN,
-            message=(
-                f"runtime {runtime_ref} was never attested: no "
-                "deployment-owned runtime manager is wired; nothing to clean up"
-            ),
-        )
-
-
-def _unavailable_secret_provider(capability_ref: CapabilityRef, epoch: int) -> str:
-    raise SecretUnavailableError(
-        f"no capability secret is available for {capability_ref} epoch {epoch}: "
-        "no deployment-owned runtime manager is wired (plan §6.2.1)"
-    )
-
-
-def _build_production_runtime_supervisor() -> SupervisorConnector:
-    """The composition root's production ``AgentRuntimeSupervisor``.
-
-    Built from the fail-closed ``_UnattestedRuntimeClient`` because the
-    reference deployment has no deployment-owned runtime manager to attest
-    runtimes (plan §6.2.1).  Deployments that operate a real runtime
-    manager replace this seam with a client wired to that manager; until
-    then every binding activation and MCP tool call fails closed.
-    """
-    return SupervisorConnector(
-        _UnattestedRuntimeClient(),
-        _unavailable_secret_provider,
-    )
 
 
 def _build_mcp_tool_gate(
@@ -536,18 +513,30 @@ def create_app(
     """Assemble the FastAPI application.
 
     ``agent_runtime_supervisor`` is the composition-root test seam: production
-    callers pass ``None`` and the lifespan wires the fail-closed production
-    supervisor (:func:`_build_production_runtime_supervisor`); tests inject a
-    fake to exercise attested-runtime paths.
+    callers pass ``None`` and the lifespan wires the fail-closed HTTP-health
+    supervisor; tests inject a fake to exercise attested-runtime paths.
     """
     active_database = database or Database(settings.database_url)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        await active_database.initialize()
+        initialization = await active_database.initialize()
+        # ``Database`` returns a two-stage result.  Keep compatibility with
+        # injected test doubles that predate the result object (``None`` means
+        # the historical all-ready outcome).
+        agent_schema_ready = bool(getattr(initialization, "agent_ready", True))
+        agent_schema_reason = getattr(initialization, "agent_reason_code", None)
+        app.state.agent_schema_ready = agent_schema_ready
+        app.state.agent_schema_reason = agent_schema_reason
         app.state.repositories = RepositoryBundle(active_database.session_factory)
         purge_now = datetime.now(UTC)
-        purged = await app.state.repositories.purge_expired(now=purge_now)
+        if agent_schema_ready:
+            purged = await app.state.repositories.purge_expired(now=purge_now)
+        else:
+            # Core auth/terminal service must still start when the Agent
+            # migration stage is unavailable; do not issue any query against
+            # tables that the failed Agent transaction may have rolled back.
+            purged = await app.state.repositories.purge_core_expired(now=purge_now)
         auth_state = await app.state.repositories.auth_state.get()
         app.state.browser_sessions.synchronize_epoch(auth_state.epoch)
         await app.state.terminal_hub.synchronize_epoch(auth_state.epoch)
@@ -590,7 +579,10 @@ def create_app(
         # Expired approvals sweep through the policy (spec §5/§7), never the
         # repository directly: the policy records one ``expired`` audit event
         # per swept row.  The count joins the startup purge report.
-        purged["approvals"] = await app.state.approval_policy.expire_pending(now=purge_now)
+        if agent_schema_ready:
+            purged["approvals"] = await app.state.approval_policy.expire_pending(now=purge_now)
+        else:
+            purged["approvals"] = 0
         if any(purged.values()):
             logger.info("Purged expired persistence rows: %s", purged)
         app.state.terminal_router = TerminalRouter(
@@ -600,11 +592,13 @@ def create_app(
             capability_wait_seconds=settings.command_timeout_seconds,
             resume_grace_seconds=settings.terminal_resume_grace_seconds,
         )
-        # Plan §6.2.1: the runtime supervisor is a required control-plane
-        # port.  Production wires the real SupervisorConnector (fail-closed
-        # when no deployment-owned runtime manager can attest runtimes);
-        # tests may inject a fake through create_app.
-        runtime_supervisor = agent_runtime_supervisor or _build_production_runtime_supervisor()
+        # Plan §6.2.1 as simplified on 2026-08-22: the production supervisor
+        # admits a binding while its OpenCode endpoint answers an
+        # authenticated health probe (see _ProductionRuntimeGate); tests may
+        # inject a fake through create_app.
+        runtime_supervisor = agent_runtime_supervisor or _ProductionRuntimeGate.build(
+            settings=settings, repositories=app.state.repositories
+        )
         app.state.agent_runtime_supervisor = runtime_supervisor
         feature_context = build_feature_context(
             # No real port implementations exist yet, so every port except
@@ -625,26 +619,12 @@ def create_app(
         # tombstones.  Fail-safe by design: errors are logged, never fatal.
         # It runs BEFORE plugin startup so the spec §7 order holds: recovery
         # fences stale runs before any pipeline can claim new work.
-        try:
-            recovered = await run_agent_recovery(
+        async def recover_agent_fence() -> object:
+            return await run_agent_recovery(
                 app.state.repositories,
                 approval_policy=app.state.approval_policy,
             )
-            if any(
-                (
-                    recovered.inbox_recovered,
-                    recovered.inbox_delivery_unknown,
-                    recovered.inbox_reconciled,
-                    recovered.runs_marked_unknown,
-                    recovered.cleanup_jobs_retried,
-                    recovered.cleanup_jobs_completed,
-                    recovered.approvals_revoked,
-                    recovered.approvals_marked_unknown,
-                )
-            ):
-                logger.info("Agent restart recovery: %s", recovered)
-        except Exception:
-            logger.exception("Agent restart recovery failed")
+        app.state.agent_broker_plugin.bind_startup_fencing(recover_agent_fence)
         # M4.5 runtime wiring (spec §3a/§7): the registry and watch engine
         # need the lifespan-built repositories, session factory, and hubs, so
         # the composition root builds them here and exposes them on app.state.
@@ -652,19 +632,79 @@ def create_app(
         # them and its startup/shutdown hooks drive the lifecycle in the spec
         # order: watch engine first, then per-binding pipelines, then the
         # deadline tick task - and the exact reverse at shutdown.
-        if settings.agent_broker_enabled:
+        if settings.agent_broker_enabled and agent_schema_ready:
+            provider_catalog = ProviderCatalog.from_settings(settings)
+            app.state.agent_provider_catalog = provider_catalog
             app.state.agent_runtime_registry = AgentRuntimeRegistry(
                 settings=settings,
                 repositories=app.state.repositories,
                 sessions=app.state.session_factory,
                 hub=app.state.agent_stream_hub,
-                # Plan §6.2.1: the supervisor activation gate is always
-                # wired in production.  Without a deployment-owned runtime
-                # manager the supervisor fails closed, so every binding
-                # stays disabled until its runtime can be attested
-                # (spec §6).  Bindings without runtime fields fail closed
-                # regardless of the supervisor.
+                # Plan §6.2.1: the supervisor activation gate is always wired
+                # in production.  Bindings stay disabled until their
+                # configured OpenCode endpoint is attested healthy; bindings
+                # without runtime fields fail closed regardless.
                 supervisor=runtime_supervisor,
+                provider_catalog=provider_catalog,
+            )
+            async def _fence_approvals(binding_id: UUID) -> object:
+                return await app.state.approval_policy.revoke_for_binding(
+                    binding_id,
+                    actor="controller",
+                )
+
+            async def _fence_streams(binding_id: UUID) -> object:
+                return await app.state.agent_stream_hub.close_for_binding(binding_id)
+
+            async def _bootstrap_capability_available(binding: Any) -> bool:
+                configured = settings.agent_opencode_mcp_token
+                if configured is None or binding.runtime_epoch is None:
+                    return False
+                expected_hash = digest_secret(configured.get_secret_value())
+                now_epoch = int(datetime.now(UTC).timestamp())
+                tokens = await app.state.repositories.agent_tokens.list_for_binding(
+                    binding.id
+                )
+                return any(
+                    token.revoked_at is None
+                    and token.expiry_epoch > now_epoch
+                    and token.binding_epoch == binding.runtime_epoch
+                    and secrets.compare_digest(token.token_hash, expected_hash)
+                    for token in tokens
+                )
+
+            app.state.agent_runtime_controller = AgentRuntimeController(
+                repositories=app.state.repositories,
+                registry=app.state.agent_runtime_registry,
+                supervisor=runtime_supervisor,
+                provider_catalog=provider_catalog,
+                approval_fencer=_fence_approvals,
+                stream_fencer=_fence_streams,
+                bootstrap_capability_checker=_bootstrap_capability_available,
+            )
+
+            async def _agent_topology(term_id: UUID) -> object:
+                connection = await app.state.registry.maybe_get(term_id)
+                topology = getattr(connection, "topology", None)
+                if topology is None:
+                    return None
+                return {
+                    "revision": topology.revision,
+                    "pane_ids": [
+                        pane.pane_id
+                        for window in topology.windows
+                        for pane in window.panes
+                    ],
+                }
+
+            app.state.agent_topology_provider = _agent_topology
+            app.state.agent_provisioning = AgentProvisioningService(
+                repositories=app.state.repositories,
+                sessions=app.state.session_factory,
+                topology=_agent_topology,
+                catalog=provider_catalog,
+                bootstrap_secret=settings.agent_opencode_mcp_token,
+                controller=app.state.agent_runtime_controller,
             )
             app.state.agent_watch_engine = WatchEngine(
                 sessions=app.state.session_factory,
@@ -685,15 +725,36 @@ def create_app(
             app.state.agent_broker_plugin.bind_runtime_services(
                 watch_engine=app.state.agent_watch_engine,
                 registry=app.state.agent_runtime_registry,
+                controller=app.state.agent_runtime_controller,
                 sessions=app.state.session_factory,
                 watch_tick_seconds=settings.agent_watch_deadline_tick_seconds,
+                runtime_health_tick_seconds=settings.agent_runtime_health_tick_seconds,
             )
-        await app.state.feature_registry.startup(feature_context)
+        if settings.agent_broker_enabled and not agent_schema_ready:
+            # Publish an explicit degraded capability state without invoking
+            # the Agent plugin.  Its startup hooks intentionally query Agent
+            # tables and must remain fenced until the migration retry has
+            # succeeded.
+            async def _migration_fence() -> object:
+                raise RuntimeError("Agent schema migration is unavailable")
+
+            coordinator = AgentStartupCoordinator(_migration_fence)
+            coordinator.result = AgentStartupResult(
+                AgentStartupState.DEGRADED,
+                agent_schema_reason or "recovery_failed",
+                ("agent_migration",),
+            )
+            app.state.agent_broker_plugin.startup_coordinator = coordinator
+            logger.error(
+                "Agent Broker remains degraded after migration failure; core terminal service is up"
+            )
+        else:
+            await app.state.feature_registry.startup(feature_context)
         # The MCP capability surface is built here because the continuation
         # service and token authenticator need the repository bundle; the
         # mounted ASGI wrapper serves it only while the plugin is enabled.
         mcp_lifespan_ctx = None
-        if settings.agent_broker_enabled:
+        if settings.agent_broker_enabled and agent_schema_ready:
             app.state.agent_mcp_app = await _build_agent_mcp_app(app, settings)
             # The SDK's Streamable HTTP app starts its session manager from
             # its own Starlette lifespan, but Starlette only runs the
@@ -745,7 +806,10 @@ def create_app(
                     try:
                         await app.state.feature_registry.shutdown()
                     finally:
-                        await active_database.dispose()
+                        try:
+                            await runtime_supervisor.aclose()
+                        finally:
+                            await active_database.dispose()
 
     app = FastAPI(
         title="TermFlow Control Plane",
@@ -869,10 +933,12 @@ def create_app(
     # mounted while the plugin is enabled; the capability-discovery endpoint
     # stays mounted unconditionally so C can observe the disabled state.
     if settings.agent_broker_enabled:
-        app.include_router(agent_admin_router)
-        app.include_router(agent_conversations_router)
-        app.include_router(agent_stream_router)
-        app.include_router(agent_approvals_router)
+        agent_schema_dependency = [Depends(require_agent_schema)]
+        app.include_router(agent_admin_router, dependencies=agent_schema_dependency)
+        app.include_router(agent_cleanup_router, dependencies=agent_schema_dependency)
+        app.include_router(agent_conversations_router, dependencies=agent_schema_dependency)
+        app.include_router(agent_stream_router, dependencies=agent_schema_dependency)
+        app.include_router(agent_approvals_router, dependencies=agent_schema_dependency)
         # MCP Streamable HTTP is never exposed to a browser (plan §10); the
         # endpoint is only mounted while the plugin is enabled (plan §3.4).
         app.state.agent_mcp_app = None

@@ -301,12 +301,40 @@ export interface TerminalActionResultFrame {
 
 export interface AgentCapabilitiesResponse {
   agent_broker_enabled: boolean
+  state: "starting" | "ready" | "degraded" | "disabled"
+  reason_code: "recovery_failed" | null
   delegated_write_grants_enabled: boolean
+}
+
+export interface CleanupPendingResponse {
+  cleanup_job_id: string
+  state: "deletion_pending"
+  status_url: string
+}
+
+export interface CleanupReceiptResponse {
+  receipt_id: string
+  artifact_kind: string
+  state: "pending" | "confirmed" | "not_applicable" | "dead_letter"
+  attempt_count: number
+  next_attempt_at: string | null
+  reason_code: string | null
+}
+
+export interface CleanupJobResponse {
+  cleanup_job_id: string
+  target_kind: string
+  state: "pending" | "completed" | "dead_letter"
+  receipts: CleanupReceiptResponse[]
 }
 
 export interface AgentConversationCreateRequest {
   binding_id: string
   title: string | null
+}
+
+export interface AgentConversationUpdateRequest {
+  title: string
 }
 
 export interface AgentConversationResponse {
@@ -476,10 +504,7 @@ export interface AgentBindingCreateRequest {
 }
 
 export interface AgentBindingUpdateRequest {
-  status: string | null
-  runtime_ref: string | null
-  runtime_epoch: number | null
-  capability_ref: string | null
+  status: "disabled" | "revoked" | null
 }
 
 export interface AgentBindingResponse {
@@ -496,6 +521,111 @@ export interface AgentBindingResponse {
 
 export interface AgentBindingListResponse {
   bindings: AgentBindingResponse[]
+}
+
+export interface AgentBindingDetailResponse {
+  binding_id: string
+  profile_id: string
+  term_id: string
+  status: string
+  config_revision: number
+  runtime_ref: string | null
+  runtime_epoch: number | null
+  capability_ref: string | null
+  profile: AgentSetupProfileSummary | null
+  runtime: AgentRuntimeStateResponse | null
+  pane_policy: AgentPanePolicyResponse
+  disclosure: AgentProviderDisclosureResponse | null
+}
+
+export interface AgentBindingRuntimeUpdateRequest {
+  runtime_ref: string
+  capability_ref: string
+  expected_revision: number
+}
+
+export interface AgentDisclosureAcceptRequest {
+  disclosure_fingerprint: string
+  accepted: true
+}
+
+export interface AgentPanePolicyReplaceRequest {
+  pane_ids: string[]
+  topology_revision: number
+  expected_revision: number | null
+}
+
+export interface AgentPanePolicyResponse {
+  binding_id: string
+  pane_ids: string[]
+  topology_revision: number | null
+}
+
+export interface AgentProviderDisclosureResponse {
+  binding_id: string | null
+  disclosure_fingerprint: string
+  provider_id: string
+  model_id: string
+  endpoint_origin: string
+  region: string
+  retention_terms: string
+  retention_version: string
+  no_training: boolean
+  policy_version: string
+  credential_source: string | null
+  accepted: boolean
+  accepted_at: string | null
+  accepted_auth_epoch: number | null
+}
+
+export interface AgentRuntimeStateResponse {
+  readiness: string
+  reason_code: string | null
+  config_revision: number
+  applied_revision: number | null
+  runtime_epoch: number | null
+  provider_readiness: string
+  observed_runtime_ref: string | null
+  observed_capability_ref: string | null
+  provider_reason_code: string | null
+}
+
+export interface AgentSetupProfileSummary {
+  profile_id: string
+  display_name: string
+  backend_kind: string
+  provider_id: string | null
+  model_id: string | null
+}
+
+export interface AgentSetupRequest {
+  term_id: string
+  profile_id: string | null
+  profile_display_name: string | null
+  pane_ids: string[]
+  topology_revision: number
+  disclosure_fingerprint: string
+  accepted: true
+  idempotency_key: string
+}
+
+export interface AgentSetupResponse {
+  state: "unconfigured" | "deployment_required" | "activating" | "ready" | "unavailable"
+  term_id: string
+  binding_id: string | null
+  profile: AgentSetupProfileSummary | null
+  profiles: AgentSetupProfileSummary[]
+  token: AgentSetupTokenSummary
+  runtime: AgentRuntimeStateResponse | null
+  pane_policy: AgentPanePolicyResponse | null
+  disclosure: AgentProviderDisclosureResponse | null
+  topology_revision: number | null
+  reason_code: string | null
+}
+
+export interface AgentSetupTokenSummary {
+  installed: boolean
+  expires_at: string | null
 }
 
 export interface AgentTokenCreateRequest {

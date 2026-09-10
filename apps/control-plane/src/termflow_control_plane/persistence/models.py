@@ -14,8 +14,9 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    text,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, synonym
 from termflow_protocol.common import utc_now
 
 
@@ -227,6 +228,11 @@ class AuthToken(Base):
     )
     epoch: Mapped[int] = mapped_column(Integer)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    # The original strong-authentication time survives token refresh/rotation.
+    # Legacy tokens cannot prove one, so migration 0011 leaves this NULL.
+    authenticated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
     rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -289,7 +295,9 @@ class AgentBinding(Base):
         ForeignKey("instances.id", ondelete="CASCADE"),
         index=True,
     )
-    status: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(
+        String(32), default="disabled", server_default=text("'disabled'")
+    )
     # Runtime fields are opaque references to the externally deployed runtime
     # and its epoch-bound MCP capability.  A binding may be created before a
     # runtime is provisioned and stays fail-closed while the runtime is not
@@ -297,23 +305,96 @@ class AgentBinding(Base):
     runtime_ref: Mapped[str | None] = mapped_column(String(128), default=None)
     runtime_epoch: Mapped[int | None] = mapped_column(Integer, default=None)
     capability_ref: Mapped[str | None] = mapped_column(String(128), default=None)
+    config_revision: Mapped[int] = mapped_column(
+        Integer, default=1, server_default=text("1")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
 
     __table_args__ = (
-        # One active binding per (profile, Term).  Uniqueness is expressed over
-        # the explicit status column rather than a partial index on active
-        # rows: because status is non-null and part of the key, at most one
-        # binding can occupy any given state for the same profile/Term pair,
-        # so "active" is unique while terminal-state rows may coexist.
-        UniqueConstraint(
+        Index(
+            "uq_agent_bindings_profile_term_active",
             "profile_id",
             "term_id",
-            "status",
-            name="uq_agent_bindings_profile_term_status",
+            unique=True,
+            sqlite_where=text("status != 'revoked'"),
+            postgresql_where=text("status != 'revoked'"),
         ),
+    )
+
+
+class AgentProviderDisclosureAcceptance(Base):
+    """Immutable, credential-free provider disclosure acceptance history."""
+
+    __tablename__ = "agent_provider_disclosure_acceptances"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    binding_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_bindings.id", ondelete="CASCADE"),
+    )
+    disclosure_fingerprint: Mapped[str] = mapped_column(String(64))
+    provider_id: Mapped[str] = mapped_column(String(64))
+    model_id: Mapped[str] = mapped_column(String(128))
+    endpoint_origin: Mapped[str] = mapped_column(String(2048))
+    region: Mapped[str] = mapped_column(String(128))
+    retention_terms: Mapped[str] = mapped_column(Text)
+    retention_version: Mapped[str] = mapped_column(String(64))
+    no_training: Mapped[bool] = mapped_column(Boolean)
+    policy_version: Mapped[str] = mapped_column(String(64))
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    accepted_auth_epoch: Mapped[int] = mapped_column(Integer)
+    actor_kind: Mapped[str] = mapped_column(String(32))
+    actor_ref: Mapped[str] = mapped_column(String(256))
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_agent_provider_disclosure_acceptances_binding_disclosure_fingerprint",
+            "binding_id",
+            "disclosure_fingerprint",
+        ),
+    )
+
+
+class AgentSetupReceipt(Base):
+    """Durable idempotency receipt for one product setup request.
+
+    The receipt intentionally stores only a request digest and the public
+    setup outcome.  Bootstrap credentials and raw capability tokens never
+    cross this boundary.  It is created in the same transaction as the
+    setup aggregate, so a failed setup cannot leave a claim behind.
+    """
+
+    __tablename__ = "agent_setup_receipts"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    idempotency_key: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), unique=True, index=True
+    )
+    request_digest: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(
+        String(32), default="activating", server_default=text("'activating'")
+    )
+    term_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("instances.id", ondelete="CASCADE"),
+        index=True,
+    )
+    binding_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_bindings.id", ondelete="SET NULL"),
+        index=True,
+        default=None,
+    )
+    reason_code: Mapped[str | None] = mapped_column(String(64), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
 
 
@@ -392,7 +473,7 @@ class BackendConversationRef(Base):
 
 
 class AgentRuntimeBinding(Base):
-    """Persistent runtime registration, epoch, and readiness (plan §6.2.1)."""
+    """One controller-observed runtime state row for a desired binding."""
 
     __tablename__ = "agent_runtime_bindings"
 
@@ -400,13 +481,41 @@ class AgentRuntimeBinding(Base):
     binding_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("agent_bindings.id", ondelete="CASCADE"),
-        index=True,
     )
-    runtime_ref: Mapped[str] = mapped_column(String(128))
-    runtime_epoch: Mapped[int] = mapped_column(Integer)
-    readiness: Mapped[str] = mapped_column(String(32))
+    readiness: Mapped[str] = mapped_column(
+        String(32),
+        default="unprovisioned",
+        server_default=text("'unprovisioned'"),
+    )
+    reason_code: Mapped[str | None] = mapped_column(String(64), default=None)
+    observed_runtime_ref: Mapped[str | None] = mapped_column(
+        String(128), default=None
+    )
+    observed_runtime_epoch: Mapped[int | None] = mapped_column(Integer, default=None)
+    observed_capability_ref: Mapped[str | None] = mapped_column(
+        String(128), default=None
+    )
+    applied_revision: Mapped[int | None] = mapped_column(Integer, default=None)
+    config_fingerprint: Mapped[str | None] = mapped_column(String(64), default=None)
     last_health_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
+    )
+    transition_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    provider_readiness: Mapped[str] = mapped_column(
+        String(32),
+        default="configured_unverified",
+        server_default=text("'configured_unverified'"),
+    )
+    provider_verified_revision: Mapped[int | None] = mapped_column(
+        Integer, default=None
+    )
+    provider_last_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    provider_reason_code: Mapped[str | None] = mapped_column(
+        String(64), default=None
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
@@ -415,11 +524,29 @@ class AgentRuntimeBinding(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "runtime_ref",
-            "runtime_epoch",
-            name="uq_agent_runtime_bindings_runtime_ref_epoch",
+            "binding_id", name="uq_agent_runtime_bindings_binding_id"
+        ),
+        UniqueConstraint(
+            "observed_runtime_ref",
+            "observed_runtime_epoch",
+            name="uq_agent_runtime_bindings_observed_runtime_ref_epoch",
+        ),
+        Index(
+            "ix_agent_runtime_bindings_readiness_last_health_at",
+            "readiness",
+            "last_health_at",
+        ),
+        Index(
+            "ix_agent_runtime_bindings_provider_readiness_last_checked_at",
+            "provider_readiness",
+            "provider_last_checked_at",
         ),
     )
+
+    # Compatibility query/constructor aliases for Task 4's repository change.
+    # They do not create legacy columns; metadata contains observed_* only.
+    runtime_ref: Mapped[str | None] = synonym("observed_runtime_ref")
+    runtime_epoch: Mapped[int | None] = synonym("observed_runtime_epoch")
 
 
 class AgentInboxItem(Base):
@@ -889,9 +1016,18 @@ class AgentCleanupJob(Base):
     target_kind: Mapped[str] = mapped_column(String(32))
     target_ref: Mapped[str] = mapped_column(String(128))
     state: Mapped[str] = mapped_column(String(32))
+    # A manifest version makes the receipt set auditable and lets a future
+    # cleanup policy evolve without silently interpreting an old job with a
+    # new artifact vocabulary.
+    manifest_version: Mapped[int] = mapped_column(
+        Integer, default=1, server_default=text("1")
+    )
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[str | None] = mapped_column(Text, default=None)
     next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -900,7 +1036,63 @@ class AgentCleanupJob(Base):
     )
 
     __table_args__ = (
+        UniqueConstraint(
+            "target_kind",
+            "target_ref",
+            name="uq_agent_cleanup_jobs_target",
+        ),
         Index("ix_agent_cleanup_jobs_state_next_attempt_at", "state", "next_attempt_at"),
+    )
+
+
+class AgentCleanupReceipt(Base):
+    """Per-artifact durable evidence for one cleanup manifest.
+
+    A job is complete only after every receipt is ``confirmed`` or carries a
+    typed ``not_applicable`` policy decision.  In particular, a missing
+    handler never turns an empty/unknown receipt set into success.
+    """
+
+    __tablename__ = "agent_cleanup_receipts"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    cleanup_job_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agent_cleanup_jobs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    artifact_kind: Mapped[str] = mapped_column(String(64))
+    artifact_ref: Mapped[str] = mapped_column(String(256))
+    state: Mapped[str] = mapped_column(String(32))
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, default=None)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    evidence_digest: Mapped[str | None] = mapped_column(String(64), default=None)
+    confirmation_key: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), default=None)
+    policy_reason: Mapped[str | None] = mapped_column(String(128), default=None)
+    policy_version: Mapped[str | None] = mapped_column(String(64), default=None)
+    confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "cleanup_job_id",
+            "artifact_kind",
+            "artifact_ref",
+            name="uq_agent_cleanup_receipts_manifest_entry",
+        ),
+        Index(
+            "ix_agent_cleanup_receipts_state_next_attempt_at",
+            "state",
+            "next_attempt_at",
+        ),
     )
 
 

@@ -17,7 +17,7 @@ export function isBackendRuntimeState(value: string): value is BackendRuntimeSta
 
 export interface AgentMessageState {
   messageId: string
-  role: 'assistant' | 'user'
+  role: 'assistant' | 'user' | 'system'
   text: string
   status: 'streaming' | 'complete'
   createdAt: number
@@ -319,10 +319,13 @@ export function applyAguiEvent(
 }
 
 /**
- * Inject historical user messages from the REST ``/messages`` listing (M6b
- * spec §4.5). Only ``role === 'user'`` rows are consumed: assistant content
- * always comes from the event replay to avoid dual sources. Rows with a null
- * ``body`` (pre-migration history) degrade to an empty text placeholder.
+ * Inject historical user and system messages from the REST ``/messages``
+ * listing (M6b spec §4.5). Assistant content always comes from the event
+ * replay to avoid dual sources. System rows are retained as ordinary
+ * completed message records so the UI can present them in a collapsed
+ * context section without inventing a prompt that the server did not send.
+ * Rows with a null ``body`` (pre-migration history) degrade to an empty text
+ * placeholder.
  *
  * Seeding is idempotent (existing keys are skipped), and it is temporally
  * separated from same-session echoes: the 202 receipt's ``message_id`` is an
@@ -335,17 +338,28 @@ export function seedUserMessages(
 ): AgentHistoryState {
   const next = cloneState(state)
   for (const message of messages) {
-    if (message.role !== 'user') continue
-    if (next.userMessages.has(message.message_id)) continue
     const parsed = Date.parse(message.created_at)
     const at = Number.isFinite(parsed) ? parsed : now()
-    next.userMessages.set(message.message_id, {
-      clientId: message.message_id,
-      text: message.body ?? '',
-      deliveryState: 'accepted',
-      error: null,
-    })
-    next.timeline.push({ type: 'user', refId: message.message_id, at })
+    if (message.role === 'system') {
+      if (next.messages.has(message.message_id)) continue
+      next.messages.set(message.message_id, {
+        messageId: message.message_id,
+        role: 'system',
+        text: message.body ?? '',
+        status: 'complete',
+        createdAt: at,
+      })
+      next.timeline.push({ type: 'message', refId: message.message_id, at })
+    } else if (message.role === 'user') {
+      if (next.userMessages.has(message.message_id)) continue
+      next.userMessages.set(message.message_id, {
+        clientId: message.message_id,
+        text: message.body ?? '',
+        deliveryState: 'accepted',
+        error: null,
+      })
+      next.timeline.push({ type: 'user', refId: message.message_id, at })
+    }
   }
   return next
 }

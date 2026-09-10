@@ -10,9 +10,9 @@ fresh token per epoch, only the digest retained, raw token delivered exactly
 once then discarded, fail-closed verification.
 
 The connector deliberately contains no Docker control: the tests inject a
-``FakeRuntimeClient`` standing in for the deployment-owned runtime manager
-(production wiring to that manager is out of 0.2.0 scope; until one is
-injected, production fails closed - see ``test_app_wiring.py``).
+``FakeRuntimeClient`` standing in for the deployment-owned OpenCode endpoint;
+production uses the authenticated HTTP health client and still fails closed
+when that endpoint cannot attest readiness (see ``test_app_wiring.py``).
 """
 
 from __future__ import annotations
@@ -63,11 +63,10 @@ class _FakeRuntimeState:
 
 
 class FakeRuntimeClient:
-    """Test double for the deployment-owned runtime manager.
+    """Test double for the deployment-owned runtime endpoint.
 
     The production connector never drives Docker: production wiring injects an
-    HTTP client for a deployment-owned runtime manager (out of 0.2.0 scope).
-    This fake simulates that manager's side of the lifecycle: a runtime
+    HTTP client for the OpenCode endpoint.  This fake simulates that endpoint's lifecycle: a runtime
     provisioned with an initial readiness/epoch, restarts that take effect only
     after a configurable number of not-ready health polls, and cleanup that
     removes the runtime.
@@ -360,6 +359,37 @@ class TestQuiesce:
 
 
 class TestRestart:
+    async def test_restart_fences_old_epoch_before_client_failure(
+        self, provider: FakeSecretProvider
+    ) -> None:
+        class FailingRestartClient(FakeRuntimeClient):
+            async def restart(
+                self,
+                runtime_ref: RuntimeRef,
+                epoch: int,
+                capability_secret: str,
+            ) -> RuntimeHealth:
+                del runtime_ref, epoch, capability_secret
+                raise RuntimeError("deployment restart failed")
+
+        client = FailingRestartClient()
+        connector = make_connector(client, provider)
+        await connector.register(BINDING_ID, RUNTIME_REF, 1, CAPABILITY_REF)
+
+        with pytest.raises(RuntimeError, match="deployment restart failed"):
+            await connector.restart(RUNTIME_REF, 2, CAPABILITY_REF)
+
+        # The old epoch is fenced before the failing await and cannot be used
+        # while the deployment state is unknown.
+        assert connector.accept_tool_call(RUNTIME_REF, 1) is False
+        assert connector.accept_activation(RUNTIME_REF, 1) is False
+        assert connector.accept_tool_call(RUNTIME_REF, 2) is False
+        attested = connector._runtimes[RUNTIME_REF]
+        assert attested.epoch == 2
+        assert attested.capability_ref == CAPABILITY_REF
+        assert attested.ready is False
+        assert (await connector.health(RUNTIME_REF)).status is RuntimeStatus.NOT_READY
+
     async def test_restart_rotates_epoch_and_is_ready_once_health_proves_it(
         self, provider: FakeSecretProvider
     ) -> None:
@@ -451,7 +481,9 @@ class TestRestart:
         with pytest.raises(SecretUnavailableError):
             await connector.restart(RUNTIME_REF, 2, CAPABILITY_REF)
         assert client.restart_calls == []
-        assert connector.accept_tool_call(RUNTIME_REF, 1) is True
+        # A restart request fences the old epoch even when no replacement
+        # secret is available; callers must re-attest before using it again.
+        assert connector.accept_tool_call(RUNTIME_REF, 1) is False
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +505,30 @@ class TestCleanup:
         assert connector.accept_activation(RUNTIME_REF, 1) is False
         health = await connector.health(RUNTIME_REF)
         assert health.status is RuntimeStatus.UNKNOWN
+
+    async def test_aclose_forwards_to_an_owned_runtime_client(
+        self, provider: FakeSecretProvider
+    ) -> None:
+        class ClosableClient(FakeRuntimeClient):
+            def __init__(self) -> None:
+                super().__init__()
+                self.closed = False
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        client = ClosableClient()
+        connector = make_connector(client, provider)
+
+        await connector.aclose()
+
+        assert client.closed is True
+
+    async def test_aclose_is_a_noop_for_clients_without_close_hook(
+        self, client: FakeRuntimeClient, provider: FakeSecretProvider
+    ) -> None:
+        connector = make_connector(client, provider)
+        await connector.aclose()
 
 
 # ---------------------------------------------------------------------------

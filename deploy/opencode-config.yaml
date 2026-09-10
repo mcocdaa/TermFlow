@@ -2,14 +2,27 @@
   "$schema": "https://opencode.ai/config.json",
   "permission": {
     "*": "deny",
-    "termflow_list_panes": "ask",
-    "termflow_pane_read": "ask",
-    "termflow_pane_send_text": "ask",
-    "termflow_pane_send_keys": "ask",
-    "termflow_watch_create": "ask",
-    "termflow_watch_list": "ask",
-    "termflow_watch_get": "ask",
-    "termflow_watch_cancel": "ask"
+    "termflow_*": "allow"
   },
-  "mcp": {}
+  "mcp": {
+    "termflow": {
+      "type": "remote",
+      "url": "{env:TERMFLOW_AGENT_MCP_URL}",
+      "headers": {
+        "Authorization": "Bearer {env:TERMFLOW_AGENT_MCP_TOKEN}"
+      },
+      "enabled": true
+    }
+  },
+  "provider": {
+    "deepseek": {
+      "options": {
+        "baseURL": "https://api.deepseek.com",
+        "apiKey": "{env:DEEPSEEK_API_KEY}"
+      },
+      "models": {
+        "deepseek-v4-flash": {}
+      }
+    }
+  }
 }

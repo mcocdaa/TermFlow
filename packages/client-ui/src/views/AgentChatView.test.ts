@@ -158,6 +158,45 @@ afterEach(() => {
 })
 
 describe('AgentChatView', () => {
+  it('orders system, user, and assistant entries by conversation time', async () => {
+    const message = (id: string, role: string, body: string, createdAt: string, revision: number) => ({
+      message_id: id,
+      conversation_id: CONVERSATION,
+      run_id: null,
+      role,
+      kind: role === 'system' ? 'prompt' : 'text',
+      assembly_revision: revision,
+      is_final: true,
+      body_digest: `digest-${id}`,
+      body,
+      created_at: createdAt,
+    })
+    const harness = await mounted({
+      listMessages: vi.fn(async () => ({ messages: [
+        message('system-1', 'system', '系统说明', '2026-08-12T00:00:00Z', 1),
+        message('user-1', 'user', '第一问', '2026-08-12T00:00:01Z', 2),
+        message('user-2', 'user', '第二问', '2026-08-12T00:00:03Z', 4),
+      ] })),
+    })
+    harness.transport.emit({ type: 'open' })
+    harness.transport.emit({
+      type: 'event',
+      event: { type: 'TEXT_MESSAGE_CHUNK', messageId: 'assistant-1', delta: '第一答', timestamp: Date.parse('2026-08-12T00:00:02Z') },
+      cursor: '7-1',
+    })
+    await flushPromises()
+
+    const timeline = [...harness.wrapper.get('[data-agent-message-list]').element.children]
+      .map((element) => ({ role: element.getAttribute('data-agent-message-role'), text: element.textContent?.trim() }))
+    expect(timeline).toEqual([
+      { role: 'system', text: '系统 系统上下文系统说明' },
+      { role: 'user', text: '你第一问' },
+      { role: 'assistant', text: 'Agent第一答' },
+      { role: 'user', text: '你第二问' },
+    ])
+    harness.unmount()
+  })
+
   it('renders the live message flow with tool rows and approval cards in timeline order', async () => {
     const harness = await mounted()
     harness.transport.emit({ type: 'open' })

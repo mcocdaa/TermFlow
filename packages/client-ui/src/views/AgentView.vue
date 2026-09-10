@@ -1,7 +1,10 @@
 <template>
   <div class="page agent-view">
     <header class="page-heading">
-      <div><p class="eyebrow">Agent</p><h1>Agent 控制台</h1></div>
+      <div>
+        <p class="eyebrow">Agent</p>
+        <h1 id="agent-title">Agent 控制台</h1>
+      </div>
     </header>
 
     <section v-if="!agentBrokerEnabled" class="agent-placeholder" data-agent-disabled>
@@ -10,83 +13,114 @@
     </section>
 
     <template v-else>
-      <section class="settings-panel agent-binding-panel" aria-labelledby="agent-bindings-heading">
-        <div class="settings-panel-heading">
-          <div><p class="eyebrow">Bindings</p><h2 id="agent-bindings-heading">选择 Binding</h2></div>
-        </div>
-        <p v-if="bindingsLoading" class="agent-binding-panel__state" data-agent-bindings-loading>加载中…</p>
-        <p v-else-if="bindingsFailed" class="agent-binding-panel__state" role="alert" data-agent-bindings-failed>无法加载 Binding 列表。</p>
-        <p v-else-if="bindings.length === 0" class="agent-binding-panel__state" data-agent-bindings-empty>无可用 Binding。</p>
-        <div v-else class="agent-binding-list" role="group" aria-label="Binding 列表">
-          <button
-            v-for="binding in bindings"
-            :key="binding.binding_id"
-            type="button"
-            class="agent-binding-option"
-            :class="{ 'agent-binding-option--selected': selectedBindingId === binding.binding_id }"
-            :aria-pressed="selectedBindingId === binding.binding_id ? 'true' : 'false'"
-            :data-agent-binding-id="binding.binding_id"
-            @click="selectBinding(binding.binding_id)"
-          >
-            <span class="agent-binding-option__term">Term {{ binding.term_id }}</span>
-            <span class="agent-binding-option__profile">Profile {{ binding.profile_id }}</span>
-            <span class="agent-binding-option__status" :data-agent-binding-status="binding.status">{{ binding.status }}</span>
-          </button>
-        </div>
-      </section>
+      <p v-if="pageError !== null" class="form-error agent-page-error" role="alert" data-agent-error>
+        {{ pageError }}
+      </p>
 
       <section class="settings-panel agent-conversation-panel" aria-labelledby="agent-conversations-heading">
         <div class="settings-panel-heading">
-          <div><p class="eyebrow">Conversations</p><h2 id="agent-conversations-heading">会话列表</h2></div>
+          <div>
+            <p class="eyebrow">Conversations</p>
+            <h2 id="agent-conversations-heading">会话记录</h2>
+          </div>
+          <span class="status-chip" data-agent-conversation-count>{{ conversationRows.length }}</span>
         </div>
-        <div v-if="selectedBindingId === undefined" class="agent-conversation-panel__state" data-agent-conversations-need-binding>
-          请先选择 Binding。
-        </div>
-        <template v-else>
-          <form class="agent-create-row" @submit.prevent="createConversation">
-            <label class="sr-only" for="agent-new-title">新会话标题（可选）</label>
-            <input
-              id="agent-new-title"
-              v-model="newTitle"
-              class="agent-create-row__input"
-              type="text"
-              placeholder="会话标题（可选）"
-              data-agent-create-title
-            />
-            <button type="submit" class="primary-button" :disabled="creating" data-action="create-conversation">
-              {{ creating ? '创建中…' : '创建会话' }}
-            </button>
-          </form>
-          <p v-if="conversations.loading.value" class="agent-conversation-panel__state" data-agent-conversations-loading>加载中…</p>
-          <p v-else-if="conversations.conversations.value.length === 0" class="agent-conversation-panel__state" data-agent-conversations-empty>暂无会话。</p>
-          <ul v-else class="agent-conversation-list">
-            <li v-for="conversation in conversations.conversations.value" :key="conversation.conversation_id" class="agent-conversation-row" :data-agent-conversation-id="conversation.conversation_id">
+
+        <p v-if="directoryLoading || conversations.loading.value" class="agent-conversation-panel__state" data-agent-conversations-loading>加载中…</p>
+        <p v-else-if="bindings.length === 0" class="agent-conversation-panel__state" data-agent-bindings-empty>
+          暂无可用 Term，请先在电脑管理中连接一个 Term。
+        </p>
+        <p v-else-if="conversationRows.length === 0" class="agent-conversation-panel__state" data-agent-conversations-empty>
+          暂无会话记录。
+        </p>
+        <div v-else class="agent-conversation-table" role="table" aria-label="Agent 会话记录" data-agent-conversation-table>
+          <div class="agent-conversation-table__head" role="row">
+            <span role="columnheader">会话名称</span>
+            <span role="columnheader">Term</span>
+            <span role="columnheader">工作状态</span>
+            <span role="columnheader">操作</span>
+          </div>
+          <article
+            v-for="conversation in conversationRows"
+            :key="conversation.conversation_id"
+            class="agent-conversation-table__row"
+            role="row"
+            :data-agent-conversation-id="conversation.conversation_id"
+          >
+            <div role="cell" data-label="会话名称" class="agent-conversation-table__name">
+              <form v-if="editingConversationId === conversation.conversation_id" class="agent-rename-form" @submit.prevent="saveRename(conversation.conversation_id)">
+                <label class="sr-only" :for="`agent-rename-${conversation.conversation_id}`">会话名称</label>
+                <input
+                  :id="`agent-rename-${conversation.conversation_id}`"
+                  v-model="renameDraft"
+                  maxlength="255"
+                  data-agent-rename-input
+                  @keydown.esc.prevent="cancelRename"
+                />
+                <button class="icon-button icon-only" type="submit" data-action="save-conversation-name" aria-label="保存会话名称" title="保存会话名称">
+                  <Check :size="17" aria-hidden="true" />
+                </button>
+                <button class="icon-button icon-only" type="button" data-action="cancel-conversation-name" aria-label="取消重命名" title="取消重命名" @click="cancelRename">
+                  <X :size="17" aria-hidden="true" />
+                </button>
+              </form>
               <RouterLink
-                class="agent-conversation-row__open"
+                v-else
+                class="agent-conversation-table__title"
                 :to="`/agent/${conversation.conversation_id}`"
-                :data-agent-conversation-title="conversation.title"
+                :data-agent-conversation-title="conversation.title ?? ''"
               >
-                <span class="agent-conversation-row__title">{{ conversationTitle(conversation) }}</span>
-                <span class="agent-conversation-row__status" :data-agent-conversation-status="conversation.status">{{ conversation.status }}</span>
-                <span
-                  v-if="conversations.pendingCount(conversation.conversation_id) > 0"
-                  class="agent-pending-badge"
-                  :aria-label="`${conversations.pendingCount(conversation.conversation_id)} 个待处理审批`"
-                  data-agent-pending-badge
-                >{{ conversations.pendingCount(conversation.conversation_id) }}</span>
+                <span>{{ conversationTitle(conversation) }}</span>
+              </RouterLink>
+            </div>
+            <div role="cell" data-label="Term" class="agent-conversation-table__term">
+              {{ termName(bindingTermId(conversation.binding_id)) }}
+            </div>
+            <div role="cell" data-label="工作状态" class="agent-conversation-table__status">
+              <span class="agent-status-tag" :data-status="conversationStatus(conversation.status).tone">
+                {{ conversationStatus(conversation.status).label }}
+              </span>
+              <span
+                v-if="conversations.pendingCount(conversation.conversation_id) > 0"
+                class="agent-pending-badge"
+                :aria-label="`${conversations.pendingCount(conversation.conversation_id)} 个待处理审批`"
+                data-agent-pending-badge
+              >{{ conversations.pendingCount(conversation.conversation_id) }}</span>
+            </div>
+            <div role="cell" data-label="操作" class="agent-conversation-table__actions">
+              <RouterLink
+                class="icon-button icon-only"
+                :to="`/agent/${conversation.conversation_id}`"
+                data-action="open-conversation"
+                :aria-label="`打开会话：${conversationTitle(conversation)}`"
+                title="打开会话"
+              >
+                <ExternalLink :size="17" aria-hidden="true" />
               </RouterLink>
               <button
+                class="icon-button icon-only"
                 type="button"
-                class="secondary-button agent-conversation-row__delete"
+                data-action="rename-conversation"
+                :aria-label="`重命名会话：${conversationTitle(conversation)}`"
+                title="重命名会话"
+                @click="startRename(conversation)"
+              >
+                <Pencil :size="17" aria-hidden="true" />
+              </button>
+              <button
+                class="icon-button icon-only destructive"
+                type="button"
                 data-action="delete-conversation"
+                :aria-label="`删除会话：${conversationTitle(conversation)}`"
+                title="删除会话"
                 @click="requestDelete(conversation.conversation_id)"
-              >删除</button>
-            </li>
-          </ul>
-        </template>
+              >
+                <Trash2 :size="17" aria-hidden="true" />
+              </button>
+            </div>
+          </article>
+        </div>
       </section>
-
-      <p class="agent-grants-note" data-agent-grants>Delegated Write Grants：{{ delegatedWriteGrantsEnabled ? '可用' : '不可用' }}</p>
     </template>
 
     <div v-if="deleteTargetId !== null" class="dialog-backdrop" @click.self="closeDeleteDialog">
@@ -114,13 +148,10 @@
 </template>
 
 <script setup lang="ts">
-//: Agent overview (M6b spec §4.7): capability-gated binding selector
-//: (`GET /agent/admin/bindings`, term/profile/status) feeding the
-//: conversation list scoped by the selected binding (list/create/delete +
-//: pending approval badges). Deletion goes through a confirm dialog that
-//: reuses the ClosePaneDialog focus-trap pattern (Escape cancels, focus
-//: restored); every rendered text is pure interpolation. A disabled broker
-//: renders the 占位 instead of the management UI (spec §6.4).
+//: Product-facing Agent directory. Binding ids remain an internal API scope;
+//: the table resolves them to Term names and exposes only conversation data.
+//: All action glyphs come from the open-source Lucide Vue package.
+import { Check, ExternalLink, Pencil, Trash2, X } from '@lucide/vue'
 import type { AgentBindingResponse, AgentConversationResponse } from '@termflow/client-contracts'
 import { ApiError } from '@termflow/client-core'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -132,54 +163,92 @@ import { useClientRuntime } from '../runtime'
 
 const runtime = useClientRuntime()
 const toast = useBottomToast()
-const { agentBrokerEnabled, delegatedWriteGrantsEnabled } = useAgentBroker()
+const { agentBrokerEnabled } = useAgentBroker()
 
 const bindings = ref<AgentBindingResponse[]>([])
-const bindingsLoading = ref(true)
-const bindingsFailed = ref(false)
-const selectedBindingId = ref<string | undefined>(undefined)
-const conversations = useAgentConversations(selectedBindingId)
+const termNames = ref(new Map<string, string>())
+const directoryLoading = ref(true)
+const directoryError = ref<string | null>(null)
+const controller = ref<AbortController | null>(null)
 
-const newTitle = ref('')
-const creating = ref(false)
-let controller: AbortController | null = null
+const conversations = useAgentConversations(() => bindings.value.map((binding) => binding.binding_id))
 
-async function loadBindings() {
-  bindingsLoading.value = true
-  bindingsFailed.value = false
-  try {
-    bindings.value = (await runtime.api.agents.listBindings(controller?.signal)).bindings
-  } catch (error) {
-    // A navigation-abort must not surface as a failure toast on the next
-    // page (mirrors useAgentConversations' aborted filter).
-    if (error instanceof ApiError && error.kind === 'aborted') return
-    bindingsFailed.value = true
-    toast.show({ text: '无法加载 Binding 列表。', tone: 'error' })
-  } finally {
-    bindingsLoading.value = false
-  }
+const conversationRows = computed(() => [...conversations.conversations.value].sort((left, right) => {
+  return right.updated_at.localeCompare(left.updated_at)
+}))
+
+const pageError = computed(() => directoryError.value ?? conversations.error.value)
+
+function isAborted(error: unknown): boolean {
+  return error instanceof ApiError && error.kind === 'aborted'
 }
 
-function selectBinding(bindingId: string) {
-  selectedBindingId.value = bindingId
+async function loadDirectory() {
+  directoryLoading.value = true
+  directoryError.value = null
+  const signal = controller.value?.signal
+  const [bindingResult, computerResult] = await Promise.allSettled([
+    runtime.api.agents.listBindings(signal === undefined ? {} : { signal }),
+    runtime.api.computers.list(signal),
+  ])
+  if (bindingResult.status === 'fulfilled') {
+    bindings.value = bindingResult.value.bindings
+  } else if (!isAborted(bindingResult.reason)) {
+    directoryError.value = '无法加载 Agent 会话数据，请稍后重试。'
+    toast.show({ text: directoryError.value, tone: 'error' })
+  }
+  if (computerResult.status === 'fulfilled') {
+    const names = new Map<string, string>()
+    for (const computer of computerResult.value.computers) {
+      for (const term of computer.terms) names.set(term.instance_id, term.name)
+    }
+    termNames.value = names
+  } else if (!isAborted(computerResult.reason) && directoryError.value === null) {
+    directoryError.value = '无法加载 Term 名称，部分会话信息可能不完整。'
+  }
+  directoryLoading.value = false
+}
+
+function bindingTermId(bindingId: string): string {
+  return bindings.value.find((binding) => binding.binding_id === bindingId)?.term_id ?? ''
+}
+
+function termName(termId: string): string {
+  return termNames.value.get(termId) ?? (termId === '' ? 'Term 未知' : `Term · ${termId.slice(0, 8)}`)
 }
 
 function conversationTitle(conversation: AgentConversationResponse): string {
-  return conversation.title ?? `会话 ${conversation.conversation_id.slice(0, 8)}`
+  return conversation.title?.trim() || `会话 ${conversation.conversation_id.slice(0, 8)}`
 }
 
-async function createConversation() {
-  const binding = selectedBindingId.value
-  if (binding === undefined || creating.value) return
-  creating.value = true
-  try {
-    const title = newTitle.value.trim()
-    const created = await conversations.create(binding, title === '' ? undefined : title)
-    // Keep the typed title on failure so it can be retried.
-    if (created !== null) newTitle.value = ''
-  } finally {
-    creating.value = false
+function conversationStatus(status: string): { label: string, tone: 'running' | 'stopped' | 'attention' } {
+  const normalized = status.toLowerCase()
+  if (['active', 'open', 'running', 'processing', 'queued'].includes(normalized)) {
+    return { label: '运行中', tone: 'running' }
   }
+  if (['failed', 'error', 'degraded'].includes(normalized)) {
+    return { label: '需要注意', tone: 'attention' }
+  }
+  return { label: '已停止', tone: 'stopped' }
+}
+
+const editingConversationId = ref<string | null>(null)
+const renameDraft = ref('')
+
+function startRename(conversation: AgentConversationResponse) {
+  editingConversationId.value = conversation.conversation_id
+  renameDraft.value = conversationTitle(conversation)
+  void nextTick(() => document.querySelector<HTMLInputElement>('[data-agent-rename-input]')?.focus())
+}
+
+function cancelRename() {
+  editingConversationId.value = null
+  renameDraft.value = ''
+}
+
+async function saveRename(conversationId: string) {
+  const updated = await conversations.rename(conversationId, renameDraft.value)
+  if (updated !== null) cancelRename()
 }
 
 // Delete confirm dialog (ClosePaneDialog focus-trap pattern).
@@ -233,15 +302,13 @@ function trapFocus(event: KeyboardEvent) {
 }
 
 onMounted(() => {
-  controller = new AbortController()
+  controller.value = new AbortController()
 })
-// Bindings are only fetched once the capability gate resolves enabled —
-// a disabled broker renders the placeholder and never probes the admin API.
 watch(agentBrokerEnabled, (enabled) => {
-  if (enabled) void loadBindings()
+  if (enabled) void loadDirectory()
 })
 onBeforeUnmount(() => {
-  controller?.abort()
-  controller = null
+  controller.value?.abort()
+  controller.value = null
 })
 </script>

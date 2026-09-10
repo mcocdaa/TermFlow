@@ -86,3 +86,27 @@ attestation。CI 引用完整 commit SHA 且权限最小化。
 
 容器默认只映射 loopback。需要远程访问时，应使用可信反向代理终止 TLS，并保护
 Admin Token。不要把数据库、A 配置、Bridge 日志或 tmux socket 上传为诊断附件。
+
+## Agent Broker v0.2.0 的运行时边界与证据等级
+
+参考部署中的 B 不直接操作 Docker。生产运行时门禁由
+`HttpHealthRuntimeClient` 对 OpenCode 的 `/global/health` 发起带 Basic Auth 的探测；
+绑定的 runtime epoch 仍由 B 校验，探测失败、epoch 不一致、撤销或共享 runtime 冲突均
+fail-closed。OpenCode 的 MCP 配置固定在 `deploy/opencode-config.yaml`，只允许审查过的
+TermFlow 工具；URL 和 AgentToken 通过 Compose 环境变量的 `{env:}` 插值传入，不把原始
+token 写入镜像或持久化卷。普通 B 重启不会自行推进 epoch，撤销或 profile 变更才会使旧
+epoch 失效。
+
+验证结果按证据等级区分，不能用较低等级的结果替代较高等级的运行时证明：
+
+| 等级 | 当前覆盖 | 限制 |
+| --- | --- | --- |
+| 静态/契约 | Python、TypeScript、Rust、Compose 配置、OpenCode fixture、工具 allowlist、`scripts/security/verify-agent-containers.sh` 的可执行检查 | 不证明容器已经启动，也不证明外部模型可用 |
+| 确定性产品跨进程 | `tests/e2e/test_agent_product_setup.py` + `test_agent_broker_process.py` 使用真实 A/tmux 和 B 子进程验证 setup 不重启 B、health drift/recovery、旧 epoch/错误 Host/撤销/运行中撤销、SSE replay/dedup、歧义动作 `delivery_unknown`、清理重试和 dead-letter；2026-09-08 组合运行 9 passed，另有 1 个运行中撤销场景通过 | 使用本地 fake OpenCode/provider，不证明真实容器或外部模型 |
+| 隔离真实浏览器 | `apps/clients/web/e2e/agent-chat.spec.ts` 与 `agent-terminal.spec.ts` 在 disposable Chromium 中验证登录、Agent 导航、setup、sidecar、隐私/a11y、runtime `503` fail-closed、reload persistence 和单 WebSocket；2026-09-08 desktop 通过，移动 portrait/landscape 亦通过 | 浏览器使用临时无外网环境；未连接稳定 OpenCode/MCP 或外部模型 |
+| 容器集成与出口 | `tests/e2e/test_agent_opencode_container.py` 的 pinned 1.18.18 生命周期/inspect smoke（1 passed）以及 `test_agent_provider_egress.py` 的 provider allow/deny、无直连、网络隔离（4 passed，均为 2026-09-08 记录） | 需要 Docker daemon、固定镜像和临时凭据；不覆盖 B/OpenCode/MCP 的真实产品编排或模型行为 |
+| live 外部模型 | 2026-09-09 disposable Compose 部署完成真实 B → OpenCode → DeepSeek → approval → Docker A `echo 1` 路径：一次 approval 被消费，重复决定返回 HTTP 409，记录一次 tool start/completion，pane 有一条命令和一条独立输出 `1`，最终 assistant body 恰为 `1`；B/OpenCode 重建后 setup、conversation 和 A 在线状态保留 | 该运行使用 synthetic、明确标注未验证的 provider disclosure metadata，readiness 仍为 `configured_unverified`，所以不证明供应商的 no-training/retention/region 政策或稳定发布就绪；新鲜 re-auth、撤销/断线和 `once`/`reject` 仍是未完成的 release gate |
+
+容器检查脚本只读取明确指定的 Compose project，不执行 up、down 或删除操作。集成测试的
+teardown 只清理自身随机 project 和随机 volume 名称。上述边界是覆盖说明，不构成“绝对
+安全”保证；宿主机、反向代理、模型供应商和 Docker 默认 seccomp/AppArmor 仍是部署者责任。

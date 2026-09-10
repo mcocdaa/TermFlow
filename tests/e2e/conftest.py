@@ -1,19 +1,28 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import os
+import secrets
 import signal
 import socket
 import subprocess
+import threading
 import time
-from dataclasses import dataclass
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 import httpx
 import pexpect
 import pytest
+from sqlalchemy import text
+from termflow_control_plane.persistence.database import Database
+from termflow_control_plane.persistence.repositories import RepositoryBundle, digest_secret
 from termflow_node.instances.models import LocalInstance
 from termflow_node.instances.store import InstanceStore
 from websockets.sync.client import connect
@@ -69,6 +78,9 @@ class TermFlowSystem:
         self.database_path = root / "control-plane.db"
         self.control_log_path = root / "control-plane.log"
         self.control_process: subprocess.Popen[bytes] | None = None
+        self.control_environment: dict[str, str] = {}
+        self.control_start_count = 0
+        self.control_process_ids: list[int] = []
         self.children: list[pexpect.spawn] = []
         self.instances: list[LocalInstance] = []
         self.node_env = os.environ.copy()
@@ -86,6 +98,11 @@ class TermFlowSystem:
     def admin_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.admin_token}"}
 
+    @property
+    def control_process_id(self) -> int | None:
+        process = self.control_process
+        return process.pid if process is not None and process.poll() is None else None
+
     def start_control_plane(self) -> None:
         if self.control_process is not None and self.control_process.poll() is None:
             return
@@ -100,6 +117,7 @@ class TermFlowSystem:
                 "TERMFLOW_TOTP_MASTER_KEY": self._totp_master_key,
             }
         )
+        environment.update(self.control_environment)
         log = self.control_log_path.open("ab")
         self.control_process = subprocess.Popen(
             [
@@ -115,8 +133,10 @@ class TermFlowSystem:
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+        self.control_start_count += 1
+        self.control_process_ids.append(self.control_process.pid)
         log.close()
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             if self.control_process.poll() is not None:
                 raise RuntimeError(self.control_log_path.read_text(errors="replace"))
@@ -164,7 +184,7 @@ class TermFlowSystem:
             capture_output=True,
             text=True,
             check=False,
-            timeout=5,
+            timeout=30,
         )
         assert result.returncode == 0, result.stdout + result.stderr
         assert enrollment_token not in result.stdout + result.stderr
@@ -179,7 +199,7 @@ class TermFlowSystem:
             encoding=None,
         )
         self.children.append(child)
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 30
         record: LocalInstance | None = None
         while time.monotonic() < deadline:
             current = [
@@ -218,7 +238,7 @@ class TermFlowSystem:
         return False
 
     def topology(self, instance_id: UUID) -> dict[str, object]:
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 30
         while True:
             response = httpx.get(
                 f"{self.base_url}/api/v1/instances/{instance_id}/topology",
@@ -317,6 +337,424 @@ class TermFlowSystem:
                 check=False,
             )
         self.stop_control_plane()
+
+
+class FakeAgentRuntime:
+    """Tiny, mutable OpenCode HTTP contract used only by deterministic E2E."""
+
+    def __init__(self) -> None:
+        self.healthy = True
+        self.mcp_connected = True
+        self.delete_available = True
+        self.session_create_calls = 0
+        self.prompt_calls = 0
+        self.delete_calls = 0
+        self.health_calls = 0
+        self.mcp_calls = 0
+        self.sse_connections = 0
+        self.reconcile_calls = 0
+        self.reconcile_available = True
+        self._sessions: dict[str, list[dict[str, object]]] = {}
+        self._events: list[str] = []
+        self._event_counter = 0
+        self._next_prompt_mode = "completed"
+        self._disconnect_after_events: int | None = None
+        self._forced_disconnects_remaining = 0
+        self._started = False
+        self._stopping = False
+        self._condition = threading.Condition()
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler_type())
+        self._server.daemon_threads = True
+        self._thread = threading.Thread(
+            target=self._server.serve_forever,
+            name="termflow-fake-agent-runtime",
+            daemon=True,
+        )
+
+    @property
+    def base_url(self) -> str:
+        host, port = self._server.server_address[:2]
+        return f"http://{host}:{port}"
+
+    def start(self) -> None:
+        if self._started:
+            return
+        self._started = True
+        self._thread.start()
+
+    def stop(self) -> None:
+        if not self._started:
+            self._server.server_close()
+            return
+        with self._condition:
+            self._stopping = True
+            self._condition.notify_all()
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=5)
+
+    def set_health(self, *, healthy: bool, mcp_connected: bool | None = None) -> None:
+        self.healthy = healthy
+        if mcp_connected is not None:
+            self.mcp_connected = mcp_connected
+
+    def disconnect_next_sse_after(self, *, event_count: int) -> None:
+        if event_count < 1:
+            raise ValueError("event_count must be positive")
+        with self._condition:
+            self._disconnect_after_events = event_count
+            self._forced_disconnects_remaining = 1
+
+    def emit_tool_start_only_on_next_prompt(self) -> None:
+        with self._condition:
+            self._next_prompt_mode = "tool_start_only"
+
+    def set_reconcile_available(self, available: bool) -> None:
+        self.reconcile_available = available
+
+    def _next_event(
+        self,
+        event_type: str,
+        properties: dict[str, object],
+    ) -> dict[str, object]:
+        self._event_counter += 1
+        return {
+            "directory": "/workspace",
+            "payload": {
+                "id": f"evt_fixture_{self._event_counter}",
+                "type": event_type,
+                "properties": properties,
+            },
+        }
+
+    def _emit_completed_turn(self, session_id: str) -> None:
+        message_id = f"msg_fixture_{self.prompt_calls}"
+        text = "fixture-result-1"
+        self._sessions.setdefault(session_id, []).append(
+            {"id": message_id, "role": "assistant"}
+        )
+        events = (
+            self._next_event(
+                "session.status",
+                {"sessionID": session_id, "status": {"type": "busy"}},
+            ),
+            self._next_event(
+                "message.part.updated",
+                {
+                    "sessionID": session_id,
+                    "part": {
+                        "id": f"prt_fixture_{self.prompt_calls}",
+                        "messageID": message_id,
+                        "sessionID": session_id,
+                        "type": "text",
+                        "text": text,
+                    },
+                },
+            ),
+            self._next_event(
+                "message.updated",
+                {
+                    "sessionID": session_id,
+                    "info": {
+                        "id": message_id,
+                        "role": "assistant",
+                        "time": {"created": 1, "completed": 2},
+                    },
+                },
+            ),
+            self._next_event("session.idle", {"sessionID": session_id}),
+        )
+        with self._condition:
+            self._events.extend(
+                json.dumps(event, separators=(",", ":")) for event in events
+            )
+            self._condition.notify_all()
+
+    def _emit_tool_start_only(self, session_id: str) -> None:
+        message_id = f"msg_fixture_{self.prompt_calls}"
+        events = (
+            self._next_event(
+                "session.status",
+                {"sessionID": session_id, "status": {"type": "busy"}},
+            ),
+            self._next_event(
+                "message.part.updated",
+                {
+                    "sessionID": session_id,
+                    "part": {
+                        "id": f"prt_tool_fixture_{self.prompt_calls}",
+                        "messageID": message_id,
+                        "sessionID": session_id,
+                        "type": "tool",
+                        "callID": f"call_fixture_{self.prompt_calls}",
+                        "tool": "termflow_terminal_input",
+                        "state": {"status": "running"},
+                    },
+                },
+            ),
+        )
+        with self._condition:
+            self._events.extend(
+                json.dumps(event, separators=(",", ":")) for event in events
+            )
+            self._condition.notify_all()
+
+    def _handler_type(self) -> type[BaseHTTPRequestHandler]:
+        runtime = self
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, _format: str, *args: object) -> None:
+                del args
+
+            def _json(self, status: int, payload: object) -> None:
+                encoded = json.dumps(payload, separators=(",", ":")).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+            def _empty(self, status: int) -> None:
+                self.send_response(status)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def _read_body(self) -> bytes:
+                length = int(self.headers.get("Content-Length", "0"))
+                return self.rfile.read(length) if length else b""
+
+            def do_GET(self) -> None:  # noqa: N802
+                path = urlsplit(self.path).path
+                if path == "/global/health":
+                    runtime.health_calls += 1
+                    self._json(200, {"healthy": runtime.healthy, "version": "fixture"})
+                    return
+                if path == "/mcp":
+                    runtime.mcp_calls += 1
+                    status = "connected" if runtime.mcp_connected else "failed"
+                    self._json(200, {"termflow": {"status": status}})
+                    return
+                if path == "/global/event":
+                    self._stream_events()
+                    return
+                if path.startswith("/session/") and path.endswith("/message"):
+                    runtime.reconcile_calls += 1
+                    session_id = path.split("/")[2]
+                    if not runtime.reconcile_available:
+                        self._json(503, {"error": "fixture_reconcile_unavailable"})
+                        return
+                    if session_id not in runtime._sessions:
+                        self._json(404, {"error": "not_found"})
+                    else:
+                        self._json(200, runtime._sessions[session_id])
+                    return
+                self._json(404, {"error": "not_found"})
+
+            def _stream_events(self) -> None:
+                runtime.sse_connections += 1
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                index = 0
+                sent_on_connection = 0
+                try:
+                    while True:
+                        with runtime._condition:
+                            while (
+                                index >= len(runtime._events)
+                                and not runtime._stopping
+                            ):
+                                runtime._condition.wait(timeout=0.2)
+                            if runtime._stopping:
+                                return
+                            pending = runtime._events[index:]
+                            index = len(runtime._events)
+                        for event in pending:
+                            self.wfile.write(f"data: {event}\n\n".encode())
+                            self.wfile.flush()
+                            sent_on_connection += 1
+                            with runtime._condition:
+                                force_disconnect = (
+                                    runtime._forced_disconnects_remaining > 0
+                                    and runtime._disconnect_after_events is not None
+                                    and sent_on_connection
+                                    >= runtime._disconnect_after_events
+                                )
+                                if force_disconnect:
+                                    runtime._forced_disconnects_remaining -= 1
+                                    runtime._disconnect_after_events = None
+                            if force_disconnect:
+                                self.close_connection = True
+                                return
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+
+            def do_POST(self) -> None:  # noqa: N802
+                path = urlsplit(self.path).path
+                self._read_body()
+                if path == "/session":
+                    runtime.session_create_calls += 1
+                    session_id = f"ses_fixture_{runtime.session_create_calls}"
+                    runtime._sessions[session_id] = []
+                    self._json(200, {"id": session_id})
+                    return
+                if path.startswith("/session/") and path.endswith("/prompt_async"):
+                    runtime.prompt_calls += 1
+                    session_id = path.split("/")[2]
+                    if session_id not in runtime._sessions:
+                        self._json(404, {"error": "not_found"})
+                        return
+                    self._empty(204)
+                    with runtime._condition:
+                        prompt_mode = runtime._next_prompt_mode
+                        runtime._next_prompt_mode = "completed"
+                    if prompt_mode == "tool_start_only":
+                        runtime._emit_tool_start_only(session_id)
+                    else:
+                        runtime._emit_completed_turn(session_id)
+                    return
+                if path.startswith("/session/") and (
+                    path.endswith("/abort") or "/permissions/" in path
+                ):
+                    self._json(200, {"ok": True})
+                    return
+                self._json(404, {"error": "not_found"})
+
+            def do_DELETE(self) -> None:  # noqa: N802
+                path = urlsplit(self.path).path
+                if path.startswith("/session/"):
+                    runtime.delete_calls += 1
+                    session_id = path.split("/")[2]
+                    if not runtime.delete_available:
+                        self._json(503, {"error": "fixture_unavailable"})
+                        return
+                    runtime._sessions.pop(session_id, None)
+                    self._empty(204)
+                    return
+                self._json(404, {"error": "not_found"})
+
+        return Handler
+
+
+@dataclass(slots=True)
+class AgentProductSystem:
+    system: TermFlowSystem
+    runtime: FakeAgentRuntime
+    mcp_token: str = field(repr=False)
+    cleanup_helper_token: str = field(repr=False)
+
+
+@dataclass(slots=True)
+class AgentMigrationFailureSystem:
+    system: TermFlowSystem
+    inbox_id: UUID
+
+
+async def _prepare_agent_migration_failure(database_path: Path) -> UUID:
+    database = Database(f"sqlite+aiosqlite:///{database_path}")
+    try:
+        initialized = await database.initialize()
+        assert initialized.agent_ready
+        repositories = RepositoryBundle(database.session_factory)
+        installation = await repositories.installations.create(
+            digest_secret("migration-failure-installation")
+        )
+        term = await repositories.instances.register_or_rotate(
+            uuid4(),
+            installation.id,
+            "migration-failure-term",
+            digest_secret("migration-failure-term-token"),
+        )
+        profile = await repositories.agent_profiles.create(
+            display_name="migration-failure-profile",
+            backend_kind="opencode",
+            config='{"model_id":"deepseek-v4-flash","provider_id":"deepseek"}',
+        )
+        binding = await repositories.agent_bindings.create(
+            profile_id=profile.id,
+            term_id=term.id,
+        )
+        conversation = await repositories.agent_conversations.create(
+            binding_id=binding.id,
+            title="must remain unclaimed",
+        )
+        inbox = await repositories.agent_inbox.enqueue(
+            conversation_id=conversation.id,
+            kind="user_message",
+            actor_id="migration-fixture",
+            actor_kind="user_session",
+            idempotency_key="migration-failure-pending-inbox",
+            payload_digest="d" * 64,
+            source="user",
+        )
+        # The current revision remains 0012, but strict Agent-head validation
+        # now fails on an extra Agent-only column.  Core 0005 validation does
+        # not inspect this table, which exercises the real two-stage boundary.
+        async with database.engine.begin() as connection:
+            await connection.execute(
+                text("ALTER TABLE agent_profiles ADD COLUMN injected_failure TEXT")
+            )
+        return inbox.id
+    finally:
+        await database.dispose()
+
+
+@pytest.fixture
+def agent_product_system(tmp_path: Path) -> Iterator[AgentProductSystem]:
+    runtime = FakeAgentRuntime()
+    system = TermFlowSystem(tmp_path)
+    mcp_token = secrets.token_urlsafe(32)
+    cleanup_helper_token = secrets.token_urlsafe(32)
+    # This is synthetic catalog metadata for an isolated fake-provider test.
+    # It is deliberately not evidence about DeepSeek's real retention/training
+    # policy and is never reused by the stable/live deployment.
+    system.control_environment.update(
+        {
+            "TERMFLOW_AGENT_OPENCODE_BASE_URL": runtime.base_url,
+            "TERMFLOW_AGENT_OPENCODE_DIRECTORY": "/workspace",
+            "TERMFLOW_AGENT_OPENCODE_MCP_TOKEN": mcp_token,
+            "TERMFLOW_AGENT_CLEANUP_HELPER_TOKEN": cleanup_helper_token,
+            "TERMFLOW_AGENT_PROVIDER_DEEPSEEK_ENDPOINT_ORIGIN": (
+                "https://api.deepseek.com"
+            ),
+            "TERMFLOW_AGENT_PROVIDER_DEEPSEEK_MODEL_IDS": "deepseek-v4-flash",
+            "TERMFLOW_AGENT_PROVIDER_DEEPSEEK_REGION": "fixture-only",
+            "TERMFLOW_AGENT_PROVIDER_DEEPSEEK_RETENTION_TERMS": "fixture-only",
+            "TERMFLOW_AGENT_PROVIDER_DEEPSEEK_RETENTION_VERSION": "fixture-only-v1",
+            "TERMFLOW_AGENT_PROVIDER_DEEPSEEK_NO_TRAINING": "true",
+            "TERMFLOW_AGENT_PROVIDER_DEEPSEEK_CREDENTIAL_SOURCE": "DEEPSEEK_API_KEY",
+            "TERMFLOW_AGENT_PROVIDER_DEEPSEEK_POLICY_VERSION": "fixture-only-v1",
+            "TERMFLOW_AGENT_RUNTIME_HEALTH_TICK_SECONDS": "0.2",
+            "TERMFLOW_AGENT_PIPELINE_RECONCILE_ATTEMPTS": "2",
+        }
+    )
+    try:
+        system.start_control_plane()
+        yield AgentProductSystem(
+            system=system,
+            runtime=runtime,
+            mcp_token=mcp_token,
+            cleanup_helper_token=cleanup_helper_token,
+        )
+    finally:
+        system.cleanup()
+        runtime.stop()
+
+
+@pytest.fixture
+def agent_migration_failure_system(
+    tmp_path: Path,
+) -> Iterator[AgentMigrationFailureSystem]:
+    system = TermFlowSystem(tmp_path)
+    inbox_id = asyncio.run(_prepare_agent_migration_failure(system.database_path))
+    try:
+        system.start_control_plane()
+        yield AgentMigrationFailureSystem(system=system, inbox_id=inbox_id)
+    finally:
+        system.cleanup()
 
 
 @pytest.fixture

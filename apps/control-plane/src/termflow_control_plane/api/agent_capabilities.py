@@ -11,9 +11,9 @@ while the plugin itself is disabled.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal, cast
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
 from termflow_control_plane.api.dependencies import get_settings
@@ -28,6 +28,8 @@ class AgentCapabilitiesResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     agent_broker_enabled: bool
+    state: Literal["starting", "ready", "degraded", "disabled"] = "starting"
+    reason_code: Literal["recovery_failed"] | None = None
     #: Delegated Write Grants are design-only in 0.2.0; always False so C can
     #: display the disabled capability (spec §8).
     delegated_write_grants_enabled: bool = False
@@ -35,9 +37,19 @@ class AgentCapabilitiesResponse(BaseModel):
 
 @router.get("/capabilities", response_model=AgentCapabilitiesResponse)
 async def get_agent_capabilities(
+    request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AgentCapabilitiesResponse:
+    plugin = getattr(request.app.state, "agent_broker_plugin", None)
+    coordinator = getattr(plugin, "startup_coordinator", None)
+    state = coordinator.result.state if coordinator is not None else "starting"
+    reason = coordinator.result.reason_code if coordinator is not None else None
     return AgentCapabilitiesResponse(
         agent_broker_enabled=settings.agent_broker_enabled,
+        state=cast(
+            Literal["starting", "ready", "degraded", "disabled"],
+            state if settings.agent_broker_enabled else "disabled",
+        ),
+        reason_code=reason,
         delegated_write_grants_enabled=settings.agent_delegated_write_grants_enabled,
     )

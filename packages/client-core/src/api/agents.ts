@@ -1,16 +1,26 @@
 import type {
+  AgentBindingDetailResponse,
   AgentBindingListResponse,
+  AgentBindingRuntimeUpdateRequest,
   AgentCapabilitiesResponse,
   AgentConversationCreateRequest,
   AgentConversationDetailResponse,
   AgentConversationListResponse,
   AgentConversationResponse,
+  AgentConversationUpdateRequest,
   AgentEventListResponse,
   AgentEventResponse,
   AgentMessageListResponse,
+  AgentDisclosureAcceptRequest,
+  AgentPanePolicyReplaceRequest,
+  AgentPanePolicyResponse,
+  AgentProviderDisclosureResponse,
+  AgentSetupRequest,
+  AgentSetupResponse,
 } from '@termflow/client-contracts'
 import { parseAguiEvent, type AguiEvent, type AguiReplayBatch } from '../agent/agui'
-import type { ApiRequest, ApiRequestOptions } from '../http/types'
+import type { ApiRequest, ApiRequestOptions, ApiRequestResponse } from '../http/types'
+import { deleteResource } from './cleanup'
 
 //: M4.5 admission models (termflow_control_plane.api.agent_conversations).
 //: The raw wire shapes also exist in generated.ts; this module keeps the
@@ -46,14 +56,80 @@ function conversationPath(conversationId: string, suffix: string): `/${string}` 
   return `/api/v1/agent/conversations/${encodeURIComponent(conversationId)}${suffix}` as const
 }
 
-export function createAgentsApi(request: ApiRequest) {
+export function createAgentsApi(request: ApiRequest, requestResponse: ApiRequestResponse) {
   return {
     capabilities: (signal?: AbortSignal) =>
       request<AgentCapabilitiesResponse>('/api/v1/agent/capabilities', withSignal({}, signal)),
 
-    /** Agent admin bindings (M6b spec §4.7): the AgentView binding selector source. */
-    listBindings: (signal?: AbortSignal) =>
-      request<AgentBindingListResponse>('/api/v1/agent/admin/bindings', withSignal({}, signal)),
+    /** Agent admin bindings used as the internal scope for the Term directory. */
+    listBindings: (options: { profileId?: string, termId?: string, signal?: AbortSignal } = {}) => {
+      const query = new URLSearchParams()
+      if (options.profileId !== undefined) query.set('profile_id', options.profileId)
+      if (options.termId !== undefined) query.set('term_id', options.termId)
+      const suffix = query.size === 0 ? '' : `?${query.toString()}`
+      return request<AgentBindingListResponse>(
+        `/api/v1/agent/admin/bindings${suffix}`,
+        withSignal({}, options.signal),
+      )
+    },
+
+    /** Read the complete Term-scoped setup/readiness aggregate. */
+    getSetup: (termId: string, signal?: AbortSignal) => {
+      const query = new URLSearchParams({ term_id: termId })
+      return request<AgentSetupResponse>(
+        `/api/v1/agent/admin/setup?${query.toString()}`,
+        withSignal({}, signal),
+      )
+    },
+
+    /** Atomically configure a Profile, Pane Policy, disclosure, and Binding. */
+    submitSetup: (body: AgentSetupRequest, signal?: AbortSignal) =>
+      request<AgentSetupResponse>(
+        '/api/v1/agent/admin/setup',
+        withSignal({ method: 'POST', body }, signal),
+      ),
+
+    getBinding: (bindingId: string, signal?: AbortSignal) =>
+      request<AgentBindingDetailResponse>(
+        `/api/v1/agent/admin/bindings/${encodeURIComponent(bindingId)}`,
+        withSignal({}, signal),
+      ),
+
+    activate: (bindingId: string, signal?: AbortSignal) =>
+      request<AgentBindingDetailResponse>(
+        `/api/v1/agent/admin/bindings/${encodeURIComponent(bindingId)}/activate`,
+        withSignal({ method: 'POST' }, signal),
+      ),
+
+    disable: (bindingId: string, signal?: AbortSignal) =>
+      request<AgentBindingDetailResponse>(
+        `/api/v1/agent/admin/bindings/${encodeURIComponent(bindingId)}/disable`,
+        withSignal({ method: 'POST' }, signal),
+      ),
+
+    updateRuntime: (bindingId: string, body: AgentBindingRuntimeUpdateRequest, signal?: AbortSignal) =>
+      request<AgentBindingDetailResponse>(
+        `/api/v1/agent/admin/bindings/${encodeURIComponent(bindingId)}/runtime`,
+        withSignal({ method: 'PUT', body }, signal),
+      ),
+
+    replacePanePolicies: (bindingId: string, body: AgentPanePolicyReplaceRequest, signal?: AbortSignal) =>
+      request<AgentPanePolicyResponse>(
+        `/api/v1/agent/admin/bindings/${encodeURIComponent(bindingId)}/pane-policies`,
+        withSignal({ method: 'PUT', body }, signal),
+      ),
+
+    getDisclosure: (bindingId: string, signal?: AbortSignal) =>
+      request<AgentProviderDisclosureResponse>(
+        `/api/v1/agent/admin/bindings/${encodeURIComponent(bindingId)}/disclosure`,
+        withSignal({}, signal),
+      ),
+
+    acceptDisclosure: (bindingId: string, body: AgentDisclosureAcceptRequest, signal?: AbortSignal) =>
+      request<AgentProviderDisclosureResponse>(
+        `/api/v1/agent/admin/bindings/${encodeURIComponent(bindingId)}/disclosure/accept`,
+        withSignal({ method: 'POST', body }, signal),
+      ),
 
     listConversations: (options: { bindingId?: string, signal?: AbortSignal } = {}) => {
       const query = new URLSearchParams()
@@ -73,12 +149,23 @@ export function createAgentsApi(request: ApiRequest) {
         withSignal({ method: 'POST', body }, signal),
       ),
 
+    renameConversation: (conversationId: string, title: string, signal?: AbortSignal) =>
+      request<AgentConversationResponse>(
+        conversationPath(conversationId, ''),
+        withSignal({ method: 'PATCH', body: { title } satisfies AgentConversationUpdateRequest }, signal),
+      ),
+
     /** Delete a conversation (M6b spec §5): 204 on success. */
     deleteConversation: (conversationId: string, signal?: AbortSignal) =>
-      request<void>(
+      deleteResource(requestResponse,
         conversationPath(conversationId, ''),
         withSignal({ method: 'DELETE' }, signal),
       ),
+
+    deleteBinding: (id: string, signal?: AbortSignal) => deleteResource(requestResponse,
+      `/api/v1/agent/admin/bindings/${encodeURIComponent(id)}`, withSignal({}, signal)),
+    deleteProfile: (id: string, signal?: AbortSignal) => deleteResource(requestResponse,
+      `/api/v1/agent/admin/profiles/${encodeURIComponent(id)}`, withSignal({}, signal)),
 
     getConversation: (conversationId: string, signal?: AbortSignal) =>
       request<AgentConversationDetailResponse>(

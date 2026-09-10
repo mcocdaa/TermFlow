@@ -196,7 +196,7 @@ class IdleDeadline:
 
     @classmethod
     def from_state(cls, state: Mapping[str, object]) -> IdleDeadline:
-        deadline = cls(seconds=float(state["seconds"]))
+        deadline = cls(seconds=float(str(state["seconds"])))
         deadline.has_cursor = bool(state.get("has_cursor", False))
         raw = state.get("last_output")
         if raw is not None:
@@ -236,6 +236,7 @@ class TriggerEvidence:
 
     event_id: UUID
     source: str
+    instance_id: UUID
     cursor: PaneCursor | None = None
     observation_ref: str | None = None
 
@@ -721,9 +722,9 @@ def build_watch_triggered_input(
     inbox_item: AgentInboxItem,
     trigger_event_id: UUID,
     trigger_source: str,
+    instance_id: UUID,
     observed_at: datetime,
     observation_ref: str | None,
-    cursor: PaneCursor,
     fired_generation: int,
 ) -> WatchTriggeredInput:
     """Build the typed ``WatchTriggered`` AgentInput (plan §11.3).
@@ -735,15 +736,13 @@ def build_watch_triggered_input(
     """
     if inbox_item is None:
         raise ValueError("a watch trigger requires its inbox item")
-    if cursor is None:
-        raise ValueError("a watch trigger requires the observation cursor")
     continuation = json.dumps(
         {
             "watch_id": str(watch.id),
             "watch_generation": fired_generation,
             "binding_id": str(watch.binding_id),
             "conversation_id": str(watch.conversation_id),
-            "instance_id": str(cursor.instance_id),
+            "instance_id": str(instance_id),
             "pane_id": watch.pane_id,
             "condition": contract.condition.model_dump(mode="json"),
             "start_cursor": (
@@ -756,7 +755,7 @@ def build_watch_triggered_input(
             # marker emitted by a pane process cannot grant authority or
             # prove success.
             "wake_behavior": "inspect",
-            "observation_scope": f"pane {watch.pane_id} on instance {cursor.instance_id}",
+            "observation_scope": f"pane {watch.pane_id} on instance {instance_id}",
             "proposed_action": contract.proposed_action,
             "pre_approved": False,
             "one_shot": watch.one_shot,
@@ -1100,6 +1099,7 @@ class WatchEngine:
                         evidence = TriggerEvidence(
                             event_id=event_id or uuid4(),
                             source="live_output",
+                            instance_id=instance_id,
                             cursor=cursor,
                             observation_ref=build_observation_ref(
                                 source="live_output",
@@ -1179,6 +1179,7 @@ class WatchEngine:
                 evidence = TriggerEvidence(
                     event_id=trigger_event_id,
                     source="topology_exit",
+                    instance_id=instance_id,
                     cursor=None,
                     observation_ref=build_observation_ref(
                         source="topology_exit",
@@ -1246,6 +1247,7 @@ class WatchEngine:
                 evidence = TriggerEvidence(
                     event_id=uuid4(),
                     source="idle_deadline",
+                    instance_id=runtime.instance_id,
                     cursor=cursor,
                     observation_ref=build_observation_ref(
                         source="idle_deadline",
@@ -1274,32 +1276,32 @@ class WatchEngine:
         can never wake the backend twice (plan §11.2).
         """
         if message.type is MessageType.PANE_OUTPUT:
-            payload = PaneOutputPayload.model_validate(message.payload)
+            pane_payload = PaneOutputPayload.model_validate(message.payload)
             return await self.evaluate_live_event(
                 instance_id=message.instance_id,
-                pane_id=payload.pane_id,
-                stream_id=payload.stream_id,
-                seq=payload.seq,
-                data=payload.to_bytes(),
+                pane_id=pane_payload.pane_id,
+                stream_id=pane_payload.stream_id,
+                seq=pane_payload.seq,
+                data=pane_payload.to_bytes(),
                 # Idle timing uses B receipt time rather than A's clock.
                 observed_at=self._clock(),
                 event_id=message.message_id,
             )
         if message.type is MessageType.STREAM_GAP:
-            payload = StreamGapPayload.model_validate(message.payload)
+            gap_payload = StreamGapPayload.model_validate(message.payload)
             return await self.evaluate_gap_event(
                 instance_id=message.instance_id,
-                pane_id=payload.pane_id,
-                previous_stream_id=payload.previous_stream_id,
-                reason=payload.reason,
+                pane_id=gap_payload.pane_id,
+                previous_stream_id=gap_payload.previous_stream_id,
+                reason=gap_payload.reason,
                 observed_at=self._clock(),
                 event_id=message.message_id,
             )
         if message.type is MessageType.TOPOLOGY_CHANGED:
-            payload = TopologyChangedPayload.model_validate(message.payload)
+            topology_payload = TopologyChangedPayload.model_validate(message.payload)
             return await self.evaluate_topology_change(
                 instance_id=message.instance_id,
-                topology=payload.topology,
+                topology=topology_payload.topology,
                 observed_at=self._clock(),
                 event_id=message.message_id,
             )
@@ -1388,8 +1390,11 @@ class WatchEngine:
             if runtime.matcher is not None:
                 # Rearm resets the matcher: a condition that stays true cannot
                 # immediately retrigger until a new edge is observed.
+                match = runtime.condition.match
+                if match is None:
+                    raise ValueError("output_contains watch requires a match literal")
                 row.matcher_state = json.dumps(
-                    LiteralMatcher(runtime.condition.match).state(),
+                    LiteralMatcher(match).state(),
                     separators=(",", ":"),
                 )
         return FiredTrigger(
@@ -1434,9 +1439,9 @@ class WatchEngine:
             inbox_item=trigger.inbox_item,
             trigger_event_id=trigger.evidence.event_id,
             trigger_source=trigger.evidence.source,
+            instance_id=trigger.evidence.instance_id,
             observed_at=observed_at,
             observation_ref=trigger.evidence.observation_ref,
-            cursor=trigger.evidence.cursor,
             fired_generation=trigger.watch.watch_generation,
         )
 
@@ -1563,7 +1568,10 @@ class WatchEngine:
         runtime.generation += 1
         runtime.rearm_cursor = self._encode_cursor(fired.evidence.cursor)
         if runtime.matcher is not None:
-            runtime.matcher = LiteralMatcher(runtime.condition.match)
+            match = runtime.condition.match
+            if match is None:
+                raise ValueError("output_contains watch requires a match literal")
+            runtime.matcher = LiteralMatcher(match)
         if runtime.deadline is not None:
             # Idle timing restarts only on the next verified cursor.
             runtime.deadline = IdleDeadline(runtime.condition.idle_after_seconds or 1)
@@ -1591,7 +1599,7 @@ class WatchEngine:
         if self._capture is None:
             self._paused_panes.add((instance_id, pane_id))
             return []
-        reconciliation = await self._capture.reconcile(instance_id, pane_id)
+        reconciliation = await self._capture(instance_id, pane_id)
         if reconciliation is None:
             self._paused_panes.add((instance_id, pane_id))
             return []
@@ -1629,6 +1637,7 @@ class WatchEngine:
             evidence = TriggerEvidence(
                 event_id=trigger_event_id,
                 source="gap_snapshot",
+                instance_id=instance_id,
                 cursor=anchor,
                 observation_ref=observation_ref,
             )

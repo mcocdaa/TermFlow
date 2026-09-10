@@ -31,6 +31,13 @@ Web C 看到的不是 B 拼装的 Pane 文本，而是 A 在 PTY 中附着的真
 独立的 C；它与 B 放进同一 Docker 镜像只是部署选择。这个镜像的 runtime 只提供 B 的
 HTTP/WS 进程和 Web 静态文件，A、Tauri 工程以及构建工具不在镜像里。
 
+部署网络的角色也保持分离：B 的普通 default bridge 承载宿主机发布的 Web/API 端口，
+以及同机 Docker A 的出站连接；A 是客户端，主动向 B 建立 WebSocket/WSS，不是 B 的
+网关，也不需要向外开放端口。OpenCode 不加入这个 default bridge，只通过
+`agent_internal` 访问 B；live provider path 再经过 `provider_egress` 和 allowlist
+proxy。把 B 的 default bridge 标成 `internal: true` 会切断该 host-publish 路径，
+因此不能用它代替 capability 网络的隔离。
+
 ## 尺寸与显示
 
 终端 rows/cols 以 A 权威尺寸为准：优先最近活动的本地 tmux client，没有本地 client 时

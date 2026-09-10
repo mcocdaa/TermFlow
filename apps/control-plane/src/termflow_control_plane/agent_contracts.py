@@ -28,7 +28,18 @@ from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID
 
+from pydantic import BaseModel, ConfigDict, Field
+
 KIB = 1024
+
+
+class AgentProfileConfig(BaseModel):
+    """The complete client-controlled portion of an Agent Profile."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    provider_id: str = Field(min_length=1, max_length=64)
+    model_id: str = Field(min_length=1, max_length=128)
 
 
 class DataClass(StrEnum):

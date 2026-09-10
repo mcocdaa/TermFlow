@@ -16,11 +16,11 @@ TermFlow 让你通过浏览器、手机或原生客户端远程使用另一台�
 ## 安装 B + Web C
 
 B 和 Web C 在同一个 Docker 镜像中。下面的命令使用本地目录保存数据库与 TOTP 主密钥，
-并且只在宿主机 `127.0.0.1:8000` 监听：
+并通过宿主机 `127.0.0.1:8000` 发布 Web/API：
 
 ```bash
 mkdir -p data totp-secrets
-docker network create --internal termflow-net
+docker network create termflow-net
 
 docker run -d \
   --name termflow-control-plane \
@@ -46,6 +46,8 @@ curl -fsS http://127.0.0.1:8000/healthz
 公网部署时，将 HTTPS/WSS 反向代理指向 `127.0.0.1:8000`，并把
 `TERMFLOW_PUBLIC_BASE_URL` 设置为用户实际访问的 HTTPS origin。B 启动后，在 Web C 的
 Computers 页面生成 Computer A 使用的一次性注册码。
+
+B 的 Web/API 通过宿主机 loopback 端口发布；A 主动连接 B，是连接 B 的客户端，不是 B 的网关。
 
 ## 安装 Computer A
 
@@ -73,8 +75,9 @@ termflow attach project-a
 
 ### Docker
 
-Docker A 是一个后台常驻的计算节点。身份和工作目录保存在本地目录，A 不开放端口，只通过
-`termflow-net` 连接 B：
+Docker A 是一个后台常驻的计算节点。身份和工作目录保存在本地目录，A 不开放端口，只主动
+通过 WebSocket 连接 B；本机 Docker 部署可让 A 与 B 加入同一个普通 bridge 网络
+`termflow-net`：
 
 ```bash
 mkdir -p termflow-node-identity termflow-node-work

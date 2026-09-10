@@ -67,6 +67,7 @@ from .turns import (
     CreateBackendConversation,
     EvidenceRecord,
     NotificationPayload,
+    ProviderRef,
 )
 
 BACKEND_KIND = "opencode"
@@ -80,6 +81,13 @@ RECONCILE_MESSAGE_LIMIT = 100
 #: identifiers and an adapter-generated reason only, never provider payload
 #: content, headers, raw parts, or reasoning.
 MAX_SSE_DIAGNOSTICS = 32
+
+# Current OpenCode emits text deltas/parts before a completed
+# ``message.updated`` record. Keep a bounded reconstruction cache so the
+# latter can carry the visible assistant text without retaining a transcript.
+MAX_TRACKED_MESSAGE_TEXTS = 256
+MAX_TRACKED_MESSAGE_TEXT_BYTES = MAX_NOTIFICATION_TEXT_BYTES
+MAX_TRACKED_TOOL_CALLS = 256
 
 #: Fixed namespace for deterministic UUID5 derivation of ``run_id``/
 #: ``message_id`` from opaque backend message IDs (``^msg_``).  The value is
@@ -98,6 +106,19 @@ _ACCEPTED_INPUT_KINDS: tuple[AgentInputKind, ...] = (
     AgentInputKind.TIMER_TRIGGERED,
     AgentInputKind.SYSTEM_NOTIFICATION,
 )
+
+
+def _require_normalized_identifier(
+    value: object,
+    *,
+    field_name: str,
+    max_length: int,
+) -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError(f"{field_name} must be a normalized non-empty string")
+    if len(value) > max_length:
+        raise ValueError(f"{field_name} must not exceed {max_length} characters")
+    return value
 
 
 @dataclass
@@ -156,6 +177,8 @@ class OpenCodeAdapter:
         base_url: str,
         directory: str,
         backend_version: str,
+        provider_id: str,
+        model_id: str,
         client: object | None = None,
         runtime_id: str | None = None,
         binding_capability_epoch: int = 0,
@@ -171,6 +194,16 @@ class OpenCodeAdapter:
         self.base_url = base_url.rstrip("/")
         self.directory = directory
         self.backend_version = backend_version
+        self._provider_id = _require_normalized_identifier(
+            provider_id,
+            field_name="provider_id",
+            max_length=64,
+        )
+        self._model_id = _require_normalized_identifier(
+            model_id,
+            field_name="model_id",
+            max_length=128,
+        )
         # The runtime URL uniquely identifies the runtime this adapter is
         # pinned to; an explicitly assigned runtime identity overrides it.
         self.runtime_id = runtime_id or self.base_url
@@ -181,6 +214,7 @@ class OpenCodeAdapter:
         # keeps whatever auth the injector configured (tests).
         basic_auth = None
         if username is not None:
+            assert password is not None
             basic_auth = (username, password)
         if client is None:
             try:
@@ -194,9 +228,16 @@ class OpenCodeAdapter:
         self._client: Any = client
         self.stats = OpenCodeSseStats()
         self.diagnostics: list[OpenCodeSseDiagnostic] = []
+        self._message_texts: dict[str, str] = {}
+        # Current OpenCode represents tool execution as successive updates to
+        # one ``message.part.updated`` tool part (pending -> running ->
+        # completed/error).  Keep only the bounded lifecycle state needed to
+        # suppress duplicate starts across those updates; raw input/output is
+        # never retained.
+        self._tool_call_states: dict[tuple[str, str], str] = {}
         self._capabilities = AgentBackendCapabilities(
-            # Capability flags are the M4.1 negotiated matrix and stay frozen
-            # here; the M4.2 event stream exists regardless (events()).
+            # OpenCode 1.18.x exposes progress through session.status and
+            # session.idle; B infers run boundaries from those notifications.
             streaming_output=False,
             context_mode=ContextMode.LOST_ON_RESTART,  # until volume-proof resume (M4)
             submit_mode=SubmitMode.NON_IDEMPOTENT,  # 204, no idempotency key (pin §6.1)
@@ -207,10 +248,10 @@ class OpenCodeAdapter:
             runtime_isolation=RuntimeIsolation.BINDING,  # matrix §7
             accepted_input_kinds=_ACCEPTED_INPUT_KINDS,
             structured_part_fidelity=StructuredPartFidelity.NONE,
-            tool_activity_events=False,
+            tool_activity_events=True,
             permission_events=False,
             usage_cost_reporting=False,
-            explicit_run_boundaries=True,
+            explicit_run_boundaries=False,
         )
 
     async def capabilities(self) -> AgentBackendCapabilities:
@@ -251,7 +292,7 @@ class OpenCodeAdapter:
             backend_version=self.backend_version,
             runtime_id=self.runtime_id,
             binding_capability_epoch=self.binding_capability_epoch,
-            provider_ref=session_id,
+            provider_ref=ProviderRef(session_id),
         )
 
     async def submit(
@@ -277,7 +318,13 @@ class OpenCodeAdapter:
             response = await self._client.post(
                 self._url(f"/session/{ref.provider_ref}/prompt_async"),
                 params={"directory": self.directory},
-                json={"parts": parts},
+                json={
+                    "parts": parts,
+                    "model": {
+                        "providerID": self._provider_id,
+                        "modelID": self._model_id,
+                    },
+                },
             )
         except Exception as exc:
             return BackendSubmitResult(
@@ -509,8 +556,11 @@ class OpenCodeAdapter:
         if not isinstance(directory, str) or directory != self.directory:
             self.stats.scope_mismatch_events += 1
             payload = envelope.get("payload")
+            mismatched_event_id = payload.get("id") if isinstance(payload, dict) else ""
+            if not isinstance(mismatched_event_id, str):
+                mismatched_event_id = ""
             self._record_diagnostic(
-                payload.get("id") if isinstance(payload, dict) else "",
+                mismatched_event_id,
                 "<scope>",
                 None,
                 # The mismatched value is a provider filesystem path and is
@@ -572,6 +622,8 @@ class OpenCodeAdapter:
             return self._message_updated(scope, event_id, session_id, properties)
         if event_type == "message.part.updated":
             return self._part_updated(scope, event_id, session_id, properties)
+        if event_type == "message.part.delta":
+            return self._part_delta(scope, event_id, session_id, properties)
         if event_type == "session.next.tool.called":
             return self._tool_started(scope, event_id, session_id, properties)
         if event_type in ("session.next.tool.success", "session.next.tool.failed"):
@@ -627,7 +679,7 @@ class OpenCodeAdapter:
                 backend_version=self.backend_version,
                 runtime_id=self.runtime_id,
                 binding_capability_epoch=self.binding_capability_epoch,
-                provider_ref=session_id,
+                provider_ref=ProviderRef(session_id),
             ),
             scope=scope,
             kind=kind,
@@ -683,7 +735,7 @@ class OpenCodeAdapter:
 
     def _message_delta(
         self, scope: BackendEventScope, event_id: str, session_id: str, properties: dict[str, Any]
-    ) -> BackendNotification:
+    ) -> BackendNotification | None:
         delta = properties.get("delta")
         if not isinstance(delta, str):
             self._skip(event_id, "session.next.text.delta", session_id, "delta is not a string")
@@ -699,7 +751,7 @@ class OpenCodeAdapter:
 
     def _message_completed(
         self, scope: BackendEventScope, event_id: str, session_id: str, properties: dict[str, Any]
-    ) -> BackendNotification:
+    ) -> BackendNotification | None:
         text = properties.get("text")
         if not isinstance(text, str):
             self._skip(event_id, "session.next.text.ended", session_id, "text is not a string")
@@ -715,7 +767,7 @@ class OpenCodeAdapter:
 
     def _message_updated(
         self, scope: BackendEventScope, event_id: str, session_id: str, properties: dict[str, Any]
-    ) -> BackendNotification:
+    ) -> BackendNotification | None:
         info = properties.get("info")
         if not isinstance(info, dict):
             self._skip(event_id, "message.updated", session_id, "info is not an object")
@@ -727,20 +779,35 @@ class OpenCodeAdapter:
         time = info.get("time")
         completed = time.get("completed") if isinstance(time, dict) else None
         if completed is not None:
+            # A tool-call assistant message is an intermediate model step, not
+            # the product turn's final visible message.  Its ``message.part``
+            # lifecycle carries TOOL_STARTED/TOOL_COMPLETED and a later
+            # assistant message (finish=stop) supplies the final text.
+            if info.get("finish") == "tool-calls":
+                self._record_diagnostic(
+                    event_id,
+                    "message.updated",
+                    session_id,
+                    "tool-call message completion is an intermediate step",
+                )
+                return None
             kind = AgentEventKind.MESSAGE_COMPLETED
+            text = self._message_texts.get(message_id)
         else:
             kind = AgentEventKind.MESSAGE_DELTA
+            text = None
         return self._notification(
             scope,
             event_id=event_id,
             session_id=session_id,
             kind=kind,
             backend_message_id=message_id,
+            text=text,
         )
 
     def _part_updated(
         self, scope: BackendEventScope, event_id: str, session_id: str, properties: dict[str, Any]
-    ) -> BackendNotification:
+    ) -> BackendNotification | None:
         part = properties.get("part")
         if not isinstance(part, dict):
             self._skip(event_id, "message.part.updated", session_id, "part is not an object")
@@ -751,13 +818,17 @@ class OpenCodeAdapter:
             if not isinstance(text, str):
                 self._skip(event_id, "message.part.updated", session_id, "text part has no text")
                 return None
+            message_id = part.get("messageID")
+            part_id = part.get("id")
+            if isinstance(message_id, str) and message_id:
+                self._remember_message_text(message_id, text, part_id)
             return self._notification(
                 scope,
                 event_id=event_id,
                 session_id=session_id,
                 kind=AgentEventKind.MESSAGE_DELTA,
-                backend_message_id=part.get("messageID"),
-                part_id=part.get("id"),
+                backend_message_id=message_id,
+                part_id=part_id,
                 text=text,
             )
         if part_type == "reasoning":
@@ -766,6 +837,8 @@ class OpenCodeAdapter:
                 event_id, "message.part.updated", session_id, "reasoning part dropped"
             )
             return None
+        if part_type == "tool":
+            return self._tool_part_updated(scope, event_id, session_id, part)
         if part_type == "file":
             self.stats.dropped_attachment_events += 1
             self._record_diagnostic(
@@ -778,9 +851,131 @@ class OpenCodeAdapter:
         )
         return None
 
+    def _tool_part_updated(
+        self,
+        scope: BackendEventScope,
+        event_id: str,
+        session_id: str,
+        part: dict[str, Any],
+    ) -> BackendNotification | None:
+        """Normalize current OpenCode tool-part lifecycle updates.
+
+        OpenCode 1.18 emits ``pending`` and ``running`` updates before a
+        terminal ``completed`` or ``error`` state.  The pending/running pair
+        represents one logical start; only the first is surfaced.  Tool
+        arguments and output are intentionally discarded at this boundary.
+        """
+        call_id = part.get("callID")
+        tool = part.get("tool")
+        state = part.get("state")
+        if not isinstance(call_id, str) or not call_id:
+            self._skip(event_id, "message.part.updated", session_id, "tool part has no callID")
+            return None
+        if not isinstance(tool, str) or not tool:
+            self._skip(event_id, "message.part.updated", session_id, "tool part has no tool name")
+            return None
+        if not isinstance(state, dict):
+            self._skip(event_id, "message.part.updated", session_id, "tool part has no state")
+            return None
+        status = state.get("status")
+        if not isinstance(status, str) or not status:
+            self._skip(event_id, "message.part.updated", session_id, "tool state has no status")
+            return None
+        key = (session_id, call_id)
+        if status in ("pending", "running"):
+            if key in self._tool_call_states:
+                return None
+            self._remember_tool_call_state(key, status)
+            return self._notification(
+                scope,
+                event_id=event_id,
+                session_id=session_id,
+                kind=AgentEventKind.TOOL_STARTED,
+                backend_message_id=part.get("messageID"),
+                part_id=part.get("id"),
+                tool_call_id=call_id,
+                summary=tool,
+            )
+        if status in ("completed", "error", "failed"):
+            self._remember_tool_call_state(key, status)
+            failed = status in ("error", "failed")
+            code = message = None
+            if failed:
+                code, message = _error_fields(state.get("error"))
+            return self._notification(
+                scope,
+                event_id=event_id,
+                session_id=session_id,
+                kind=AgentEventKind.TOOL_COMPLETED,
+                backend_message_id=part.get("messageID"),
+                part_id=part.get("id"),
+                tool_call_id=call_id,
+                error_code=code,
+                error_message=message,
+            )
+        self._skip(event_id, "message.part.updated", session_id, f"unknown tool status {status!r}")
+        return None
+
+    def _remember_tool_call_state(self, key: tuple[str, str], status: str) -> None:
+        if (
+            len(self._tool_call_states) >= MAX_TRACKED_TOOL_CALLS
+            and key not in self._tool_call_states
+        ):
+            self._tool_call_states.pop(next(iter(self._tool_call_states)))
+        self._tool_call_states[key] = status
+
+    def _part_delta(
+        self, scope: BackendEventScope, event_id: str, session_id: str, properties: dict[str, Any]
+    ) -> BackendNotification | None:
+        """Normalize a current OpenCode ``message.part.delta`` text chunk."""
+        message_id = properties.get("messageID")
+        part_id = properties.get("partID")
+        field = properties.get("field")
+        delta = properties.get("delta")
+        if not isinstance(message_id, str) or not message_id:
+            self._skip(event_id, "message.part.delta", session_id, "messageID is missing")
+            return None
+        if field != "text" or not isinstance(delta, str):
+            self._skip(event_id, "message.part.delta", session_id, "delta is not text")
+            return None
+        self._remember_message_text(message_id, delta, part_id, append=True)
+        return self._notification(
+            scope,
+            event_id=event_id,
+            session_id=session_id,
+            kind=AgentEventKind.MESSAGE_DELTA,
+            backend_message_id=message_id,
+            part_id=part_id,
+            text=delta,
+        )
+
+    def _remember_message_text(
+        self,
+        message_id: str,
+        text: str,
+        part_id: object | None,
+        *,
+        append: bool = False,
+    ) -> None:
+        """Keep a bounded reconstruction for one assistant message."""
+        del part_id
+        if (
+            len(self._message_texts) >= MAX_TRACKED_MESSAGE_TEXTS
+            and message_id not in self._message_texts
+        ):
+            self._message_texts.pop(next(iter(self._message_texts)))
+        previous = self._message_texts.get(message_id, "")
+        if append:
+            value = previous + text
+        elif text:
+            value = text
+        else:
+            value = previous
+        self._message_texts[message_id] = value[:MAX_TRACKED_MESSAGE_TEXT_BYTES]
+
     def _tool_started(
         self, scope: BackendEventScope, event_id: str, session_id: str, properties: dict[str, Any]
-    ) -> BackendNotification:
+    ) -> BackendNotification | None:
         call_id = properties.get("callID")
         if not isinstance(call_id, str) or not call_id:
             self._skip(event_id, "session.next.tool.called", session_id, "callID is missing")
@@ -804,7 +999,7 @@ class OpenCodeAdapter:
         properties: dict[str, Any],
         *,
         failed: bool,
-    ) -> BackendNotification:
+    ) -> BackendNotification | None:
         call_id = properties.get("callID")
         if not isinstance(call_id, str) or not call_id:
             event_label = "session.next.tool.failed" if failed else "session.next.tool.success"
@@ -867,6 +1062,7 @@ class OpenCodeAdapter:
         fallback: str | None,
     ) -> BackendNotification:
         status = properties.get("status")
+        summary: str | None
         if isinstance(status, dict):
             # Spec-shaped SessionStatus: an object discriminated by ``type``
             # ({"type": "busy"} / {"type": "idle"} / {"type": "retry",

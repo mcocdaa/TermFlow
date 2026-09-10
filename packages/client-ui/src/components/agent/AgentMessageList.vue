@@ -26,8 +26,10 @@
 //: fine-grained events (tool done/failed, run finished/error, approval
 //: arrival, backend state change) are announced through the visually
 //: hidden `role="status"` region — never per chunk. Tool activity rows and
-//: approval cards are rendered inline in timeline order (arrival = server
-//: seq order), so the whole flow stays inside the single live region;
+//: approval cards are rendered inline in conversation-time order. This
+//: merges REST-seeded user/system rows with replayed AG-UI rows without
+//: exposing their different load order to the user; equal timestamps keep
+//: stable server-arrival order. The whole flow stays inside one live region;
 //: the approval card's 在审批面板处理 action bubbles up as
 //: `focus-approval` for the parent to focus the matching panel entry.
 //: Auto-scroll only while the user is pinned to the bottom (scroll
@@ -55,11 +57,16 @@ type DisplayItem =
   | { kind: 'tool'; key: string; call: AgentToolCallState }
   | { kind: 'permission'; key: string; permission: AgentPermissionState }
 
-// Timeline order = arrival order = server seq order; refs without a state
-// record (dangling timeline entries) are skipped defensively.
+// REST history is seeded before AG-UI replay, so raw insertion order would
+// group all historical user rows before every assistant/tool row. Sort by
+// the canonical timestamps and use insertion index only as a stable tie
+// breaker. Refs without a state record are skipped defensively.
 const items = computed<DisplayItem[]>(() => {
   const out: DisplayItem[] = []
-  for (const entry of props.history.timeline) {
+  const ordered = props.history.timeline
+    .map((entry, index) => ({ entry, index }))
+    .sort((left, right) => left.entry.at - right.entry.at || left.index - right.index)
+  for (const { entry } of ordered) {
     if (entry.type === 'message') {
       const message = props.history.messages.get(entry.refId)
       if (message !== undefined) out.push({ kind: 'message', key: `message:${entry.refId}`, message })

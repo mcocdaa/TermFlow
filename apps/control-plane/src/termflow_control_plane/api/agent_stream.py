@@ -395,10 +395,13 @@ async def stream_agent_events(
             )
         binding_id = binding.id
 
+    async def publish_event(event: AgentEvent) -> None:
+        await hub.publish(event)
+
     event_cursor = AgentEventCursor(
         repositories.agent_events,
         sessions,
-        publisher=hub.publish,
+        publisher=publish_event,
     )
     return StreamingResponse(
         stream_events_generator(

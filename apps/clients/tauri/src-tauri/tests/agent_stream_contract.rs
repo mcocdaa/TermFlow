@@ -95,7 +95,10 @@ fn stream_url_forces_the_agui_wire_and_encodes_webview_parameters() {
     };
     let url = build_stream_url("https://b.example", &params).unwrap();
     assert!(url.starts_with("https://b.example/api/v1/agent/stream?"));
-    assert!(url.contains("wire=agui"), "the agui projection is forced: {url}");
+    assert!(
+        url.contains("wire=agui"),
+        "the agui projection is forced: {url}"
+    );
     assert!(
         url.contains("conversation_id=x%26y%3Dz") && url.contains("cursor=7-3%2F2"),
         "webview values must be percent-encoded: {url}"

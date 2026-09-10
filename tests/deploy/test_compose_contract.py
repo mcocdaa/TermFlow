@@ -4,6 +4,16 @@ from pathlib import Path
 import yaml
 
 
+def test_docker_a_and_b_use_a_host_reachable_bridge_not_an_internal_network() -> None:
+    readme = Path("README.md").read_text()
+
+    assert "docker network create termflow-net" in readme
+    assert "docker network create --internal termflow-net" not in readme
+    assert "A 主动连接 B" in readme
+    assert "A 不开放端口" in readme
+    assert "B 的 Web/API 通过宿主机 loopback 端口发布" in readme
+
+
 def test_compose_keeps_the_hardened_single_worker_deployable_shape() -> None:
     compose = yaml.safe_load(Path("deploy/compose.yaml").read_text())
     services = compose["services"]
@@ -38,9 +48,7 @@ def test_compose_keeps_the_hardened_single_worker_deployable_shape() -> None:
     assert agent_init["read_only"] is True
     assert agent_init["restart"] == "no"
     assert agent_init["volumes"] == ["opencode-data:/data"]
-    assert agent_init["command"] == [
-        "chown 0:0 /data && chmod 0700 /data && chown 405:100 /data"
-    ]
+    assert agent_init["command"] == ["chown 0:0 /data && chmod 0700 /data && chown 405:100 /data"]
 
     assert agent["networks"] == ["agent_internal"]
     assert "ports" not in agent
@@ -52,13 +60,23 @@ def test_compose_keeps_the_hardened_single_worker_deployable_shape() -> None:
     assert agent["environment"]["HOME"] == "/home/opencode"
     assert agent["environment"].get("XDG_DATA_HOME") == "/data"
     assert any("OPENCODE_SERVER_" in key for key in agent["environment"])
+    # The pinned binary consumes provider-specific credentials. A generic
+    # OPENCODE_MODEL_API_KEY is ignored and would make a deployment look
+    # configured while every model call still fails authentication.
+    assert "OPENCODE_MODEL_API_KEY" not in agent["environment"]
+    assert "ANTHROPIC_API_KEY" not in agent["environment"]
+    assert "OPENAI_API_KEY" not in agent["environment"]
     assert agent["volumes"] == [
         "opencode-data:/data",
-        "./opencode-config.yaml:/etc/termflow/opencode-config.yaml:ro",
+        {
+            "type": "bind",
+            "source": "./opencode-config.yaml",
+            "target": "/etc/termflow/opencode-config.yaml",
+            "read_only": True,
+            "bind": {"create_host_path": False},
+        },
     ]
-    assert agent["depends_on"] == {
-        "opencode-init": {"condition": "service_completed_successfully"}
-    }
+    assert agent["depends_on"] == {"opencode-init": {"condition": "service_completed_successfully"}}
     home_tmpfs = next(entry for entry in agent["tmpfs"] if entry.startswith("/home/opencode:"))
     assert "uid=405" in home_tmpfs
     assert "gid=100" in home_tmpfs
@@ -66,7 +84,8 @@ def test_compose_keeps_the_hardened_single_worker_deployable_shape() -> None:
     healthcheck = agent["healthcheck"]["test"][1]
     assert "OPENCODE_SERVER_USERNAME" in healthcheck
     assert "Authorization: Basic" in healthcheck
-    assert "| base64" in healthcheck
+    assert "| base64 | tr -d '\\n'" in healthcheck
+    assert "wget -Y off" in healthcheck
     assert "--user" not in healthcheck
     assert "--password" not in healthcheck
 
@@ -74,18 +93,29 @@ def test_compose_keeps_the_hardened_single_worker_deployable_shape() -> None:
     assert not any(line.lstrip().startswith("#") for line in opencode_config_text.splitlines())
     opencode_config = json.loads(opencode_config_text)
     assert opencode_config["permission"]["*"] == "deny"
-    assert {
-        name for name in opencode_config["permission"] if name.startswith("termflow_")
-    } == {
-        "termflow_list_panes",
-        "termflow_pane_read",
-        "termflow_pane_send_text",
-        "termflow_pane_send_keys",
-        "termflow_watch_create",
-        "termflow_watch_list",
-        "termflow_watch_get",
-        "termflow_watch_cancel",
-    }
+    # OpenCode namespaces remote MCP tools as ``<server>_<tool>``.  The
+    # wildcard therefore covers the actual ``termflow_termflow_*`` names.
+    # OpenCode must not add a second pre-MCP approval: B cannot create its
+    # exact-argument ApprovalRequest until the MCP call reaches B.  B remains
+    # the sole terminal authority and performs the single-use write approval.
+    assert opencode_config["permission"]["termflow_*"] == "allow"
+    # The TermFlow MCP server entry rides OpenCode's native {env:}
+    # interpolation (spike-verified on the pinned image): no raw token ever
+    # lands in the frozen config or the image.
+    termflow_mcp = opencode_config["mcp"]["termflow"]
+    assert termflow_mcp["type"] == "remote"
+    assert termflow_mcp["enabled"] is True
+    assert termflow_mcp["url"] == "{env:TERMFLOW_AGENT_MCP_URL}"
+    assert termflow_mcp["headers"]["Authorization"] == ("Bearer {env:TERMFLOW_AGENT_MCP_TOKEN}")
+    # The container receives the same required bootstrap capability as B.  A
+    # deployment without an Agent binding must fail closed during preflight,
+    # rather than booting a runtime that can never reach MCP.
+    assert agent["environment"]["TERMFLOW_AGENT_MCP_URL"] == (
+        "http://control-plane:8000/api/v1/agent/mcp"
+    )
+    assert agent["environment"]["TERMFLOW_AGENT_MCP_TOKEN"] == (
+        "${OPENCODE_AGENT_MCP_TOKEN:?set OPENCODE_AGENT_MCP_TOKEN}"
+    )
 
     environment = service["environment"]
     assert environment["TERMFLOW_STATIC_DIR"] == "/app/frontend-dist"
@@ -101,6 +131,18 @@ def test_compose_keeps_the_hardened_single_worker_deployable_shape() -> None:
     # the loopback-only MCP allowlist defaults must be overridden (plan §16).
     assert environment["TERMFLOW_AGENT_MCP_ALLOWED_HOSTS"] == (
         "${TERMFLOW_AGENT_MCP_ALLOWED_HOSTS:-control-plane:8000}"
+    )
+    assert environment["TERMFLOW_AGENT_OPENCODE_MCP_TOKEN"] == (
+        "${OPENCODE_AGENT_MCP_TOKEN:?set OPENCODE_AGENT_MCP_TOKEN}"
+    )
+    assert environment["TERMFLOW_AGENT_CLEANUP_HELPER_TOKEN"] == (
+        "${TERMFLOW_AGENT_CLEANUP_HELPER_TOKEN:-}"
+    )
+    # The reference OpenCode container has a read-only root filesystem and no
+    # /workspace mount.  Sessions must use its existing writable tmpfs instead
+    # of failing every real prompt with FileSystem.realPath(/workspace).
+    assert environment["TERMFLOW_AGENT_OPENCODE_DIRECTORY"] == (
+        "${TERMFLOW_AGENT_OPENCODE_DIRECTORY:-/tmp}"
     )
 
     override = yaml.safe_load(Path("deploy/compose.totp-secret.yaml").read_text())
@@ -120,6 +162,7 @@ def test_delivery_scripts_verify_artifact_contents_and_local_state() -> None:
         assert required in verify
     assert 'TERMFLOW_ADMIN_TOKEN="verify-admin-token-that-is-long-enough"' in verify
     assert "docker compose -f deploy/compose.yaml config --quiet" in verify
+    assert 'verify-agent-containers.sh --mode "${TERMFLOW_SECURITY_MODE}"' in verify
     assert "verify-stt" not in verify.lower()
 
     verifier = Path("scripts/release/verify_control_plane_release_image.sh").read_text()

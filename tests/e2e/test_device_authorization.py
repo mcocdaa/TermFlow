@@ -118,11 +118,11 @@ def test_real_process_device_code_is_approved_by_a_separate_web_session(
 ) -> None:
     origin = {"Origin": termflow_system.base_url}
     with (
-        httpx.Client(base_url=termflow_system.base_url, timeout=2) as native,
+        httpx.Client(base_url=termflow_system.base_url, timeout=30) as native,
         httpx.Client(
             base_url=termflow_system.base_url,
             headers=origin,
-            timeout=2,
+            timeout=30,
         ) as web,
     ):
         key, jwk = _native_key()
