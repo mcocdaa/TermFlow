@@ -704,6 +704,10 @@ async def test_two_conversations_serialize_on_one_binding(
         await pipeline.submit_user_message(conversation_b, "b", actor="admin")
         await wait_until(lambda: len(backend.submit_calls) == 1)
         assert backend.submit_calls[0].request.parts[0].text == "a"
+        context_a = backend.submit_calls[0].request.parts[-1]
+        assert context_a.kind is AgentInputKind.SYSTEM_NOTIFICATION
+        assert context_a.trust is TurnPartTrust.TRUSTED
+        assert str(conversation_a) in (context_a.text or "")
 
         # B waits in the inbox while A's run is active (per-binding serial).
         rows_b = await repositories.agent_inbox.list_for_conversation(conversation_b)
@@ -730,6 +734,9 @@ async def test_two_conversations_serialize_on_one_binding(
         )
         await wait_until(lambda: len(backend.submit_calls) == 2)
         assert backend.submit_calls[1].request.parts[0].text == "b"
+        context_b = backend.submit_calls[1].request.parts[-1]
+        assert context_b.kind is AgentInputKind.SYSTEM_NOTIFICATION
+        assert str(conversation_b) in (context_b.text or "")
         assert backend.submit_calls[1].request.conversation_ref.provider_ref == ("provider-2")
     finally:
         await pipeline.stop()

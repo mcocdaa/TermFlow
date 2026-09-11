@@ -79,6 +79,25 @@ async def test_readiness_requires_termflow_mcp_connected() -> None:
     assert calls == ["/global/health", "/mcp"]
 
 
+async def test_readiness_probes_mcp_with_the_configured_directory() -> None:
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/global/health":
+            return httpx.Response(200, json={"healthy": True})
+        assert request.url.path == "/mcp"
+        seen.append(request.url.params.get("directory"))
+        return httpx.Response(200, json={"termflow": {"status": "connected"}})
+
+    client = _client(handler, directory="/tmp")
+    try:
+        result = await client.readiness(RUNTIME_REF)
+    finally:
+        await client.aclose()
+    assert result == RuntimeReadinessProbe(True, True, None)
+    assert seen == ["/tmp"]
+
+
 async def test_readiness_rejects_missing_failed_or_malformed_mcp_state() -> None:
     payloads = (
         {},

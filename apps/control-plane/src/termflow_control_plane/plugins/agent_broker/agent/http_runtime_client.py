@@ -90,6 +90,7 @@ class HttpHealthRuntimeClient:
         base_url: str,
         username: str | None = None,
         password: str | None = None,
+        directory: str | None = None,
         epoch_resolver: EpochResolver | None = None,
         probe_timeout_seconds: float = _DEFAULT_PROBE_TIMEOUT_SECONDS,
         restart_probe_attempts: int = _DEFAULT_RESTART_PROBE_ATTEMPTS,
@@ -99,6 +100,11 @@ class HttpHealthRuntimeClient:
         if not base_url or not base_url.strip():
             raise ValueError("a runtime base URL is required")
         self._base_url = base_url.strip().rstrip("/")
+        if directory is not None and not directory.strip():
+            raise ValueError("runtime directory must be a non-empty path when set")
+        # OpenCode scopes MCP status to the session directory, so the probe
+        # must address the same directory the adapter runs sessions in.
+        self._directory = directory.strip() if directory is not None else None
         self._epoch_resolver = epoch_resolver
         if not math.isfinite(probe_timeout_seconds) or not (
             0 < probe_timeout_seconds <= _MAX_PROBE_TIMEOUT_SECONDS
@@ -149,10 +155,12 @@ class HttpHealthRuntimeClient:
             return None
         return resolved
 
-    async def _get_json(self, path: str) -> tuple[object | None, bool]:
+    async def _get_json(
+        self, path: str, *, params: dict[str, str] | None = None
+    ) -> tuple[object | None, bool]:
         """Fetch one JSON endpoint without retaining any failure diagnostics."""
         try:
-            response = await self._client.get(f"{self._base_url}{path}")
+            response = await self._client.get(f"{self._base_url}{path}", params=params)
         except Exception:
             # This boundary intentionally includes transport, timeout, and
             # protocol errors from httpx.  The exception is never public.
@@ -179,7 +187,8 @@ class HttpHealthRuntimeClient:
         ):
             return RuntimeReadinessProbe(False, False, "runtime_unreachable")
 
-        mcp_body, mcp_ok = await self._get_json("/mcp")
+        mcp_params = {"directory": self._directory} if self._directory else None
+        mcp_body, mcp_ok = await self._get_json("/mcp", params=mcp_params)
         # /mcp is an object map.  Only the exact lowercase TermFlow key and
         # exact connected status constitute readiness; aliases are rejected.
         if (

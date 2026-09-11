@@ -402,6 +402,7 @@ class _ProductionRuntimeGate:
             base_url=settings.agent_opencode_base_url,
             username=settings.agent_opencode_username,
             password=password.get_secret_value() if password is not None else None,
+            directory=settings.agent_opencode_directory,
             epoch_resolver=resolve_epoch,
         )
 
