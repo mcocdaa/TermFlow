@@ -12,6 +12,7 @@
       <template v-for="item in items" :key="item.key">
         <AgentMessageBubble v-if="item.kind === 'message' || item.kind === 'user'" :message="item.message" />
         <AgentToolActivity v-else-if="item.kind === 'tool'" :call="item.call" />
+        <AgentThinkingBlock v-else-if="item.kind === 'thinking'" :thinking="item.thinking" />
         <AgentApprovalCard v-else-if="item.kind === 'permission'" :permission="item.permission" @focus="onFocusApproval" />
       </template>
     </div>
@@ -36,9 +37,10 @@
 //: anchoring); smooth scrolling is disabled under prefers-reduced-motion
 //: (app.css).
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import type { AgentHistoryState, AgentMessageState, AgentPermissionState, AgentToolCallState, AgentUserMessageState } from '@termflow/client-core'
+import type { AgentHistoryState, AgentMessageState, AgentPermissionState, AgentThinkingState, AgentToolCallState, AgentUserMessageState } from '@termflow/client-core'
 import AgentApprovalCard from './AgentApprovalCard.vue'
 import AgentMessageBubble from './AgentMessageBubble.vue'
+import AgentThinkingBlock from './AgentThinkingBlock.vue'
 import AgentToolActivity from './AgentToolActivity.vue'
 
 const props = defineProps<{
@@ -56,6 +58,7 @@ type DisplayItem =
   | { kind: 'user'; key: string; message: AgentUserMessageState }
   | { kind: 'tool'; key: string; call: AgentToolCallState }
   | { kind: 'permission'; key: string; permission: AgentPermissionState }
+  | { kind: 'thinking'; key: string; thinking: AgentThinkingState }
 
 // REST history is seeded before AG-UI replay, so raw insertion order would
 // group all historical user rows before every assistant/tool row. Sort by
@@ -76,6 +79,9 @@ const items = computed<DisplayItem[]>(() => {
     } else if (entry.type === 'tool') {
       const call = props.history.toolCalls.get(entry.refId)
       if (call !== undefined) out.push({ kind: 'tool', key: `tool:${entry.refId}`, call })
+    } else if (entry.type === 'thinking') {
+      const thinking = props.history.thinking.get(entry.refId)
+      if (thinking !== undefined) out.push({ kind: 'thinking', key: `thinking:${entry.refId}`, thinking })
     } else if (entry.type === 'permission') {
       const permission = props.history.permissions.get(entry.refId)
       if (permission !== undefined) out.push({ kind: 'permission', key: `permission:${entry.refId}`, permission })

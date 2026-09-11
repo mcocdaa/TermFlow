@@ -98,3 +98,14 @@ describe('turn completion state convergence', () => {
     expect(state.backend.state).toBe('busy')
   })
 })
+
+describe('thinking frames', () => {
+  it('accumulates reasoning and completes on the completed frame', () => {
+    let state = createAgentHistoryState()
+    state = apply(state, { type: 'CUSTOM', name: 'termflow.thinking_delta', value: { id: 'th1', delta: '分析' } } as AguiEvent)
+    state = apply(state, { type: 'CUSTOM', name: 'termflow.thinking_delta', value: { id: 'th1', delta: '中' } } as AguiEvent)
+    state = apply(state, { type: 'CUSTOM', name: 'termflow.thinking_completed', value: { id: 'th1' } } as AguiEvent)
+    expect(state.thinking.get('th1')).toMatchObject({ text: '分析中', status: 'complete' })
+    expect(state.timeline.some((item) => item.type === 'thinking')).toBe(true)
+  })
+})

@@ -63,7 +63,13 @@ export interface AgentUserMessageState {
   error: string | null
 }
 
-export type TimelineItemType = 'message' | 'tool' | 'permission' | 'run' | 'user'
+export interface AgentThinkingState {
+  id: string
+  text: string
+  status: 'streaming' | 'complete'
+}
+
+export type TimelineItemType = 'message' | 'tool' | 'permission' | 'run' | 'user' | 'thinking'
 
 export interface TimelineItem {
   type: TimelineItemType
@@ -81,6 +87,7 @@ export interface AgentHistoryState {
   /** Order = arrival order = server seq order (live and replay preserve it). */
   timeline: TimelineItem[]
   userMessages: Map<string, AgentUserMessageState>
+  thinking: Map<string, AgentThinkingState>
 }
 
 export function createAgentHistoryState(): AgentHistoryState {
@@ -92,6 +99,7 @@ export function createAgentHistoryState(): AgentHistoryState {
     backend: { state: null, epoch: null },
     timeline: [],
     userMessages: new Map(),
+    thinking: new Map(),
   }
 }
 
@@ -108,6 +116,7 @@ function cloneState(state: AgentHistoryState): AgentHistoryState {
     backend: { ...state.backend },
     timeline: [...state.timeline],
     userMessages: new Map(state.userMessages),
+    thinking: new Map(state.thinking),
   }
 }
 
@@ -287,6 +296,19 @@ export function applyAguiEvent(
       break
     }
     case 'CUSTOM': {
+      if (event.name === 'termflow.thinking_delta' || event.name === 'termflow.thinking_completed') {
+        const value = event.value as Record<string, unknown>
+        const id = nonEmptyString(value.id) ? value.id : 'thinking'
+        const delta = typeof value.delta === 'string' ? value.delta : ''
+        const existing = next.thinking.get(id)
+        next.thinking.set(id, {
+          id,
+          text: (existing?.text ?? '') + delta,
+          status: event.name === 'termflow.thinking_completed' ? 'complete' : 'streaming',
+        })
+        if (existing === undefined) next.timeline.push({ type: 'thinking', refId: id, at })
+        break
+      }
       if (event.name !== AGUI_PERMISSION_CUSTOM) break
       const value = event.value
       const approvalId = value.approval_request_id
