@@ -80,7 +80,6 @@ export function useAgentConversation(options: UseAgentConversationOptions) {
   async function start() {
     if (started || !toValue(options.enabled ?? true)) return
     started = true
-    const stored = runtime.agentCursorStore.load(options.conversationId)
     // Seed historical user messages before the stream connects: the reducer
     // timeline is application-ordered, so user rows must precede replayed
     // and live assistant events (M6b spec §4.5 timing split). Best effort —
@@ -127,9 +126,11 @@ export function useAgentConversation(options: UseAgentConversationOptions) {
         clear: (handle) => runtime.clock.clearTimeout(handle),
       },
       replayAgui: (conversationId, sinceSeq) => fetchEventsSinceAgui(runtime.api.request, conversationId, sinceSeq),
-      // Hot recovery resumes from the persisted cursor; a cold start seeds
-      // from seq 0 with a batch REST replay after open (§4.4).
-      ...(stored === null ? { seedFromSeq: 0 } : { initialCursor: stored.cursor }),
+      // Always replay the canonical event history on mount. The REST seed
+      // only covers user rows, so resuming from a persisted cursor would
+      // hide every assistant message and tool activity recorded before this
+      // visit; the session's own reconnect still uses the live cursor.
+      seedFromSeq: 0,
     })
     void session.connect()
   }
