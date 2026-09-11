@@ -59,3 +59,42 @@ describe('seedUserMessages', () => {
     expect(next.timeline).toContainEqual({ type: 'message', refId: 'system-1', at: Date.parse('2026-01-01T00:00:00Z') })
   })
 })
+
+describe('backend state convergence', () => {
+  it('returns an in-flight busy state to ready when the run finishes', () => {
+    let state = createAgentHistoryState()
+    state = apply(state, runStarted('r'), stateDelta('busy', 1), runFinished('r'))
+    expect(state.backend.state).toBe('ready')
+  })
+
+  it('keeps an explicit terminal state when the run finishes', () => {
+    let state = createAgentHistoryState()
+    state = apply(state, runStarted('r'), stateDelta('context_lost', 1), runFinished('r'))
+    expect(state.backend.state).toBe('context_lost')
+  })
+})
+
+describe('turn completion state convergence', () => {
+  it('returns busy to ready when a finished text has no tool running', () => {
+    let state = createAgentHistoryState()
+    state = apply(
+      state,
+      stateDelta('busy', 1),
+      chunk('m1', '收到', 10),
+      end('m1'),
+    )
+    expect(state.backend.state).toBe('ready')
+  })
+
+  it('stays busy while a tool call is still running', () => {
+    let state = createAgentHistoryState()
+    state = apply(
+      state,
+      stateDelta('busy', 1),
+      chunk('m1', 'let me check', 10),
+      toolStart('t1', 'pane_read'),
+      end('m1'),
+    )
+    expect(state.backend.state).toBe('busy')
+  })
+})

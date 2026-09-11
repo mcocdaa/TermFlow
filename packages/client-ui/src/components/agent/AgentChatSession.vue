@@ -80,7 +80,7 @@
 //: record) remounts it and re-scopes the whole conversation state.
 import { ApiError, type AgentHistoryState, type AgentUserMessageState } from '@termflow/client-core'
 import type { AgentConversationDetailResponse } from '@termflow/client-contracts'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { ArrowLeft } from '@lucide/vue'
 import AgentApprovalPanel from './AgentApprovalPanel.vue'
@@ -103,6 +103,11 @@ const approvalTray = ref<HTMLDetailsElement | null>(null)
 const approvalPanel = ref<InstanceType<typeof AgentApprovalPanel> | null>(null)
 const pendingCount = ref(0)
 function updatePendingCount(count: number) { pendingCount.value = count; emit('pendingCount', count) }
+// A pending write approval must be visible without hunting for the tray:
+// open it as soon as the panel reports one.
+watch(pendingCount, (count) => {
+  if (count > 0 && approvalTray.value !== null) approvalTray.value.open = true
+})
 
 const runtime = useClientRuntime()
 const toast = useBottomToast()

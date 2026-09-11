@@ -8,7 +8,7 @@ export const AGUI_PERMISSION_CUSTOM = 'termflow.permission_requested'
 //: Known backend runtime states projected through STATE_DELTA
 //: (termflow_protocol BackendRuntimeState). Unknown values are kept verbatim
 //: so wire drift never hides data; the UI maps known values to labels.
-export const BACKEND_RUNTIME_STATES = ['connecting', 'busy', 'ready', 'unavailable', 'context_lost', 'reconciling', 'closed'] as const
+export const BACKEND_RUNTIME_STATES = ['connecting', 'idle', 'busy', 'retry', 'ready', 'unavailable', 'context_lost', 'reconciling', 'closed'] as const
 export type BackendRuntimeState = (typeof BACKEND_RUNTIME_STATES)[number]
 
 export function isBackendRuntimeState(value: string): value is BackendRuntimeState {
@@ -180,6 +180,13 @@ export function applyAguiEvent(
       if (existing !== undefined && existing.status !== 'complete') {
         next.messages.set(event.messageId, { ...existing, status: 'complete' })
       }
+      // This OpenCode build emits no run boundaries and no trailing idle, so
+      // a finished assistant text with no tool still running is the signal
+      // that the turn is done; converge the provider state.
+      const toolRunning = [...next.toolCalls.values()].some((call) => call.status === 'running')
+      if (!toolRunning && (next.backend.state === 'busy' || next.backend.state === 'retry' || next.backend.state === 'connecting')) {
+        next.backend = { ...next.backend, state: 'ready' }
+      }
       break
     }
     case 'TOOL_CALL_START': {
@@ -245,6 +252,11 @@ export function applyAguiEvent(
       } else if (existing.status === 'active') {
         next.runs.set(event.runId, { ...existing, status: 'finished', endedAt: at })
       }
+      // OpenCode does not always emit a trailing idle state after a turn, so
+      // converge an in-flight provider state once the run is terminal.
+      if (next.backend.state === 'busy' || next.backend.state === 'retry' || next.backend.state === 'connecting') {
+        next.backend = { ...next.backend, state: 'ready' }
+      }
       break
     }
     case 'RUN_ERROR': {
@@ -268,6 +280,9 @@ export function applyAguiEvent(
           errorMessage: event.message,
           endedAt: at,
         })
+      }
+      if (next.backend.state === 'busy' || next.backend.state === 'retry' || next.backend.state === 'connecting') {
+        next.backend = { ...next.backend, state: 'ready' }
       }
       break
     }

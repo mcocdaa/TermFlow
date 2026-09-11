@@ -1,5 +1,5 @@
 <template>
-  <span class="agent-backend-status" :class="`agent-backend-status--${displayState}`" :data-agent-backend-state="dataState">
+  <span v-if="displayState !== 'unknown'" class="agent-backend-status" :class="`agent-backend-status--${displayState}`" :data-agent-backend-state="dataState">
     {{ label }}
   </span>
 </template>
@@ -20,7 +20,9 @@ const props = defineProps<{
 
 const LABELS: Record<BackendRuntimeState, string> = {
   connecting: '连接中',
+  idle: '空闲',
   busy: '处理中',
+  retry: '重试中',
   ready: '就绪',
   unavailable: '不可用',
   context_lost: '上下文丢失',
