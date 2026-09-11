@@ -279,7 +279,7 @@ async def test_database_initialize_rolls_back_mid_0011_and_can_retry(
             assert (await connection.execute(text("PRAGMA foreign_keys"))).scalar_one() == 1
             assert (
                 await connection.execute(text("SELECT version_num FROM alembic_version"))
-            ).scalar_one() == "0012"
+            ).scalar_one() == "0013"
             assert (
                 await connection.execute(
                     text("SELECT status FROM agent_bindings WHERE id = :id"),
@@ -918,7 +918,12 @@ def test_0011_fresh_database_has_exact_runtime_disclosure_and_auth_schema(
         }
         for table_name, columns in expected_columns.items():
             assert {column["name"] for column in inspector.get_columns(table_name)} == columns
-            assert set(models.Base.metadata.tables[table_name].columns.keys()) == columns
+            metadata_columns = set(models.Base.metadata.tables[table_name].columns.keys())
+            if table_name == "agent_bindings":
+                # Added by the post-0011 write-policy revision; this snapshot
+                # pins the legacy 0011 schema.
+                metadata_columns -= {"write_policy"}
+            assert metadata_columns == columns
 
         disclosure_columns = expected_columns["agent_provider_disclosure_acceptances"]
         assert not any(

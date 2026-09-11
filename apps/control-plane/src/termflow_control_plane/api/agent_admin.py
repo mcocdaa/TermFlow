@@ -119,6 +119,14 @@ class AgentBindingUpdateRequest(BaseModel):
     status: Literal["disabled", "revoked"] | None = None
 
 
+class AgentWritePolicyRequest(BaseModel):
+    """Two-mode write approval policy the agent panel toggles."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    write_policy: Literal["manual", "auto"]
+
+
 class AgentBindingResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -126,6 +134,7 @@ class AgentBindingResponse(BaseModel):
     profile_id: UUID
     term_id: UUID
     status: str
+    write_policy: str = "manual"
     runtime_ref: str | None
     runtime_epoch: int | None
     capability_ref: str | None
@@ -231,6 +240,7 @@ class AgentBindingDetailResponse(BaseModel):
     profile_id: UUID
     term_id: UUID
     status: str
+    write_policy: str = "manual"
     config_revision: int
     runtime_ref: str | None
     runtime_epoch: int | None
@@ -257,6 +267,7 @@ class AgentSetupResponse(BaseModel):
     profiles: list[AgentSetupProfileSummary] = Field(default_factory=list)
     token: AgentSetupTokenSummary
     runtime: AgentRuntimeStateResponse | None = None
+    write_policy: str | None = None
     pane_policy: AgentPanePolicyResponse | None = None
     disclosure: AgentProviderDisclosureResponse | None = None
     topology_revision: int | None = None
@@ -345,6 +356,7 @@ def _binding_response(binding: AgentBinding) -> AgentBindingResponse:
         profile_id=binding.profile_id,
         term_id=binding.term_id,
         status=binding.status,
+        write_policy=binding.write_policy,
         runtime_ref=binding.runtime_ref,
         runtime_epoch=binding.runtime_epoch,
         capability_ref=binding.capability_ref,
@@ -545,6 +557,7 @@ async def _binding_detail(
         profile_id=binding.profile_id,
         term_id=binding.term_id,
         status=binding.status,
+        write_policy=binding.write_policy,
         config_revision=binding.config_revision,
         runtime_ref=binding.runtime_ref,
         runtime_epoch=binding.runtime_epoch,
@@ -649,6 +662,7 @@ async def _setup_response(
             ),
         ),
         runtime=_runtime_response(binding, runtime),
+        write_policy=binding.write_policy,
         pane_policy=AgentPanePolicyResponse(
             binding_id=binding.id,
             pane_ids=sorted(policy.pane_id for policy in policies if policy.allowed),
@@ -1602,6 +1616,36 @@ async def accept_agent_binding_disclosure(
     if current_disclosure is None:
         raise TermFlowError("disclosure_unavailable", 503, "Disclosure state is unavailable.")
     return current_disclosure
+
+
+@router.put("/bindings/{binding_id}/write-policy", response_model=AgentBindingResponse)
+async def set_agent_binding_write_policy(
+    binding_id: UUID,
+    request: AgentWritePolicyRequest,
+    auth: Annotated[AdminAuthContext, Depends(require_fresh_admin)],
+    repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
+    sessions: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
+) -> AgentBindingResponse:
+    """Switch one Binding between manual and auto write approval.
+
+    Sensitive enough to require recent re-authentication: auto mode removes
+    the human gate for every allowlisted write on the binding.
+    """
+
+    del auth
+    await _require_binding(binding_id, repositories)
+    async with sessions() as session:
+        result = await session.execute(
+            update(AgentBinding)
+            .where(AgentBinding.id == binding_id)
+            .values(write_policy=request.write_policy, updated_at=datetime.now(UTC))
+            .returning(AgentBinding)
+        )
+        binding = result.scalar_one_or_none()
+        await session.commit()
+    if binding is None:
+        raise TermFlowError("binding_not_found", 404, "The Agent Binding does not exist.")
+    return _binding_response(binding)
 
 
 @router.patch("/bindings/{binding_id}", response_model=AgentBindingResponse)

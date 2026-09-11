@@ -907,6 +907,9 @@ class AgentBrokerPlugin:
         manifest.add_revision(
             MigrationRevision(id="0012", owner="agent_broker", dependencies=("0011",))
         )
+        manifest.add_revision(
+            MigrationRevision(id="0013", owner="agent_broker", dependencies=("0012",))
+        )
 
     def bind_startup_fencing(self, fencing: Hook) -> None:
         self._startup_fencing = fencing

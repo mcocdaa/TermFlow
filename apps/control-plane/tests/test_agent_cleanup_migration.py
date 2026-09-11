@@ -128,7 +128,7 @@ def test_0012_empty_database_reaches_head(tmp_path: Path) -> None:
         _upgrade(connection, "head")
         assert (
             connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-            == "0012"
+            == "0013"
         )
         assert "agent_cleanup_receipts" in inspect(connection).get_table_names()
 

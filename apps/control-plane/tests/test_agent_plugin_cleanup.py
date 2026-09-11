@@ -78,6 +78,7 @@ def test_migration_manifest_declares_the_full_alembic_chain(
         ("0010", "agent_broker", ("0009",)),
         ("0011", "agent_broker", ("0010",)),
         ("0012", "agent_broker", ("0011",)),
+        ("0013", "agent_broker", ("0012",)),
     ]
 
 

@@ -4893,6 +4893,21 @@ class ApprovalRepository:
             )
             return approval
 
+    async def find_pending_for_conversation(
+        self, conversation_id: UUID
+    ) -> ApprovalRequest | None:
+        """Return the oldest pending approval of one conversation, if any."""
+        async with self._sessions() as session:
+            return await session.scalar(
+                select(ApprovalRequest)
+                .where(
+                    ApprovalRequest.conversation_id == conversation_id,
+                    ApprovalRequest.state == "pending",
+                )
+                .order_by(ApprovalRequest.created_at)
+                .limit(1)
+            )
+
     async def set_state(
         self,
         approval_id: UUID,

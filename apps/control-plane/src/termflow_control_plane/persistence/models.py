@@ -298,6 +298,11 @@ class AgentBinding(Base):
     status: Mapped[str] = mapped_column(
         String(32), default="disabled", server_default=text("'disabled'")
     )
+    #: Write approval policy: ``manual`` (human decision) or ``auto`` (the
+    #: binding pre-approves every allowlisted write).  Defaults to manual.
+    write_policy: Mapped[str] = mapped_column(
+        String(16), default="manual", server_default=text("'manual'")
+    )
     # Runtime fields are opaque references to the externally deployed runtime
     # and its epoch-bound MCP capability.  A binding may be created before a
     # runtime is provisioned and stays fail-closed while the runtime is not

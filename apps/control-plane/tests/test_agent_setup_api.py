@@ -440,3 +440,42 @@ def test_runtime_update_validates_server_policy_and_rotates_identity_once(
     assert forged.status_code == 409, forged.text
     assert forged.json()["error"]["code"] == "runtime_assignment_conflict"
     assert controller.fence_calls[-1] == (binding_id, False)
+
+
+def test_write_policy_switches_between_manual_and_auto(setup_client: Any) -> None:
+    client, _controller, _catalog = setup_client
+    term_id = _seed_term_sync(client)
+    headers = {"Authorization": "Bearer admin-token-that-is-long-enough-for-tests"}
+    profile = client.post(
+        "/api/v1/agent/admin/profiles",
+        headers=headers,
+        json={
+            "display_name": "write-policy-profile",
+            "backend_kind": "opencode",
+            "config": '{"provider_id":"deepseek","model_id":"deepseek-v4-flash"}',
+        },
+    )
+    profile_id = UUID(profile.json()["profile_id"])
+    binding = client.post(
+        "/api/v1/agent/admin/bindings",
+        headers=headers,
+        json={"profile_id": str(profile_id), "term_id": str(term_id)},
+    )
+    binding_id = UUID(binding.json()["binding_id"])
+    assert binding.json()["write_policy"] == "manual"
+
+    switched = client.put(
+        f"/api/v1/agent/admin/bindings/{binding_id}/write-policy",
+        headers=headers,
+        json={"write_policy": "auto"},
+    )
+    assert switched.status_code == 200, switched.text
+    assert switched.json()["write_policy"] == "auto"
+
+
+    invalid = client.put(
+        f"/api/v1/agent/admin/bindings/{binding_id}/write-policy",
+        headers=headers,
+        json={"write_policy": "always"},
+    )
+    assert invalid.status_code == 422

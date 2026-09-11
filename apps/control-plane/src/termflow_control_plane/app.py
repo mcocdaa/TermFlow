@@ -218,6 +218,7 @@ async def _build_agent_mcp_app(app: FastAPI, settings: Settings) -> Starlette:
     guardrails = McpGuardrailConfig(
         approval_wait_timeout_seconds=settings.agent_approval_wait_timeout_seconds,
         approval_ttl_seconds=settings.agent_approval_ttl_seconds,
+        tool_timeout_seconds=settings.agent_tool_timeout_seconds,
     )
     commands = CommandService(
         repositories=app.state.repositories,

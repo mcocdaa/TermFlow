@@ -60,6 +60,7 @@ from termflow_control_plane.plugins.agent_broker.agent.approval_audit import (
 )
 from termflow_control_plane.plugins.agent_broker.agent.permissions import (
     ApprovalArgsHashInput,
+    ApprovalDecision,
     ApprovalError,
     ApprovalPolicy,
     ApprovalState,
@@ -298,9 +299,33 @@ class CommandService:
 
         observed = self._clock()
         expiry = observed + timedelta(seconds=self._ttl)
+        # Two-mode binding policy (0013): ``auto`` pre-approves every
+        # allowlisted write; ``manual`` keeps the human gate and additionally
+        # refuses a second proposal while one is already waiting, so a model
+        # that retries cannot spam approvals or expire them under the user.
+        binding = await self._repositories.agent_bindings.get_by_id(principal.binding_id)
+        auto_approve = binding is not None and binding.write_policy == "auto"
+        if not auto_approve:
+            pending = await self._repositories.approvals.find_pending_for_conversation(
+                params.conversation_id
+            )
+            if pending is not None:
+                raise TermFlowToolError(
+                    TermFlowErrorCode.APPROVAL_REQUIRED,
+                    f"approval {pending.id} is already pending for this conversation; "
+                    "wait for the human decision instead of resubmitting",
+                    data={"approval_id": str(pending.id)},
+                )
         approval = await self._create_approval(
             principal, params, tool_call_id=tool_call_id, operation=operation, expiry=expiry
         )
+        if auto_approve:
+            await self.policy.decide(
+                approval.id,
+                decision=ApprovalDecision.APPROVED,
+                actor="system:write_policy_auto",
+                auth_epoch=await persisted_authentication_epoch(self._repositories),
+            )
         try:
             deadline = observed + timedelta(seconds=self._wait_timeout)
             state = await self._wait_for_decision(approval.id, deadline)
