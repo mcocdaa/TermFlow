@@ -818,11 +818,15 @@ test('renders the Agent directory as a Term-facing table in the product shell', 
   await expect(table.locator('[data-action="delete-conversation"] svg')).toBeVisible()
 
   if (testInfo.project.name.startsWith('mobile')) {
-    const links = page.locator('.mobile-nav a')
+    // Portrait uses the bottom navigation; landscape (844px wide) keeps the
+    // side navigation. Assert the navigation that is actually rendered.
+    const links = page.locator('.side-nav:visible a, .mobile-nav:visible a')
     await expect(links).toHaveCount(4)
     for (let index = 0; index < 4; index += 1) {
       await expect(links.nth(index).locator('svg')).toBeVisible()
-      await expect(links.nth(index).locator('.nav-label')).toHaveCSS('display', 'none')
+      if (testInfo.project.name === 'mobile-portrait') {
+        await expect(links.nth(index).locator('.nav-label')).toHaveCSS('display', 'none')
+      }
     }
   }
 

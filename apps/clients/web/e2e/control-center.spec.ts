@@ -220,7 +220,7 @@ async function expectWordSelection(
   const secondWord = `RIGHT${suffix}`
   await page.locator('.terminal-host textarea').focus()
   if (exitCopyMode) await page.keyboard.press('q')
-  await page.keyboard.type(String.raw`printf '\033[2J\033[HLEFT%s    RIGHT%s' ${suffix} ${suffix}`)
+  await page.keyboard.type(String.raw`printf '\033[2J\033[HLEFT%s    RIGHT%s\n' ${suffix} ${suffix}`)
   const outputStart = terminalOutputFrames.length
   await page.keyboard.press('Enter')
   await expect.poll(() => Buffer.concat(terminalOutputFrames.slice(outputStart)).toString('utf8')).toContain(secondWord)
@@ -262,10 +262,13 @@ test('permanently removes only its disposable offline Term', async ({ page }, te
   const deleted = page.waitForResponse((response) =>
     response.request().method() === 'DELETE'
     && response.url().endsWith(`/api/v1/terms/${offlineTermId}`)
-    && response.status() === 204,
+    && response.status() === 202,
   )
   await dialog.locator('[data-action="confirm-delete-term"]').click()
   await deleted
+  // Offline deletion is asynchronous: the dialog keeps the cleanup job id
+  // visible while the directory refreshes without the removed Term.
+  await expect(dialog).toContainText('清理待完成')
   await expect(offlineRow).toHaveCount(0)
   await page.reload()
   await expect(page.locator(`[data-term-id="${offlineTermId}"]`)).toHaveCount(0)
@@ -864,7 +867,7 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
     const firstWord = `LEFTM${wordSuffix}`
     const secondWord = `RIGHTM${wordSuffix}`
     await page.locator('.terminal-host textarea').focus()
-    await page.keyboard.type(String.raw`printf '\033[2J\033[H${firstWord}    ${secondWord}'`)
+    await page.keyboard.type(String.raw`printf '\033[2J\033[H${firstWord}    ${secondWord}\n'`)
     await page.keyboard.press('Enter')
     await expect(page.locator('.terminal-host')).toContainText(secondWord)
     const currentActivePane = (await panesForTerm(page)).find((pane) => pane.active)!

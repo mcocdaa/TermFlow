@@ -21,7 +21,10 @@ test('deployed read-only smoke preserves dashboard and terminal route state', as
 
   await expect(page.locator('.metric-card')).toHaveCount(4)
   await expect(page.locator('[data-action="logout"] svg')).toHaveCount(1)
-  await expect(page.locator('.side-nav:visible svg, .mobile-nav:visible svg')).toHaveCount(3)
+  const capabilities = await page.request.get('/api/v1/agent/capabilities')
+  expect(capabilities.ok()).toBeTruthy()
+  const expectedNavigationItems = (await capabilities.json()).agent_broker_enabled ? 4 : 3
+  await expect(page.locator('.side-nav:visible svg, .mobile-nav:visible svg')).toHaveCount(expectedNavigationItems)
   for (const root of ['html', 'body', '#app']) {
     await expect(page.locator(root)).not.toHaveClass(/termflow-terminal-route/)
   }

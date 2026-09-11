@@ -72,7 +72,9 @@ test('smokes the Agent chat: capability gate, conversation creation, fail-closed
 
   // Fixture a profile + binding over the admin API. The binding's runtime is
   // never activated, so the composer must fail closed on submit (spec §10
-  // risk 6 / M4.5 fail-closed pipeline mapping).
+  // risk 6 / M4.5 fail-closed pipeline mapping). Conversation creation moved
+  // to the terminal Agent panel, so the durable row is seeded through the same
+  // public product API and the directory below stays read-only.
   const profile = await page.request.post('/api/v1/agent/admin/profiles', {
     headers: { Authorization: `Bearer ${adminToken}` },
     data: {
@@ -89,47 +91,48 @@ test('smokes the Agent chat: capability gate, conversation creation, fail-closed
   })
   expect(binding.status()).toBe(201)
   const bindingId = (await binding.json() as { binding_id: string }).binding_id
+  const createdAt = await page.request.post('/api/v1/agent/conversations', {
+    headers: { Authorization: `Bearer ${adminToken}` },
+    data: { binding_id: bindingId, title: `smoke-${testInfo.project.name}` },
+  })
+  expect(createdAt.status()).toBe(201)
+  const conversationId = (await createdAt.json() as { conversation_id: string }).conversation_id
 
   await page.reload()
-  // The overview resolves the binding to a product-facing Term row; Binding
-  // ids are no longer exposed as a selector in the page.
-  await expect(page.locator('[data-agent-create-term]')).toHaveValue(bindingId)
-
-  await page.locator('[data-agent-create-title]').fill(`smoke-${testInfo.project.name}`)
-  const created = page.waitForResponse((response) =>
-    response.request().method() === 'POST'
-    && response.url().endsWith('/api/v1/agent/conversations')
-    && response.status() === 201,
-  )
-  await page.locator('[data-action="create-conversation"]').click()
-  const createdResponse = await created
-  const conversationId = (await createdResponse.json() as { conversation_id: string }).conversation_id
+  // The console resolves the binding to a product-facing Term row, renders the
+  // durable conversation, and never exposes the removed inline create form.
+  await expect(
+    page.locator('[data-agent-create-term], [data-agent-create-title], [data-action="create-conversation"]'),
+  ).toHaveCount(0)
 
   const conversationRow = page.locator(`[data-agent-conversation-id="${conversationId}"]`)
   await expect(conversationRow).toBeVisible()
   await conversationRow.locator('[data-action="open-conversation"]').click()
   await expect(page).toHaveURL(new RegExp(`/agent/${conversationId}$`))
 
-  // Without a runtime the composer is reachable, but submitting greys it
-  // out with the unavailable hint (503 binding_runtime_unavailable).
-  await expect(page.locator('[data-agent-composer-input]')).toBeEnabled()
-  await page.locator('[data-agent-composer-input]').fill('烟雾测试')
-  const rejected = page.waitForResponse((response) =>
-    response.request().method() === 'POST'
-    && response.url().endsWith(`/api/v1/agent/conversations/${conversationId}/messages`)
-    && response.status() === 503,
-  )
-  await page.locator('[data-action="send-message"]').click()
-  await rejected
-  await expect(page.locator('[data-agent-composer-unavailable]')).toContainText('后端运行时未就绪')
+  // A freshly created binding stays disabled until its runtime is activated,
+  // so the live stream fences it (403 binding_revoked) and the composer fails
+  // closed inside the UI instead of dispatching. B applies the same fence to
+  // any non-UI submitter.
+  await expect(page.locator('[data-agent-revoked-banner]')).toContainText('Agent Binding 已撤销')
   await expect(page.locator('[data-agent-composer-input]')).toBeDisabled()
+  await expect(page.locator('[data-action="send-message"]')).toBeDisabled()
+  const rejected = await page.request.post(
+    `/api/v1/agent/conversations/${conversationId}/messages`,
+    {
+      headers: { Authorization: `Bearer ${adminToken}` },
+      data: { text: '烟雾测试' },
+    },
+  )
+  expect(rejected.status()).toBe(403)
+  expect(JSON.stringify(await rejected.json())).toContain('binding_revoked')
   if (screenshotDir) {
     await page.screenshot({ path: `${screenshotDir}/agent-runtime-unavailable-${testInfo.project.name}.png` })
   }
 
   // Reload through the production HTTP boundary before claiming the created
-  // conversation persisted. Runtime-unavailable is a transient delivery
-  // result; the durable assertion here is the same conversation route/title.
+  // conversation persisted. The disabled binding is a durable product state;
+  // the assertion here is the same conversation route/title.
   await page.reload()
   await expect(page).toHaveURL(new RegExp(`/agent/${conversationId}$`))
   await expect(page.locator('[data-agent-chat-title]')).toHaveText(`smoke-${testInfo.project.name}`)

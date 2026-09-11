@@ -119,7 +119,7 @@
   .enrollment-copy-button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); }
   .warning-text { color: var(--color-warning); }
   .registration-code, .login-command { display: block; overflow-wrap: anywhere; padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-terminal); color: var(--color-terminal-foreground); font-family: var(--font-mono); }
-  .terminal-view { position: relative; max-width: none; height: 100%; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
+  .terminal-view { position: relative; max-width: none; height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
   .terminal-titlebar { position: relative; z-index: 12; min-height: 3.25rem; display: flex; align-items: center; justify-content: flex-start; gap: var(--space-3); padding: var(--space-1) var(--space-3); border-block-end: 1px solid var(--color-border); background: var(--color-panel); }
   .terminal-back { flex: 0 0 auto; min-width: 2.35rem; min-height: 2.35rem; display: grid; place-items: center; border: 1px solid var(--color-border); border-radius: var(--radius-md); color: var(--color-text-primary); text-decoration: none; }
   .terminal-identity, .terminal-titlebar-actions { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
@@ -430,7 +430,7 @@
   .agent-chat-view { display: flex; flex-direction: column; min-height: 100%; }
   .agent-chat-session { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
   .terminal-workspace { display: flex; min-width: 0; min-height: 0; position: relative; overflow: hidden; }
-  .terminal-interaction-host { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; flex: 1; min-width: 0; min-height: 0; }
+  .terminal-interaction-host { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto; flex: 1; min-width: 0; min-height: 0; }
   .terminal-interaction-host > .terminal-frame { grid-row: 1; }
   .terminal-interaction-host > .mobile-keybar-shell { grid-row: 3; }
   .terminal-agent-panel { position: absolute; z-index: 45; inset-block-start: var(--space-4); inset-inline-end: var(--space-4); display: flex; flex-direction: column; width: clamp(26rem, 35vw, 30rem); height: min(42rem, calc(100% - 2 * var(--space-4))); max-width: calc(100% - 2 * var(--space-4)); min-width: 18rem; min-height: 20rem; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-panel); box-shadow: var(--shadow-panel); overflow: hidden; overscroll-behavior: contain; container: terminal-agent-panel / inline-size; }
