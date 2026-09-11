@@ -110,7 +110,11 @@ def test_opencode_config_selects_deepseek_without_literal_secret() -> None:
         "baseURL": "https://api.deepseek.com",
         "apiKey": "{env:DEEPSEEK_API_KEY}",
     }
-    assert set(deepseek["models"]) == {"deepseek-v4-flash"}
+    assert set(deepseek["models"]) == {
+        "deepseek-flash",
+        "deepseek-v4-pro",
+        "deepseek-v4-flash",
+    }
     assert "replace-with-deployment-secret" not in config_text
     assert "DEEPSEEK_API_KEY=" not in config_text
 
