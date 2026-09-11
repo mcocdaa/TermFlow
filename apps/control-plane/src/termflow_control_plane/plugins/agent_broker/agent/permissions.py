@@ -25,10 +25,12 @@ The CAS cannot be expressed through the ``ApprovalRepository`` (its
 the session factory.  ``actor`` is accepted by every user-driven transition
 and validated, ready for the M5.3 audit wiring (no actor column exists yet).
 
-:func:`canonical_hash` deterministically binds an approval to the exact write:
-schema version, operation, instance/pane incarnation, encoded text/key bytes,
-submit flag, cursor precondition, run/grant id, expiry, and policy epoch.
-Any change to any input changes the hash, so an approval can never authorize a
+:func:`canonical_hash` deterministically binds an approval to the exact
+reviewed write: schema version, operation, instance/pane incarnation, encoded
+text/key bytes, submit flag, expiry, and policy epoch.  The transient cursor
+precondition and run id stay in the encoded schema but are unset for command
+approvals, so an unrelated pane read cannot invalidate a human decision.  Any
+change to a bound input changes the hash, so an approval can never authorize a
 different write than the one that was reviewed.  The encoding is locked by an
 explicit test vector in ``tests/test_agent_approvals.py``.
 """
@@ -146,11 +148,11 @@ class ApprovalArgsHashInput:
     """Every input that defines one exact write request (plan §12.1).
 
     ``encoded_bytes`` is the exact text/key payload bytes the write would
-    send, ``pane_incarnation`` is the target pane's incarnation at request
-    time, and ``cursor_precondition`` is the expected pane cursor before the
-    write executes.  ``run_id`` and ``grant_id`` are mutually exclusive in
-    practice (a write is either run-scoped or grant-scoped); both are encoded
-    so the hash covers whichever identity applies.
+    send and ``pane_incarnation`` is the target pane's incarnation at request
+    time.  ``cursor_precondition`` and ``run_id`` remain part of the encoded
+    schema for compatibility but command approvals leave them unset: the
+    human reviews the command and its target identity, not the observation
+    cursor or run boundary at proposal time.
     """
 
     schema_version: int

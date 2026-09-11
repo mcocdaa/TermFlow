@@ -88,14 +88,13 @@ class Settings(BaseSettings):
     # M5.2 approval flow: the write tools wait synchronously for the human
     # decision (must stay below the MCP tool guard timeout) and created
     # approvals expire after the TTL.
-    #: Synchronous approval wait budget.  Kept below the pinned OpenCode MCP
-    #: client's own call timeout so the handler can hand a still-pending
-    #: request to the background late-completion path before the client
-    #: cancels the call.
-    agent_approval_wait_timeout_seconds: float = Field(default=45.0, gt=0)
+    #: Synchronous approval wait.  The Model's tool call is the natural pause
+    #: point, so B waits here for the human; the pinned OpenCode config sets a
+    #: matching ``mcp.termflow.timeout`` (330s) above the MCP tool budget.
+    agent_approval_wait_timeout_seconds: float = Field(default=280.0, gt=0)
     agent_approval_ttl_seconds: float = Field(default=300.0, gt=0)
     #: MCP tool-call budget; must stay above ``agent_approval_wait_timeout_seconds``.
-    agent_tool_timeout_seconds: float = Field(default=60.0, gt=0)
+    agent_tool_timeout_seconds: float = Field(default=310.0, gt=0)
     # Delegated Write Grants stay disabled in 0.2.0: no code path reads the
     # table, the canonical hash always binds grant_id=None, and this flag is
     # only exposed for C to display (spec §8).

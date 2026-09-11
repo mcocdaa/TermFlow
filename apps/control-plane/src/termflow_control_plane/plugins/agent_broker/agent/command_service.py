@@ -569,11 +569,15 @@ class CommandService:
                 "the write was not executed",
             )
         # 5) Recomputed hash against the CURRENT ledger must still match the
-        #    stored hash; any drift (text, pane, incarnation, cursor, run,
-        #    epoch) means the reviewed target changed.  The expiry used for
-        #    the recomputation is the stored ``expires_at`` frozen at
-        #    creation - never a fresh ``now + ttl`` - so an approval decided
-        #    late in its TTL window still matches (spec §4.4 + M5.2 note).
+        #    stored hash; any drift in the reviewed scope (text/keys, pane,
+        #    incarnation, epoch) means the reviewed command changed.  The
+        #    transient observation cursor and run id are intentionally not
+        #    part of the reviewed scope, so a pane read or a run boundary
+        #    while the human decides cannot invalidate the approval.  The
+        #    expiry used for the recomputation is the stored ``expires_at``
+        #    frozen at creation - never a fresh ``now + ttl`` - so an
+        #    approval decided later in its TTL window still matches
+        #    (spec §4.4 + M5.2 note).
         context = await self._write_context(
             principal, params, operation, expiry=expires_at, policy_epoch=current_epoch
         )
@@ -765,12 +769,12 @@ class CommandService:
             submit = False
             input_bytes = len(encoded)
         cursor = await self._observation.resolve_cursor(principal.instance_id, params.pane_id)
-        if cursor is None:
-            pane_incarnation = "1"
-            cursor_precondition = None
-        else:
-            pane_incarnation = str(cursor.pane_incarnation)
-            cursor_precondition = f"{cursor.stream_id}:{cursor.seq}"
+        pane_incarnation = "1" if cursor is None else str(cursor.pane_incarnation)
+        # The reviewed scope is the command and its target identity.  The
+        # transient observation cursor and the run id are deliberately not
+        # bound: the human approves the write (text/keys, pane, incarnation),
+        # and any pane read or run boundary during the wait must not
+        # invalidate that decision.
         return _WriteContext(
             canonical_hash=canonical_hash(
                 ApprovalArgsHashInput(
@@ -781,8 +785,8 @@ class CommandService:
                     pane_incarnation=pane_incarnation,
                     encoded_bytes=encoded,
                     submit=submit,
-                    cursor_precondition=cursor_precondition,
-                    run_id=await self._current_run_id(params.conversation_id),
+                    cursor_precondition=None,
+                    run_id=None,
                     grant_id=None,
                     expiry=expiry,
                     policy_epoch=(

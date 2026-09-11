@@ -14,6 +14,9 @@
       "enabled": true
     }
   },
+  "experimental": {
+    "mcp_timeout": 330000
+  },
   "provider": {
     "deepseek": {
       "options": {
