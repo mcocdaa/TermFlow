@@ -38,6 +38,7 @@ from termflow_control_plane.api.agent_approvals import router as agent_approvals
 from termflow_control_plane.api.agent_capabilities import router as agent_capabilities_router
 from termflow_control_plane.api.agent_cleanup import router as agent_cleanup_router
 from termflow_control_plane.api.agent_conversations import router as agent_conversations_router
+from termflow_control_plane.api.agent_parts import router as agent_parts_router
 from termflow_control_plane.api.agent_stream import router as agent_stream_router
 from termflow_control_plane.api.bridge import router as bridge_router
 from termflow_control_plane.api.clients import router as clients_router
@@ -939,6 +940,7 @@ def create_app(
         app.include_router(agent_admin_router, dependencies=agent_schema_dependency)
         app.include_router(agent_cleanup_router, dependencies=agent_schema_dependency)
         app.include_router(agent_conversations_router, dependencies=agent_schema_dependency)
+        app.include_router(agent_parts_router, dependencies=agent_schema_dependency)
         app.include_router(agent_stream_router, dependencies=agent_schema_dependency)
         app.include_router(agent_approvals_router, dependencies=agent_schema_dependency)
         # MCP Streamable HTTP is never exposed to a browser (plan §10); the
