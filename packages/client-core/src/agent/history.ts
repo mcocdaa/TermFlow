@@ -8,7 +8,7 @@ export const AGUI_PERMISSION_CUSTOM = 'termflow.permission_requested'
 //: Known backend runtime states projected through STATE_DELTA
 //: (termflow_protocol BackendRuntimeState). Unknown values are kept verbatim
 //: so wire drift never hides data; the UI maps known values to labels.
-export const BACKEND_RUNTIME_STATES = ['connecting', 'ready', 'unavailable', 'context_lost', 'reconciling', 'closed'] as const
+export const BACKEND_RUNTIME_STATES = ['connecting', 'busy', 'ready', 'unavailable', 'context_lost', 'reconciling', 'closed'] as const
 export type BackendRuntimeState = (typeof BACKEND_RUNTIME_STATES)[number]
 
 export function isBackendRuntimeState(value: string): value is BackendRuntimeState {

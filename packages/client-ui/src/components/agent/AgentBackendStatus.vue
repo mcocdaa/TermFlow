@@ -20,6 +20,7 @@ const props = defineProps<{
 
 const LABELS: Record<BackendRuntimeState, string> = {
   connecting: '连接中',
+  busy: '处理中',
   ready: '就绪',
   unavailable: '不可用',
   context_lost: '上下文丢失',

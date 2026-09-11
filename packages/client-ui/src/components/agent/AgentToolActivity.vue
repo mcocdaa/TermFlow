@@ -53,7 +53,12 @@ const expanded = ref(false)
 const summaryId = useId()
 const hasSummary = computed(() => props.call.summary !== null)
 // A RESULT-without-START backfill has an empty tool name (history.ts).
-const displayName = computed(() => (props.call.toolName === '' ? '工具调用' : props.call.toolName))
+// OpenCode namespaces remote MCP tools as ``<server>_<tool>``, so the wire
+// name carries a doubled ``termflow_`` prefix; show the bare tool name.
+const displayName = computed(() => {
+  const bare = props.call.toolName.replace(/^termflow_termflow_/, '').replace(/^termflow_/, '')
+  return bare === '' ? '工具调用' : bare
+})
 const statusLabel = computed(() => STATUS_LABELS[props.call.status])
 const summaryText = computed(() => stripAnsiOsc(props.call.summary ?? ''))
 </script>
