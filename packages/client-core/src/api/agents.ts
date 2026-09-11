@@ -217,6 +217,17 @@ export function createAgentsApi(request: ApiRequest, requestResponse: ApiRequest
         conversationPath(conversationId, '/cancel'),
         withSignal({ method: 'POST', body }, signal),
       ),
+
+    /** Per-conversation write approval switch (manual | auto). */
+    setConversationWritePolicy: (
+      conversationId: string,
+      writePolicy: 'manual' | 'auto',
+      signal?: AbortSignal,
+    ) =>
+      request<AgentConversationResponse>(
+        conversationPath(conversationId, '/write-policy'),
+        withSignal({ method: 'PUT', body: { write_policy: writePolicy } }, signal),
+      ),
   }
 }
 

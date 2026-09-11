@@ -24,6 +24,7 @@ const conversation: AgentConversationResponse = {
   binding_id: binding.binding_id,
   title: '部署检查',
   status: 'active',
+  write_policy: 'manual',
   created_at: '2026-09-09T00:00:00Z',
   updated_at: '2026-09-09T00:00:00Z',
 }

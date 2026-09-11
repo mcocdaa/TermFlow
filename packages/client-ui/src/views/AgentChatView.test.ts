@@ -45,6 +45,7 @@ function detailResponse(conversationId: string = CONVERSATION, title = '测试�
     binding_id: 'b1',
     title,
     status: 'open',
+    write_policy: 'manual',
     created_at: '2026-08-12T00:00:00+00:00',
     updated_at: '2026-08-12T00:00:00+00:00',
     binding: { binding_id: 'b1', profile_id: 'p1', term_id: 'term-1', status: 'ready' },

@@ -302,12 +302,21 @@ class CommandService:
 
         observed = self._clock()
         expiry = observed + timedelta(seconds=self._ttl)
-        # Two-mode binding policy (0013): ``auto`` pre-approves every
-        # allowlisted write; ``manual`` keeps the human gate and additionally
-        # refuses a second proposal while one is already waiting, so a model
-        # that retries cannot spam approvals or expire them under the user.
+        # Two-mode write approval policy: the per-conversation switch (0014)
+        # wins; the binding value is the default copied at creation and the
+        # fallback for rows that predate the column.  ``auto`` pre-approves
+        # every allowlisted write; ``manual`` keeps the human gate and refuses
+        # a second proposal while one is already waiting.
         binding = await self._repositories.agent_bindings.get_by_id(principal.binding_id)
-        auto_approve = binding is not None and binding.write_policy == "auto"
+        conversation = await self._repositories.agent_conversations.get_by_id(
+            params.conversation_id
+        )
+        effective_policy = (
+            conversation.write_policy
+            if conversation is not None
+            else (binding.write_policy if binding is not None else "manual")
+        )
+        auto_approve = effective_policy == "auto"
         if not auto_approve:
             pending = await self._repositories.approvals.find_pending_for_conversation(
                 params.conversation_id

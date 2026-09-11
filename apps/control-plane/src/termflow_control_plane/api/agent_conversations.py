@@ -13,7 +13,7 @@ sessions stay an opaque mapping owned by the plugin boundary.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, cast
+from typing import Annotated, Literal, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
@@ -22,7 +22,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from termflow_protocol.agent import MAX_AGENT_TEXT_BYTES, validate_agent_text
 
 from termflow_control_plane.api.agent_cleanup import existing_deletion_response, pending_response
-from termflow_control_plane.api.dependencies import get_repositories, require_admin
+from termflow_control_plane.api.dependencies import (
+    get_repositories,
+    require_admin,
+    require_fresh_admin,
+)
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.models import (
     AgentBinding,
@@ -76,6 +80,14 @@ class AgentConversationUpdateRequest(BaseModel):
         return title
 
 
+class AgentConversationWritePolicyRequest(BaseModel):
+    """Per-conversation switch between manual and auto write approval."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    write_policy: Literal["manual", "auto"]
+
+
 class AgentConversationResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -83,6 +95,7 @@ class AgentConversationResponse(BaseModel):
     binding_id: UUID
     title: str | None
     status: str
+    write_policy: str = "manual"
     created_at: datetime
     updated_at: datetime
 
@@ -111,6 +124,7 @@ class AgentConversationDetailResponse(BaseModel):
     binding_id: UUID
     title: str | None
     status: str
+    write_policy: str = "manual"
     created_at: datetime
     updated_at: datetime
     binding: AgentConversationBindingInfo
@@ -207,6 +221,7 @@ def _conversation_response(conversation: AgentConversation) -> AgentConversation
         binding_id=conversation.binding_id,
         title=conversation.title,
         status=conversation.status,
+        write_policy=conversation.write_policy,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
     )
@@ -310,11 +325,15 @@ async def create_agent_conversation(
     request: AgentConversationCreateRequest,
     repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
 ) -> AgentConversationResponse:
-    if await repositories.agent_bindings.get_by_id(request.binding_id) is None:
+    binding = await repositories.agent_bindings.get_by_id(request.binding_id)
+    if binding is None:
         raise TermFlowError("binding_not_found", 404, "The Agent Binding does not exist.")
     conversation = await repositories.agent_conversations.create(
         binding_id=request.binding_id,
         title=request.title,
+        # New conversations start from the binding default; the switch is
+        # per conversation from here on.
+        write_policy=binding.write_policy,
     )
     return _conversation_response(conversation)
 
@@ -356,6 +375,7 @@ async def get_agent_conversation(
         binding_id=conversation.binding_id,
         title=conversation.title,
         status=conversation.status,
+        write_policy=conversation.write_policy,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
         binding=_binding_info(binding),
@@ -371,6 +391,29 @@ async def rename_agent_conversation(
     conversation = await repositories.agent_conversations.rename(
         conversation_id,
         request.title,
+    )
+    if conversation is None:
+        raise TermFlowError(
+            "conversation_not_found",
+            404,
+            "The Agent Conversation does not exist.",
+        )
+    return _conversation_response(conversation)
+
+
+@router.put(
+    "/{conversation_id}/write-policy",
+    response_model=AgentConversationResponse,
+    dependencies=[Depends(require_fresh_admin)],
+)
+async def set_agent_conversation_write_policy(
+    conversation_id: UUID,
+    request: AgentConversationWritePolicyRequest,
+    repositories: Annotated[RepositoryBundle, Depends(get_repositories)],
+) -> AgentConversationResponse:
+    """Switch one conversation between manual and auto write approval."""
+    conversation = await repositories.agent_conversations.set_write_policy(
+        conversation_id, request.write_policy
     )
     if conversation is None:
         raise TermFlowError(

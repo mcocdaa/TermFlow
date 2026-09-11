@@ -279,7 +279,7 @@ async def test_database_initialize_rolls_back_mid_0011_and_can_retry(
             assert (await connection.execute(text("PRAGMA foreign_keys"))).scalar_one() == 1
             assert (
                 await connection.execute(text("SELECT version_num FROM alembic_version"))
-            ).scalar_one() == "0013"
+            ).scalar_one() == "0014"
             assert (
                 await connection.execute(
                     text("SELECT status FROM agent_bindings WHERE id = :id"),

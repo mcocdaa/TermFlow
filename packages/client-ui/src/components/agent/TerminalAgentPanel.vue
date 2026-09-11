@@ -104,7 +104,7 @@
       </section>
       <div v-else data-agent-panel-state="ready" class="terminal-agent-panel__ready">
         <div v-if="bindingId" class="terminal-agent-policy" data-agent-write-policy>
-          <span class="terminal-agent-policy__label">写入审批</span>
+          <span class="terminal-agent-policy__label">新会话默认</span>
           <div class="terminal-agent-policy__options" role="group" aria-label="写入审批方式">
             <button type="button" :class="{ 'is-active': writePolicy === 'manual' }" :aria-pressed="writePolicy === 'manual'" :disabled="mutating" data-action="policy-manual" @click="changeWritePolicy('manual')">手动审批</button>
             <button type="button" :class="{ 'is-active': writePolicy === 'auto' }" :aria-pressed="writePolicy === 'auto'" :disabled="mutating" data-action="policy-auto" @click="pendingAutoPolicy = true">完全放行</button>

@@ -2905,12 +2905,14 @@ class AgentConversationRepository:
         binding_id: UUID,
         title: str | None = None,
         status: str = "active",
+        write_policy: str = "manual",
     ) -> AgentConversation:
         async with self._sessions() as session:
             conversation = AgentConversation(
                 binding_id=binding_id,
                 title=title,
                 status=status,
+                write_policy=write_policy,
             )
             session.add(conversation)
             await session.commit()
@@ -2944,6 +2946,21 @@ class AgentConversationRepository:
                 update(AgentConversation)
                 .where(AgentConversation.id == conversation_id)
                 .values(title=title, updated_at=observed_at)
+                .returning(AgentConversation)
+            )
+            conversation = result.scalar_one_or_none()
+            await session.commit()
+            return conversation
+
+    async def set_write_policy(
+        self, conversation_id: UUID, write_policy: str
+    ) -> AgentConversation | None:
+        observed_at = datetime.now(UTC)
+        async with self._sessions() as session:
+            result = await session.execute(
+                update(AgentConversation)
+                .where(AgentConversation.id == conversation_id)
+                .values(write_policy=write_policy, updated_at=observed_at)
                 .returning(AgentConversation)
             )
             conversation = result.scalar_one_or_none()

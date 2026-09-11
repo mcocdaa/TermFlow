@@ -451,6 +451,11 @@ class AgentConversation(Base):
     # Title is a product-facing convenience the backend may propose later.
     title: Mapped[str | None] = mapped_column(String(255), default=None)
     status: Mapped[str] = mapped_column(String(32))
+    #: Per-conversation write approval policy (0014): copied from the binding
+    #: at creation and switchable per conversation in the agent UI.
+    write_policy: Mapped[str] = mapped_column(
+        String(16), default="manual", server_default=text("'manual'")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now

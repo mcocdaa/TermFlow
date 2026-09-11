@@ -520,6 +520,17 @@
   .agent-chat-body .agent-chat-region { flex: 1; min-width: 0; }
   .agent-chat-body .agent-message-list { min-height: 12rem; }
   .agent-chat-body .agent-approval-panel { flex: none; width: min(24rem, 40%); overflow-y: auto; border-inline-start: 1px solid var(--color-border); padding-inline-start: var(--space-3); }
+  .agent-chat-session { position: relative; }
+  .agent-policy-toggle { display: flex; gap: var(--space-1); }
+  .agent-policy-toggle button { padding: .15rem var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-elevated); color: inherit; font-size: var(--text-sm); }
+  .agent-policy-toggle button.is-active { border-color: var(--color-accent); color: var(--color-accent); }
+  .agent-policy-confirm { flex: none; margin-block-start: var(--space-2); padding: var(--space-2); border: 1px solid var(--color-warning); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-warning) 8%, var(--color-panel)); }
+  .agent-policy-confirm p { margin: 0 0 var(--space-2); font-size: var(--text-sm); }
+  .agent-policy-confirm__actions { display: flex; gap: var(--space-2); }
+  .agent-approval-open { flex: none; align-self: flex-start; margin-block-start: var(--space-2); padding: var(--space-1) var(--space-3); border: 1px solid var(--color-warning); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-warning) 12%, var(--color-panel)); color: inherit; font-size: var(--text-sm); }
+  .agent-approval-modal { position: absolute; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(0, 0, 0, .45); }
+  .agent-approval-modal__panel { width: min(32rem, calc(100% - 2 * var(--space-3))); max-height: calc(100% - 2 * var(--space-3)); overflow-y: auto; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-panel); box-shadow: var(--shadow-panel); }
+  .agent-approval-modal__header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-block-end: var(--space-2); }
   @media (max-width: 47.99rem) {
     .agent-conversation-table__head { display: none; }
     .agent-conversation-table__row { grid-template-columns: 1fr auto; gap: var(--space-3); }

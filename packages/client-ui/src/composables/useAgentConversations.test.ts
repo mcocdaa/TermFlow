@@ -12,6 +12,7 @@ function conversation(conversationId: string): AgentConversationResponse {
     binding_id: 'b1',
     title: null,
     status: 'open',
+    write_policy: 'manual',
     created_at: '2026-08-12T00:00:00+00:00',
     updated_at: '2026-08-12T00:00:00+00:00',
   }

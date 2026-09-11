@@ -342,6 +342,7 @@ export interface AgentConversationResponse {
   binding_id: string
   title: string | null
   status: string
+  write_policy: string
   created_at: string
   updated_at: string
 }
@@ -362,6 +363,7 @@ export interface AgentConversationDetailResponse {
   binding_id: string
   title: string | null
   status: string
+  write_policy: string
   created_at: string
   updated_at: string
   binding: AgentConversationBindingInfo

@@ -13,6 +13,10 @@
       </div>
     </div>
     <div class="agent-chat-header__actions">
+      <div class="agent-policy-toggle" role="group" aria-label="本对话写入审批" data-agent-conversation-policy>
+        <button type="button" :class="{ 'is-active': conversationPolicy === 'manual' }" :aria-pressed="conversationPolicy === 'manual'" :disabled="policyPending" data-action="conversation-policy-manual" @click="changePolicy('manual')">手动审批</button>
+        <button type="button" :class="{ 'is-active': conversationPolicy === 'auto' }" :aria-pressed="conversationPolicy === 'auto'" :disabled="policyPending" data-action="conversation-policy-auto" @click="policyConfirm = true">完全放行</button>
+      </div>
       <AgentBackendStatus :state="backendState" />
       <button
         v-if="hasActiveRun"
@@ -47,12 +51,30 @@
     {{ revokedBannerText }}
   </div>
 
+  <div v-if="policyConfirm" class="agent-policy-confirm" role="alertdialog" aria-label="确认完全放行本对话" data-agent-policy-confirm>
+    <p>本对话内，Agent 对已授权 Pane 的每次写入都会立即执行，不再弹审批。</p>
+    <div class="agent-policy-confirm__actions">
+      <button type="button" class="primary-button" :disabled="policyPending" data-action="confirm-conversation-policy" @click="changePolicy('auto')">确认放行</button>
+      <button type="button" class="text-button" :disabled="policyPending" @click="policyConfirm = false">取消</button>
+    </div>
+  </div>
+
   <div class="agent-chat-body">
     <AgentMessageList :history="displayHistory" @focus-approval="focusApproval" />
-    <details v-if="variant !== 'page'" ref="approvalTray" class="agent-approval-tray">
-      <summary>待处理审批 {{ pendingCount }}</summary>
-      <AgentApprovalPanel ref="approvalPanel" :conversation-id="conversationId" :history="conversation.history.value" @pending-count="updatePendingCount" />
-    </details>
+    <template v-if="variant !== 'page'">
+      <button v-if="pendingCount > 0 && !approvalModalOpen" type="button" class="agent-approval-open" data-action="open-approvals" @click="approvalModalOpen = true">
+        待处理审批 {{ pendingCount }}
+      </button>
+      <div v-if="approvalModalOpen" class="agent-approval-modal" role="dialog" aria-modal="true" aria-label="待处理审批" data-agent-approval-modal>
+        <div class="agent-approval-modal__panel">
+          <header class="agent-approval-modal__header">
+            <strong>待处理审批 {{ pendingCount }}</strong>
+            <button type="button" class="text-button" data-action="dismiss-approvals" @click="approvalModalOpen = false">稍后处理</button>
+          </header>
+          <AgentApprovalPanel ref="approvalPanel" :conversation-id="conversationId" :history="conversation.history.value" @pending-count="updatePendingCount" />
+        </div>
+      </div>
+    </template>
     <AgentApprovalPanel v-else ref="approvalPanel" :conversation-id="conversationId" :history="conversation.history.value" @pending-count="updatePendingCount" />
   </div>
 
@@ -99,15 +121,13 @@ const props = withDefaults(defineProps<{
   variant?: 'page' | 'sidecar' | 'floating'
 }>(), { variant: 'page' })
 const emit = defineEmits<{ close: []; pendingCount: [count: number] }>()
-const approvalTray = ref<HTMLDetailsElement | null>(null)
 const approvalPanel = ref<InstanceType<typeof AgentApprovalPanel> | null>(null)
 const pendingCount = ref(0)
 function updatePendingCount(count: number) { pendingCount.value = count; emit('pendingCount', count) }
-// A pending write approval must be visible without hunting for the tray:
-// open it as soon as the panel reports one.
-watch(pendingCount, (count) => {
-  if (count > 0 && approvalTray.value !== null) approvalTray.value.open = true
-})
+// A pending write approval opens the centered modal immediately; the user can
+// dismiss it and reopen it from the inline button while it stays pending.
+const approvalModalOpen = ref(false)
+watch(pendingCount, (count) => { if (count > 0) approvalModalOpen.value = true })
 
 const runtime = useClientRuntime()
 const toast = useBottomToast()
@@ -124,6 +144,24 @@ const hasActiveRun = computed(() =>
   [...conversation.history.value.runs.values()].some((run) => run.status === 'active'),
 )
 const bindingRevoked = computed(() => conversation.bindingRevoked.value)
+const conversationPolicy = computed<'manual' | 'auto'>(() =>
+  detail.value?.write_policy === 'auto' ? 'auto' : 'manual',
+)
+const policyPending = ref(false)
+const policyConfirm = ref(false)
+async function changePolicy(policy: 'manual' | 'auto') {
+  if (policyPending.value) return
+  policyPending.value = true
+  try {
+    await runtime.api.agents.setConversationWritePolicy(props.conversationId, policy)
+    policyConfirm.value = false
+    await loadDetail()
+  } catch (error) {
+    toast.show({ text: error instanceof Error ? error.message : '无法更新审批方式。', tone: 'error' })
+  } finally {
+    policyPending.value = false
+  }
+}
 const revokedBannerText = computed(() =>
   conversation.closeReason.value === 'conversation_not_found'
     ? '该会话不存在或已被删除，无法继续连接。'
@@ -201,7 +239,7 @@ async function cancelRun() {
 
 /** The approval card asked to handle its request: focus the panel entry. */
 function focusApproval(approvalId: string) {
-  if (approvalTray.value) approvalTray.value.open = true
+  approvalModalOpen.value = true
   void nextTick(() => approvalPanel.value?.focusApproval(approvalId))
 }
 defineExpose({ focusApproval })
