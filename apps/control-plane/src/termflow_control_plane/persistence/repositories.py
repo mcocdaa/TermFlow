@@ -4915,7 +4915,7 @@ class ApprovalRepository:
     ) -> ApprovalRequest | None:
         """Return the oldest pending approval of one conversation, if any."""
         async with self._sessions() as session:
-            return await session.scalar(
+            approval: ApprovalRequest | None = await session.scalar(
                 select(ApprovalRequest)
                 .where(
                     ApprovalRequest.conversation_id == conversation_id,
@@ -4924,6 +4924,7 @@ class ApprovalRepository:
                 .order_by(ApprovalRequest.created_at)
                 .limit(1)
             )
+            return approval
 
     async def set_state(
         self,

@@ -41,6 +41,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from termflow_protocol import CommandResultPayload
+from termflow_protocol.agent import ApprovalDecision
 from termflow_protocol.keys import NAMED_KEYS, canonical_key_bytes
 from termflow_protocol.mcp import (
     PaneSendKeysParams,
@@ -60,7 +61,6 @@ from termflow_control_plane.plugins.agent_broker.agent.approval_audit import (
 )
 from termflow_control_plane.plugins.agent_broker.agent.permissions import (
     ApprovalArgsHashInput,
-    ApprovalDecision,
     ApprovalError,
     ApprovalPolicy,
     ApprovalState,
