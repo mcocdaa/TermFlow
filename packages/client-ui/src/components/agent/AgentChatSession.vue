@@ -81,26 +81,13 @@
 
   <div class="agent-chat-body">
     <AgentMessageList :history="displayHistory" @focus-approval="focusApproval" />
-    <div
-      v-if="variant !== 'page'"
-      v-show="approvalModalOpen"
-      class="agent-approval-modal"
-      role="dialog"
-      aria-modal="true"
-      aria-label="待处理审批"
-      data-agent-approval-modal
-    >
-      <div class="agent-approval-modal__panel">
-        <header class="agent-approval-modal__header">
-          <strong>待处理审批 {{ pendingCount }}</strong>
-          <button type="button" class="text-button" data-action="dismiss-approvals" @click="approvalModalOpen = false">稍后处理</button>
-        </header>
-        <!-- Always mounted: the panel reports pendingCount, which opens this modal. -->
-        <AgentApprovalPanel ref="approvalPanel" :conversation-id="conversationId" :history="conversation.history.value" @pending-count="updatePendingCount" />
-      </div>
-    </div>
-    <AgentApprovalPanel v-else ref="approvalPanel" :conversation-id="conversationId" :history="conversation.history.value" @pending-count="updatePendingCount" />
   </div>
+
+  <!-- Approval prompt sits directly above the composer (Codex-style). The
+       panel stays mounted so it can report the pending count. -->
+  <section v-show="pendingCount > 0" class="agent-approval-prompt" role="region" aria-label="待批准操作" data-agent-approval-prompt>
+    <AgentApprovalPanel ref="approvalPanel" :conversation-id="conversationId" :history="conversation.history.value" @pending-count="updatePendingCount" />
+  </section>
 
   <AgentComposer
     :conversation-id="conversationId"
@@ -150,8 +137,7 @@ const pendingCount = ref(0)
 function updatePendingCount(count: number) { pendingCount.value = count; emit('pendingCount', count) }
 // A pending write approval opens the centered modal immediately; the user can
 // dismiss it and reopen it from the inline button while it stays pending.
-const approvalModalOpen = ref(false)
-watch(pendingCount, (count) => { if (count > 0) approvalModalOpen.value = true })
+watch(pendingCount, (count) => { if (count > 0) void nextTick(() => approvalPanel.value?.focusApproval('')) })
 
 const runtime = useClientRuntime()
 const toast = useBottomToast()
@@ -279,7 +265,6 @@ async function cancelRun() {
 
 /** The approval card asked to handle its request: focus the panel entry. */
 function focusApproval(approvalId: string) {
-  approvalModalOpen.value = true
   void nextTick(() => approvalPanel.value?.focusApproval(approvalId))
 }
 defineExpose({ focusApproval })

@@ -1,4 +1,5 @@
 import type { RouteRecordRaw } from 'vue-router'
+import AgentPreviewView from '../views/AgentPreviewView.vue'
 import AgentChatView from '../views/AgentChatView.vue'
 import AgentView from '../views/AgentView.vue'
 import ComputersView from '../views/ComputersView.vue'
@@ -12,6 +13,7 @@ import SettingsView from '../views/SettingsView.vue'
 import TotpActivationView from '../views/TotpActivationView.vue'
 
 export const clientRoutes: RouteRecordRaw[] = [
+  { path: '/agent-preview', component: AgentPreviewView, meta: { bare: true } },
   { path: '/login', component: LoginView, meta: { bare: true } },
   { path: '/authorize', component: NativeAuthorizeView, meta: { bare: true } },
   { path: '/device', component: DeviceAuthorizeView, meta: { bare: true, requiresAuth: true } },
