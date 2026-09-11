@@ -249,6 +249,9 @@ class CommandService:
         if policy is None:
             policy = ApprovalPolicy(repositories, sessions, clock=self._clock, audit=audit)
         self.policy = policy
+        #: Timed-out writes whose approval stays open; each task finishes the
+        #: write when (and only when) the human approves it later.
+        self._late_completions: set[asyncio.Task[None]] = set()
 
     async def send_text(
         self,
@@ -326,28 +329,110 @@ class CommandService:
                 actor="system:write_policy_auto",
                 auth_epoch=await persisted_authentication_epoch(self._repositories),
             )
+        late = False
         try:
             deadline = observed + timedelta(seconds=self._wait_timeout)
-            state = await self._wait_for_decision(approval.id, deadline)
+            try:
+                state = await self._wait_for_decision(approval.id, deadline)
+            except asyncio.CancelledError:
+                # The MCP client gave up on the call (or B is shutting down);
+                # keep a later human decision able to execute the write.
+                late = True
+                self._schedule_late_completion(approval, principal, params, operation)
+                raise
+            if state is None:
+                # The human still owns the decision: keep the approval open
+                # and finish the write in the background when it is approved,
+                # so a late decision still executes instead of becoming a
+                # zombie.  The model gets a bounded "waiting" result and must
+                # not resubmit.
+                late = True
+                self._schedule_late_completion(approval, principal, params, operation)
+                raise TermFlowToolError(
+                    TermFlowErrorCode.APPROVAL_REQUIRED,
+                    f"approval {approval.id} is waiting for the human decision; "
+                    "it will execute once approved. Do not resubmit.",
+                    data={"approval_id": str(approval.id)},
+                )
             if state is not ApprovalState.APPROVED:
                 raise self._decision_failure(approval.id, state)
-            incarnation = await self._preflight(approval, principal, params, operation)
-            final = await self._repositories.approvals.get_by_id(approval.id)
-            if final is None or final.state != ApprovalState.APPROVED.value:
-                state = ApprovalState(final.state) if final is not None else ApprovalState.REVOKED
-                logger.warning(
-                    "approval %s changed state (%s) between preflight and send; not sending",
-                    approval.id,
-                    state,
-                )
-                raise self._decision_failure(approval.id, state)
-            return await self._send_and_settle(
-                approval, principal, params, operation, incarnation
-            )
+            return await self._execute_approved(approval, principal, params, operation)
         finally:
             # Any non-execution exit with the approval still pending revokes
-            # it best-effort (guard timeout cancellation, internal error).
-            await self._revoke_pending_if_any(approval.id)
+            # it best-effort (guard cancellation, internal error).  The
+            # deliberate late-decision handoff keeps it open.
+            if not late:
+                await self._revoke_pending_if_any(approval.id)
+
+    async def _execute_approved(
+        self,
+        approval: ApprovalRequest,
+        principal: AgentTokenPrincipal,
+        params: PaneSendTextParams | PaneSendKeysParams,
+        operation: str,
+    ) -> PaneSendTextResult | PaneSendKeysResult:
+        """Preflight an approved request and send it exactly once."""
+        incarnation = await self._preflight(approval, principal, params, operation)
+        final = await self._repositories.approvals.get_by_id(approval.id)
+        if final is None or final.state != ApprovalState.APPROVED.value:
+            state = ApprovalState(final.state) if final is not None else ApprovalState.REVOKED
+            logger.warning(
+                "approval %s changed state (%s) between preflight and send; not sending",
+                approval.id,
+                state,
+            )
+            raise self._decision_failure(approval.id, state)
+        return await self._send_and_settle(
+            approval, principal, params, operation, incarnation
+        )
+
+    def _schedule_late_completion(
+        self,
+        approval: ApprovalRequest,
+        principal: AgentTokenPrincipal,
+        params: PaneSendTextParams | PaneSendKeysParams,
+        operation: str,
+    ) -> None:
+        task = asyncio.create_task(
+            self._complete_after_decision(approval, principal, params, operation),
+            name=f"agent-late-approval-{approval.id}",
+        )
+        self._late_completions.add(task)
+        task.add_done_callback(self._late_completions.discard)
+
+    async def _complete_after_decision(
+        self,
+        approval: ApprovalRequest,
+        principal: AgentTokenPrincipal,
+        params: PaneSendTextParams | PaneSendKeysParams,
+        operation: str,
+    ) -> None:
+        """Finish a timed-out write after the human decision arrives."""
+        try:
+            while True:
+                current = await self._repositories.approvals.get_by_id(approval.id)
+                if current is None:
+                    return
+                state = ApprovalState(current.state)
+                expires_at = self._aware(current.expires_at)
+                if expires_at is None or self._clock() >= expires_at:
+                    try:
+                        await self.policy.revoke(approval.id, actor="system:approval_expired")
+                    except ApprovalError:
+                        pass
+                    return
+                if state is ApprovalState.APPROVED:
+                    await self._execute_approved(current, principal, params, operation)
+                    return
+                if state is not ApprovalState.PENDING:
+                    return
+                await asyncio.sleep(self._poll_interval)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # pragma: no cover - defensive boundary
+            logger.warning(
+                "late approval completion failed for %s", approval.id, exc_info=True
+            )
 
     async def _create_approval(
         self,
@@ -388,8 +473,15 @@ class CommandService:
                 },
             ) from exc
 
-    async def _wait_for_decision(self, approval_id: UUID, deadline: datetime) -> ApprovalState:
-        """Poll the persisted approval until it leaves ``pending`` or times out."""
+    async def _wait_for_decision(
+        self, approval_id: UUID, deadline: datetime
+    ) -> ApprovalState | None:
+        """Poll until the approval leaves ``pending``; ``None`` on deadline.
+
+        A deadline does not revoke the request: the caller hands it to the
+        background late-completion task so a decision that arrives after the
+        synchronous wait still executes exactly once.
+        """
         while True:
             approval = await self._repositories.approvals.get_by_id(approval_id)
             if approval is None:
@@ -401,19 +493,7 @@ class CommandService:
             if state in _FINAL_WAIT_STATES:
                 return state
             if self._clock() >= deadline:
-                # Waiting timed out: revoke the pending approval so a later
-                # decision can never create an approved-but-unexecuted zombie
-                # (spec §1 timeout semantics).
-                try:
-                    await self.policy.revoke(approval_id, actor="system:tool_timeout")
-                except ApprovalError:
-                    pass
-                raise TermFlowToolError(
-                    TermFlowErrorCode.APPROVAL_REQUIRED,
-                    f"approval {approval_id} is still pending after "
-                    f"{self._wait_timeout:.0f}s; the write was not executed",
-                    data={"approval_id": str(approval_id)},
-                )
+                return None
             await asyncio.sleep(self._poll_interval)
 
     async def _preflight(
