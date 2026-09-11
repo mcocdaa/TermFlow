@@ -57,6 +57,12 @@
           data-agent-panel-readiness
           :data-state="setup.state"
         >{{ readinessLabels[setup.state] }}</span>
+        <div v-if="isReady && bindingId" class="terminal-agent-policy" data-agent-write-policy>
+          <div class="terminal-agent-policy__options" role="group" aria-label="新会话写入审批">
+            <button type="button" :class="{ 'is-active': writePolicy === 'manual' }" :aria-pressed="writePolicy === 'manual'" :disabled="mutating" data-action="policy-manual" @click="changeWritePolicy('manual')">手动</button>
+            <button type="button" :class="{ 'is-active': writePolicy === 'auto' }" :aria-pressed="writePolicy === 'auto'" :disabled="mutating" data-action="policy-auto" @click="pendingAutoPolicy = true">放行</button>
+          </div>
+        </div>
         <button
           ref="closeButton"
           type="button"
@@ -103,13 +109,6 @@
         <h3>Agent 暂不可用</h3><p role="alert">{{ error }}</p><button type="button" :disabled="mutating" @click="retry">重试</button><button v-if="bindingId" type="button" :disabled="mutating" @click="activate">重新激活</button>
       </section>
       <div v-else data-agent-panel-state="ready" class="terminal-agent-panel__ready">
-        <div v-if="bindingId" class="terminal-agent-policy" data-agent-write-policy>
-          <span class="terminal-agent-policy__label">新会话默认</span>
-          <div class="terminal-agent-policy__options" role="group" aria-label="写入审批方式">
-            <button type="button" :class="{ 'is-active': writePolicy === 'manual' }" :aria-pressed="writePolicy === 'manual'" :disabled="mutating" data-action="policy-manual" @click="changeWritePolicy('manual')">手动审批</button>
-            <button type="button" :class="{ 'is-active': writePolicy === 'auto' }" :aria-pressed="writePolicy === 'auto'" :disabled="mutating" data-action="policy-auto" @click="pendingAutoPolicy = true">完全放行</button>
-          </div>
-        </div>
         <div v-if="pendingAutoPolicy" class="terminal-agent-policy__confirm" role="alertdialog" aria-label="确认完全放行" data-agent-policy-confirm>
           <p>完全放行后，Agent 对已授权 Pane 的每次写入都会立即执行，不再弹审批。</p>
           <div class="terminal-agent-policy__confirm-actions">

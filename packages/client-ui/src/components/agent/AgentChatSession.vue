@@ -29,6 +29,18 @@
       >
         {{ canceling ? '正在取消…' : '取消运行' }}
       </button>
+      <button
+        v-if="variant === 'page'"
+        type="button"
+        class="icon-button icon-only"
+        :disabled="deletePending"
+        aria-label="删除会话"
+        title="删除会话"
+        data-action="delete-conversation"
+        @click="deleteConfirm = true"
+      >
+        <Trash2 :size="16" aria-hidden="true" />
+      </button>
     </div>
   </header>
 
@@ -51,6 +63,14 @@
     {{ revokedBannerText }}
   </div>
 
+  <div v-if="deleteConfirm" class="agent-policy-confirm" role="alertdialog" aria-label="确认删除会话" data-agent-delete-confirm>
+    <p>删除后该会话及其事件会被清理，无法恢复。</p>
+    <div class="agent-policy-confirm__actions">
+      <button type="button" class="danger-button" :disabled="deletePending" data-action="confirm-delete-conversation" @click="removeConversation">确认删除</button>
+      <button type="button" class="text-button" :disabled="deletePending" @click="deleteConfirm = false">取消</button>
+    </div>
+  </div>
+
   <div v-if="policyConfirm" class="agent-policy-confirm" role="alertdialog" aria-label="确认完全放行本对话" data-agent-policy-confirm>
     <p>本对话内，Agent 对已授权 Pane 的每次写入都会立即执行，不再弹审批。</p>
     <div class="agent-policy-confirm__actions">
@@ -61,20 +81,24 @@
 
   <div class="agent-chat-body">
     <AgentMessageList :history="displayHistory" @focus-approval="focusApproval" />
-    <template v-if="variant !== 'page'">
-      <button v-if="pendingCount > 0 && !approvalModalOpen" type="button" class="agent-approval-open" data-action="open-approvals" @click="approvalModalOpen = true">
-        待处理审批 {{ pendingCount }}
-      </button>
-      <div v-if="approvalModalOpen" class="agent-approval-modal" role="dialog" aria-modal="true" aria-label="待处理审批" data-agent-approval-modal>
-        <div class="agent-approval-modal__panel">
-          <header class="agent-approval-modal__header">
-            <strong>待处理审批 {{ pendingCount }}</strong>
-            <button type="button" class="text-button" data-action="dismiss-approvals" @click="approvalModalOpen = false">稍后处理</button>
-          </header>
-          <AgentApprovalPanel ref="approvalPanel" :conversation-id="conversationId" :history="conversation.history.value" @pending-count="updatePendingCount" />
-        </div>
+    <div
+      v-if="variant !== 'page'"
+      v-show="approvalModalOpen"
+      class="agent-approval-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="待处理审批"
+      data-agent-approval-modal
+    >
+      <div class="agent-approval-modal__panel">
+        <header class="agent-approval-modal__header">
+          <strong>待处理审批 {{ pendingCount }}</strong>
+          <button type="button" class="text-button" data-action="dismiss-approvals" @click="approvalModalOpen = false">稍后处理</button>
+        </header>
+        <!-- Always mounted: the panel reports pendingCount, which opens this modal. -->
+        <AgentApprovalPanel ref="approvalPanel" :conversation-id="conversationId" :history="conversation.history.value" @pending-count="updatePendingCount" />
       </div>
-    </template>
+    </div>
     <AgentApprovalPanel v-else ref="approvalPanel" :conversation-id="conversationId" :history="conversation.history.value" @pending-count="updatePendingCount" />
   </div>
 
@@ -103,8 +127,8 @@
 import { ApiError, type AgentHistoryState, type AgentUserMessageState } from '@termflow/client-core'
 import type { AgentConversationDetailResponse } from '@termflow/client-contracts'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { RouterLink } from 'vue-router'
-import { ArrowLeft } from '@lucide/vue'
+import { RouterLink, useRouter } from 'vue-router'
+import { ArrowLeft, Trash2 } from '@lucide/vue'
 import AgentApprovalPanel from './AgentApprovalPanel.vue'
 import AgentBackendStatus from './AgentBackendStatus.vue'
 import AgentComposer from './AgentComposer.vue'
@@ -149,6 +173,22 @@ const conversationPolicy = computed<'manual' | 'auto'>(() =>
 )
 const policyPending = ref(false)
 const policyConfirm = ref(false)
+const deleteConfirm = ref(false)
+const deletePending = ref(false)
+const router = useRouter()
+async function removeConversation() {
+  if (deletePending.value) return
+  deletePending.value = true
+  try {
+    await runtime.api.agents.deleteConversation(props.conversationId)
+    await router.push('/agent')
+  } catch (error) {
+    toast.show({ text: error instanceof Error ? error.message : '删除失败，请稍后重试。', tone: 'error' })
+  } finally {
+    deletePending.value = false
+    deleteConfirm.value = false
+  }
+}
 async function changePolicy(policy: 'manual' | 'auto') {
   if (policyPending.value) return
   policyPending.value = true

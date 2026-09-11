@@ -327,6 +327,16 @@ export function applyAguiEvent(
           next.backend.epoch = Number.isInteger(value.epoch) ? (value.epoch as number) : null
         }
       }
+      // This OpenCode build does not always emit a text END for the final
+      // assistant message; an idle/ready runtime means the turn is over, so
+      // the streaming caret must stop.
+      if (next.backend.state === 'ready' || next.backend.state === 'idle') {
+        for (const [id, message] of next.messages) {
+          if (message.status === 'streaming') {
+            next.messages.set(id, { ...message, status: 'complete' })
+          }
+        }
+      }
       break
     }
   }
