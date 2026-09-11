@@ -7,7 +7,7 @@ import { createFakeRuntime } from '../test/fakeRuntime'
 import { useTermAgent } from './useTermAgent'
 import type { AgentSetupResponse } from '@termflow/client-contracts'
 
-export const setupResponse = (term = 't1'): AgentSetupResponse => ({ state: 'unconfigured', term_id: term, binding_id: null, profile: null, profiles: [], token: { installed: false, expires_at: null }, runtime: null, pane_policy: null, disclosure: null, topology_revision: 1, reason_code: null })
+export const setupResponse = (term = 't1'): AgentSetupResponse => ({ state: 'unconfigured', term_id: term, binding_id: null, profile: null, profiles: [], token: { installed: false, expires_at: null }, runtime: null, write_policy: null, pane_policy: null, disclosure: null, topology_revision: 1, reason_code: null })
 function harness(getSetup: ReturnType<typeof vi.fn>, authorizeNative = vi.fn(async () => 'authenticated' as const)) {
   const runtime = createFakeRuntime({ sensitiveAuthorization: { mode: 'native-oauth', authorizeNative } })
   runtime.api.agents.getSetup = getSetup

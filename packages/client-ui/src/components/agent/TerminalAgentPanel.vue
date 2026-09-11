@@ -103,6 +103,20 @@
         <h3>Agent 暂不可用</h3><p role="alert">{{ error }}</p><button type="button" :disabled="mutating" @click="retry">重试</button><button v-if="bindingId" type="button" :disabled="mutating" @click="activate">重新激活</button>
       </section>
       <div v-else data-agent-panel-state="ready" class="terminal-agent-panel__ready">
+        <div v-if="bindingId" class="terminal-agent-policy" data-agent-write-policy>
+          <span class="terminal-agent-policy__label">写入审批</span>
+          <div class="terminal-agent-policy__options" role="group" aria-label="写入审批方式">
+            <button type="button" :class="{ 'is-active': writePolicy === 'manual' }" :aria-pressed="writePolicy === 'manual'" :disabled="mutating" data-action="policy-manual" @click="changeWritePolicy('manual')">手动审批</button>
+            <button type="button" :class="{ 'is-active': writePolicy === 'auto' }" :aria-pressed="writePolicy === 'auto'" :disabled="mutating" data-action="policy-auto" @click="pendingAutoPolicy = true">完全放行</button>
+          </div>
+        </div>
+        <div v-if="pendingAutoPolicy" class="terminal-agent-policy__confirm" role="alertdialog" aria-label="确认完全放行" data-agent-policy-confirm>
+          <p>完全放行后，Agent 对已授权 Pane 的每次写入都会立即执行，不再弹审批。</p>
+          <div class="terminal-agent-policy__confirm-actions">
+            <button type="button" class="primary-button" :disabled="mutating" data-action="confirm-policy-auto" @click="changeWritePolicy('auto')">确认放行</button>
+            <button type="button" class="text-button" :disabled="mutating" @click="pendingAutoPolicy = false">取消</button>
+          </div>
+        </div>
         <div v-if="historyOpen" class="terminal-agent-history" data-agent-history>
           <div class="terminal-agent-history__heading">
             <strong>历史记录</strong>
@@ -151,11 +165,13 @@ import { History, MessageSquarePlus, Move, X } from '@lucide/vue'
 import type { AgentSetupResponse } from '@termflow/client-contracts'
 import { useFloatingPanel, type FloatingPanelResizeEdge } from '../../composables/useFloatingPanel'
 import { useTermAgent } from '../../composables/useTermAgent'
+import { useClientRuntime } from '../../runtime'
 import AgentChatSession from './AgentChatSession.vue'
 import AgentSetupForm from './AgentSetupForm.vue'
 
 const props = withDefaults(defineProps<{ termId: string; conversationId: string | null; open?: boolean; mobilePage?: boolean }>(), { open: true, mobilePage: false })
 const emit = defineEmits<{ close: []; selectConversation: [conversationId: string | null]; pendingCount: [count: number]; readiness: [state: AgentSetupResponse['state']] }>()
+const runtime = useClientRuntime()
 const { setup, profiles, panes, bindingId, conversations, selectedConversationId, pendingApprovalCount, loading, mutating, error, refresh, submitSetup, activate, acceptDisclosure, selectConversation, createConversation, retry } = useTermAgent({ termId: () => props.termId, requestedConversationId: () => props.conversationId })
 const panel = ref<HTMLElement | null>(null)
 const container = ref<HTMLElement | null>(null)
@@ -171,6 +187,23 @@ const { style: panelStyle, sync, beginDrag, beginResize } = useFloatingPanel({
 const closeButton = ref<HTMLButtonElement | null>(null)
 const disclosureAccepted = ref(false)
 const historyOpen = ref(false)
+const pendingAutoPolicy = ref(false)
+const writePolicy = computed<'manual' | 'auto'>(() => setup.value?.write_policy === 'auto' ? 'auto' : 'manual')
+
+async function changeWritePolicy(policy: 'manual' | 'auto') {
+  const binding = bindingId.value
+  if (binding === null || mutating.value) return
+  mutating.value = true
+  try {
+    await runtime.api.agents.setWritePolicy(binding, policy)
+    pendingAutoPolicy.value = false
+    await refresh()
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : '无法更新写入审批方式。'
+  } finally {
+    mutating.value = false
+  }
+}
 const isReady = computed(() => setup.value?.state === 'ready')
 const selectedEntry = computed(() => conversations.value.find((entry) => entry.conversation_id === selectedConversationId.value) ?? null)
 const panelTitle = computed(() => selectedEntry.value?.title?.trim() || (selectedConversationId.value ? 'Agent 对话' : 'Term Agent'))

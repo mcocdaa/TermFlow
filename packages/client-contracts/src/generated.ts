@@ -512,6 +512,7 @@ export interface AgentBindingResponse {
   profile_id: string
   term_id: string
   status: string
+  write_policy: string
   runtime_ref: string | null
   runtime_epoch: number | null
   capability_ref: string | null
@@ -528,6 +529,7 @@ export interface AgentBindingDetailResponse {
   profile_id: string
   term_id: string
   status: string
+  write_policy: string
   config_revision: number
   runtime_ref: string | null
   runtime_epoch: number | null
@@ -617,6 +619,7 @@ export interface AgentSetupResponse {
   profiles: AgentSetupProfileSummary[]
   token: AgentSetupTokenSummary
   runtime: AgentRuntimeStateResponse | null
+  write_policy: string | null
   pane_policy: AgentPanePolicyResponse | null
   disclosure: AgentProviderDisclosureResponse | null
   topology_revision: number | null

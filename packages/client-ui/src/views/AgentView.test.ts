@@ -11,6 +11,7 @@ const binding: AgentBindingResponse = {
   profile_id: 'profile-1',
   term_id: 'term-1',
   status: 'ready',
+  write_policy: 'manual',
   runtime_ref: 'runtime-1',
   runtime_epoch: 1,
   capability_ref: 'capability-1',

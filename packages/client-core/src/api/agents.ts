@@ -1,6 +1,7 @@
 import type {
   AgentBindingDetailResponse,
   AgentBindingListResponse,
+  AgentBindingResponse,
   AgentBindingRuntimeUpdateRequest,
   AgentCapabilitiesResponse,
   AgentConversationCreateRequest,
@@ -105,6 +106,13 @@ export function createAgentsApi(request: ApiRequest, requestResponse: ApiRequest
       request<AgentBindingDetailResponse>(
         `/api/v1/agent/admin/bindings/${encodeURIComponent(bindingId)}/disable`,
         withSignal({ method: 'POST' }, signal),
+      ),
+
+    /** Two-mode write approval policy (manual | auto). */
+    setWritePolicy: (bindingId: string, writePolicy: 'manual' | 'auto', signal?: AbortSignal) =>
+      request<AgentBindingResponse>(
+        `/api/v1/agent/admin/bindings/${encodeURIComponent(bindingId)}/write-policy`,
+        withSignal({ method: 'PUT', body: { write_policy: writePolicy } }, signal),
       ),
 
     updateRuntime: (bindingId: string, body: AgentBindingRuntimeUpdateRequest, signal?: AbortSignal) =>

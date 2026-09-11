@@ -439,6 +439,14 @@
   .terminal-agent-panel__title { flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; font-size: .95rem; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
   .terminal-agent-panel__content { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; padding: var(--space-3); }
   .terminal-agent-panel__ready { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+  .terminal-agent-policy { display: flex; align-items: center; gap: var(--space-2); flex: none; margin-block-end: var(--space-3); }
+  .terminal-agent-policy__label { color: var(--color-text-muted); font-size: var(--text-sm); }
+  .terminal-agent-policy__options { display: flex; gap: var(--space-1); margin-inline-start: auto; }
+  .terminal-agent-policy__options button { padding: .15rem var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-elevated); color: inherit; font-size: var(--text-sm); }
+  .terminal-agent-policy__options button.is-active { border-color: var(--color-accent); color: var(--color-accent); }
+  .terminal-agent-policy__confirm { flex: none; margin-block-end: var(--space-3); padding: var(--space-2); border: 1px solid var(--color-warning); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-warning) 8%, var(--color-panel)); }
+  .terminal-agent-policy__confirm p { margin: 0 0 var(--space-2); font-size: var(--text-sm); }
+  .terminal-agent-policy__confirm-actions { display: flex; gap: var(--space-2); }
   .agent-panel-readiness { display: inline-flex; align-items: center; max-width: 8rem; overflow: hidden; padding: .1rem var(--space-2); border: 1px solid var(--color-online); border-radius: 99rem; color: var(--color-online); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
   .agent-panel-readiness[data-state='unavailable'] { color: var(--color-danger); border-color: var(--color-danger); }
   .agent-panel-readiness[data-state='activating'], .agent-panel-readiness[data-state='deployment_required'] { color: var(--color-warning); border-color: var(--color-warning); }
