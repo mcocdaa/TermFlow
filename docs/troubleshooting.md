@@ -116,6 +116,34 @@ uv run --package termflow-node termflow attach '<exact-instance-uuid>'
 拓扑只代表当前在线状态，B 不伪装离线前的快照。先等 Bridge 完成重连与完整快照，再用
 API 返回的 `%<digits>` Pane ID。Pane 在校验和输入之间消失会得到 `pane_not_found`。
 
+## Docker A 注册失败或无法 attach
+
+A 与 B 必须加入同一个普通 bridge 网络，并指向 B 的服务地址：
+
+- 仓库 Compose：`--network termflow-v020-local_default`，
+  `TERMFLOW_SERVER=http://control-plane:8000`；
+- README 的单容器 B：`--network termflow-net`，
+  `TERMFLOW_SERVER=http://termflow-control-plane:8000`。
+
+A 不发布端口。一次性注册码默认 60 秒内有效：生成后立即启动 A，日志应出现
+`enrolled at control-plane` 和 `serve: instance ... running`；过期时日志会显示注册失败，
+重新生成注册码并保留身份目录重建容器即可。镜像 tag 必须与 B 版本一致；源码 checkout 用
+`scripts/build-node-image.sh` 构建。
+
+`docker exec` 默认以 root 运行，而 Bridge 和每个 Instance 的私有 tmux server 都以容器内
+UID 1000（`termflow`）运行，所以访问 A 状态的命令都要加 `--user termflow`：
+
+```bash
+docker exec --user termflow -it termflow-node termflow attach demo
+docker exec --user termflow termflow-node termflow doctor
+docker exec --user termflow termflow-node termflow status demo --json
+```
+
+不要用默认 tmux socket 排查 Instance：`termflow status demo --json` 返回该 Instance 的精确
+`socket_path`，只有必须裸用 tmux 时才用 `tmux -S <socket_path> has-session`。注册成功后
+Web C 的 Computers 页面应显示在线；否则先从 B 侧确认
+`/api/v1/instances`，再检查 B `/healthz` 与 A 的网络。
+
 ## 安全停止
 
 先用 `termflow list --json` 获得精确 UUID，再执行：

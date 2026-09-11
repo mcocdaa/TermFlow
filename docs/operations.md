@@ -113,7 +113,9 @@ scripts/security/verify-agent-containers.sh --mode live termflow-v020-local
 curl -fsS http://127.0.0.1:8765/healthz
 ```
 
-base-only 命令只用于 core/offline 配置检查；它不是 Agent live 部署证明。所有动态
+base-only 命令只用于 core/offline 配置检查；它不是 Agent live 部署证明。base/offline
+部署和同主机 Docker A fixture 的完整步骤见
+[local runbook](runbooks/agent-broker-local.md)。所有动态
 provider egress、模型、MCP、A 命令和 approval 结果都必须单独记录为
 未验证/已验证证据，静态测试或 OpenCode health 不能替代 live gate。
 

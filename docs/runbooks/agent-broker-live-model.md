@@ -5,20 +5,29 @@ separate from static contracts, the LLM-free OpenCode smoke test, and the
 disposable proxy checks: a result is evidence for one recorded deployment, not
 a general provider guarantee.
 
-## Current status (2026-09-09)
+## Current status (2026-09-11)
 
-The stable-release gate is still **unverified**. The deterministic product tests cover the
-same failure semantics (capability fences, active-turn revoke,
-disconnect/reconcile, ambiguous delivery, and cleanup receipts), and the
-disposable container tests cover OpenCode lifecycle and provider-egress
-isolation. A 2026-09-09 disposable functional deployment also completed the
-real B → OpenCode → DeepSeek → approval → Docker A `echo 1` path and survived
-B/OpenCode recreation. That run used synthetic, explicitly unverified provider
-disclosure metadata, so it proves function, not provider policy or release
-readiness. The current repository-root `.env` preflight still fails on the 13
-missing deployment/provider-policy fields. Do not infer a policy value from the
-user-supplied endpoint or token, and do not set `no_training=true` without
-independent account/contract evidence.
+The fixed `termflow-v020-local` project now runs the live profile with the
+operator's DeepSeek credential and operator-supplied disclosure fields. A real
+`deepseek-flash` turn completed the B → OpenCode → DeepSeek → approval →
+Docker A `echo 1` path: one `send_text` approval was created and consumed, a
+duplicate decision returned HTTP 409 `approval_already_decided`, Docker A
+showed exactly one `echo 1` command and one standalone `1`, the final
+assistant body reported `1`, and provider readiness moved to `verified` for
+config revision 1. Live testing found and fixed two runtime integration
+defects: the dispatcher now passes the active B conversation id to the model
+as a trusted system part (every `termflow_*` write/watch tool requires it), and
+the readiness probe now scopes OpenCode `/mcp` to the configured session
+directory (an unscoped probe reported `failed` while the directory-scoped MCP
+server was `connected`).
+
+These disclosure fields are still operator-supplied and are **not**
+independently verified policy evidence, so the stable-release gate remains
+unverified. Do not set `no_training=true` without independent account/contract
+evidence, and do not infer a policy value from the user-supplied endpoint or
+token. The endpoint currently advertises `deepseek-flash` and
+`deepseek-v4-pro`; `scripts/deploy/agent-local-preflight.sh` accepts
+`deepseek-flash` and the legacy reference id `deepseek-v4-flash`.
 
 ## Preconditions
 
@@ -82,7 +91,9 @@ network or the uplink. The default network is B's normal host-facing bridge so
 Docker can provide the explicit loopback publish used by Web C and the A/C API.
 Docker A is deployed separately; on the same host it may join the exact
 `<compose-project>_default` bridge and use `http://control-plane:8000`, while a
-separate host uses B's canonical HTTPS/WSS origin. Its placement does not turn
+separate host uses B's canonical HTTPS/WSS origin (the local runbook's
+"Docker A same-host fixture" has the exact build, enrollment, and run
+commands). Its placement does not turn
 B's client-facing network into an internal Docker network; do not create that
 bridge with `--internal`. No OpenCode, proxy, or MCP port is published. The inspector checks full container
 IDs (`docker ps -aq --no-trunc`), exact Compose labels, source paths of read-only
@@ -136,6 +147,24 @@ operator / reviewer:
 Any failed, skipped, or unrecorded step keeps the live-model gate
 **unverified**. Never infer provider behavior from static tests, a proxy
 configuration render, or an LLM-free OpenCode health probe.
+
+## Fixed-project functional record (2026-09-11)
+
+Project `termflow-v020-local` (main checkout `885bf96` plus the two live-path
+fixes) ran the base + live Compose overlay with the pinned OpenCode image, the
+allowlisted egress proxy, and Docker A pane `%0`. The operator supplied the
+DeepSeek credential and disclosure fields; the endpoint advertised
+`deepseek-flash`, and OpenCode was configured for it. Setup activated one
+binding with runtime `ready` and provider `configured_unverified`. The real
+model ("请在当前允许的终端中执行 echo 1，并告诉我结果。") proposed exactly one
+`send_text`; B admitted the user message with HTTP 202, created one pending
+approval, accepted the first decision with HTTP 200, rejected the duplicate
+with HTTP 409 `approval_already_decided`, and finished with the approval
+`consumed`. Docker A's pane contained exactly one `echo 1` command and one
+standalone `1`; the single final assistant body reported `1`; provider
+readiness advanced to `verified` for config revision 1. The live container
+inspector passed. The disclosure fields remain operator-supplied, so this is
+functional evidence only, not provider policy or stable-release acceptance.
 
 ## Disposable functional record (2026-09-09)
 

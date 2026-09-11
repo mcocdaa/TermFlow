@@ -10,8 +10,9 @@ TermFlow 让你通过浏览器、手机或原生客户端远程使用另一台�
                     Computer A（tmux、命令和工作目录）
 ```
 
-关闭客户端或短暂断网不会停止 A 上运行的命令。v0.1.0 管理
-`Computer → Term → Window → Pane`；Agent 和语音能力不属于这个版本。
+关闭客户端或短暂断网不会停止 A 上运行的命令。v0.2.0 在
+`Computer → Term → Window → Pane` 之上加入 Agent Broker（OpenCode 后端、人工审批、
+可回放的 Agent 事件流和固定 Compose 参考部署）；语音能力不属于这个版本。
 
 ## 安装 B + Web C
 
@@ -49,6 +50,11 @@ Computers 页面生成 Computer A 使用的一次性注册码。
 
 B 的 Web/API 通过宿主机 loopback 端口发布；A 主动连接 B，是连接 B 的客户端，不是 B 的网关。
 
+上面的示例使用已发布 tag 的单容器 B。从当前源码（v0.2.0，含 Agent Broker 和固定 Compose
+部署）运行 B 时，使用 [部署与恢复](docs/operations.md) 中的
+`docker compose -f deploy/compose.yaml` 流程；两种 B 部署对应的 A 网络和服务地址不同，
+Docker A 一节分别说明。
+
 ## 安装 Computer A
 
 ### Linux
@@ -76,8 +82,23 @@ termflow attach project-a
 ### Docker
 
 Docker A 是一个后台常驻的计算节点。身份和工作目录保存在本地目录，A 不开放端口，只主动
-通过 WebSocket 连接 B；本机 Docker 部署可让 A 与 B 加入同一个普通 bridge 网络
-`termflow-net`：
+通过 WebSocket 连接 B。A 必须与 B 加入同一个普通 bridge 网络，并使用与 B 相同版本的镜像：
+
+- 已发布版本：把下文的镜像换成 Release 页面对应的 tag，例如
+  `ghcr.io/mcocdaa/termflow-node:vX.Y.Z`，不要使用 `latest`；
+- 从源码验证：在仓库根目录运行 `scripts/build-node-image.sh termflow-node:v0.2.0`。
+
+先在 Web C 的 Computers 页面生成一次性注册码；无界面环境可以用管理员 token 调用 API
+（默认 60 秒内有效，请在启动 A 前立即生成）：
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TERMFLOW_ADMIN_TOKEN" \
+  http://127.0.0.1:8765/api/v1/enrollment-tokens
+```
+
+下面假设 B 是本仓库的 Compose project `termflow-v020-local`：A 加入它的默认网络
+`termflow-v020-local_default`，并通过服务名访问 B：
 
 ```bash
 mkdir -p termflow-node-identity termflow-node-work
@@ -85,7 +106,7 @@ mkdir -p termflow-node-identity termflow-node-work
 docker run -d \
   --name termflow-node \
   --restart unless-stopped \
-  --network termflow-net \
+  --network termflow-v020-local_default \
   --cap-drop ALL \
   --cap-add CHOWN \
   --cap-add DAC_OVERRIDE \
@@ -96,12 +117,17 @@ docker run -d \
   --tmpfs /tmp \
   --volume "$PWD/termflow-node-identity:/home/termflow" \
   --volume "$PWD/termflow-node-work:/work" \
-  --env TERMFLOW_SERVER=http://termflow-control-plane:8000 \
-  --env TERMFLOW_CODE='<Web C 生成的一次性注册码>' \
+  --env TERMFLOW_SERVER=http://control-plane:8000 \
+  --env TERMFLOW_CODE='<一次性注册码>' \
   --env TERMFLOW_ALLOW_INSECURE_HTTP=true \
   --env TERMFLOW_NEW=demo \
-  ghcr.io/mcocdaa/termflow-node:v0.1.0
+  termflow-node:v0.2.0
 ```
+
+如果 B 用本页前面的单容器示例运行，则改为 `--network termflow-net` 和
+`TERMFLOW_SERVER=http://termflow-control-plane:8000`。
+`TERMFLOW_ALLOW_INSECURE_HTTP=true` 只用于 loopback 上的明文 HTTP；正式 HTTPS/WSS 部署不能
+设置它。
 
 Web C 进入 Docker A 的 Term 默认使用 Bash。如需改用 POSIX sh，在上述
 `docker run` 命令中追加：
@@ -113,20 +139,23 @@ Web C 进入 Docker A 的 Term 默认使用 Bash。如需改用 POSIX sh，在�
 `TERMFLOW_SHELL` 只接受 `bash` 和 `sh`。修改后需要保留身份和工作目录，并
 重新创建 Docker A 容器；新的 tmux pane 使用所选 shell，已经运行的 pane 不会热切换。
 
-进入 Docker A 的 Term：
+进入 Docker A 的 Term、查看状态和排障：
 
 ```bash
 docker exec --user termflow -it termflow-node termflow attach demo
-```
-
-查看服务状态：
-
-```bash
+docker exec --user termflow termflow-node termflow doctor
+docker exec --user termflow termflow-node termflow status demo --json
 docker logs termflow-node
 ```
 
-`termflow-node-identity/` 保存 A 的身份，`termflow-node-work/` 保存用户文件。这两个目录由 A
-管理；删除目录会删除对应数据。
+`docker exec` 必须带 `--user termflow`：A 以容器内 UID 1000 运行，并为每个 Instance 使用独立
+tmux socket；以 root 执行或直接运行 `tmux list-sessions` 只会看到默认 socket 并报
+“No such file or directory”。`termflow status demo --json` 会返回该 Instance 的精确
+`socket_path`，只有在必须裸用 tmux 时才用 `tmux -S <socket_path>`。注册码过期时
+`docker logs` 会显示注册失败，重新生成注册码并保留身份目录重试即可。
+
+`termflow-node-identity/` 保存 A 的身份，`termflow-node-work/` 保存用户文件。容器首次启动会
+把这两个目录改成容器内 `termflow`（UID 1000）所有；删除目录会删除对应数据。
 
 ## 客户端
 
