@@ -291,3 +291,36 @@ def test_provider_and_model_enforce_profile_identifier_limits(
             model_id=model_id,
             client=object(),
         )
+
+
+def test_backend_retry_status_uses_the_stable_state_vocabulary() -> None:
+    adapter = OpenCodeAdapter(
+        base_url=BASE_URL,
+        directory=DIRECTORY,
+        backend_version=BACKEND_VERSION,
+        provider_id="deepseek",
+        model_id="deepseek-flash",
+        client=object(),
+        runtime_id=RUNTIME_ID,
+        binding_capability_epoch=3,
+    )
+    scope = BackendEventScope(binding_id="binding-1", runtime_epoch=1)
+    envelope = json.dumps(
+        {
+            "directory": DIRECTORY,
+            "payload": {
+                "id": "evt-retry",
+                "type": "session.status",
+                "properties": {
+                    "sessionID": "ses_1",
+                    "status": {"type": "retry", "attempt": 3},
+                },
+            },
+        }
+    )
+
+    notification = adapter._normalize_event(scope, envelope)
+
+    assert notification is not None
+    assert notification.kind is AgentEventKind.BACKEND_STATE_CHANGED
+    assert notification.payload.summary == "retry"

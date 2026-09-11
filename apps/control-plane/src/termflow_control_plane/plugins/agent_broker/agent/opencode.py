@@ -1101,14 +1101,9 @@ class OpenCodeAdapter:
             # "attempt", "message", "next", ...}).
             status_type = status.get("type")
             if isinstance(status_type, str) and status_type:
-                if status_type == "retry":
-                    attempt = status.get("attempt")
-                    if isinstance(attempt, int) and attempt >= 0:
-                        summary = f"retry attempt {attempt}"
-                    else:
-                        summary = "retry"
-                else:
-                    summary = status_type
+                # Keep the client vocabulary stable and finite: ``retry`` is
+                # one state; the attempt number is adapter-internal detail.
+                summary = "retry" if status_type == "retry" else status_type
             else:
                 summary = fallback
         elif isinstance(status, str):
