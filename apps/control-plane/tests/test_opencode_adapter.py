@@ -13,12 +13,16 @@ from termflow_control_plane.plugins.agent_broker.agent.opencode import (
 )
 from termflow_control_plane.plugins.agent_broker.agent.turns import (
     BackendConversationRef,
+    BackendEventScope,
     BackendOutcome,
     BackendTurnPart,
     BackendTurnRequest,
+    ContextBlock,
+    ContextFact,
+    ContextFactTrust,
     ProviderRef,
 )
-from termflow_protocol.agent import AgentInputKind
+from termflow_protocol.agent import AgentEventKind, AgentInputKind
 
 BASE_URL = "https://opencode.test"
 DIRECTORY = "/srv/termflow/workspace-1"
@@ -89,6 +93,136 @@ async def test_submit_sends_selected_provider_and_model() -> None:
     assert result.retry_safe is False
 
     await adapter.close()
+
+
+async def test_submit_renders_context_facts_as_the_system_prompt() -> None:
+    recorded: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        recorded["json"] = json.loads(request.content)
+        return httpx.Response(status_code=204)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = OpenCodeAdapter(
+        base_url=BASE_URL,
+        directory=DIRECTORY,
+        backend_version=BACKEND_VERSION,
+        provider_id="deepseek",
+        model_id="deepseek-flash",
+        client=client,
+        runtime_id=RUNTIME_ID,
+        binding_capability_epoch=3,
+    )
+    ref = _conversation_ref()
+    request = _turn_request(ref).model_copy(
+        update={
+            "context": ContextBlock(
+                facts=(
+                    ContextFact(
+                        text="conversation_id=abc",
+                        trust=ContextFactTrust.SYSTEM,
+                    ),
+                )
+            )
+        }
+    )
+
+    await adapter.submit(ref, request)
+
+    assert recorded["json"] == {
+        "parts": [{"type": "text", "text": "hello"}],
+        "model": {"providerID": "deepseek", "modelID": "deepseek-flash"},
+        "system": "conversation_id=abc",
+    }
+    await adapter.close()
+
+
+def test_provider_user_message_echo_is_dropped_from_the_transcript() -> None:
+    adapter = OpenCodeAdapter(
+        base_url=BASE_URL,
+        directory=DIRECTORY,
+        backend_version=BACKEND_VERSION,
+        provider_id="deepseek",
+        model_id="deepseek-flash",
+        client=object(),
+        runtime_id=RUNTIME_ID,
+        binding_capability_epoch=3,
+    )
+    scope = BackendEventScope(binding_id="binding-1", runtime_epoch=1)
+
+    def envelope(event_id: str, event_type: str, properties: dict[str, Any]) -> str:
+        return json.dumps(
+            {
+                "directory": DIRECTORY,
+                "payload": {"id": event_id, "type": event_type, "properties": properties},
+            }
+        )
+
+    assert (
+        adapter._normalize_event(
+            scope,
+            envelope(
+                "evt-1",
+                "message.updated",
+                {"sessionID": "ses_1", "info": {"id": "msg_user_1", "role": "user"}},
+            ),
+        )
+        is None
+    )
+    assert (
+        adapter._normalize_event(
+            scope,
+            envelope(
+                "evt-2",
+                "message.part.updated",
+                {
+                    "sessionID": "ses_1",
+                    "part": {
+                        "type": "text",
+                        "text": "hello",
+                        "messageID": "msg_user_1",
+                        "id": "prt-1",
+                    },
+                },
+            ),
+        )
+        is None
+    )
+    assert (
+        adapter._normalize_event(
+            scope,
+            envelope(
+                "evt-3",
+                "message.part.delta",
+                {
+                    "sessionID": "ses_1",
+                    "messageID": "msg_user_1",
+                    "partID": "prt-1",
+                    "field": "text",
+                    "delta": "hello",
+                },
+            ),
+        )
+        is None
+    )
+    assistant = adapter._normalize_event(
+        scope,
+        envelope(
+            "evt-4",
+            "message.part.updated",
+            {
+                "sessionID": "ses_1",
+                "part": {
+                    "type": "text",
+                    "text": "hi",
+                    "messageID": "msg_assistant_1",
+                    "id": "prt-2",
+                },
+            },
+        ),
+    )
+    assert assistant is not None
+    assert assistant.kind is AgentEventKind.MESSAGE_DELTA
 
 
 def test_provider_and_model_are_required_constructor_arguments() -> None:

@@ -64,6 +64,7 @@ from .turns import (
     BackendSubmitResult,
     BackendTurnPart,
     BackendTurnRequest,
+    ContextBlock,
     CreateBackendConversation,
     EvidenceRecord,
     NotificationPayload,
@@ -88,6 +89,10 @@ MAX_SSE_DIAGNOSTICS = 32
 MAX_TRACKED_MESSAGE_TEXTS = 256
 MAX_TRACKED_MESSAGE_TEXT_BYTES = MAX_NOTIFICATION_TEXT_BYTES
 MAX_TRACKED_TOOL_CALLS = 256
+#: Provider user messages (the prompt parts B itself submitted) are echoed by
+#: OpenCode's message stream; their ids are remembered so those parts are
+#: never projected as assistant transcript.
+MAX_TRACKED_USER_MESSAGES = 256
 
 #: Fixed namespace for deterministic UUID5 derivation of ``run_id``/
 #: ``message_id`` from opaque backend message IDs (``^msg_``).  The value is
@@ -229,6 +234,11 @@ class OpenCodeAdapter:
         self.stats = OpenCodeSseStats()
         self.diagnostics: list[OpenCodeSseDiagnostic] = []
         self._message_texts: dict[str, str] = {}
+        # OpenCode echoes the user's prompt as ``message.updated``/
+        # ``message.part.*`` events; B already owns the durable user message,
+        # so these ids are recorded to drop the echo from the assistant
+        # transcript.
+        self._user_message_ids: dict[str, None] = {}
         # Current OpenCode represents tool execution as successive updates to
         # one ``message.part.updated`` tool part (pending -> running ->
         # completed/error).  Keep only the bounded lifecycle state needed to
@@ -314,17 +324,21 @@ class OpenCodeAdapter:
         if not request.parts:
             raise ValueError("opencode submit requires at least one turn part")
         parts = [_render_text_part(part) for part in request.parts]
+        body: dict[str, object] = {
+            "parts": parts,
+            "model": {
+                "providerID": self._provider_id,
+                "modelID": self._model_id,
+            },
+        }
+        system = _render_system_context(request.context)
+        if system is not None:
+            body["system"] = system
         try:
             response = await self._client.post(
                 self._url(f"/session/{ref.provider_ref}/prompt_async"),
                 params={"directory": self.directory},
-                json={
-                    "parts": parts,
-                    "model": {
-                        "providerID": self._provider_id,
-                        "modelID": self._model_id,
-                    },
-                },
+                json=body,
             )
         except Exception as exc:
             return BackendSubmitResult(
@@ -776,6 +790,11 @@ class OpenCodeAdapter:
         if not isinstance(message_id, str) or not message_id:
             self._skip(event_id, "message.updated", session_id, "info carries no id")
             return None
+        if info.get("role") == "user":
+            # B already persisted the user's message at admission; the
+            # provider echo must never become assistant transcript.
+            self._remember_user_message(message_id)
+            return None
         time = info.get("time")
         completed = time.get("completed") if isinstance(time, dict) else None
         if completed is not None:
@@ -820,6 +839,8 @@ class OpenCodeAdapter:
                 return None
             message_id = part.get("messageID")
             part_id = part.get("id")
+            if isinstance(message_id, str) and message_id in self._user_message_ids:
+                return None
             if isinstance(message_id, str) and message_id:
                 self._remember_message_text(message_id, text, part_id)
             return self._notification(
@@ -935,6 +956,8 @@ class OpenCodeAdapter:
         if not isinstance(message_id, str) or not message_id:
             self._skip(event_id, "message.part.delta", session_id, "messageID is missing")
             return None
+        if message_id in self._user_message_ids:
+            return None
         if field != "text" or not isinstance(delta, str):
             self._skip(event_id, "message.part.delta", session_id, "delta is not text")
             return None
@@ -948,6 +971,15 @@ class OpenCodeAdapter:
             part_id=part_id,
             text=delta,
         )
+
+    def _remember_user_message(self, message_id: str) -> None:
+        """Remember one provider user-message id with a bounded cache."""
+        if (
+            len(self._user_message_ids) >= MAX_TRACKED_USER_MESSAGES
+            and message_id not in self._user_message_ids
+        ):
+            self._user_message_ids.pop(next(iter(self._user_message_ids)))
+        self._user_message_ids[message_id] = None
 
     def _remember_message_text(
         self,
@@ -1116,6 +1148,14 @@ class OpenCodeAdapter:
 
     def _url(self, path: str) -> str:
         return f"{self.base_url}{path}"
+
+
+def _render_system_context(context: ContextBlock | None) -> str | None:
+    """Render trusted context facts as the provider system prompt."""
+    if context is None or not context.facts:
+        return None
+    facts = [fact.text for fact in context.facts if fact.text]
+    return "\n".join(facts) if facts else None
 
 
 def _render_text_part(part: BackendTurnPart) -> dict[str, str]:

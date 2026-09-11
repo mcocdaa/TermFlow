@@ -23,6 +23,24 @@ MAX_AGENT_TEXT_BYTES = 64 * 1024
 MAX_REF_LENGTH = 2048
 
 
+def validate_agent_text(text: str, *, max_bytes: int = MAX_AGENT_TEXT_BYTES) -> str:
+    """Validate agent chat text while keeping intentional line breaks.
+
+    The Web composer strips every control character except newline, so the
+    server mirrors that contract: a multi-line prompt is accepted, while
+    terminal pane input keeps the stricter single-line ``validate_plain_text``.
+    """
+
+    if any(
+        (ord(character) < 32 and character != "\n") or 127 <= ord(character) <= 159
+        for character in text
+    ):
+        raise ValueError("text contains unsupported control characters")
+    if len(text.encode("utf-8")) > max_bytes:
+        raise ValueError(f"text exceeds {max_bytes} UTF-8 bytes")
+    return text
+
+
 class AgentInputKind(StrEnum):
     USER_MESSAGE = "user_message"
     WATCH_TRIGGERED = "watch_triggered"
@@ -117,7 +135,7 @@ class UserMessagePayload(PayloadModel):
     @field_validator("text")
     @classmethod
     def plain_text_only(cls, value: str) -> str:
-        return validate_plain_text(value, max_bytes=MAX_AGENT_TEXT_BYTES)
+        return validate_agent_text(value, max_bytes=MAX_AGENT_TEXT_BYTES)
 
 
 class WatchTriggeredPayload(PayloadModel):

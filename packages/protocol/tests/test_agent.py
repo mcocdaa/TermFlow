@@ -9,7 +9,7 @@ from termflow_protocol import (
     parse_agent_event,
     parse_agent_input,
 )
-from termflow_protocol.agent import MAX_AGENT_TEXT_BYTES
+from termflow_protocol.agent import MAX_AGENT_TEXT_BYTES, validate_agent_text
 
 
 def _input_dict(
@@ -96,3 +96,22 @@ def test_system_notification_text_is_plain_text_with_byte_cap() -> None:
                 },
             )
         )
+
+
+def test_agent_message_text_keeps_newlines_and_refuses_other_controls() -> None:
+    # The Web composer strips every C0/C1 control character except newline,
+    # so the server contract must accept multi-line prompts while pane input
+    # keeps the stricter single-line ``validate_plain_text``.
+    assert validate_agent_text("第一行\n第二行") == "第一行\n第二行"
+    for invalid in ("a\x00b", "a\x7fb", "a\x9fb"):
+        with pytest.raises(ValueError):
+            validate_agent_text(invalid)
+    with pytest.raises(ValueError, match="exceeds"):
+        validate_agent_text("ab", max_bytes=1)
+
+
+def test_user_message_payload_accepts_a_multi_line_prompt() -> None:
+    parsed = parse_agent_input(
+        _input_dict("user_message", "user_session", "user", {"text": "one\ntwo"})
+    )
+    assert parsed.payload.text == "one\ntwo"

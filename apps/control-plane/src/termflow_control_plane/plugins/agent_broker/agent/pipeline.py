@@ -101,6 +101,9 @@ from termflow_control_plane.plugins.agent_broker.agent.turns import (
     BackendTurnPart,
     BackendTurnRequest,
     BackendWorkspaceAlias,
+    ContextBlock,
+    ContextFact,
+    ContextFactTrust,
     CreateBackendConversation,
     ProviderRef,
     TurnPartTrust,
@@ -1275,25 +1278,29 @@ class AgentPipelineService:
         else:  # pragma: no cover - the payload table only holds these two kinds
             raise ValueError(f"unsupported input kind: {type(payload).__name__}")
         # The live model cannot infer B's conversation id from the user text,
-        # but every termflow_* write/watch tool requires it.  Emit it as a
-        # trusted system part so a tool-using turn can address its own
-        # conversation; the binding-scoped MCP token remains the authority.
-        context_part = BackendTurnPart(
-            kind=AgentInputKind.SYSTEM_NOTIFICATION,
-            text=(
-                "TermFlow session context: conversation_id="
-                f"{envelope.conversation_id}. "
-                "Use exactly this value as conversation_id for every "
-                "termflow_* tool that requires it."
-            ),
-            trust=TurnPartTrust.TRUSTED,
+        # but every termflow_* write/watch tool requires it.  Deliver it as a
+        # trusted system fact (adapter maps it to the provider's system
+        # prompt) so it never appears as a user-visible message part; the
+        # binding-scoped MCP token remains the authority.
+        context = ContextBlock(
+            facts=[
+                ContextFact(
+                    text=(
+                        "TermFlow session context: conversation_id="
+                        f"{envelope.conversation_id}. "
+                        "Use exactly this value as conversation_id for every "
+                        "termflow_* tool that requires it."
+                    ),
+                    trust=ContextFactTrust.SYSTEM,
+                )
+            ]
         )
-        parts = (*parts, context_part)
         return BackendTurnRequest(
             conversation_ref=ref,
             correlation_id=str(envelope.correlation_id),
             idempotency_key=envelope.idempotency_key,
             parts=parts,
+            context=context,
         )
 
     async def _wait_for_run_terminal(self, run_id: UUID) -> None:

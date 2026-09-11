@@ -19,8 +19,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from termflow_protocol.agent import MAX_AGENT_TEXT_BYTES
-from termflow_protocol.messages import validate_plain_text
+from termflow_protocol.agent import MAX_AGENT_TEXT_BYTES, validate_agent_text
 
 from termflow_control_plane.api.agent_cleanup import existing_deletion_response, pending_response
 from termflow_control_plane.api.dependencies import get_repositories, require_admin
@@ -173,7 +172,7 @@ class AgentSubmitMessageRequest(BaseModel):
     @field_validator("text")
     @classmethod
     def plain_text_only(cls, value: str) -> str:
-        return validate_plain_text(value, max_bytes=MAX_AGENT_TEXT_BYTES)
+        return validate_agent_text(value, max_bytes=MAX_AGENT_TEXT_BYTES)
 
 
 class AgentSubmitMessageResponse(BaseModel):
