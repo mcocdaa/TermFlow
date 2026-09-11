@@ -143,6 +143,42 @@ def _project_run_completed(
     return _project_run_boundary(event, payload, "RUN_FINISHED")
 
 
+def _project_thinking_delta(
+    event: AgentEvent, payload: dict[str, object] | None
+) -> tuple[list[dict[str, object]], ProjectionDropCounts]:
+    """Model reasoning rides a CUSTOM frame so clients can collapse it."""
+    if payload is None:
+        return [], ProjectionDropCounts(missing_payload=1)
+    text = payload.get("text")
+    if not text:
+        return [], ProjectionDropCounts(empty_delta=1)
+    message_id = str(_required(payload, "message_id"))
+    return [
+        {
+            "type": "CUSTOM",
+            "name": "termflow.thinking_delta",
+            "value": {"id": message_id, "delta": text},
+            "timestamp": _epoch_ms(event.created_at),
+        }
+    ], ProjectionDropCounts()
+
+
+def _project_thinking_completed(
+    event: AgentEvent, payload: dict[str, object] | None
+) -> tuple[list[dict[str, object]], ProjectionDropCounts]:
+    if payload is None:
+        return [], ProjectionDropCounts(missing_payload=1)
+    message_id = str(_required(payload, "message_id"))
+    return [
+        {
+            "type": "CUSTOM",
+            "name": "termflow.thinking_completed",
+            "value": {"id": message_id},
+            "timestamp": _epoch_ms(event.created_at),
+        }
+    ], ProjectionDropCounts()
+
+
 def _project_message_delta(
     event: AgentEvent, payload: dict[str, object] | None
 ) -> tuple[list[dict[str, object]], ProjectionDropCounts]:
@@ -335,6 +371,8 @@ _PROJECTORS: dict[str, _Projector] = {
     "run_started": _project_run_started,
     "message_delta": _project_message_delta,
     "message_completed": _project_message_completed,
+    "thinking_delta": _project_thinking_delta,
+    "thinking_completed": _project_thinking_completed,
     "tool_started": _project_tool_started,
     "tool_completed": _project_tool_completed,
     "permission_requested": _project_permission_requested,

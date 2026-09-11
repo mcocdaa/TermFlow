@@ -83,6 +83,8 @@ class AgentEventKind(StrEnum):
     RUN_STARTED = "run_started"
     MESSAGE_DELTA = "message_delta"
     MESSAGE_COMPLETED = "message_completed"
+    THINKING_DELTA = "thinking_delta"
+    THINKING_COMPLETED = "thinking_completed"
     TOOL_STARTED = "tool_started"
     TOOL_COMPLETED = "tool_completed"
     PERMISSION_REQUESTED = "permission_requested"

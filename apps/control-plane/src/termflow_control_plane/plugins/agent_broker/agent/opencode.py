@@ -653,12 +653,45 @@ class OpenCodeAdapter:
         if event_type == "session.idle":
             return self._backend_state_changed(scope, event_id, session_id, properties, "idle")
         if event_type.startswith("session.next.reasoning"):
-            self.stats.dropped_reasoning_events += 1
-            self._record_diagnostic(event_id, event_type, session_id, "reasoning content dropped")
-            return None
+            return self._reasoning(scope, event_id, session_id, event_type, properties)
         self.stats.unmapped_events += 1
         self._record_diagnostic(event_id, event_type, session_id, "no canonical mapping")
         return None
+
+    def _reasoning(
+        self,
+        scope: BackendEventScope,
+        event_id: str,
+        session_id: str,
+        event_type: str,
+        properties: dict[str, Any],
+    ) -> BackendNotification | None:
+        """Project model reasoning as a bounded thinking stream.
+
+        Reasoning is display-only (the human/UI can collapse it); it is never
+        fed back into the model.
+        """
+        finished = event_type.endswith((".ended", ".completed"))
+        text = None if finished else properties.get("delta") or properties.get("text")
+        if not finished and (not isinstance(text, str) or not text):
+            self._skip(event_id, event_type, session_id, "reasoning content is not text")
+            return None
+        thinking_id = properties.get("reasoningID") or properties.get("messageID")
+        if not isinstance(thinking_id, str) or not thinking_id:
+            thinking_id = session_id
+        return self._notification(
+            scope,
+            event_id=event_id,
+            session_id=session_id,
+            kind=(
+                AgentEventKind.THINKING_COMPLETED
+                if finished
+                else AgentEventKind.THINKING_DELTA
+            ),
+            backend_message_id=thinking_id,
+            part_id=thinking_id,
+            text=text,
+        )
 
     def _notification(
         self,
