@@ -13,7 +13,7 @@
       </div>
     </header>
     <div class="agent-chat-body">
-      <AgentMessageList :history="history" />
+      <AgentPartsList :parts="parts" />
     </div>
     <section v-if="permission" class="agent-approval-prompt" data-preview-approvals>
       <AgentApprovalCard :permission="permission" @focus="() => {}" />
@@ -30,7 +30,7 @@
 //: history reducer with sample AG-UI frames so the shipped components render
 //: without any backend.
 import AgentApprovalCard from '../components/agent/AgentApprovalCard.vue'
-import AgentMessageList from '../components/agent/AgentMessageList.vue'
+import AgentPartsList, { type AgentConversationPart } from '../components/agent/AgentPartsList.vue'
 import { Send } from '@lucide/vue'
 import {
   applyAguiEvent,
@@ -86,6 +86,16 @@ const frames: AguiEvent[] = [
 for (const frame of frames) state = applyAguiEvent(state, frame, () => now)
 
 const history: AgentHistoryState = state
+const parts: AgentConversationPart[] = [
+  { type: 'step-start' },
+  { type: 'reasoning', text: '用户想让我在终端执行 echo 1。我先列出 pane，确认可写后再发送命令并等待审批。' },
+  { type: 'tool', tool: 'termflow_termflow_list_panes', status: 'completed', input: '{}', output: '{\n  "instance_id": "a38adddd-f204-4bd8-9587-0b57aa21524c",\n  "panes": [{"pane_id": "%0", "active": true, "dead": false}]\n}' },
+  { type: 'reasoning', text: '只有一个 pane %0。发送 echo 1 并提交，然后读取输出。' },
+  { type: 'tool', tool: 'termflow_termflow_pane_send_text', status: 'completed', input: '{"params": {"pane_id": "%0", "text": "echo 1", "submit": true, "intent": "Run echo 1"}}', output: '{\n  "ok": true,\n  "outcome": "confirmed",\n  "approval_id": "5282e3e1-..."\n}' },
+  { type: 'tool', tool: 'termflow_termflow_pane_read', status: 'completed', input: '{"params": {"pane_id": "%0"}}', output: '"$ echo 1\\n1\\n$ "' },
+  { type: 'text', text: '已执行。结果输出为 `1`。' },
+  { type: 'step-finish' },
+]
 const permission = [...state.permissions.values()][0]
 </script>
 
