@@ -17,7 +17,7 @@
         <button type="button" :class="{ 'is-active': conversationPolicy === 'manual' }" :aria-pressed="conversationPolicy === 'manual'" :disabled="policyPending" data-action="conversation-policy-manual" @click="changePolicy('manual')">手动审批</button>
         <button type="button" :class="{ 'is-active': conversationPolicy === 'auto' }" :aria-pressed="conversationPolicy === 'auto'" :disabled="policyPending" data-action="conversation-policy-auto" @click="policyConfirm = true">完全放行</button>
       </div>
-      <AgentBackendStatus v-if="backendState !== 'ready'" :state="backendState" />
+      
       <button
         v-if="hasActiveRun"
         type="button"
@@ -45,7 +45,7 @@
   </header>
 
   <div v-if="variant === 'floating'" class="agent-floating-session-status" data-agent-floating-session-status>
-    <AgentBackendStatus v-if="backendState !== 'ready'" :state="backendState" />
+    
     <button
       v-if="hasActiveRun"
       type="button"
@@ -118,7 +118,6 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { ArrowLeft, Trash2 } from '@lucide/vue'
 import AgentApprovalPanel from './AgentApprovalPanel.vue'
-import AgentBackendStatus from './AgentBackendStatus.vue'
 import AgentComposer from './AgentComposer.vue'
 import AgentPartsList, { type AgentConversationPart } from './AgentPartsList.vue'
 import AgentMessageList from './AgentMessageList.vue'
@@ -133,7 +132,7 @@ const props = withDefaults(defineProps<{
   enabled: boolean
   variant?: 'page' | 'sidecar' | 'floating'
 }>(), { variant: 'page' })
-const emit = defineEmits<{ close: []; pendingCount: [count: number] }>()
+const emit = defineEmits<{ close: []; pendingCount: [count: number]; backendState: [state: string | null] }>()
 const approvalPanel = ref<InstanceType<typeof AgentApprovalPanel> | null>(null)
 const pendingCount = ref(0)
 function updatePendingCount(count: number) { pendingCount.value = count; emit('pendingCount', count) }
@@ -168,6 +167,7 @@ const detail = ref<AgentConversationDetailResponse | null>(null)
 let controller: AbortController | null = null
 
 const backendState = computed(() => conversation.history.value.backend.state)
+watch(backendState, (state) => { emit('backendState', state) }, { immediate: true })
 const hasActiveRun = computed(() =>
   [...conversation.history.value.runs.values()].some((run) => run.status === 'active'),
 )

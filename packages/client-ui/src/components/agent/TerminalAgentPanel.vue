@@ -71,6 +71,7 @@
         data-agent-panel-readiness
         :data-state="setup.state"
       >{{ readinessLabels[setup.state] }}</span>
+      <AgentBackendStatus v-if="backendState !== null && backendState !== 'ready'" :state="backendState" />
       <div v-if="isReady && bindingId" class="terminal-agent-policy" data-agent-write-policy>
         <span class="terminal-agent-policy__label">写入审批</span>
         <div class="terminal-agent-policy__options" role="group" aria-label="新会话写入审批">
@@ -140,7 +141,7 @@
           </button>
         </div>
         <p v-if="error" class="agent-panel-error" role="alert">{{ error }}</p>
-        <AgentChatSession v-if="selectedConversationId" :key="selectedConversationId" :conversation-id="selectedConversationId" :enabled="true" variant="floating" @pending-count="forwardPending" />
+        <AgentChatSession v-if="selectedConversationId" :key="selectedConversationId" :conversation-id="selectedConversationId" :enabled="true" variant="floating" @pending-count="forwardPending" @backend-state="backendState = $event" />
         <p v-else class="terminal-agent-empty">选择历史会话或点击“新建会话”。</p>
       </div>
     </div>
@@ -168,6 +169,7 @@ import type { AgentSetupResponse } from '@termflow/client-contracts'
 import { useFloatingPanel, type FloatingPanelResizeEdge } from '../../composables/useFloatingPanel'
 import { useTermAgent } from '../../composables/useTermAgent'
 import { useClientRuntime } from '../../runtime'
+import AgentBackendStatus from './AgentBackendStatus.vue'
 import AgentChatSession from './AgentChatSession.vue'
 import AgentSetupForm from './AgentSetupForm.vue'
 
@@ -189,6 +191,7 @@ const { style: panelStyle, sync, beginDrag, beginResize } = useFloatingPanel({
 const closeButton = ref<HTMLButtonElement | null>(null)
 const disclosureAccepted = ref(false)
 const historyOpen = ref(false)
+const backendState = ref<string | null>(null)
 const pendingAutoPolicy = ref(false)
 const writePolicy = computed<'manual' | 'auto'>(() => setup.value?.write_policy === 'auto' ? 'auto' : 'manual')
 
