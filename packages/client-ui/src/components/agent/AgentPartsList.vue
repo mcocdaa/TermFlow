@@ -1,6 +1,6 @@
 <template>
   <div class="agent-parts">
-    <template v-for="(part, index) in parts" :key="index">
+    <template v-for="(part, index) in parts" :key="part.id ?? index">
       <div
         v-if="part.type === 'text'"
         class="agent-message"
@@ -60,6 +60,7 @@ import { Sparkles, Wrench } from '@lucide/vue'
 
 export interface AgentConversationPart {
   type: string
+  id?: string | null
   role?: string | null
   text?: string | null
   tool?: string | null

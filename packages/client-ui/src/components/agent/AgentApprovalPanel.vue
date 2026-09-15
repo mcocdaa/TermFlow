@@ -26,7 +26,7 @@
               data-action="approve-approval"
               :ref="(element) => setApprovalControl(approval.approval_id, element)"
               :disabled="isBusy(approval.approval_id)"
-              @click="openConfirm(approval.approval_id)"
+              @click="decide(approval.approval_id, 'approve')"
             >批准</button>
             <button
               type="button"
