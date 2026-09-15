@@ -101,16 +101,17 @@ async def get_agent_conversation_parts(
     if ref is None:
         return JSONResponse({"parts": []})
     password = settings.agent_opencode_password
+    username = settings.agent_opencode_username
+    auth: tuple[str, str] | None = None
+    if username is not None and password is not None:
+        auth = (username, password.get_secret_value())
     base = str(settings.agent_opencode_base_url).rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.get(
                 f"{base}/session/{ref.provider_ref}/message",
                 params={"directory": settings.agent_opencode_directory, "limit": 50},
-                auth=(
-                    settings.agent_opencode_username,
-                    password.get_secret_value() if password is not None else None,
-                ),
+                auth=auth,
             )
     except httpx.HTTPError:
         return JSONResponse({"parts": []})
@@ -140,7 +141,8 @@ async def get_agent_conversation_parts(
                     }
                 )
             elif kind == "tool":
-                state = part.get("state") if isinstance(part.get("state"), dict) else {}
+                raw_state = part.get("state")
+                state = raw_state if isinstance(raw_state, dict) else {}
                 input_view, input_omitted = _tool_input_view(state.get("input"))
                 parts.append(
                     {
