@@ -80,7 +80,8 @@
   </div>
 
   <div class="agent-chat-body">
-    <AgentPartsList :parts="parts" />
+    <AgentPartsList v-if="parts.length > 0" :parts="parts" />
+    <AgentMessageList v-else :history="displayHistory" @focus-approval="focusApproval" />
   </div>
 
   <!-- Approval prompt sits directly above the composer (Codex-style). The
@@ -120,6 +121,7 @@ import AgentApprovalPanel from './AgentApprovalPanel.vue'
 import AgentBackendStatus from './AgentBackendStatus.vue'
 import AgentComposer from './AgentComposer.vue'
 import AgentPartsList, { type AgentConversationPart } from './AgentPartsList.vue'
+import AgentMessageList from './AgentMessageList.vue'
 import { useAgentConversation } from '../../composables/useAgentConversation'
 import { useBottomToast } from '../../composables/useBottomToast'
 import { useClientRuntime } from '../../runtime'
