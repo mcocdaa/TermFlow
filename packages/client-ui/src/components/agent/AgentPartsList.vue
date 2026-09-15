@@ -1,7 +1,12 @@
 <template>
   <div class="agent-parts">
     <template v-for="(part, index) in parts" :key="index">
-      <div v-if="part.type === 'text'" class="agent-message agent-message--assistant">
+      <div
+        v-if="part.type === 'text'"
+        class="agent-message"
+        :class="part.role === 'user' ? 'agent-message--user' : 'agent-message--assistant'"
+      >
+        <p v-if="part.role === 'user'" class="agent-message__role">你</p>
         <p class="agent-message__text">{{ part.text }}</p>
       </div>
 
@@ -13,17 +18,17 @@
         <p class="agent-thinking__text">{{ part.text }}</p>
       </details>
 
-      <article
+      <details
         v-else-if="part.type === 'tool'"
         class="agent-tool-activity"
         :class="`agent-tool-activity--${part.status}`"
         data-agent-tool
       >
-        <header class="agent-tool-activity__row">
+        <summary class="agent-tool-activity__row">
           <Wrench :size="14" aria-hidden="true" />
           <span class="agent-tool-activity__name">{{ bareTool(part.tool) }}</span>
           <span class="agent-tool-activity__status">{{ statusLabel(part.status) }}</span>
-        </header>
+        </summary>
         <div v-if="part.input || part.output || part.error" class="agent-tool-activity__detail" data-agent-tool-detail>
           <template v-if="part.input && part.input !== '{}'">
             <p class="agent-tool-activity__label">输入</p>
@@ -38,10 +43,10 @@
             <pre class="agent-tool-activity__code agent-tool-activity__code--error">{{ part.error }}</pre>
           </template>
         </div>
-      </article>
+      </details>
 
-      <div v-else class="agent-part-step" aria-hidden="true">
-        <span>{{ part.type === 'step-start' ? '开始' : '完成' }}</span>
+      <div v-else-if="part.type === 'step-start'" class="agent-part-step" aria-hidden="true">
+        <span>开始</span>
       </div>
     </template>
   </div>
@@ -55,6 +60,7 @@ import { Sparkles, Wrench } from '@lucide/vue'
 
 export interface AgentConversationPart {
   type: string
+  role?: string | null
   text?: string | null
   tool?: string | null
   status?: string | null

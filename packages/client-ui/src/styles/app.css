@@ -599,3 +599,9 @@
 .agent-tool-activity__code--error { color: var(--color-danger); }
 .agent-part-step { align-self: stretch; border-block-start: 1px dashed var(--color-border); }
 .agent-part-step span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+
+.agent-parts .agent-message--user { align-self: flex-end; max-width: 85%; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--color-accent); color: var(--color-accent-contrast); }
+.agent-parts .agent-message--user .agent-message__text { margin: 0; color: inherit; }
+.agent-message__role { margin: 0 0 var(--space-1); font-size: .72rem; opacity: .8; }
+.agent-parts details.agent-tool-activity > summary { cursor: pointer; list-style: none; }
+.agent-parts details.agent-tool-activity > summary::-webkit-details-marker { display: none; }
