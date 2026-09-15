@@ -99,12 +99,14 @@ jobs:
 
       - name: Validate and build Control Plane image
         run: |
-          # compose.yaml interpolates the OpenCode basic-auth pair and model
-          # credential with `:?`, so validation fails without them even though
-          # `config --quiet` never starts a container.
+          # compose.yaml interpolates the OpenCode basic-auth pair, the agent
+          # MCP token, and the model credential with `:?`, so validation
+          # fails without them even though `config --quiet` never starts a
+          # container.
           TERMFLOW_ADMIN_TOKEN=ci-admin-token-that-is-long-enough \
             OPENCODE_SERVER_USERNAME=termflow \
             OPENCODE_SERVER_PASSWORD=ci-opencode-password \
+            OPENCODE_AGENT_MCP_TOKEN=ci-opencode-agent-mcp-token \
             OPENCODE_MODEL_API_KEY=ci-opencode-model-key \
             docker compose -f deploy/compose.yaml config --quiet
           scripts/build-control-plane-image.sh termflow-control-plane:ci
