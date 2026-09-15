@@ -30,46 +30,16 @@ jobs:
       - name: Build, install, and connect the frozen Node bundle
         run: scripts/release/verify_node_bundle.sh v0.1.0
 
-  verify:
+  verify-clients:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      TERMFLOW_ADMIN_TOKEN: ci-admin-token-that-is-long-enough
-      XDG_CONFIG_HOME: ${{ github.workspace }}/.ci/config
-      XDG_STATE_HOME: ${{ github.workspace }}/.ci/state
-      XDG_RUNTIME_DIR: ${{ github.workspace }}/.ci/runtime
-
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
-
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
-        with:
-          python-version: "3.12"
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5
         with:
           node-version: "22.23.2"
           cache: npm
-
-      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c  # stable
-        with:
-          components: rustfmt, clippy
-
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # v2
-        with:
-          workspaces: apps/clients/tauri/src-tauri -> target
-
-      - name: Install uv and tmux
-        run: |
-          python -m pip install --disable-pip-version-check uv==0.11.19
-          sudo apt-get update
-          sudo apt-get install --yes tmux libwebkit2gtk-4.1-dev libxdo-dev \
-            libssl-dev libayatana-appindicator3-dev librsvg2-dev
-          mkdir -p "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR"
-          chmod 700 "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR"
-
-      - name: Sync locked workspace
-        run: uv sync --frozen --all-packages
 
       - name: Install locked client workspace
         run: npm ci
@@ -86,6 +56,32 @@ jobs:
       - name: Build client workspaces
         run: npm run build --workspaces --if-present
 
+  verify-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TERMFLOW_ADMIN_TOKEN: ci-admin-token-that-is-long-enough
+      XDG_CONFIG_HOME: ${{ github.workspace }}/.ci/config
+      XDG_STATE_HOME: ${{ github.workspace }}/.ci/state
+      XDG_RUNTIME_DIR: ${{ github.workspace }}/.ci/runtime
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv and tmux
+        run: |
+          python -m pip install --disable-pip-version-check uv==0.11.19
+          sudo apt-get update
+          sudo apt-get install --yes tmux
+          mkdir -p "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR"
+
+      - name: Sync locked workspace
+        run: uv sync --frozen --all-packages
+
       - name: Test Python workspace
         run: uv run --all-packages python -m pytest -q --junitxml=.ci/pytest.xml
 
@@ -94,8 +90,55 @@ jobs:
           uv run --all-packages ruff check .
           uv run --all-packages mypy packages/protocol/src apps/control-plane/src apps/node/src
 
+      - name: Upload test metadata on failure
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
+        with:
+          name: pytest-metadata
+          path: .ci/pytest.xml
+          if-no-files-found: ignore
+          retention-days: 3
+
+  verify-rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TERMFLOW_ADMIN_TOKEN: ci-admin-token-that-is-long-enough
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5
+        with:
+          node-version: "22.23.2"
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c  # stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c  # v2
+        with:
+          workspaces: apps/clients/tauri/src-tauri -> target
+          # rust-cache keys caches by job id; keep the pre-split `verify`
+          # cache after the verification split.
+          shared-key: verify
+
+      - name: Install Linux Tauri prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwebkit2gtk-4.1-dev libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - run: npm ci
+
       - name: Verify Rust and unsigned Linux Tauri compile
         run: scripts/verify-tauri.sh
+
+  verify-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
 
       - name: Validate and build Control Plane image
         run: |
@@ -112,15 +155,6 @@ jobs:
           scripts/build-control-plane-image.sh termflow-control-plane:ci
           scripts/verify-control-plane-image.sh termflow-control-plane:ci
           scripts/release/verify_control_plane_release_image.sh termflow-control-plane:ci
-
-      - name: Upload test metadata on failure
-        if: failure()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
-        with:
-          name: pytest-metadata
-          path: .ci/pytest.xml
-          if-no-files-found: ignore
-          retention-days: 3
 
   tauri-desktop-unsigned:
     strategy:
