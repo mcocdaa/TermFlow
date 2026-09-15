@@ -29,11 +29,14 @@
           <span class="agent-part-entry__title">{{ bareTool(part.tool) }}</span>
           <span class="agent-part-entry__status">{{ statusLabel(part.status) }}</span>
         </summary>
-        <div v-if="part.input || part.output || part.error" class="agent-tool-activity__detail" data-agent-tool-detail>
+        <div v-if="part.input || part.output || part.error || part.input_omitted?.length" class="agent-tool-activity__detail" data-agent-tool-detail>
           <template v-if="part.input && part.input !== '{}'">
             <p class="agent-tool-activity__label">输入</p>
             <pre class="agent-tool-activity__code">{{ pretty(part.input) }}</pre>
           </template>
+          <p v-if="part.input_omitted?.length" class="agent-tool-activity__label" data-agent-tool-defaults>
+            默认参数已省略：{{ part.input_omitted.join('、') }}
+          </p>
           <template v-if="part.output">
             <p class="agent-tool-activity__label">结果</p>
             <pre class="agent-tool-activity__code">{{ pretty(part.output) }}</pre>
@@ -66,6 +69,7 @@ export interface AgentConversationPart {
   tool?: string | null
   status?: string | null
   input?: string | null
+  input_omitted?: string[] | null
   output?: string | null
   error?: string | null
   reason?: string | null

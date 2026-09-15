@@ -639,3 +639,5 @@
 .agent-parts > * { flex: none; }
 .agent-parts .agent-message--assistant .agent-message__text { border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-elevated); }
 .agent-parts .agent-message--user .agent-message__text { border: 0; background: var(--color-accent); color: var(--color-accent-contrast); }
+
+.agent-parts { padding-block-end: var(--space-3); }

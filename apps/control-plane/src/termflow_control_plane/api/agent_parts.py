@@ -52,6 +52,34 @@ def _bounded(value: object, limit: int) -> str | None:
     return text[:limit] + "\n…（已截断）"
 
 
+def _tool_input_view(raw: object) -> tuple[object, list[str]]:
+    """Hide constant/default tool params so the card shows only real choices.
+
+    ``conversation_id`` is injected by B and ``submit: true`` is the schema
+    default; both are noise in the conversation view.  The omitted names are
+    returned so the card can say what it hid instead of losing the fact.
+    """
+    payload = raw
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except ValueError:
+            return raw, []
+    if not isinstance(payload, dict):
+        return raw, []
+    params = payload.get("params")
+    if not isinstance(params, dict):
+        return raw, []
+    omitted = [
+        key
+        for key, value in params.items()
+        if key == "conversation_id" or (key == "submit" and value is True)
+    ]
+    if omitted:
+        payload = {**payload, "params": {k: v for k, v in params.items() if k not in omitted}}
+    return payload, omitted
+
+
 @router.get("/{conversation_id}/parts")
 async def get_agent_conversation_parts(
     conversation_id: UUID,
@@ -109,13 +137,15 @@ async def get_agent_conversation_parts(
                 )
             elif kind == "tool":
                 state = part.get("state") if isinstance(part.get("state"), dict) else {}
+                input_view, input_omitted = _tool_input_view(state.get("input"))
                 parts.append(
                     {
                         "type": "tool",
                         "id": part.get("id"),
                         "tool": part.get("tool"),
                         "status": state.get("status"),
-                        "input": _bounded(state.get("input"), _MAX_INPUT),
+                        "input": _bounded(input_view, _MAX_INPUT),
+                        "input_omitted": input_omitted,
                         "output": _bounded(state.get("output"), _MAX_TEXT),
                         "error": _bounded(state.get("error"), _MAX_ERROR),
                     }
