@@ -380,10 +380,10 @@
   /* M6b agent chat — composer (textarea + send + cancel, fail-closed states) */
   .agent-composer { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border-block-start: 1px solid var(--color-border); background: var(--color-panel); }
   .agent-composer--disabled { opacity: 0.6; }
-  .agent-composer__row { display: flex; align-items: flex-end; gap: var(--space-2); }
+  .agent-composer__row { display: flex; align-items: center; gap: var(--space-2); }
   .agent-composer__input-shell { position: relative; flex: 1; min-width: 0; }
-  .agent-composer__input { display: block; height: 4.25rem; min-height: 4.25rem; max-height: 12rem; resize: none; overflow-y: auto; padding-inline-end: 3.5rem; font: inherit; line-height: 1.5; border-radius: var(--radius-lg); }
-  .agent-composer__send { position: absolute; inset-inline-end: var(--space-2); inset-block-end: var(--space-2); flex: none; border: 1px solid var(--color-accent); border-radius: 50%; background: var(--color-accent); color: var(--color-accent-contrast); }
+  .agent-composer__input { display: block; height: 2.75rem; min-height: 2.75rem; max-height: 12rem; resize: none; overflow-y: auto; padding-inline-end: 3.5rem; font: inherit; line-height: 1.5; border-radius: var(--radius-lg); }
+  .agent-composer__send { position: absolute; inset-inline-end: var(--space-2); inset-block: 0; margin-block: auto; flex: none; border: 1px solid var(--color-accent); border-radius: 50%; background: var(--color-accent); color: var(--color-accent-contrast); }
   .agent-composer__send:hover:not(:disabled), .agent-composer__send:focus-visible { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 82%, white); color: var(--color-accent-contrast); }
   .agent-composer__send:disabled { opacity: .45; }
   .agent-composer__cancel { flex: none; }

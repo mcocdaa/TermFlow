@@ -90,12 +90,12 @@
             <div role="cell" data-label="操作" class="agent-conversation-table__actions">
               <RouterLink
                 class="icon-button icon-only"
-                :to="`/agent/${conversation.conversation_id}`"
+                :to="`/terms/${bindingTermId(conversation.binding_id)}?agent=${conversation.conversation_id}`"
                 data-action="open-conversation"
-                :aria-label="`打开会话：${conversationTitle(conversation)}`"
-                title="打开会话"
+                :aria-label="`在终端中打开：${conversationTitle(conversation)}`"
+                title="在终端中打开"
               >
-                <ExternalLink :size="17" aria-hidden="true" />
+                <Terminal :size="17" aria-hidden="true" />
               </RouterLink>
               <button
                 class="icon-button icon-only"
@@ -151,7 +151,7 @@
 //: Product-facing Agent directory. Binding ids remain an internal API scope;
 //: the table resolves them to Term names and exposes only conversation data.
 //: All action glyphs come from the open-source Lucide Vue package.
-import { Check, ExternalLink, Pencil, Trash2, X } from '@lucide/vue'
+import { Check, Pencil, Terminal, Trash2, X } from '@lucide/vue'
 import type { AgentBindingResponse, AgentConversationResponse } from '@termflow/client-contracts'
 import { ApiError } from '@termflow/client-core'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'

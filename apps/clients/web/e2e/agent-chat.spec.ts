@@ -108,7 +108,7 @@ test('smokes the Agent chat: capability gate, conversation creation, fail-closed
   const conversationRow = page.locator(`[data-agent-conversation-id="${conversationId}"]`)
   await expect(conversationRow).toBeVisible()
   await conversationRow.locator('[data-action="open-conversation"]').click()
-  await expect(page).toHaveURL(new RegExp(`/agent/${conversationId}$`))
+  await expect(page).toHaveURL(new RegExp(`/terms/[0-9a-f-]+\\?agent=${conversationId}$`))
 
   // A freshly created binding stays disabled until its runtime is activated,
   // so the live stream fences it (403 binding_revoked) and the composer fails
@@ -134,7 +134,7 @@ test('smokes the Agent chat: capability gate, conversation creation, fail-closed
   // conversation persisted. The disabled binding is a durable product state;
   // the assertion here is the same conversation route/title.
   await page.reload()
-  await expect(page).toHaveURL(new RegExp(`/agent/${conversationId}$`))
+  await expect(page).toHaveURL(new RegExp(`/terms/[0-9a-f-]+\\?agent=${conversationId}$`))
   await expect(page.locator('[data-agent-chat-title]')).toHaveText(`smoke-${testInfo.project.name}`)
   if (screenshotDir) {
     await page.screenshot({ path: `${screenshotDir}/agent-reloaded-${testInfo.project.name}.png` })

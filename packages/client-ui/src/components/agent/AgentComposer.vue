@@ -11,7 +11,7 @@
           ref="textEl"
           v-model="text"
           class="agent-composer__input"
-          rows="2"
+          rows="1"
           :maxlength="MAX_AGENT_TEXT_BYTES"
           :disabled="unavailable"
           aria-label="发送给 Agent 的消息"
