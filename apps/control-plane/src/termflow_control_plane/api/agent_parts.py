@@ -100,7 +100,12 @@ async def get_agent_conversation_parts(
             kind = part.get("type")
             if kind in ("text", "reasoning"):
                 parts.append(
-                    {"type": kind, "id": part.get("id"), "role": role, "text": _bounded(part.get("text"), _MAX_TEXT)}
+                    {
+                        "type": kind,
+                        "id": part.get("id"),
+                        "role": role,
+                        "text": _bounded(part.get("text"), _MAX_TEXT),
+                    }
                 )
             elif kind == "tool":
                 state = part.get("state") if isinstance(part.get("state"), dict) else {}
