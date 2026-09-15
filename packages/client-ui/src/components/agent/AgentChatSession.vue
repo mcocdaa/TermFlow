@@ -17,7 +17,7 @@
         <button type="button" :class="{ 'is-active': conversationPolicy === 'manual' }" :aria-pressed="conversationPolicy === 'manual'" :disabled="policyPending" data-action="conversation-policy-manual" @click="changePolicy('manual')">手动审批</button>
         <button type="button" :class="{ 'is-active': conversationPolicy === 'auto' }" :aria-pressed="conversationPolicy === 'auto'" :disabled="policyPending" data-action="conversation-policy-auto" @click="policyConfirm = true">完全放行</button>
       </div>
-      <AgentBackendStatus :state="backendState" />
+      <AgentBackendStatus v-if="backendState !== 'ready'" :state="backendState" />
       <button
         v-if="hasActiveRun"
         type="button"
@@ -45,7 +45,7 @@
   </header>
 
   <div v-if="variant === 'floating'" class="agent-floating-session-status" data-agent-floating-session-status>
-    <AgentBackendStatus :state="backendState" />
+    <AgentBackendStatus v-if="backendState !== 'ready'" :state="backendState" />
     <button
       v-if="hasActiveRun"
       type="button"
