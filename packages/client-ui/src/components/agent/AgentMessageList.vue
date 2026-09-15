@@ -9,6 +9,9 @@
       data-agent-message-list
       @scroll="onScroll"
     >
+      <p v-if="items.length === 0" class="agent-message-list__empty" data-agent-message-empty>
+        输入一条消息，开始与 Agent 对话。
+      </p>
       <template v-for="item in items" :key="item.key">
         <AgentMessageBubble v-if="item.kind === 'message' || item.kind === 'user'" :message="item.message" />
         <AgentToolActivity v-else-if="item.kind === 'tool'" :call="item.call" />

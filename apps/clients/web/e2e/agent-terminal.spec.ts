@@ -702,8 +702,8 @@ test(
       })
     }
 
-    const approvalTray = page.locator('details.agent-approval-tray')
-    await expect(approvalTray).not.toHaveAttribute('open', '')
+    const approvalPrompt = page.locator('[data-agent-approval-prompt]')
+    await expect(approvalPrompt).toBeHidden()
     await page.locator('[data-agent-composer-input]').fill(PRIVATE_PROMPT)
     await page.locator('[data-action="send-message"]').click()
     await expect(page.locator('[data-agent-message-list]')).toContainText(
@@ -713,10 +713,9 @@ test(
       `[data-agent-approval-card][data-agent-approval-id="${APPROVAL_ID}"]`,
     )
     await expect(approvalCard).toBeVisible()
-    await expect(approvalTray).not.toHaveAttribute('open', '')
+    await expect(approvalPrompt).toBeVisible()
 
     await approvalCard.locator('[data-action="focus-approval"]').click()
-    await expect(approvalTray).toHaveAttribute('open', '')
     const approveButton = page.locator(
       `[data-agent-approval-item][data-agent-approval-id="${APPROVAL_ID}"] [data-action="approve-approval"]`,
     )
@@ -732,7 +731,7 @@ test(
     await reauth.getByRole('button', { name: '验证' }).click()
     await expect(reauth).toBeHidden()
     await expect(page.getByRole('alertdialog')).toHaveCount(0)
-    await expect(page.locator('[data-agent-approval-empty]')).toBeVisible()
+    await expect(approvalPrompt).toBeHidden()
     await expect(page.locator('[data-agent-message-list]')).toContainText(
       'Agent 已执行，终端结果为 1。',
     )
@@ -806,8 +805,36 @@ test('renders the Agent directory as a Term-facing table in the product shell', 
     for (const label of ['会话名称', 'Term', '工作状态', '操作']) {
       await expect(table.locator(`[role="cell"][data-label="${label}"]`)).toHaveCount(1)
     }
+    // Actions are a separate bottom row on a narrow card. Keeping them under
+    // the status field preserves the reading order and gives the icon group a
+    // full-width touch target instead of pinning it beside the title.
+    if (testInfo.project.name === 'mobile-portrait') {
+      const row = table.locator('[role="row"][data-agent-conversation-id]').first()
+      const rowBox = await row.boundingBox()
+      const statusBox = await row.locator('[role="cell"][data-label="工作状态"]').boundingBox()
+      const actionsBox = await row.locator('[role="cell"][data-label="操作"]').boundingBox()
+      expect(rowBox).not.toBeNull()
+      expect(statusBox).not.toBeNull()
+      expect(actionsBox).not.toBeNull()
+      expect(actionsBox!.y).toBeGreaterThan(statusBox!.y + statusBox!.height - 1)
+      expect(actionsBox!.x).toBeGreaterThanOrEqual(rowBox!.x - 1)
+      expect(actionsBox!.x + actionsBox!.width).toBeLessThanOrEqual(rowBox!.x + rowBox!.width + 1)
+    }
   } else {
     await expect(table.getByRole('columnheader')).toHaveText(['会话名称', 'Term', '工作状态', '操作'])
+  }
+  if (testInfo.project.name === 'mobile-landscape') {
+    const operationCell = table.locator('[role="row"][data-agent-conversation-id]').first().locator('[role="cell"][data-label="操作"]')
+    const operationBox = await operationCell.boundingBox()
+    const viewport = page.viewportSize()
+    expect(operationBox).not.toBeNull()
+    expect(viewport).not.toBeNull()
+    expect(operationBox!.x + operationBox!.width).toBeLessThanOrEqual(viewport!.width + 1)
+    for (const button of await operationCell.locator('a, button').all()) {
+      const buttonBox = await button.boundingBox()
+      expect(buttonBox).not.toBeNull()
+      expect(buttonBox!.x + buttonBox!.width).toBeLessThanOrEqual(viewport!.width + 1)
+    }
   }
   await expect(table).toContainText('Mock terminal')
   await expect(table).toContainText('运行中')
