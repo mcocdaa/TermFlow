@@ -73,7 +73,11 @@ def _tool_input_view(raw: object) -> tuple[object, list[str]]:
     omitted = [
         key
         for key, value in params.items()
-        if key == "conversation_id" or (key == "submit" and value is True)
+        if (
+            key == "conversation_id"
+            or (key == "submit" and value is True)
+            or (key == "max_bytes" and value == 65536)
+        )
     ]
     if omitted:
         payload = {**payload, "params": {k: v for k, v in params.items() if k not in omitted}}
