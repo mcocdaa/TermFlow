@@ -127,19 +127,29 @@
             <span>{{ conversations.length }} 个会话</span>
           </div>
           <p v-if="conversations.length === 0" class="muted">暂无会话</p>
-          <button
-            v-for="entry in conversations"
-            :key="entry.conversation_id"
-            type="button"
-            class="terminal-agent-history__item"
-            :class="{ 'is-selected': entry.conversation_id === selectedConversationId }"
-            :aria-current="entry.conversation_id === selectedConversationId ? 'true' : undefined"
-            :data-agent-history-conversation="entry.conversation_id"
-            @click="selectConversation(entry.conversation_id)"
-          >
-            <span class="terminal-agent-history__item-title">{{ entry.title || '未命名会话' }}</span>
-            <span class="terminal-agent-history__item-status">{{ entry.status === 'open' ? '进行中' : '已停止' }}</span>
-          </button>
+          <div v-for="entry in conversations" :key="entry.conversation_id" class="terminal-agent-history__row">
+            <button
+              type="button"
+              class="terminal-agent-history__item"
+              :class="{ 'is-selected': entry.conversation_id === selectedConversationId }"
+              :aria-current="entry.conversation_id === selectedConversationId ? 'true' : undefined"
+              :data-agent-history-conversation="entry.conversation_id"
+              @click="selectConversation(entry.conversation_id); historyOpen = false"
+            >
+              <span class="terminal-agent-history__item-title">{{ entry.title || '未命名会话' }}</span>
+              <span class="terminal-agent-history__item-status">{{ entry.status === 'open' ? '进行中' : '已停止' }}</span>
+            </button>
+            <button
+              type="button"
+              class="icon-button icon-only terminal-agent-history__delete"
+              :aria-label="`删除会话 ${entry.title || '未命名会话'}`"
+              title="删除会话"
+              data-action="delete-history-conversation"
+              @click="deleteHistoryConversation(entry.conversation_id)"
+            >
+              <Trash2 :size="14" aria-hidden="true" />
+            </button>
+          </div>
         </div>
         <p v-if="error" class="agent-panel-error" role="alert">{{ error }}</p>
         <AgentChatSession v-if="selectedConversationId" :key="selectedConversationId" :conversation-id="selectedConversationId" :enabled="true" variant="floating" @pending-count="forwardPending" @backend-state="backendState = $event" />
@@ -165,7 +175,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { History, MessageSquarePlus, Move, X } from '@lucide/vue'
+import { History, MessageSquarePlus, Move, Trash2, X } from '@lucide/vue'
 import type { AgentSetupResponse } from '@termflow/client-contracts'
 import { useFloatingPanel, type FloatingPanelResizeEdge } from '../../composables/useFloatingPanel'
 import { useTermAgent } from '../../composables/useTermAgent'
@@ -194,6 +204,20 @@ const historyOpen = ref(false)
 const backendState = ref<string | null>(null)
 const pendingAutoPolicy = ref(false)
 const writePolicy = computed<'manual' | 'auto'>(() => setup.value?.write_policy === 'auto' ? 'auto' : 'manual')
+
+async function deleteHistoryConversation(conversationId: string) {
+  if (mutating.value) return
+  mutating.value = true
+  try {
+    await runtime.api.agents.deleteConversation(conversationId)
+    conversations.value = conversations.value.filter((entry) => entry.conversation_id !== conversationId)
+    if (selectedConversationId.value === conversationId) selectConversation(conversations.value[0]?.conversation_id ?? null)
+  } catch {
+    // Surfaced on the next refresh; keep the list unchanged meanwhile.
+  } finally {
+    mutating.value = false
+  }
+}
 
 async function changeWritePolicy(policy: 'manual' | 'auto') {
   const binding = bindingId.value

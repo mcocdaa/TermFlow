@@ -626,3 +626,9 @@
 .terminal-agent-panel__content { position: relative; }
 .terminal-agent-history-backdrop { position: absolute; inset: 0; z-index: 4; background: transparent; }
 .terminal-agent-history { position: absolute; z-index: 5; inset-block-start: var(--space-3); inset-inline: var(--space-3); margin: 0; max-height: min(24rem, calc(100% - var(--space-6))); box-shadow: 0 12px 32px rgb(0 0 0 / 35%); }
+
+.terminal-agent-history { max-height: 60%; }
+.terminal-agent-history__row { display: flex; align-items: stretch; border-block-end: 1px solid var(--color-border); }
+.terminal-agent-history__row:last-child { border-block-end: 0; }
+.terminal-agent-history__row .terminal-agent-history__item { flex: 1; border-block-end: 0; }
+.terminal-agent-history__delete { flex: none; align-self: center; margin-inline-end: var(--space-1); }

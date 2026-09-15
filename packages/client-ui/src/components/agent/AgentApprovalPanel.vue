@@ -140,7 +140,18 @@ const { approvals, loading, isBusy, refresh, decide, revoke } = useAgentApproval
 })
 
 /** The panel is the pending list; decided/expired rows fall away after refresh. */
-const visibleApprovals = computed(() => approvals.value.filter((approval) => approval.state === 'pending' && (approval.expires_at === null || Date.parse(approval.expires_at) > Date.now())))
+/** B timestamps may be naive UTC; treat missing timezones as UTC so a
+ *  fresh approval is never misread as expired due to client offset. */
+function parseTimestamp(value: string | null | undefined): number {
+  if (value === null || value === undefined) return Number.NaN
+  const normalized = /(Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`
+  return Date.parse(normalized)
+}
+const visibleApprovals = computed(() => approvals.value.filter((approval) => {
+  if (approval.state !== 'pending') return false
+  const expires = parseTimestamp(approval.expires_at)
+  return Number.isNaN(expires) || expires > Date.now()
+}))
 watch(() => visibleApprovals.value.length, (count) => emit('pendingCount', count), { immediate: true })
 watch(() => visibleApprovals.value.map((approval) => approval.approval_id).join(','), () => { void focusRequestedApproval() }, { flush: 'post' })
 
@@ -162,7 +173,8 @@ onBeforeUnmount(() => {
 })
 
 function countdown(expiresAt: string): string {
-  const remaining = Date.parse(expiresAt) - nowMs.value
+  const parsed = parseTimestamp(expiresAt)
+  const remaining = parsed - nowMs.value
   if (!Number.isFinite(remaining)) return '—'
   if (remaining <= 0) return '已过期'
   const total = Math.floor(remaining / 1_000)
