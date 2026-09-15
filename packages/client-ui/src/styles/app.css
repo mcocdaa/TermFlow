@@ -632,3 +632,6 @@
 .terminal-agent-history__row:last-child { border-block-end: 0; }
 .terminal-agent-history__row .terminal-agent-history__item { flex: 1; border-block-end: 0; }
 .terminal-agent-history__delete { flex: none; align-self: center; margin-inline-end: var(--space-1); }
+
+.agent-parts .agent-message { padding: 0; border: 0; border-radius: 0; background: transparent; max-width: min(46rem, 92%); }
+.agent-parts .agent-message .agent-message__text { border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-elevated); }
