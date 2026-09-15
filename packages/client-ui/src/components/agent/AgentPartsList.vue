@@ -10,24 +10,24 @@
         <p class="agent-message__text">{{ part.text }}</p>
       </div>
 
-      <details v-else-if="part.type === 'reasoning'" class="agent-thinking" data-agent-thinking>
-        <summary class="agent-thinking__summary">
+      <details v-else-if="part.type === 'reasoning'" class="agent-part-entry agent-part-entry--thinking" data-agent-thinking>
+        <summary class="agent-part-entry__head">
           <Sparkles :size="14" aria-hidden="true" />
-          <span>思考</span>
+          <span class="agent-part-entry__title">思考</span>
         </summary>
-        <p class="agent-thinking__text">{{ part.text }}</p>
+        <p class="agent-part-entry__text">{{ part.text }}</p>
       </details>
 
       <details
         v-else-if="part.type === 'tool'"
-        class="agent-tool-activity"
-        :class="`agent-tool-activity--${part.status}`"
+        class="agent-part-entry agent-part-entry--tool"
+        :class="`agent-part-entry--${part.status}`"
         data-agent-tool
       >
-        <summary class="agent-tool-activity__row">
+        <summary class="agent-part-entry__head">
           <Wrench :size="14" aria-hidden="true" />
-          <span class="agent-tool-activity__name">{{ bareTool(part.tool) }}</span>
-          <span class="agent-tool-activity__status">{{ statusLabel(part.status) }}</span>
+          <span class="agent-part-entry__title">{{ bareTool(part.tool) }}</span>
+          <span class="agent-part-entry__status">{{ statusLabel(part.status) }}</span>
         </summary>
         <div v-if="part.input || part.output || part.error" class="agent-tool-activity__detail" data-agent-tool-detail>
           <template v-if="part.input && part.input !== '{}'">

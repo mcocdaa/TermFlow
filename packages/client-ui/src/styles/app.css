@@ -611,3 +611,14 @@
 
 .agent-message--user { align-self: flex-end; max-width: 85%; padding: 0; border: 0; border-radius: 0; background: transparent; }
 .agent-message--user .agent-message__text { margin: 0; padding: var(--space-2) var(--space-3); border: 0; border-radius: var(--radius-md); background: var(--color-accent); color: var(--color-accent-contrast); }
+
+.agent-part-entry { border: 1px solid var(--color-border); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-elevated) 45%, transparent); overflow: hidden; }
+.agent-part-entry > summary.agent-part-entry__head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); cursor: pointer; list-style: none; color: var(--color-text-secondary); font-size: var(--text-sm); }
+.agent-part-entry > summary.agent-part-entry__head::-webkit-details-marker { display: none; }
+.agent-part-entry__title { color: var(--color-text-primary); font-weight: 600; overflow-wrap: anywhere; }
+.agent-part-entry--thinking .agent-part-entry__title { color: var(--color-text-muted); font-weight: 500; }
+.agent-part-entry__status { margin-inline-start: auto; flex: none; padding: .1rem var(--space-2); border: 1px solid var(--color-border); border-radius: 99rem; font-size: .72rem; color: var(--color-text-muted); }
+.agent-part-entry--completed .agent-part-entry__status { color: var(--color-online); border-color: var(--color-online); }
+.agent-part-entry--failed .agent-part-entry__status, .agent-part-entry--error .agent-part-entry__status { color: var(--color-danger); border-color: var(--color-danger); }
+.agent-part-entry--running .agent-part-entry__status, .agent-part-entry--pending .agent-part-entry__status { color: var(--color-accent); border-color: var(--color-accent); }
+.agent-part-entry__text { margin: 0; padding: 0 var(--space-3) var(--space-3); font-size: var(--text-sm); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
