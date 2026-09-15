@@ -80,7 +80,7 @@
   </div>
 
   <div class="agent-chat-body">
-    <AgentMessageList :history="displayHistory" @focus-approval="focusApproval" />
+    <AgentPartsList :parts="parts" />
   </div>
 
   <!-- Approval prompt sits directly above the composer (Codex-style). The
@@ -119,7 +119,7 @@ import { ArrowLeft, Trash2 } from '@lucide/vue'
 import AgentApprovalPanel from './AgentApprovalPanel.vue'
 import AgentBackendStatus from './AgentBackendStatus.vue'
 import AgentComposer from './AgentComposer.vue'
-import AgentMessageList from './AgentMessageList.vue'
+import AgentPartsList, { type AgentConversationPart } from './AgentPartsList.vue'
 import { useAgentConversation } from '../../composables/useAgentConversation'
 import { useBottomToast } from '../../composables/useBottomToast'
 import { useClientRuntime } from '../../runtime'
@@ -145,6 +145,22 @@ const conversation = useAgentConversation({
   conversationId: props.conversationId,
   enabled: () => props.enabled,
 })
+
+const parts = ref<AgentConversationPart[]>([])
+let partsTimer: number | null = null
+async function refreshParts() {
+  try {
+    const response = await runtime.api.agents.getConversationParts(props.conversationId)
+    parts.value = response.parts
+  } catch {
+    // Transient while the runtime reconnects; the next poll retries.
+  }
+}
+onMounted(() => {
+  void refreshParts()
+  partsTimer = window.setInterval(() => { if (!document.hidden) void refreshParts() }, 2000)
+})
+onBeforeUnmount(() => { if (partsTimer !== null) window.clearInterval(partsTimer) })
 
 const detail = ref<AgentConversationDetailResponse | null>(null)
 let controller: AbortController | null = null

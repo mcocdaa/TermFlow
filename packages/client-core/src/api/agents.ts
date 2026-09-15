@@ -39,6 +39,18 @@ export interface AgentSubmitMessageResponse {
   submission_state: string
 }
 
+/** Bounded, display-only view of one OpenCode session part. */
+export interface AgentConversationPart {
+  type: string
+  text?: string | null
+  tool?: string | null
+  status?: string | null
+  input?: string | null
+  output?: string | null
+  error?: string | null
+  reason?: string | null
+}
+
 export interface AgentCancelRequest {
   reason?: string | null
 }
@@ -61,6 +73,13 @@ export function createAgentsApi(request: ApiRequest, requestResponse: ApiRequest
   return {
     capabilities: (signal?: AbortSignal) =>
       request<AgentCapabilitiesResponse>('/api/v1/agent/capabilities', withSignal({}, signal)),
+
+    /** Bounded OpenCode session parts for display parity (read-only). */
+    getConversationParts: (conversationId: string, signal?: AbortSignal) =>
+      request<{ parts: AgentConversationPart[] }>(
+        `/api/v1/agent/conversations/${encodeURIComponent(conversationId)}/parts`,
+        withSignal({}, signal),
+      ),
 
     /** Agent admin bindings used as the internal scope for the Term directory. */
     listBindings: (options: { profileId?: string, termId?: string, signal?: AbortSignal } = {}) => {
