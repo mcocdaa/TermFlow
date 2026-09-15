@@ -1,19 +1,43 @@
 <template>
   <div v-if="authorization.open.value" class="dialog-backdrop">
-    <section ref="panel" role="dialog" aria-modal="true" aria-label="重新验证身份" class="dialog-panel" @keydown="onKeydown">
-      <h2>重新验证身份</h2>
-      <p v-if="native">请在系统浏览器中完成身份验证。</p>
-      <form v-else @submit.prevent="submit">
-        <label v-if="!challenge">Root 凭据<input ref="credentialInput" v-model="credential" name="root_credential" type="password" autocomplete="off" required /></label>
-        <label v-else>动态验证码<input v-model="totp" name="totp" inputmode="numeric" autocomplete="off" required /></label>
-        <p v-if="error" role="alert">{{ error }}</p>
-        <button type="submit" :disabled="busy">验证</button>
+    <section ref="panel" role="dialog" aria-modal="true" aria-label="重新验证身份" class="dialog-panel agent-reauth-dialog" @keydown="onKeydown">
+      <header>
+        <div>
+          <p class="eyebrow">Security Check</p>
+          <h2>重新验证身份</h2>
+        </div>
+        <button type="button" class="icon-button icon-only" aria-label="关闭" data-action="close-reauth-dialog" @click="cancel">
+          <X :size="18" aria-hidden="true" />
+        </button>
+      </header>
+      <p class="agent-reauth-dialog__hint">
+        <ShieldCheck :size="16" aria-hidden="true" />
+        <span v-if="native">请在系统浏览器中完成身份验证。</span>
+        <span v-else>为保护终端安全，执行敏感操作前需要重新验证管理员身份。验证通过后本次操作会自动继续。</span>
+      </p>
+      <form v-if="!native" class="security-form" @submit.prevent="submit">
+        <template v-if="!challenge">
+          <label for="reauth-root-credential">Root 凭据</label>
+          <input id="reauth-root-credential" ref="credentialInput" v-model="credential" name="root_credential" type="password" autocomplete="off" required />
+        </template>
+        <template v-else>
+          <label for="reauth-totp">动态验证码</label>
+          <input id="reauth-totp" v-model="totp" name="totp" inputmode="numeric" autocomplete="one-time-code" required />
+        </template>
+        <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+        <div class="dialog-actions">
+          <button ref="cancelButton" type="button" class="secondary-button" :disabled="busy" @click="cancel">取消</button>
+          <button type="submit" class="primary-button" :disabled="busy">{{ busy ? '正在验证…' : '验证' }}</button>
+        </div>
       </form>
-      <button ref="cancelButton" type="button" @click="cancel">取消</button>
+      <div v-else class="dialog-actions">
+        <button ref="cancelButton" type="button" class="secondary-button" @click="cancel">取消</button>
+      </div>
     </section>
   </div>
 </template>
 <script setup lang="ts">
+import { ShieldCheck, X } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useClientRuntime } from '../../runtime'
 import { useSensitiveAuthorization } from '../../composables/useSensitiveAuthorization'

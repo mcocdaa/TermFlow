@@ -20,6 +20,7 @@
     </section>
     <div class="x-preview__composer">
       <span>输入消息…</span>
+      <button type="button" class="secondary-button compact-secondary-button" data-action="preview-reauth" @click="authorization.authorize()">重新验证身份（预览）</button>
       <button type="button" class="icon-button icon-only" aria-label="发送消息"><Send :size="18" aria-hidden="true" /></button>
     </div>
   </section>
@@ -32,6 +33,7 @@
 import AgentApprovalCard from '../components/agent/AgentApprovalCard.vue'
 import AgentPartsList, { type AgentConversationPart } from '../components/agent/AgentPartsList.vue'
 import { Send } from '@lucide/vue'
+import { useSensitiveAuthorization } from '../composables/useSensitiveAuthorization'
 import {
   applyAguiEvent,
   createAgentHistoryState,
@@ -40,6 +42,7 @@ import {
   type AguiEvent,
 } from '@termflow/client-core'
 
+const authorization = useSensitiveAuthorization()
 const now = Date.now()
 let state = createAgentHistoryState()
 state = seedUserMessages(

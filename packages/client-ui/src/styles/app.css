@@ -104,6 +104,12 @@
   .device-approval-dialog, .revoke-client-dialog { width: min(100%, 36rem); display: grid; gap: var(--space-4); }
   .device-approval-dialog .security-form, .revoke-client-dialog .security-form { width: 100%; margin-block-start: 0; }
   .protection-dialog .security-form { width: 100%; margin-block-start: var(--space-4); }
+  .agent-reauth-dialog { width: min(100%, 24rem); display: grid; gap: var(--space-4); }
+  .agent-reauth-dialog .security-form { width: 100%; }
+  .agent-reauth-dialog__hint { display: flex; align-items: flex-start; gap: var(--space-2); margin: 0; padding: var(--space-3); border: 1px solid color-mix(in srgb, var(--color-accent) 30%, var(--color-border)); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-accent) 8%, var(--color-elevated)); color: var(--color-text-secondary); font-size: 0.85rem; line-height: 1.55; }
+  .agent-reauth-dialog__hint > svg { flex: none; margin-block-start: 0.15rem; color: var(--color-accent); }
+  .agent-reauth-dialog .dialog-actions { margin-block-start: var(--space-2); }
+  .agent-reauth-dialog .dialog-actions button { flex: 1; }
   .device-approval-details { margin: 0; }
   .device-approval-details div { align-items: baseline; }
   .revoke-client-dialog > p { margin: 0; color: var(--color-text-secondary); line-height: 1.6; }
