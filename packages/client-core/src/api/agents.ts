@@ -183,6 +183,12 @@ export function createAgentsApi(request: ApiRequest, requestResponse: ApiRequest
       ),
 
     /** Delete a conversation (M6b spec §5): 204 on success. */
+    updateConversation: (conversationId: string, body: AgentConversationUpdateRequest, signal?: AbortSignal) =>
+      request<AgentConversationResponse>(
+        `/api/v1/agent/conversations/${encodeURIComponent(conversationId)}`,
+        withSignal({ method: 'PATCH', body }, signal),
+      ),
+
     deleteConversation: (conversationId: string, signal?: AbortSignal) =>
       deleteResource(requestResponse,
         conversationPath(conversationId, ''),

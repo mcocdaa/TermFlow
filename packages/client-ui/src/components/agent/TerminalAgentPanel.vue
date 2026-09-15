@@ -49,7 +49,25 @@
           <History :size="17" aria-hidden="true" />
         </button>
       </div>
-      <h2 class="terminal-agent-panel__title" data-agent-panel-title>{{ panelTitle }}</h2>
+      <input
+        v-if="renamingId !== null && renamingId === selectedConversationId"
+        ref="renameInput"
+        v-model="renameDraft"
+        class="terminal-agent-panel__rename"
+        data-agent-rename-input
+        aria-label="重命名会话"
+        @keydown.enter.prevent="commitRename"
+        @keydown.esc="cancelRename"
+        @blur="commitRename"
+      />
+      <button
+        v-else
+        type="button"
+        class="terminal-agent-panel__title"
+        data-agent-panel-title
+        title="重命名会话"
+        @click="beginRename(selectedConversationId)"
+      >{{ panelTitle }}</button>
       <div class="terminal-agent-panel__actions">
         <button
           ref="closeButton"
@@ -136,7 +154,29 @@
               :data-agent-history-conversation="entry.conversation_id"
               @click="selectConversation(entry.conversation_id); historyOpen = false"
             >
-              <span class="terminal-agent-history__item-title">{{ entry.title || '未命名会话' }}</span>
+              <input
+                v-if="renamingId === entry.conversation_id"
+                ref="renameInput"
+                v-model="renameDraft"
+                class="terminal-agent-history__rename-input"
+                data-agent-history-rename-input
+                aria-label="重命名会话"
+                @keydown.enter.prevent="commitRename"
+                @keydown.esc="cancelRename"
+                @blur="commitRename"
+                @click.stop
+              />
+              <span v-else class="terminal-agent-history__item-title">{{ entry.title || '未命名会话' }}</span>
+              <button
+                type="button"
+                class="icon-button icon-only terminal-agent-history__rename"
+                :aria-label="`重命名会话 ${entry.title || '未命名会话'}`"
+                title="重命名会话"
+                data-action="rename-history-conversation"
+                @click.stop="beginRename(entry.conversation_id)"
+              >
+                <Pencil :size="14" aria-hidden="true" />
+              </button>
               <span class="terminal-agent-history__item-status">{{ entry.status === 'open' ? '进行中' : '已停止' }}</span>
             </button>
             <button
@@ -175,7 +215,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { History, MessageSquarePlus, Move, Trash2, X } from '@lucide/vue'
+import { History, MessageSquarePlus, Move, Pencil, Trash2, X } from '@lucide/vue'
 import type { AgentSetupResponse } from '@termflow/client-contracts'
 import { useFloatingPanel, type FloatingPanelResizeEdge } from '../../composables/useFloatingPanel'
 import { useTermAgent } from '../../composables/useTermAgent'
@@ -235,6 +275,31 @@ async function changeWritePolicy(policy: 'manual' | 'auto') {
 }
 const isReady = computed(() => setup.value?.state === 'ready')
 const selectedEntry = computed(() => conversations.value.find((entry) => entry.conversation_id === selectedConversationId.value) ?? null)
+const renamingId = ref<string | null>(null)
+const renameDraft = ref('')
+const renameInput = ref<HTMLInputElement | null>(null)
+function beginRename(conversationId: string | null) {
+  if (conversationId === null || mutating.value) return
+  const entry = conversations.value.find((item) => item.conversation_id === conversationId)
+  renameDraft.value = entry?.title?.trim() ?? ''
+  renamingId.value = conversationId
+  void nextTick(() => renameInput.value?.select())
+}
+async function commitRename() {
+  const id = renamingId.value
+  if (id === null) return
+  renamingId.value = null
+  const title = renameDraft.value.trim()
+  const entry = conversations.value.find((item) => item.conversation_id === id)
+  if (title === '' || title === (entry?.title?.trim() ?? '')) return
+  try {
+    await runtime.api.agents.updateConversation(id, { title })
+    await refresh()
+  } catch {
+    // Keep the previous title; the next refresh reconciles.
+  }
+}
+function cancelRename() { renamingId.value = null }
 const panelTitle = computed(() => selectedEntry.value?.title?.trim() || (selectedConversationId.value ? 'Agent 对话' : 'Term Agent'))
 const disclosureRecoveryRequired = computed(() => setup.value?.state === 'unavailable' && (
   setup.value.reason_code === 'binding_disclosure_stale'
