@@ -70,8 +70,8 @@
         class="agent-panel-readiness"
         data-agent-panel-readiness
         :data-state="setup.state"
-      >{{ readinessLabels[setup.state] }}</span>
-      <AgentBackendStatus v-if="backendState !== null && backendState !== 'ready'" :state="backendState" />
+        :data-backend-state="backendState ?? undefined"
+      >{{ mergedStatusLabel }}</span>
       <div v-if="isReady && bindingId" class="terminal-agent-policy" data-agent-write-policy>
         <span class="terminal-agent-policy__label">写入审批</span>
         <div class="terminal-agent-policy__options" role="group" aria-label="新会话写入审批">
@@ -169,7 +169,6 @@ import type { AgentSetupResponse } from '@termflow/client-contracts'
 import { useFloatingPanel, type FloatingPanelResizeEdge } from '../../composables/useFloatingPanel'
 import { useTermAgent } from '../../composables/useTermAgent'
 import { useClientRuntime } from '../../runtime'
-import AgentBackendStatus from './AgentBackendStatus.vue'
 import AgentChatSession from './AgentChatSession.vue'
 import AgentSetupForm from './AgentSetupForm.vue'
 
@@ -216,6 +215,16 @@ const disclosureRecoveryRequired = computed(() => setup.value?.state === 'unavai
   setup.value.reason_code === 'binding_disclosure_stale'
   || setup.value.reason_code === 'binding_disclosure_required'
 ))
+const backendLabels: Record<string, string> = {
+  connecting: '连接中', idle: '空闲', busy: '处理中', retry: '重试中', ready: '已就绪',
+  unavailable: '离线', context_lost: '上下文丢失', reconciling: '恢复中', closed: '已关闭',
+}
+const mergedStatusLabel = computed(() => {
+  const state = setup.value?.state
+  if (state !== 'ready') return state === undefined ? '' : readinessLabels[state]
+  if (backendState.value === null || backendState.value === 'ready') return '已就绪'
+  return backendLabels[backendState.value] ?? backendState.value
+})
 const readinessLabels: Record<AgentSetupResponse['state'], string> = {
   unconfigured: '未设置', deployment_required: '需部署', activating: '激活中', ready: '已就绪', unavailable: '不可用',
 }
