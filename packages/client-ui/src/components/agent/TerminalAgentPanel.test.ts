@@ -68,6 +68,23 @@ it('uses an icon toolbar and exposes edge resize handles for the floating panel'
   w.unmount()
 })
 
+it('keeps readiness and write policy in a compact status bar below the title', async () => {
+  const runtime = createFakeRuntime()
+  runtime.api.agents.getSetup = vi.fn(async () => ({ state: 'ready', term_id: 't1', binding_id: 'b1', profiles: [], disclosure: null })) as never
+  runtime.api.agents.listConversations = vi.fn(async () => ({ conversations: [] })) as never
+  const w = mount(TerminalAgentPanel, {
+    props: { termId: 't1', conversationId: null },
+    global: { plugins: [createClientUi(runtime)], stubs: { AgentChatSession: true } },
+  })
+  await flushPromises()
+  expect(w.find('[data-agent-panel-statusbar]').exists()).toBe(true)
+  expect(w.get('[data-agent-panel-statusbar]').get('[data-agent-panel-readiness]').text()).toBe('已就绪')
+  expect(w.find('[data-agent-panel-statusbar]').find('[data-agent-write-policy]').exists()).toBe(true)
+  expect(w.get('.terminal-agent-panel__header').find('[data-agent-panel-readiness]').exists()).toBe(false)
+  expect(w.get('.terminal-agent-panel__header').find('[data-agent-write-policy]').exists()).toBe(false)
+  w.unmount()
+})
+
 it('uses the whole workspace on mobile without floating-window controls', async () => {
   const runtime = createFakeRuntime()
   runtime.api.agents.getSetup = vi.fn(async () => ({ state: 'ready', term_id: 't1', binding_id: 'b1', profiles: [], disclosure: null })) as never
