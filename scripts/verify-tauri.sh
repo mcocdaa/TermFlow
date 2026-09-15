@@ -19,7 +19,6 @@ run_rust_gates() {
   cargo fmt --manifest-path "${MANIFEST}" --all -- --check
   cargo clippy --manifest-path "${MANIFEST}" --all-targets --all-features -- -D warnings
   cargo test --manifest-path "${MANIFEST}" --all-targets --all-features
-  cargo check --manifest-path "${MANIFEST}" --all-targets --all-features
 }
 
 if has_linux_prerequisites; then
@@ -47,4 +46,4 @@ docker run --rm \
   -v "${TERMFLOW_TAURI_TARGET_VOLUME:-termflow-tauri-target}:/target" \
   -e CARGO_TARGET_DIR=/target \
   "${image}" \
-  bash -c 'cp -a /source /tmp/termflow-tauri && cd /tmp/termflow-tauri/apps/clients/tauri/src-tauri && cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-targets --all-features && cargo check --all-targets --all-features'
+  bash -c 'cp -a /source /tmp/termflow-tauri && cd /tmp/termflow-tauri/apps/clients/tauri/src-tauri && cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-targets --all-features'
