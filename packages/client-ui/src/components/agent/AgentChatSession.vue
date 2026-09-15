@@ -152,7 +152,7 @@ let partsTimer: number | null = null
 async function refreshParts() {
   try {
     const response = await runtime.api.agents.getConversationParts(props.conversationId)
-    parts.value = response.parts
+    parts.value = response.parts ?? []
   } catch {
     // Transient while the runtime reconnects; the next poll retries.
   }
