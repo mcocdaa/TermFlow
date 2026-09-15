@@ -622,3 +622,7 @@
 .agent-part-entry--failed .agent-part-entry__status, .agent-part-entry--error .agent-part-entry__status { color: var(--color-danger); border-color: var(--color-danger); }
 .agent-part-entry--running .agent-part-entry__status, .agent-part-entry--pending .agent-part-entry__status { color: var(--color-accent); border-color: var(--color-accent); }
 .agent-part-entry__text { margin: 0; padding: 0 var(--space-3) var(--space-3); font-size: var(--text-sm); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.terminal-agent-panel__content { position: relative; }
+.terminal-agent-history-backdrop { position: absolute; inset: 0; z-index: 4; background: transparent; }
+.terminal-agent-history { position: absolute; z-index: 5; inset-block-start: var(--space-3); inset-inline: var(--space-3); margin: 0; max-height: min(24rem, calc(100% - var(--space-6))); box-shadow: 0 12px 32px rgb(0 0 0 / 35%); }

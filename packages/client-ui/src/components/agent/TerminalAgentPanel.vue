@@ -120,6 +120,7 @@
             <button type="button" class="text-button" :disabled="mutating" @click="pendingAutoPolicy = false">取消</button>
           </div>
         </div>
+        <div v-if="historyOpen" class="terminal-agent-history-backdrop" data-agent-history-backdrop @click="historyOpen = false" />
         <div v-if="historyOpen" class="terminal-agent-history" data-agent-history>
           <div class="terminal-agent-history__heading">
             <strong>历史记录</strong>
