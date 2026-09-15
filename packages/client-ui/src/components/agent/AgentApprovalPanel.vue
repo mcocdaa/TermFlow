@@ -148,9 +148,13 @@ watch(() => visibleApprovals.value.map((approval) => approval.approval_id).join(
 // adapter wires the platform timer; tests inject a controllable one).
 const nowMs = ref(runtime.clock.now())
 let interval: unknown | null = null
+let pollTicks = 0
 onMounted(() => {
+  void refresh()
   interval = runtime.clock.setInterval(() => {
     nowMs.value = runtime.clock.now()
+    pollTicks += 1
+    if (pollTicks % 2 === 0) void refresh()
   }, 1_000)
 })
 onBeforeUnmount(() => {

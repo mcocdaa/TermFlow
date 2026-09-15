@@ -11,11 +11,12 @@
           ref="textEl"
           v-model="text"
           class="agent-composer__input"
-          rows="3"
+          rows="2"
           :maxlength="MAX_AGENT_TEXT_BYTES"
           :disabled="unavailable"
           aria-label="发送给 Agent 的消息"
           data-agent-composer-input
+          @keydown="onKeydown"
         />
         <button
           type="button"
@@ -141,6 +142,14 @@ const tooLong = computed(() => utf8ByteLength(normalizedText.value) > MAX_AGENT_
 const runtimeDown = computed(() => props.backendState === 'unavailable' || runtimeUnavailable.value)
 const unavailable = computed(() => Boolean(props.disabled) || runtimeDown.value)
 const canSend = computed(() => !unavailable.value && !submitting.value && !tooLong.value && normalizedText.value.length > 0)
+
+/** Enter sends; Shift+Enter keeps a newline. Guards IME composition so
+ *  confirming Chinese candidates never submits mid-word. */
+function onKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  void submit()
+}
 
 // The 503 fail-closed latch lifts once a STATE_DELTA reports ``ready``.
 watch(
