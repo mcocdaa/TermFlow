@@ -167,17 +167,17 @@
                 @click.stop
               />
               <span v-else class="terminal-agent-history__item-title">{{ entry.title || '未命名会话' }}</span>
-              <button
-                type="button"
-                class="icon-button icon-only terminal-agent-history__rename"
-                :aria-label="`重命名会话 ${entry.title || '未命名会话'}`"
-                title="重命名会话"
-                data-action="rename-history-conversation"
-                @click.stop="beginRename(entry.conversation_id)"
-              >
-                <Pencil :size="14" aria-hidden="true" />
-              </button>
               <span class="terminal-agent-history__item-status">{{ entry.status === 'open' ? '进行中' : '已停止' }}</span>
+            </button>
+            <button
+              type="button"
+              class="icon-button icon-only terminal-agent-history__rename"
+              :aria-label="`重命名会话 ${entry.title || '未命名会话'}`"
+              title="重命名会话"
+              data-action="rename-history-conversation"
+              @click="beginRename(entry.conversation_id)"
+            >
+              <Pencil :size="14" aria-hidden="true" />
             </button>
             <button
               type="button"

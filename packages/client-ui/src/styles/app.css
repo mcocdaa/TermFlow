@@ -631,7 +631,7 @@
 .terminal-agent-history__row { display: flex; align-items: stretch; border-block-end: 1px solid var(--color-border); }
 .terminal-agent-history__row:last-child { border-block-end: 0; }
 .terminal-agent-history__row .terminal-agent-history__item { flex: 1; border-block-end: 0; }
-.terminal-agent-history__delete { flex: none; align-self: center; margin-inline-end: var(--space-1); }
+.terminal-agent-history__delete { flex: none; align-self: center; margin-inline-end: var(--space-2); }
 
 .agent-parts .agent-message { padding: 0; border: 0; border-radius: 0; background: transparent; max-width: min(46rem, 92%); }
 .agent-parts .agent-message .agent-message__text { border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-elevated); }
@@ -645,6 +645,6 @@
 .terminal-agent-panel__header { position: relative; }
 .terminal-agent-panel__actions { margin-inline-start: auto; }
 .terminal-agent-panel__title { position: absolute; left: 50%; transform: translateX(-50%); max-width: calc(100% - 11rem); margin: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-size: .95rem; font-weight: 600; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
-.terminal-agent-panel__rename { position: absolute; left: 50%; transform: translateX(-50%); width: min(14rem, 55%); padding: var(--space-1) var(--space-2); border: 1px solid var(--color-accent); border-radius: var(--radius-sm); background: var(--color-elevated); color: inherit; font: inherit; font-size: .95rem; text-align: center; }
-.terminal-agent-history__rename { flex: none; align-self: center; }
+.terminal-agent-panel__rename { position: absolute; left: 50%; transform: translateX(-50%); width: min(12rem, 45%); margin: 0; padding: 0; border: 0; border-block-end: 1px solid var(--color-accent); border-radius: 0; background: transparent; color: inherit; font: inherit; font-size: .95rem; font-weight: 600; text-align: center; outline: none; }
+.terminal-agent-history__rename { flex: none; align-self: center; margin-inline-end: var(--space-1); }
 .terminal-agent-history__rename-input { flex: 1; min-width: 0; margin-inline: var(--space-2); padding: var(--space-1) var(--space-2); border: 1px solid var(--color-accent); border-radius: var(--radius-sm); background: var(--color-elevated); color: inherit; font: inherit; }
