@@ -140,7 +140,7 @@ const { approvals, loading, isBusy, refresh, decide, revoke } = useAgentApproval
 })
 
 /** The panel is the pending list; decided/expired rows fall away after refresh. */
-const visibleApprovals = computed(() => approvals.value.filter((approval) => approval.state === 'pending'))
+const visibleApprovals = computed(() => approvals.value.filter((approval) => approval.state === 'pending' && (approval.expires_at === null || Date.parse(approval.expires_at) > Date.now())))
 watch(() => visibleApprovals.value.length, (count) => emit('pendingCount', count), { immediate: true })
 watch(() => visibleApprovals.value.map((approval) => approval.approval_id).join(','), () => { void focusRequestedApproval() }, { flush: 'post' })
 
