@@ -51,18 +51,6 @@
       </div>
       <h2 class="terminal-agent-panel__title" data-agent-panel-title>{{ panelTitle }}</h2>
       <div class="terminal-agent-panel__actions">
-        <span
-          v-if="setup !== null"
-          class="agent-panel-readiness"
-          data-agent-panel-readiness
-          :data-state="setup.state"
-        >{{ readinessLabels[setup.state] }}</span>
-        <div v-if="isReady && bindingId" class="terminal-agent-policy" data-agent-write-policy>
-          <div class="terminal-agent-policy__options" role="group" aria-label="新会话写入审批">
-            <button type="button" :class="{ 'is-active': writePolicy === 'manual' }" :aria-pressed="writePolicy === 'manual'" :disabled="mutating" data-action="policy-manual" @click="changeWritePolicy('manual')">手动</button>
-            <button type="button" :class="{ 'is-active': writePolicy === 'auto' }" :aria-pressed="writePolicy === 'auto'" :disabled="mutating" data-action="policy-auto" @click="pendingAutoPolicy = true">放行</button>
-          </div>
-        </div>
         <button
           ref="closeButton"
           type="button"
@@ -76,6 +64,21 @@
         </button>
       </div>
     </header>
+
+    <div v-if="setup !== null" class="terminal-agent-panel__statusbar" data-agent-panel-statusbar>
+      <span
+        class="agent-panel-readiness"
+        data-agent-panel-readiness
+        :data-state="setup.state"
+      >{{ readinessLabels[setup.state] }}</span>
+      <div v-if="isReady && bindingId" class="terminal-agent-policy" data-agent-write-policy>
+        <span class="terminal-agent-policy__label">写入审批</span>
+        <div class="terminal-agent-policy__options" role="group" aria-label="新会话写入审批">
+          <button type="button" :class="{ 'is-active': writePolicy === 'manual' }" :aria-pressed="writePolicy === 'manual'" :disabled="mutating" data-action="policy-manual" @click="changeWritePolicy('manual')">手动</button>
+          <button type="button" :class="{ 'is-active': writePolicy === 'auto' }" :aria-pressed="writePolicy === 'auto'" :disabled="mutating" data-action="policy-auto" @click="pendingAutoPolicy = true">放行</button>
+        </div>
+      </div>
+    </div>
 
     <div class="terminal-agent-panel__content">
       <section v-if="loading" data-agent-panel-state="loading" role="status">正在加载 Agent…</section>
@@ -106,7 +109,7 @@
         <button type="button" :disabled="mutating" @click="refresh">刷新</button>
       </section>
       <section v-else-if="setup?.state !== 'ready'" data-agent-panel-state="unavailable">
-        <h3>Agent 暂不可用</h3><p role="alert">{{ error }}</p><button type="button" :disabled="mutating" @click="retry">重试</button><button v-if="bindingId" type="button" :disabled="mutating" @click="activate">重新激活</button>
+        <h3>{{ error ? 'Agent 暂不可用' : 'Agent 正在恢复' }}</h3><p role="alert">{{ error || '运行时还在连接中，稍候会自动刷新。' }}</p><button type="button" :disabled="mutating" @click="retry">重试</button><button v-if="bindingId && error" type="button" :disabled="mutating" @click="activate">重新激活</button>
       </section>
       <div v-else data-agent-panel-state="ready" class="terminal-agent-panel__ready">
         <div v-if="pendingAutoPolicy" class="terminal-agent-policy__confirm" role="alertdialog" aria-label="确认完全放行" data-agent-policy-confirm>

@@ -55,7 +55,15 @@ export function useTermAgent(options: { termId: MaybeRefOrGetter<string>; reques
       if (!error.value && summary.reason_code) error.value = agentReasonMessage(summary.reason_code)
     } catch (cause) {
       if (current(g, term) && !signal.aborted) error.value = agentReasonMessage(cause instanceof ApiError ? cause.code : null)
-    } finally { if (current(g, term)) loading.value = false }
+    } finally {
+      if (current(g, term)) {
+        loading.value = false
+        const state = setup.value?.state
+        if ((state === 'activating' || state === 'unavailable') && !disposed) {
+          window.setTimeout(() => { if (!disposed && toValue(options.termId) === term) void refresh() }, 3000)
+        }
+      }
+    }
   }
   async function mutate(operation: (signal: AbortSignal) => Promise<unknown>, success?: () => void, refreshAfter = true) {
     if (mutating.value) return
