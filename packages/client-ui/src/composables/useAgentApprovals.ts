@@ -112,7 +112,14 @@ export function useAgentApprovals(options: UseAgentApprovalsOptions = {}) {
       if (!disposed && generation === loadGeneration) approvals.value = response.approvals
     } catch (error) {
       if (generation === loadGeneration && !(error instanceof ApiError && error.kind === 'aborted')) {
-        toast.show({ text: '无法加载审批列表。', tone: 'error' })
+        if (error instanceof ApiError && error.status === 404) {
+          // The conversation (or its approval scope) is gone — most often the
+          // user just deleted it. An empty list is the right answer, not an
+          // error toast.
+          if (!disposed && generation === loadGeneration) approvals.value = []
+        } else {
+          toast.show({ text: '无法加载审批列表。', tone: 'error' })
+        }
       }
     } finally {
       endApprovalListLoad()
