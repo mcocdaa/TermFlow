@@ -1,6 +1,7 @@
 <template>
   <section class="agent-disclosure" aria-label="数据发送说明">
     <h4 class="agent-disclosure__title">数据发送说明</h4>
+    <p class="agent-disclosure__intro">启用后，对话内容和所选窗格的终端上下文会发送给下列提供方。</p>
     <p class="agent-disclosure__route">{{ disclosure.provider_id }} · {{ disclosure.model_id }}</p>
     <dl class="agent-disclosure__grid">
       <div class="agent-disclosure__row">

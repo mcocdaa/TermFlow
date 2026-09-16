@@ -2,30 +2,31 @@
   <form class="agent-setup-form" @submit.prevent="submit">
     <header class="agent-setup-form__intro">
       <h3>设置 Term Agent</h3>
-      <p class="muted">选择运行配置和允许访问的窗格，确认数据发送说明后启用。</p>
+      <p class="muted">选择模型配置和 Agent 可访问的终端窗格，确认数据发送说明后启用。</p>
     </header>
 
     <div class="agent-setup-field">
-      <label class="agent-setup-field__label" for="agent-setup-profile">Agent Profile</label>
+      <label class="agent-setup-field__label" for="agent-setup-profile">模型配置（Agent Profile）</label>
       <select id="agent-setup-profile" v-model="profileId" name="profileId" :disabled="busy">
-        <option value="">新建 Profile</option>
+        <option value="">新建模型配置…</option>
         <option v-for="profile in profiles" :key="profile.profile_id" :value="profile.profile_id" :disabled="!matchesDisclosure(profile)">{{ profile.display_name }}{{ matchesDisclosure(profile) ? '' : '（提供方配置不匹配）' }}</option>
       </select>
+      <p class="agent-setup-field__hint">只决定 Agent 调用哪个模型，不改变访问权限。</p>
     </div>
 
     <div v-if="!profileId" class="agent-setup-field">
-      <label class="agent-setup-field__label" for="agent-setup-name">名称</label>
-      <input id="agent-setup-name" v-model="displayName" name="profileDisplayName" maxlength="120" placeholder="例如 DeepSeek live profile" :disabled="busy" />
+      <label class="agent-setup-field__label" for="agent-setup-name">配置名称</label>
+      <input id="agent-setup-name" v-model="displayName" name="profileDisplayName" maxlength="120" placeholder="例如 DeepSeek 日常" :disabled="busy" />
     </div>
 
     <fieldset class="agent-setup-panes" :disabled="busy">
-      <legend>允许访问的窗格</legend>
-      <p class="agent-setup-panes__hint">Agent 只能读取和写入勾选的窗格。</p>
+      <legend>允许 Agent 访问的窗格</legend>
+      <p class="agent-setup-panes__hint">窗格是终端里的一块分屏（下方 % 编号）。Agent 只能读取勾选窗格的内容；写入仍会逐一弹审批。</p>
       <label v-for="pane in panes" :key="pane.pane_id" class="agent-setup-pane">
         <input v-model="paneIds" type="checkbox" name="paneIds" :value="pane.pane_id" />
         <span class="agent-setup-pane__text">
-          <span class="agent-setup-pane__title">{{ pane.title || pane.pane_id }}</span>
           <code class="agent-setup-pane__id">{{ pane.pane_id }}</code>
+          <span class="agent-setup-pane__title">{{ pane.current_command || pane.title || pane.window_id }}</span>
         </span>
       </label>
       <p v-if="!panes.length" class="agent-setup-panes__empty">暂无可用窗格，请连接终端后刷新。</p>
