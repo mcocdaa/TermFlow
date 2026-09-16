@@ -67,6 +67,44 @@ cp .env.example .env
 docker compose --env-file .env -f deploy/compose.yaml up -d --build
 ```
 
+### 发布镜像 Compose 部署（无需源码 checkout）
+
+生产路径：不从源码构建，只取 GitHub 上同 tag 的部署文件，并让 Compose 拉取 GHCR 已发布
+的 Control Plane 镜像。README「发布镜像 Compose（推荐，含 Agent）」给出了可直接复制的
+curl 版本；离线或审计场景建议下载该 tag 的源码包，只使用其中的 `deploy/` 目录。
+
+- `compose.release.yaml` 的服务形状与 `compose.yaml` + `compose.agent-live.yaml` 完全
+  一致（B + Web C、固定 OpenCode 运行时、allowlist provider egress proxy），差异只有
+  control-plane 引用发布镜像而不是本地 build，项目名为 `termflow`。
+- `TERMFLOW_IMAGE_TAG` 必填：固定版本写 Release 的精确 tag（推荐，可复现）；写
+  `latest` 表示跟随最新稳定版，但 `latest` 只随稳定 tag 移动，无法复现历史证据。
+- `TERMFLOW_IMAGE_REPOSITORY` 可选：仓库 fork 时覆盖默认的
+  `ghcr.io/mcocdaa/termflow-control-plane`。
+- 该项目固定使用 `termflow-data`、`termflow-totp-key`、`termflow-opencode-data` 卷，
+  默认发布 `127.0.0.1:8765`。升级/回退只改 tag 后 `pull` + `up -d`；不要
+  `down --volumes`。
+- 重建 B 后如果 Agent 显示 `runtime_unreachable`，等 B healthy 后重启一次 OpenCode
+  容器（`docker restart termflow-opencode-agent-1`），让 MCP 连接在新 B 实例上重建。
+
+从本地参考部署（project `termflow-v020-local`）迁移数据到发布项目时，先停旧项目容器，
+再复制三个卷；源卷保持不动，确认无误后再自行清理：
+
+```bash
+docker compose -p termflow-v020-local --env-file .env -f deploy/compose.yaml stop
+docker run --rm \
+  --mount source=termflow-v020-local-data,target=/from \
+  --mount source=termflow-data,target=/to \
+  alpine sh -c 'cp -a /from/. /to/'
+docker run --rm \
+  --mount source=termflow-v020-local-totp-key,target=/from \
+  --mount source=termflow-totp-key,target=/to \
+  alpine sh -c 'cp -a /from/. /to/'
+docker run --rm \
+  --mount source=termflow-v020-local-opencode-data,target=/from \
+  --mount source=termflow-opencode-data,target=/to \
+  alpine sh -c 'cp -a /from/. /to/'
+```
+
 ### v0.2.0 Agent Broker durable local profile
 
 Agent Broker 的本地参考部署是固定、可审计的 Compose project：
@@ -125,9 +163,10 @@ provider egress、模型、MCP、A 命令和 approval 结果都必须单独记�
 但镜像来源不属于普通 Compose 的运行时配置。
 
 TOTP 主密钥迁移（升级到独立密钥卷时）：新版 Compose 把自动生成的 TOTP 主密钥放在固定的
-`termflow-v020-local-totp-key` 卷，与 `termflow-v020-local-data` 数据库卷分离。若旧部署已在
-旧的 `termflow-data` 卷中生成
-`totp-master-key`，先停容器，把旧密钥文件复制进新卷再启动，避免已绑定的验证器全部失效：
+`termflow-v020-local-totp-key` 卷，与 `termflow-v020-local-data` 数据库卷分离。若更早的
+历史部署已在当时的 metadata 卷（名为 `termflow-data`）中生成 `totp-master-key`，先停
+容器，把旧密钥文件复制进新卷再启动，避免已绑定的验证器全部失效；注意这个历史
+`termflow-data` 与发布 Compose 的 `termflow-data`（现在的 metadata 卷）同名但用途不同：
 
 ```bash
 docker compose -p termflow-v020-local --env-file .env -f deploy/compose.yaml stop
@@ -138,7 +177,8 @@ docker run --rm \
 docker compose -p termflow-v020-local --env-file .env -f deploy/compose.yaml up -d
 ```
 
-如果要直接运行正式 GHCR 镜像，镜像地址必须由部署者明确选择；它不是 `.env` 的必填项，也不会
+如果只想直接运行正式 GHCR 镜像的 B（仅终端；Agent Broker 需要上面的发布 Compose 或
+本地参考部署），镜像地址必须由部署者明确选择；它不是 `.env` 的必填项，也不会
 被默认 Compose 隐式替换：
 
 ```bash

@@ -28,6 +28,20 @@ TERMFLOW_ADMIN_TOKEN="verify-admin-token-that-is-long-enough" \
   OPENCODE_SERVER_PASSWORD="verify-opencode-password" \
   OPENCODE_AGENT_MCP_TOKEN="verify-agent-mcp-token" \
   docker compose -f deploy/compose.yaml config --quiet
+TERMFLOW_ADMIN_TOKEN="verify-admin-token-that-is-long-enough" \
+  OPENCODE_SERVER_USERNAME="termflow" \
+  OPENCODE_SERVER_PASSWORD="verify-opencode-password" \
+  OPENCODE_AGENT_MCP_TOKEN="verify-agent-mcp-token" \
+  DEEPSEEK_API_KEY="verify-deepseek-key" \
+  TERMFLOW_IMAGE_TAG="verify" \
+  TERMFLOW_AGENT_PROVIDER_DEEPSEEK_ENDPOINT_ORIGIN="https://api.deepseek.com" \
+  TERMFLOW_AGENT_PROVIDER_DEEPSEEK_MODEL_IDS="deepseek-v4-flash" \
+  TERMFLOW_AGENT_PROVIDER_DEEPSEEK_REGION="global" \
+  TERMFLOW_AGENT_PROVIDER_DEEPSEEK_RETENTION_TERMS="account policy" \
+  TERMFLOW_AGENT_PROVIDER_DEEPSEEK_RETENTION_VERSION="policy-2026-09" \
+  TERMFLOW_AGENT_PROVIDER_DEEPSEEK_NO_TRAINING="true" \
+  TERMFLOW_AGENT_PROVIDER_DEEPSEEK_POLICY_VERSION="policy-2026-09" \
+  docker compose -f deploy/compose.release.yaml config --quiet
 scripts/build-control-plane-image.sh "${CONTROL_PLANE_IMAGE}"
 scripts/verify-control-plane-image.sh "${CONTROL_PLANE_IMAGE}"
 

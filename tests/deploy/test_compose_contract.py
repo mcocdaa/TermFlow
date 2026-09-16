@@ -167,6 +167,102 @@ def test_compose_keeps_the_hardened_single_worker_deployable_shape() -> None:
     assert not Path("deploy/compose.dev.yaml").exists()
 
 
+def test_release_compose_uses_published_images_without_building() -> None:
+    release = yaml.safe_load(Path("deploy/compose.release.yaml").read_text())
+    base = yaml.safe_load(Path("deploy/compose.yaml").read_text())
+    overlay = yaml.safe_load(Path("deploy/compose.agent-live.yaml").read_text())
+
+    services = release["services"]
+    base_services = base["services"]
+    overlay_services = overlay["services"]
+    assert set(services) == set(base_services) | {"provider-egress-proxy"}
+    for service in services.values():
+        assert "build" not in service
+
+    control_plane = services["control-plane"]
+    assert control_plane["image"] == (
+        "${TERMFLOW_IMAGE_REPOSITORY:-ghcr.io/mcocdaa/termflow-control-plane}"
+        ":${TERMFLOW_IMAGE_TAG:?set TERMFLOW_IMAGE_TAG in .env}"
+    )
+    for key in (
+        "read_only",
+        "cap_drop",
+        "cap_add",
+        "security_opt",
+        "tmpfs",
+        "command",
+        "ports",
+        "volumes",
+        "networks",
+        "logging",
+        "healthcheck",
+    ):
+        assert control_plane[key] == base_services["control-plane"][key]
+
+    base_env = base_services["control-plane"]["environment"]
+    overlay_env = overlay_services["control-plane"]["environment"]
+    release_env = control_plane["environment"]
+    assert set(release_env) == set(base_env) | set(overlay_env)
+    for key, value in base_env.items():
+        if key in overlay_env:
+            continue
+        assert release_env[key] == value
+    for key, value in overlay_env.items():
+        assert release_env[key] == value
+
+    agent = services["opencode-agent"]
+    base_agent = base_services["opencode-agent"]
+    assert agent["image"] == base_agent["image"]
+    assert agent["depends_on"] == base_agent["depends_on"]
+    assert agent["networks"] == ["agent_internal", "provider_egress"]
+    for key in (
+        "command",
+        "user",
+        "cap_drop",
+        "security_opt",
+        "read_only",
+        "tmpfs",
+        "mem_limit",
+        "cpus",
+        "pids_limit",
+        "ulimits",
+        "healthcheck",
+    ):
+        assert agent[key] == base_agent[key]
+    assert agent["volumes"][0] == "termflow-opencode-data:/data"
+    assert agent["volumes"][1] == base_agent["volumes"][1]
+    base_agent_env = base_agent["environment"]
+    overlay_agent_env = overlay_services["opencode-agent"]["environment"]
+    assert set(agent["environment"]) == set(base_agent_env) | set(overlay_agent_env)
+    for key, value in {**base_agent_env, **overlay_agent_env}.items():
+        assert agent["environment"][key] == value
+
+    init = services["opencode-init"]
+    assert init["volumes"] == ["termflow-opencode-data:/data"]
+    assert {key: value for key, value in init.items() if key != "volumes"} == {
+        key: value
+        for key, value in base_services["opencode-init"].items()
+        if key != "volumes"
+    }
+    assert services["provider-egress-proxy"] == overlay_services["provider-egress-proxy"]
+
+    assert {spec["name"] for spec in release["volumes"].values()} == {
+        "termflow-data",
+        "termflow-totp-key",
+        "termflow-opencode-data",
+    }
+    networks = release["networks"]
+    assert networks["default"]["internal"] is False
+    assert networks["agent_internal"]["internal"] is True
+    assert networks["provider_egress"]["internal"] is True
+    assert networks["provider_uplink"]["internal"] is False
+
+    readme = Path("README.md").read_text()
+    assert "compose.release.yaml" in readme
+    assert "TERMFLOW_IMAGE_TAG" in readme
+    assert "compose.release.yaml" in Path("docs/operations.md").read_text()
+
+
 def test_delivery_scripts_verify_artifact_contents_and_local_state() -> None:
     verify = Path("scripts/verify.sh").read_text()
     for required in ("pytest -q", "ruff check .", "mypy", "docker compose"):
