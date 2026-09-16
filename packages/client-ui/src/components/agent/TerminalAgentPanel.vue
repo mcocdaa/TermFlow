@@ -113,14 +113,8 @@
       </section>
       <section v-else-if="disclosureRecoveryRequired" data-agent-panel-state="unavailable" data-agent-disclosure-recovery>
         <h3>请重新确认数据发送说明</h3>
+        <AgentDisclosureCard v-if="setup?.disclosure" :disclosure="setup.disclosure" />
         <template v-if="setup?.disclosure">
-          <p>{{ setup.disclosure.provider_id }} · {{ setup.disclosure.model_id }}</p>
-          <p>{{ setup.disclosure.endpoint_origin }} · {{ setup.disclosure.region }}</p>
-          <p>{{ setup.disclosure.retention_terms }} · 保留政策版本 {{ setup.disclosure.retention_version }}</p>
-          <p>{{ setup.disclosure.no_training ? '提供方声明不用于训练' : '提供方未声明不用于训练' }}</p>
-          <p>披露政策版本 {{ setup.disclosure.policy_version }}</p>
-          <p>凭据来源 {{ setup.disclosure.credential_source ?? '未配置' }}</p>
-          <p>披露摘要 <code>{{ setup.disclosure.disclosure_fingerprint }}</code></p>
           <label><input v-model="disclosureAccepted" type="checkbox" name="acceptCurrentDisclosure" :disabled="mutating" />我同意将所选窗格的终端上下文和对话发送给上述提供方。</label>
           <button type="button" class="primary-button" data-action="accept-current-disclosure" :disabled="mutating || !disclosureAccepted" @click="acceptCurrentDisclosure">确认并重新连接</button>
         </template>
@@ -221,6 +215,7 @@ import { useFloatingPanel, type FloatingPanelResizeEdge } from '../../composable
 import { useTermAgent } from '../../composables/useTermAgent'
 import { useClientRuntime } from '../../runtime'
 import AgentChatSession from './AgentChatSession.vue'
+import AgentDisclosureCard from './AgentDisclosureCard.vue'
 import AgentSetupForm from './AgentSetupForm.vue'
 
 const props = withDefaults(defineProps<{ termId: string; conversationId: string | null; open?: boolean; mobilePage?: boolean }>(), { open: true, mobilePage: false })
