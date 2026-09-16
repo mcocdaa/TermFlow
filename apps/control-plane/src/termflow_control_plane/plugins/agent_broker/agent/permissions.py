@@ -132,7 +132,7 @@ class ApprovalAlreadyConsumed(ApprovalError):
 
 
 class ApprovalToolCallConflict(ApprovalError):
-    """A tool call can only ever produce one approval per conversation."""
+    """One request key can only ever produce one approval per conversation."""
 
     def __init__(self, conversation_id: UUID, tool_call_id: str) -> None:
         self.conversation_id = conversation_id
@@ -273,8 +273,10 @@ class ApprovalPolicy:
             )
         except IntegrityError as exc:
             # The unique (conversation_id, tool_call_id) constraint means one
-            # tool call can only ever request one approval; a duplicate is a
-            # replayed tool call.  FK violations are the caller's contract
+            # model-supplied request_key can only ever request one approval;
+            # the caller resolves the duplicate through the idempotent replay
+            # path (same reviewed write -> original outcome, different write
+            # -> conflict).  FK violations are the caller's contract
             # violation (B always creates approvals for entities it owns).
             raise ApprovalToolCallConflict(conversation_id, tool_call_id) from exc
         await self._record_event(

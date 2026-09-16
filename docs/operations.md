@@ -76,9 +76,9 @@ curl 版本；离线或审计场景建议下载该 tag 的源码包，只使用�
 - `compose.release.yaml` 的服务形状与 `compose.yaml` + `compose.agent-live.yaml` 完全
   一致（B + Web C、固定 OpenCode 运行时、allowlist provider egress proxy），差异只有
   control-plane 引用发布镜像而不是本地 build，项目名为 `termflow`。
-- `TERMFLOW_IMAGE_TAG` 必填：固定版本写 Release 的精确 tag（推荐，可复现）；写
+- `TERMFLOW_RELEASE_IMAGE_TAG` 必填：固定版本写 Release 的精确 tag（推荐，可复现）；写
   `latest` 表示跟随最新稳定版，但 `latest` 只随稳定 tag 移动，无法复现历史证据。
-- `TERMFLOW_IMAGE_REPOSITORY` 可选：仓库 fork 时覆盖默认的
+- `TERMFLOW_RELEASE_IMAGE_REPOSITORY` 可选：仓库 fork 时覆盖默认的
   `ghcr.io/mcocdaa/termflow-control-plane`。
 - 该项目固定使用 `termflow-data`、`termflow-totp-key`、`termflow-opencode-data` 卷，
   默认发布 `127.0.0.1:8765`。升级/回退只改 tag 后 `pull` + `up -d`；不要

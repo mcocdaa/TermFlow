@@ -120,8 +120,11 @@ SERVED_TOOLS: tuple[TermFlowToolName, ...] = (
 #: exactly (spec §6).
 DEFERRED_WRITE_TOOLS: frozenset[str] = frozenset()
 
-#: The write tools: their handlers receive the MCP request id as
-#: ``tool_call_id`` (the replay gate of the approval flow, spec §6).
+#: The write tools: their handlers receive the model-supplied
+#: ``request_key`` as ``tool_call_id`` (the durable replay gate of the
+#: approval flow, spec §6).  JSON-RPC request ids are deliberately not used:
+#: clients recycle them across connections, which would reject legitimate
+#: new writes as replays.
 _WRITE_TOOLS: frozenset[str] = frozenset(
     {
         TermFlowToolName.PANE_SEND_TEXT.value,
@@ -213,8 +216,9 @@ def _termflow_tool_error(exc: TermFlowToolError) -> MCPError:
     """Map a handler failure to a structured MCP error (plan §10).
 
     The stable ``TermFlowErrorCode`` travels in ``data.termflow_error_code``;
-    the JSON-RPC code is transport-level only.  Not-found and malformed-request
-    failures map to ``invalid_params``; everything else to ``internal_error``.
+    the JSON-RPC code is transport-level only.  Not-found, malformed-request,
+    and request-key-conflict failures map to ``invalid_params``; everything
+    else to ``internal_error``.
     Handler-supplied ``data`` (e.g. an ``approval_id``) is merged in.
     """
     if exc.error_code in {
@@ -222,6 +226,7 @@ def _termflow_tool_error(exc: TermFlowToolError) -> MCPError:
         TermFlowErrorCode.WATCH_NOT_FOUND,
         TermFlowErrorCode.INCARNATION_CHANGED,
         TermFlowErrorCode.INVALID_REQUEST,
+        TermFlowErrorCode.APPROVAL_CONFLICT,
     }:
         code = INVALID_PARAMS
     else:
@@ -449,7 +454,6 @@ async def _run_guarded(
     ports: _ToolPorts,
     quota: PerBindingQuota,
     config: McpGuardrailConfig,
-    ctx: Context | None = None,
 ) -> BaseModel:
     """Execute one handler under the binding quota, timeout, and byte bounds."""
     if params is None and param_model is not None:
@@ -462,28 +466,29 @@ async def _run_guarded(
             async with asyncio.timeout(config.tool_timeout_seconds):
                 kwargs = ports.kwargs_for(name)
                 if name in _WRITE_TOOLS:
-                    # The write tools pin replay protection on the MCP
-                    # request id; a call without one cannot be approved
-                    # (spec §6: no ctx/request_id -> invalid_request).
-                    request_id = ctx.request_id if ctx is not None else None
-                    if request_id is None:
+                    # The replay gate is pinned on the model-supplied
+                    # ``request_key``: JSON-RPC request ids are only unique
+                    # among outstanding requests and clients recycle them
+                    # (each new connection restarts numbering), so they can
+                    # never be a durable per-conversation idempotency key.
+                    request_key = getattr(params, "request_key", None)
+                    if not isinstance(request_key, str) or not request_key:
                         raise MCPError(
                             code=INVALID_REQUEST,
-                            message=f"tool {name.value} requires a request id",
+                            message=f"tool {name.value} requires a request_key",
                             data={
                                 "termflow_error_code": TermFlowErrorCode.INVALID_REQUEST.value
                             },
                         )
-                    tool_call_id = str(request_id)
-                    if not 1 <= len(tool_call_id) <= 128:
+                    if len(request_key) > 128:
                         raise MCPError(
                             code=INVALID_REQUEST,
-                            message="tool call id must be 1-128 characters",
+                            message="request_key must be 1-128 characters",
                             data={
                                 "termflow_error_code": TermFlowErrorCode.INVALID_REQUEST.value
                             },
                         )
-                    kwargs["tool_call_id"] = tool_call_id
+                    kwargs["tool_call_id"] = request_key
                 if params is None:
                     result = await handler(principal, **kwargs)
                 else:
@@ -541,7 +546,6 @@ def _guarded_tool(
                 ports=ports,
                 quota=quota,
                 config=config,
-                ctx=ctx,
             )
 
         # ``from __future__ import annotations`` stores annotations as strings;
@@ -569,7 +573,6 @@ def _guarded_tool(
                 ports=ports,
                 quota=quota,
                 config=config,
-                ctx=ctx,
             )
 
         call.__annotations__ = {

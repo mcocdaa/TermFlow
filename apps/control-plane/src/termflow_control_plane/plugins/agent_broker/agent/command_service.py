@@ -23,6 +23,15 @@ recomputation uses the approval row's stored ``expires_at`` (frozen at
 creation) as the hash ``expiry`` - a fresh ``now + ttl`` would never match
 the stored hash for an approval decided late in its TTL window.
 
+Replay protection (spec §6) is pinned on the model-supplied ``request_key``
+carried as ``tool_call_id``: it is the durable identity of one write intent
+inside its conversation.  A retry with identical arguments observes the
+original state (receipt, pending wait, or decision failure) instead of a
+second approval, while a different write under the same key is rejected as
+:class:`~termflow_control_plane.plugins.agent_broker.agent.permissions.ApprovalToolCallConflict`.
+JSON-RPC request ids are deliberately not used: clients recycle them across
+connections, which used to reject legitimate new writes as replays.
+
 Settling (spec §4): ``ok`` -> ``consume``; known failure -> ``consume``;
 uncertain outcome (``OutcomeUnknownError``) -> ``mark_unknown``.  A settle
 CAS that loses to a concurrent revoke changes nothing but the factual
@@ -92,6 +101,16 @@ _FINAL_WAIT_STATES = frozenset(
         ApprovalState.UNKNOWN,
     }
 )
+
+
+def _stable_error_code(value: str | None) -> TermFlowErrorCode | None:
+    """Parse an audit-recorded error code back into the stable enum."""
+    if value is None:
+        return None
+    try:
+        return TermFlowErrorCode(value)
+    except ValueError:
+        return None
 
 
 class OutcomeUnknownError(TermFlowToolError):
@@ -302,6 +321,18 @@ class CommandService:
 
         observed = self._clock()
         expiry = observed + timedelta(seconds=self._ttl)
+        # Idempotent replay gate (spec §6): ``tool_call_id`` carries the
+        # model-supplied ``request_key``, the durable identity of one write
+        # intent inside its conversation.  Retrying the same reviewed write
+        # must observe the original state (receipt, pending wait, or decision
+        # failure) instead of creating a second approval or a false "replay"
+        # rejection; only a *different* write under the same key is a
+        # conflict.
+        existing = await self._repositories.approvals.get_by_tool_call(
+            params.conversation_id, tool_call_id
+        )
+        if existing is not None:
+            return await self._replay_existing(existing, principal, params, operation)
         # Two-mode write approval policy: the per-conversation switch (0014)
         # wins; the binding value is the default copied at creation and the
         # fallback for rows that predate the column.  ``auto`` pre-approves
@@ -328,9 +359,22 @@ class CommandService:
                     "wait for the human decision instead of resubmitting",
                     data={"approval_id": str(pending.id)},
                 )
-        approval = await self._create_approval(
-            principal, params, tool_call_id=tool_call_id, operation=operation, expiry=expiry
-        )
+        try:
+            approval = await self._create_approval(
+                principal, params, tool_call_id=tool_call_id, operation=operation, expiry=expiry
+            )
+        except ApprovalToolCallConflict:
+            # A concurrent identical retry won the unique constraint; replay
+            # against the row it created.
+            existing = await self._repositories.approvals.get_by_tool_call(
+                params.conversation_id, tool_call_id
+            )
+            if existing is None:
+                raise TermFlowToolError(
+                    TermFlowErrorCode.INTERNAL_ERROR,
+                    "the approval row for the conflicting request_key disappeared",
+                ) from None
+            return await self._replay_existing(existing, principal, params, operation)
         if auto_approve:
             await self.policy.decide(
                 approval.id,
@@ -453,34 +497,111 @@ class CommandService:
         expiry: datetime,
     ) -> ApprovalRequest:
         context = await self._write_context(principal, params, operation, expiry=expiry)
-        try:
-            return await self.policy.create_approval(
-                binding_id=principal.binding_id,
-                conversation_id=params.conversation_id,
-                tool_call_id=tool_call_id,
-                canonical_hash=context.canonical_hash,
-                auth_epoch=await persisted_authentication_epoch(self._repositories),
-                expires_at=expiry,
-                run_id=await self._current_run_id(params.conversation_id),
-                pane_id=params.pane_id,
-                operation=operation,
-                intent_summary=params.intent,
-                input_bytes=context.input_bytes,
+        # A duplicate request_key raises ApprovalToolCallConflict; the caller
+        # resolves it through the idempotent replay path.
+        return await self.policy.create_approval(
+            binding_id=principal.binding_id,
+            conversation_id=params.conversation_id,
+            tool_call_id=tool_call_id,
+            canonical_hash=context.canonical_hash,
+            auth_epoch=await persisted_authentication_epoch(self._repositories),
+            expires_at=expiry,
+            run_id=await self._current_run_id(params.conversation_id),
+            pane_id=params.pane_id,
+            operation=operation,
+            intent_summary=params.intent,
+            input_bytes=context.input_bytes,
+        )
+
+    async def _recorded_outcome(
+        self, approval_id: UUID
+    ) -> tuple[str | None, str | None]:
+        """The audit-recorded ``(outcome, error_code)`` of a settled approval.
+
+        Replays of a settled write report the original result, so the receipt
+        stays idempotent.  ``(None, None)`` means no audit row exists (audit
+        recording is best-effort); the caller must then fail closed and never
+        re-execute.
+        """
+        events = await self._repositories.approval_audit.list_for_approval(approval_id)
+        for event in reversed(events):
+            if event.event_type in ("consumed", "unknown"):
+                return event.outcome, event.error_code
+        return None, None
+
+    async def _replay_existing(
+        self,
+        existing: ApprovalRequest,
+        principal: AgentTokenPrincipal,
+        params: PaneSendTextParams | PaneSendKeysParams,
+        operation: str,
+    ) -> PaneSendTextResult | PaneSendKeysResult:
+        """Resolve a retry that reuses one conversation's request_key.
+
+        The reviewed scope is recomputed exactly like the preflight recheck
+        (the approval's frozen ``expires_at`` and ``auth_epoch``), so a retry
+        with identical arguments observes the original state while a retry
+        with changed arguments is a hard conflict.  A settled write returns
+        its recorded receipt or error and is never re-executed.
+        """
+        stored_expiry = self._aware(existing.expires_at)
+        if stored_expiry is None:
+            raise TermFlowToolError(
+                TermFlowErrorCode.INTERNAL_ERROR,
+                f"approval {existing.id} has no usable expiry",
             )
-        except ApprovalToolCallConflict as exc:
-            existing = await self._repositories.approvals.get_by_tool_call(
-                params.conversation_id, tool_call_id
-            )
-            state = existing.state if existing is not None else "unknown"
+        context = await self._write_context(
+            principal,
+            params,
+            operation,
+            expiry=stored_expiry,
+            policy_epoch=existing.auth_epoch,
+        )
+        key = existing.tool_call_id
+        if context.canonical_hash != existing.canonical_hash:
             raise TermFlowToolError(
                 TermFlowErrorCode.APPROVAL_CONFLICT,
-                f"tool call {tool_call_id!r} already produced an approval "
-                f"(state={state}); replay is rejected",
-                data={
-                    "approval_id": str(existing.id) if existing is not None else None,
-                    "state": state,
-                },
-            ) from exc
+                f"request_key {key!r} was already used for a different write in "
+                "this conversation; use a new request_key for a new write",
+                data={"approval_id": str(existing.id), "state": existing.state},
+            )
+        state = ApprovalState(existing.state)
+        if state is ApprovalState.CONSUMED:
+            outcome, error_code = await self._recorded_outcome(existing.id)
+            if outcome == "confirmed":
+                return self._result(params, operation, existing.id)
+            if outcome is None or outcome == "outcome_unknown":
+                raise TermFlowToolError(
+                    TermFlowErrorCode.OUTCOME_UNKNOWN,
+                    f"request_key {key!r} was already executed but its outcome "
+                    "could not be proven; it is not replayed",
+                    data={"approval_id": str(existing.id)},
+                )
+            code = _stable_error_code(error_code) or TermFlowErrorCode.INTERNAL_ERROR
+            raise TermFlowToolError(
+                code,
+                f"request_key {key!r} was already executed and failed "
+                f"({error_code or 'unknown error'}); it is not replayed",
+                data={"approval_id": str(existing.id), "error_code": error_code},
+            )
+        if state is ApprovalState.UNKNOWN:
+            raise TermFlowToolError(
+                TermFlowErrorCode.OUTCOME_UNKNOWN,
+                f"request_key {key!r} may have been sent but its outcome is "
+                "unknown; it is not replayed",
+                data={"approval_id": str(existing.id)},
+            )
+        if state in (ApprovalState.PENDING, ApprovalState.APPROVED):
+            # The first call still owns execution (its synchronous wait or the
+            # late-completion task); a second waiter could double-send a
+            # concurrently approved write, so replays only observe.
+            raise TermFlowToolError(
+                TermFlowErrorCode.APPROVAL_REQUIRED,
+                f"approval {existing.id} is already {state.value} for this "
+                "request_key; wait for its result instead of resubmitting",
+                data={"approval_id": str(existing.id)},
+            )
+        raise self._decision_failure(existing.id, state)
 
     async def _wait_for_decision(
         self, approval_id: UUID, deadline: datetime

@@ -181,8 +181,8 @@ def test_release_compose_uses_published_images_without_building() -> None:
 
     control_plane = services["control-plane"]
     assert control_plane["image"] == (
-        "${TERMFLOW_IMAGE_REPOSITORY:-ghcr.io/mcocdaa/termflow-control-plane}"
-        ":${TERMFLOW_IMAGE_TAG:?set TERMFLOW_IMAGE_TAG in .env}"
+        "${TERMFLOW_RELEASE_IMAGE_REPOSITORY:-ghcr.io/mcocdaa/termflow-control-plane}"
+        ":${TERMFLOW_RELEASE_IMAGE_TAG:?set TERMFLOW_RELEASE_IMAGE_TAG in .env}"
     )
     for key in (
         "read_only",
@@ -259,7 +259,7 @@ def test_release_compose_uses_published_images_without_building() -> None:
 
     readme = Path("README.md").read_text()
     assert "compose.release.yaml" in readme
-    assert "TERMFLOW_IMAGE_TAG" in readme
+    assert "TERMFLOW_RELEASE_IMAGE_TAG" in readme
     assert "compose.release.yaml" in Path("docs/operations.md").read_text()
 
 

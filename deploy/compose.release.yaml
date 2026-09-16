@@ -7,7 +7,7 @@
 #
 # 完整步骤见 docs/operations.md「发布镜像 Compose 部署」：
 #
-#   cp .env.example .env   # 固定版本：TERMFLOW_IMAGE_TAG=vX.Y.Z；跟随最新稳定版：latest
+#   cp .env.example .env   # 固定版本：TERMFLOW_RELEASE_IMAGE_TAG=vX.Y.Z；跟随最新稳定版：latest
 #   docker compose --env-file .env -f compose.release.yaml up -d
 #
 # 该文件与 deploy/opencode-config.yaml、deploy/provider-egress/squid.conf 一起使用；
@@ -16,7 +16,7 @@ name: termflow
 
 services:
   control-plane:
-    image: ${TERMFLOW_IMAGE_REPOSITORY:-ghcr.io/mcocdaa/termflow-control-plane}:${TERMFLOW_IMAGE_TAG:?set TERMFLOW_IMAGE_TAG in .env}
+    image: ${TERMFLOW_RELEASE_IMAGE_REPOSITORY:-ghcr.io/mcocdaa/termflow-control-plane}:${TERMFLOW_RELEASE_IMAGE_TAG:?set TERMFLOW_RELEASE_IMAGE_TAG in .env}
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777

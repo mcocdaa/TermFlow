@@ -206,7 +206,13 @@ async def handle_pane_send_text(
     repositories: RepositoryBundle,
     tool_call_id: str,
 ) -> PaneSendTextResult:
-    """Send literal text to a pane through the approval flow (spec §1)."""
+    """Send literal text to a pane through the human approval flow (spec §1).
+
+    ``request_key`` identifies this exact write inside the conversation: reuse
+    it only to retry the same write (the retry observes the original receipt,
+    pending state, or rejection instead of executing twice); every new write
+    needs a new key.
+    """
     _require_write_scope(principal)
     await _require_writable_pane(repositories, principal, params.pane_id)
     await _require_owned_conversation(repositories, principal, params.conversation_id)
@@ -221,7 +227,13 @@ async def handle_pane_send_keys(
     repositories: RepositoryBundle,
     tool_call_id: str,
 ) -> PaneSendKeysResult:
-    """Send a named-key sequence to a pane through the approval flow (spec §1)."""
+    """Send a named-key sequence to a pane through the human approval flow (spec §1).
+
+    ``request_key`` identifies this exact write inside the conversation: reuse
+    it only to retry the same write (the retry observes the original receipt,
+    pending state, or rejection instead of executing twice); every new write
+    needs a new key.
+    """
     _require_write_scope(principal)
     await _require_writable_pane(repositories, principal, params.pane_id)
     await _require_owned_conversation(repositories, principal, params.conversation_id)

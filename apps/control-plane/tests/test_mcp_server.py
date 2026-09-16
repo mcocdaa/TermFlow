@@ -3,7 +3,7 @@
 Keeps the most end-to-end paths:
 
 - the write tools round-trip through the approval-gated command port with a
-  tool_call_id derived from the MCP request id;
+  tool_call_id carrying the model-supplied request_key (the replay gate);
 - a full initialize + tools/call round trip with a real seeded AgentToken
   through the app-level mount (M4.5 regression).
 """
@@ -437,15 +437,16 @@ async def test_write_tools_round_trip_over_in_memory_transport(repositories) -> 
             assert keys.is_error is False
             assert keys.structured_content["outcome"] == "confirmed"
 
-    # The command port received the principal and a non-empty tool_call_id
-    # derived from the MCP request id (spec §6).
+    # The command port received the principal and the model-supplied
+    # request_key as the approval replay gate (spec §6).
     assert len(commands.text_calls) == 1
     text_call = commands.text_calls[0]
     assert text_call[0] == _principal(binding)
     assert text_call[1].text == "make test"
-    assert text_call[2]
+    assert text_call[2] == "req-1"
     assert len(commands.keys_calls) == 1
     assert commands.keys_calls[0][1].keys == ("ctrl-c",)
+    assert commands.keys_calls[0][2] == "req-2"
 
 
 def test_mcp_mount_full_round_trip_with_valid_agent_token(tmp_path) -> None:

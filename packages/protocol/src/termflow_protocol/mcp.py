@@ -128,7 +128,16 @@ class PaneReadParams(ToolModel):
 class PaneSendTextParams(ToolModel):
     pane_id: PaneId
     instance_id: UUID | None = None
-    request_key: str = Field(min_length=1, max_length=256)
+    request_key: str = Field(
+        min_length=1,
+        max_length=128,
+        description=(
+            "Stable idempotency key for this exact write inside the conversation. "
+            "Reuse it only to retry the same write: the retry observes the original "
+            "receipt, pending state, or rejection instead of executing twice. A new "
+            "write must use a new key."
+        ),
+    )
     conversation_id: UUID
     intent: str | None = Field(default=None, min_length=1, max_length=1024)
     text: str
@@ -143,7 +152,16 @@ class PaneSendTextParams(ToolModel):
 class PaneSendKeysParams(ToolModel):
     pane_id: PaneId
     instance_id: UUID | None = None
-    request_key: str = Field(min_length=1, max_length=256)
+    request_key: str = Field(
+        min_length=1,
+        max_length=128,
+        description=(
+            "Stable idempotency key for this exact write inside the conversation. "
+            "Reuse it only to retry the same write: the retry observes the original "
+            "receipt, pending state, or rejection instead of executing twice. A new "
+            "write must use a new key."
+        ),
+    )
     conversation_id: UUID
     intent: str | None = Field(default=None, min_length=1, max_length=1024)
     keys: tuple[str, ...] = Field(min_length=1, max_length=MAX_KEY_SEQUENCE_LENGTH)
@@ -247,7 +265,7 @@ class PaneReadResult(ToolModel):
 
 
 class PaneWriteResult(ToolModel):
-    request_key: str = Field(min_length=1, max_length=256)
+    request_key: str = Field(min_length=1, max_length=128)
     ok: bool
     outcome: Literal["confirmed", "outcome_unknown", "failed"]
     error_code: TermFlowErrorCode | None = None

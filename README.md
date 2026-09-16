@@ -33,7 +33,7 @@ chmod 0600 .env
 ```
 
 按 `.env` 注释生成 `TERMFLOW_ADMIN_TOKEN`、`OPENCODE_SERVER_*`、
-`OPENCODE_AGENT_MCP_TOKEN`、`DEEPSEEK_API_KEY`，把 `TERMFLOW_IMAGE_TAG` 设为上面的
+`OPENCODE_AGENT_MCP_TOKEN`、`DEEPSEEK_API_KEY`，把 `TERMFLOW_RELEASE_IMAGE_TAG` 设为上面的
 `TAG`，并按可核验证据填写 DeepSeek disclosure 字段（没有证据时 B 会 fail closed）。
 然后启动并检查：
 
@@ -45,7 +45,7 @@ curl -fsS "http://127.0.0.1:${TERMFLOW_HOST_PORT:-8765}/healthz"
 首次启动需要十几秒，`healthz` 立即失败时稍等重试。B 的 Web/API 默认发布到
 `127.0.0.1:${TERMFLOW_HOST_PORT:-8765}`，数据保存在 `termflow-data`、
 `termflow-totp-key`、`termflow-opencode-data` 三个命名卷。升级或回退只改
-`TERMFLOW_IMAGE_TAG`，再 `docker compose --env-file .env -f compose.release.yaml pull`
+`TERMFLOW_RELEASE_IMAGE_TAG`，再 `docker compose --env-file .env -f compose.release.yaml pull`
 和 `up -d`；不要删除数据卷，也不要用 `latest` 做需要复现的部署（它只随稳定 tag 移动）。
 公网部署时，把 HTTPS/WSS 反向代理指向该端口，并把 `TERMFLOW_PUBLIC_BASE_URL` 设置为
 用户实际访问的 HTTPS origin，`TERMFLOW_ALLOW_INSECURE_LOOPBACK` 保持 false。

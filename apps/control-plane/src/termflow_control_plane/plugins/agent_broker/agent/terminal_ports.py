@@ -143,8 +143,8 @@ class TerminalCommandPort(Protocol):
     synchronously for a human decision, then executes through the
     CommandRouter only after the pre-execution rechecks pass.  ``principal``
     is the authenticated binding (the instance id always comes from it),
-    ``tool_call_id`` is the MCP request id that pins replay protection, and
-    the receipt carries the consuming approval id.
+    ``tool_call_id`` carries the model-supplied ``request_key`` that pins
+    replay protection, and the receipt carries the consuming approval id.
     """
 
     async def send_text(
