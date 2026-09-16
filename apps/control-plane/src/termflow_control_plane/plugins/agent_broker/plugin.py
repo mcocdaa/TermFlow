@@ -251,12 +251,36 @@ async def run_cleanup_retry(
     retried = 0
     completed = 0
     for job in jobs:
+        if not await repositories.cleanup_jobs.has_actionable_receipts(job.id):
+            # Every pending receipt needs deployment evidence through the
+            # cleanup-helper API (provider retention, database backup,
+            # runtime/container artifacts).  The job is waiting on the
+            # operator, not on B work, so leave its recorded reason intact
+            # instead of logging a fake "no cleanup handler" failure and
+            # retrying the target handler every tick.
+            continue
         handler = handlers.get(job.target_kind)
-        try:
-            if handler is None:
-                raise RuntimeError(
+        if handler is None:
+            # The pre-startup recovery runs before the plugin registers its
+            # handlers.  Record the retry marker its first sweep looks for,
+            # but this hand-off is designed, not a failure: log without a
+            # traceback.
+            logger.info(
+                "Agent cleanup job %s (%s %s) awaits handler registration",
+                job.id,
+                job.target_kind,
+                job.target_ref,
+            )
+            await repositories.cleanup_jobs.record_attempt(
+                job.id,
+                next_attempt_at=observed + _AGENT_CLEANUP_RETRY_BACKOFF,
+                last_error=(
                     f"no cleanup handler registered for target_kind={job.target_kind!r}"
-                )
+                ),
+            )
+            retried += 1
+            continue
+        try:
             await handler(job)
         except Exception as exc:
             logger.exception(

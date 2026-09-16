@@ -5251,6 +5251,50 @@ class WatchDeliveryRepository:
             return delivery
 
 
+#: Receipts whose durable deletion B proves by itself (its own rows, runtime
+#: attestations and backend sessions).  The target-level cleanup handlers
+#: confirm exactly these; everything else needs external evidence.
+_INTERNAL_CLEANUP_RECEIPT_KINDS = frozenset(
+    {
+        "conversation",
+        "binding",
+        "profile",
+        "term",
+        "installation",
+        "b_row",
+        "watch",
+        "approval",
+        "agent_token",
+        "pane_policy",
+        "agent_event",
+        "agent_message",
+        "agent_inbox",
+        "agent_run",
+        "agent_tool_request",
+        "backend_session",
+    }
+)
+
+#: Receipts only the deployment can confirm through the cleanup-helper API
+#: (provider retention, database backup, runtime/container artifacts).  A job
+#: whose only pending receipts are these is waiting on deployment evidence,
+#: not on B work, so retries must not touch, borrow or clobber their state.
+_HELPER_CLEANUP_RECEIPT_KINDS = frozenset(
+    {
+        "container",
+        "volume",
+        "log",
+        "provider",
+        "runtime",
+        "runtime_attestation",
+        "runtime_volume",
+        "container_log",
+        "provider_retention",
+        "sqlite_wal_backup",
+    }
+)
+
+
 class CleanupJobRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
@@ -5443,6 +5487,28 @@ class CleanupJobRepository:
                 .order_by(AgentCleanupReceipt.created_at, AgentCleanupReceipt.id)
             )
             return list(rows)
+
+    async def has_actionable_receipts(self, job_id: UUID) -> bool:
+        """Whether the job still has pending work only B can complete.
+
+        ``False`` means every pending receipt needs the cleanup-helper API
+        (provider retention, database backup, runtime/container artifacts), so
+        the target-level retry handlers have nothing to do and must leave the
+        job's recorded external state untouched.
+        """
+        async with self._sessions() as session:
+            found = await session.scalar(
+                select(AgentCleanupReceipt.id)
+                .where(
+                    AgentCleanupReceipt.cleanup_job_id == job_id,
+                    AgentCleanupReceipt.state == "pending",
+                    AgentCleanupReceipt.artifact_kind.in_(
+                        _INTERNAL_CLEANUP_RECEIPT_KINDS
+                    ),
+                )
+                .limit(1)
+            )
+            return found is not None
 
     async def _refresh_job_state(
         self,
@@ -5637,24 +5703,7 @@ class CleanupJobRepository:
                         AgentCleanupReceipt.cleanup_job_id == job_id,
                         AgentCleanupReceipt.state == "pending",
                         AgentCleanupReceipt.artifact_kind.in_(
-                            [
-                                "conversation",
-                                "binding",
-                                "profile",
-                                "term",
-                                "installation",
-                                "b_row",
-                                "watch",
-                                "approval",
-                                "agent_token",
-                                "pane_policy",
-                                "agent_event",
-                                "agent_message",
-                                "agent_inbox",
-                                "agent_run",
-                                "agent_tool_request",
-                                "backend_session",
-                            ]
+                            _INTERNAL_CLEANUP_RECEIPT_KINDS
                         ),
                     )
                 )
@@ -5692,18 +5741,7 @@ class CleanupJobRepository:
                     AgentCleanupReceipt.cleanup_job_id == job_id,
                     AgentCleanupReceipt.artifact_ref == artifact_ref,
                     AgentCleanupReceipt.artifact_kind.in_(
-                        [
-                            "container",
-                            "volume",
-                            "log",
-                            "provider",
-                            "runtime",
-                            "runtime_attestation",
-                            "runtime_volume",
-                            "container_log",
-                            "provider_retention",
-                            "sqlite_wal_backup",
-                        ]
+                        _HELPER_CLEANUP_RECEIPT_KINDS
                     ),
                     AgentCleanupReceipt.state == "pending",
                     AgentCleanupReceipt.confirmation_key.is_(None),
@@ -5818,6 +5856,13 @@ class CleanupJobRepository:
                     .where(
                         AgentCleanupReceipt.cleanup_job_id == job_id,
                         AgentCleanupReceipt.state == "pending",
+                        # Helper-confirmed receipts keep their own evidence
+                        # state: a target-level retry failure must never
+                        # overwrite "awaiting deployment confirmation" with a
+                        # B-side error.
+                        AgentCleanupReceipt.artifact_kind.in_(
+                            _INTERNAL_CLEANUP_RECEIPT_KINDS
+                        ),
                     )
                     .values(
                         attempt_count=AgentCleanupReceipt.attempt_count + 1,

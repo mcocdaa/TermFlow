@@ -13,7 +13,10 @@ from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from termflow_control_plane.persistence.models import AgentCleanupJob
-from termflow_control_plane.persistence.repositories import RepositoryBundle
+from termflow_control_plane.persistence.repositories import (
+    CleanupJobRepository,
+    RepositoryBundle,
+)
 from termflow_control_plane.plugins.agent_broker.agent.inbox import (
     InboxDeliveryStateMachine,
     InboxEnvelope,
@@ -222,6 +225,173 @@ def test_run_agent_recovery_cleanup_failure_still_records_attempt_and_continues(
         assert failed_row.last_error == "backend unreachable"
         succeeded_row = await _job_state(client, succeeding.id)
         assert succeeded_row is not None and succeeded_row.state == "completed"
+
+    client.portal.call(scenario)
+
+
+async def test_recovery_skips_jobs_awaiting_helper_confirmation(
+    client: TestClient,
+) -> None:
+    """A job whose only pending receipt needs the cleanup-helper API is not a
+    retry failure: recovery must not stamp a fake "no cleanup handler" error
+    or a backoff onto the job or the external receipt."""
+
+    async def scenario() -> None:
+        repositories: RepositoryBundle = client.app.state.repositories
+        now = datetime.now(UTC)
+        job, owner = await repositories.cleanup_jobs.create_manifest(
+            target_kind="conversation",
+            target_ref=str(uuid4()),
+            receipts=[
+                CleanupJobRepository._receipt_values(
+                    artifact_kind="provider_retention",
+                    artifact_ref="provider:session-external",
+                )
+            ],
+        )
+        assert owner
+
+        report = await run_agent_recovery(repositories, now=now)
+
+        assert report.cleanup_jobs_retried == 0
+        assert report.cleanup_jobs_completed == 0
+        row = await _job_state(client, job.id)
+        assert row is not None and row.state == "pending"
+        assert row.last_error is None
+        assert row.attempt_count == 0
+        receipts = await repositories.cleanup_jobs.list_receipts(job.id)
+        assert [(r.state, r.last_error, r.next_attempt_at) for r in receipts] == [
+            ("pending", None, None)
+        ]
+
+    client.portal.call(scenario)
+
+
+async def test_cleanup_retry_never_invokes_handlers_for_helper_only_jobs(
+    client: TestClient,
+) -> None:
+    async def scenario() -> None:
+        repositories: RepositoryBundle = client.app.state.repositories
+        now = datetime.now(UTC)
+        job, owner = await repositories.cleanup_jobs.create_manifest(
+            target_kind="conversation",
+            target_ref=str(uuid4()),
+            receipts=[
+                CleanupJobRepository._receipt_values(
+                    artifact_kind="provider_retention",
+                    artifact_ref="provider:session-external",
+                )
+            ],
+        )
+        assert owner
+        calls: list[UUID] = []
+
+        async def _spy(cleanup_job: AgentCleanupJob) -> None:
+            calls.append(cleanup_job.id)
+
+        retried, completed = await run_cleanup_retry(
+            repositories, handlers={"conversation": _spy}, now=now
+        )
+
+        assert (retried, completed) == (0, 0)
+        assert calls == []
+        row = await _job_state(client, job.id)
+        assert row is not None and row.attempt_count == 0 and row.next_attempt_at is None
+
+    client.portal.call(scenario)
+
+
+async def test_record_attempt_preserves_helper_receipt_state(client: TestClient) -> None:
+    """A B-side retry failure may refresh internal receipts only; the
+    deployment-confirmed receipt keeps its own pending evidence state."""
+
+    async def scenario() -> None:
+        repositories: RepositoryBundle = client.app.state.repositories
+        now = datetime.now(UTC)
+        job, owner = await repositories.cleanup_jobs.create_manifest(
+            target_kind="conversation",
+            target_ref=str(uuid4()),
+            receipts=[
+                CleanupJobRepository._receipt_values(
+                    artifact_kind="conversation",
+                    artifact_ref="conversation:internal",
+                ),
+                CleanupJobRepository._receipt_values(
+                    artifact_kind="provider_retention",
+                    artifact_ref="provider:session-external",
+                ),
+            ],
+        )
+        assert owner
+
+        await repositories.cleanup_jobs.record_attempt(
+            job.id,
+            next_attempt_at=now + timedelta(minutes=5),
+            last_error="boom",
+        )
+
+        receipts = {
+            receipt.artifact_kind: receipt
+            for receipt in await repositories.cleanup_jobs.list_receipts(job.id)
+        }
+        assert receipts["conversation"].last_error == "boom"
+        assert receipts["conversation"].attempt_count == 1
+        assert receipts["provider_retention"].last_error is None
+        assert receipts["provider_retention"].attempt_count == 0
+        assert receipts["provider_retention"].next_attempt_at is None
+
+    client.portal.call(scenario)
+
+
+async def test_mixed_job_confirms_internal_work_then_waits_for_help(
+    client: TestClient,
+) -> None:
+    """The target handler confirms B-owned receipts and stops being retried
+    once only the helper-confirmed receipt remains."""
+
+    async def scenario() -> None:
+        repositories: RepositoryBundle = client.app.state.repositories
+        now = datetime.now(UTC)
+        job, owner = await repositories.cleanup_jobs.create_manifest(
+            target_kind="conversation",
+            target_ref=str(uuid4()),
+            receipts=[
+                CleanupJobRepository._receipt_values(
+                    artifact_kind="conversation",
+                    artifact_ref="conversation:internal",
+                ),
+                CleanupJobRepository._receipt_values(
+                    artifact_kind="provider_retention",
+                    artifact_ref="provider:session-external",
+                ),
+            ],
+        )
+        assert owner
+        calls: list[UUID] = []
+
+        async def _spy(cleanup_job: AgentCleanupJob) -> None:
+            calls.append(cleanup_job.id)
+
+        retried, completed = await run_cleanup_retry(
+            repositories, handlers={"conversation": _spy}, now=now
+        )
+        assert (retried, completed) == (1, 0)
+        assert calls == [job.id]
+        receipts = {
+            receipt.artifact_kind: receipt
+            for receipt in await repositories.cleanup_jobs.list_receipts(job.id)
+        }
+        assert receipts["conversation"].state == "confirmed"
+        assert receipts["provider_retention"].state == "pending"
+        assert receipts["provider_retention"].last_error is None
+        row = await _job_state(client, job.id)
+        assert row is not None and row.state == "pending"
+
+        retried, completed = await run_cleanup_retry(
+            repositories, handlers={"conversation": _spy}, now=now + timedelta(seconds=1)
+        )
+        assert (retried, completed) == (0, 0)
+        assert calls == [job.id]
 
     client.portal.call(scenario)
 
