@@ -450,6 +450,7 @@
   .terminal-agent-panel__title { flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; font-size: .95rem; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
   .terminal-agent-panel__statusbar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-height: 2.5rem; padding: var(--space-1) var(--space-3); border-block-end: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-elevated) 42%, var(--color-panel)); }
   .terminal-agent-panel__content { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; padding: var(--space-3); }
+  .terminal-agent-panel__scroll { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
   .terminal-agent-panel__ready { display: flex; flex-direction: column; min-height: 0; flex: 1; }
   .terminal-agent-policy { display: flex; align-items: center; gap: var(--space-2); flex: none; margin: 0; }
   .terminal-agent-policy__label { color: var(--color-text-muted); font-size: var(--text-sm); }
