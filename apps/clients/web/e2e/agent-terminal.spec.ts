@@ -570,7 +570,9 @@ test(
     await page.locator('input[name="profileDisplayName"]').fill(
       'Terminal Agent Profile',
     )
-    await page.locator('input[name="paneIds"][value="%0"]').check()
+    await expect(page.locator('input[name="paneIds"][value="%0"]')).toBeChecked()
+    await expect(page.locator('input[name="paneIds"][value="%1"]')).toBeChecked()
+    await page.locator('input[name="paneIds"][value="%1"]').uncheck()
     await expect(
       page.locator('input[name="paneIds"][value="%1"]'),
     ).not.toBeChecked()

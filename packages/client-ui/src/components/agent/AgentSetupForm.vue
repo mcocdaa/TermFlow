@@ -21,9 +21,14 @@
 
     <fieldset class="agent-setup-panes" :disabled="busy">
       <legend>允许 Agent 访问的窗格</legend>
-      <p class="agent-setup-panes__hint">窗格是终端里的一块分屏（下方 % 编号）。Agent 只能读取勾选窗格的内容；写入仍会逐一弹审批。</p>
+      <p class="agent-setup-panes__hint">窗格是终端里的一块分屏（% 编号）。Agent 只能读取勾选窗格的内容；写入仍会逐一弹审批。默认已全选。</p>
+      <div class="agent-setup-panes__actions">
+        <button type="button" :disabled="busy || !panes.length" data-action="select-all-panes" @click="selectAllPanes">全选</button>
+        <button type="button" :disabled="busy || !paneIds.length" data-action="clear-panes" @click="clearPanes">清空</button>
+        <span class="agent-setup-panes__count">已选 {{ paneIds.length }}/{{ panes.length }}</span>
+      </div>
       <label v-for="pane in panes" :key="pane.pane_id" class="agent-setup-pane">
-        <input v-model="paneIds" type="checkbox" name="paneIds" :value="pane.pane_id" />
+        <input v-model="paneIds" type="checkbox" name="paneIds" :value="pane.pane_id" @change="panesTouched = true" />
         <span class="agent-setup-pane__text">
           <code class="agent-setup-pane__id">{{ pane.pane_id }}</code>
           <span class="agent-setup-pane__title">{{ pane.current_command || pane.title || pane.window_id }}</span>
@@ -53,7 +58,20 @@ export type AgentSetupSelection = { paneIds: string[]; topologyRevision: number;
 const props = defineProps<{ setup: AgentSetupResponse; profiles: AgentSetupProfileSummary[]; panes: PaneTopology[]; busy: boolean; error: string }>()
 const emit = defineEmits<{ submit: [selection: AgentSetupSelection] }>()
 const profileId = ref(''), displayName = ref(''), paneIds = ref<string[]>([]), accepted = ref(false), localError = ref('')
+const panesTouched = ref(false)
 watch(() => props.setup.disclosure?.disclosure_fingerprint, () => { accepted.value = false })
+watch(() => props.panes.map((pane) => pane.pane_id).join(','), () => {
+  if (panesTouched.value) return
+  paneIds.value = props.panes.map((pane) => pane.pane_id)
+}, { immediate: true })
+function selectAllPanes() {
+  panesTouched.value = true
+  paneIds.value = props.panes.map((pane) => pane.pane_id)
+}
+function clearPanes() {
+  panesTouched.value = true
+  paneIds.value = []
+}
 function matchesDisclosure(profile: AgentSetupProfileSummary) {
   const disclosure = props.setup.disclosure
   return disclosure !== null && profile.provider_id === disclosure.provider_id && profile.model_id === disclosure.model_id
