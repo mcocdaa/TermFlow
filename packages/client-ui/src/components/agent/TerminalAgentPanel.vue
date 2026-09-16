@@ -103,7 +103,7 @@
       <section v-if="loading" class="terminal-agent-panel__scroll" data-agent-panel-state="loading" role="status">正在加载 Agent…</section>
       <section v-else-if="setup?.state === 'unconfigured'" class="terminal-agent-panel__scroll" data-agent-panel-state="unconfigured">
         <AgentSetupForm :setup="setup" :profiles="profiles" :panes="panes" :busy="mutating" :error="error" @submit="submitSetup" />
-        <button type="button" :disabled="mutating" @click="refresh">刷新</button>
+        <button type="button" class="text-button" :disabled="mutating" @click="refresh">刷新状态</button>
       </section>
       <section v-else-if="setup?.state === 'deployment_required'" class="terminal-agent-panel__scroll" data-agent-panel-state="deployment_required">
         <h3>需要部署 Agent 服务</h3><p>请管理员完成运行环境和提供方配置。</p><button type="button" :disabled="mutating" @click="refresh">检查部署状态</button>
@@ -112,12 +112,9 @@
         <h3>Agent 正在激活</h3><button type="button" :disabled="mutating" @click="refresh">刷新状态</button>
       </section>
       <section v-else-if="disclosureRecoveryRequired" class="terminal-agent-panel__scroll" data-agent-panel-state="unavailable" data-agent-disclosure-recovery>
-        <h3>请重新确认数据发送说明</h3>
-        <AgentDisclosureCard v-if="setup?.disclosure" :disclosure="setup.disclosure" />
-        <template v-if="setup?.disclosure">
-          <label><input v-model="disclosureAccepted" type="checkbox" name="acceptCurrentDisclosure" :disabled="mutating" />我同意将所选窗格的终端上下文和对话发送给上述提供方。</label>
-          <button type="button" class="primary-button" data-action="accept-current-disclosure" :disabled="mutating || !disclosureAccepted" @click="acceptCurrentDisclosure">确认并重新连接</button>
-        </template>
+        <h3>请重新启用 Agent</h3>
+        <p class="muted">部署的提供方配置已更新。</p>
+        <button type="button" class="primary-button" data-action="accept-current-disclosure" :disabled="mutating" @click="acceptCurrentDisclosure">重新启用</button>
         <p v-if="error" role="alert">{{ error }}</p>
         <button type="button" :disabled="mutating" @click="refresh">刷新</button>
       </section>
@@ -215,7 +212,6 @@ import { useFloatingPanel, type FloatingPanelResizeEdge } from '../../composable
 import { useTermAgent } from '../../composables/useTermAgent'
 import { useClientRuntime } from '../../runtime'
 import AgentChatSession from './AgentChatSession.vue'
-import AgentDisclosureCard from './AgentDisclosureCard.vue'
 import AgentSetupForm from './AgentSetupForm.vue'
 
 const props = withDefaults(defineProps<{ termId: string; conversationId: string | null; open?: boolean; mobilePage?: boolean }>(), { open: true, mobilePage: false })
@@ -234,7 +230,6 @@ const { style: panelStyle, sync, beginDrag, beginResize } = useFloatingPanel({
   defaultHeight: 620,
 })
 const closeButton = ref<HTMLButtonElement | null>(null)
-const disclosureAccepted = ref(false)
 const historyOpen = ref(false)
 const backendState = ref<string | null>(null)
 const pendingAutoPolicy = ref(false)
@@ -319,7 +314,6 @@ const resizeLabels: Record<FloatingPanelResizeEdge, string> = {
 }
 
 watch(() => setup.value?.state, (state) => { if (state) emit('readiness', state) }, { immediate: true })
-watch(() => setup.value?.disclosure?.disclosure_fingerprint, () => { disclosureAccepted.value = false })
 watch(selectedConversationId, (id) => { forwardPending(0); if (props.open) emit('selectConversation', id) })
 watch(() => props.open, (open, previous) => {
   if (!open) return
@@ -330,5 +324,5 @@ watch(() => props.mobilePage, (mobilePage) => {
   if (!mobilePage && props.open) void nextTick(sync)
 })
 function forwardPending(count: number) { pendingApprovalCount.value = count; emit('pendingCount', count) }
-async function acceptCurrentDisclosure() { if (disclosureAccepted.value) await acceptDisclosure() }
+async function acceptCurrentDisclosure() { await acceptDisclosure() }
 </script>

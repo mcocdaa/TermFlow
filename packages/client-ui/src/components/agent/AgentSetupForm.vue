@@ -1,27 +1,19 @@
 <template>
   <form class="agent-setup-form" @submit.prevent="submit">
     <header class="agent-setup-form__intro">
-      <h3>设置 Term Agent</h3>
-      <p class="muted">选择模型配置和 Agent 可访问的终端窗格，确认数据发送说明后启用。</p>
+      <h3>设置 Term Agent <ContextHelp label="Term Agent 说明" text="Agent 使用部署配置的模型读取你授权的窗格内容；写入命令时仍会逐一弹审批。" /></h3>
     </header>
 
-    <div class="agent-setup-field">
-      <label class="agent-setup-field__label" for="agent-setup-profile">模型配置（Agent Profile）</label>
-      <select id="agent-setup-profile" v-model="profileId" name="profileId" :disabled="busy">
-        <option value="">新建模型配置…</option>
-        <option v-for="profile in profiles" :key="profile.profile_id" :value="profile.profile_id" :disabled="!matchesDisclosure(profile)">{{ profile.display_name }}{{ matchesDisclosure(profile) ? '' : '（提供方配置不匹配）' }}</option>
-      </select>
-      <p class="agent-setup-field__hint">只决定 Agent 调用哪个模型，不改变访问权限。</p>
-    </div>
-
-    <div v-if="!profileId" class="agent-setup-field">
-      <label class="agent-setup-field__label" for="agent-setup-name">配置名称</label>
-      <input id="agent-setup-name" v-model="displayName" name="profileDisplayName" maxlength="120" placeholder="例如 DeepSeek 日常" :disabled="busy" />
-    </div>
+    <p class="agent-setup-form__model">
+      模型 <strong>{{ modelLabel }}</strong>
+      <ContextHelp label="模型配置说明" text="模型和凭据由部署配置决定，Term Agent 内不可修改。" />
+    </p>
 
     <fieldset class="agent-setup-panes" :disabled="busy">
-      <legend>允许 Agent 访问的窗格</legend>
-      <p class="agent-setup-panes__hint">窗格是终端里的一块分屏（% 编号）。Agent 只能读取勾选窗格的内容；写入仍会逐一弹审批。默认已全选。</p>
+      <legend>
+        允许 Agent 访问的窗格
+        <ContextHelp label="窗格授权说明" text="窗格是终端里的一块分屏（% 编号）。Agent 只能读取勾选窗格的内容；写入仍会逐一弹审批。默认已全选。" />
+      </legend>
       <div class="agent-setup-panes__actions">
         <button type="button" :disabled="busy || !panes.length" data-action="select-all-panes" @click="selectAllPanes">全选</button>
         <button type="button" :disabled="busy || !paneIds.length" data-action="clear-panes" @click="clearPanes">清空</button>
@@ -37,29 +29,24 @@
       <p v-if="!panes.length" class="agent-setup-panes__empty">暂无可用窗格，请连接终端后刷新。</p>
     </fieldset>
 
-    <AgentDisclosureCard v-if="setup.disclosure" :disclosure="setup.disclosure" />
-    <p v-else class="muted">提供方披露暂不可用，请管理员完成配置。</p>
-
-    <label v-if="setup.disclosure" class="agent-setup-consent">
-      <input v-model="accepted" type="checkbox" name="accepted" :disabled="busy" />
-      <span>我同意将所选窗格的终端上下文和对话发送给上述提供方。</span>
-    </label>
-
     <p v-if="localError || error" class="form-error" role="alert">{{ localError || error }}</p>
     <button type="submit" class="primary-button" :disabled="busy">{{ busy ? '正在设置…' : '启用 Agent' }}</button>
   </form>
 </template>
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { AgentSetupProfileSummary, AgentSetupResponse } from '@termflow/client-contracts'
 import type { PaneTopology } from '../../types'
-import AgentDisclosureCard from './AgentDisclosureCard.vue'
+import ContextHelp from '../common/ContextHelp.vue'
 export type AgentSetupSelection = { paneIds: string[]; topologyRevision: number; disclosureFingerprint: string; accepted: true } & ({ kind: 'existing'; profileId: string } | { kind: 'new'; profileDisplayName: string })
 const props = defineProps<{ setup: AgentSetupResponse; profiles: AgentSetupProfileSummary[]; panes: PaneTopology[]; busy: boolean; error: string }>()
 const emit = defineEmits<{ submit: [selection: AgentSetupSelection] }>()
-const profileId = ref(''), displayName = ref(''), paneIds = ref<string[]>([]), accepted = ref(false), localError = ref('')
+const paneIds = ref<string[]>([]), localError = ref('')
 const panesTouched = ref(false)
-watch(() => props.setup.disclosure?.disclosure_fingerprint, () => { accepted.value = false })
+const modelLabel = computed(() => {
+  const disclosure = props.setup.disclosure
+  return disclosure === null ? '部署未配置' : `${disclosure.provider_id} · ${disclosure.model_id}`
+})
 watch(() => props.panes.map((pane) => pane.pane_id).join(','), () => {
   if (panesTouched.value) return
   paneIds.value = props.panes.map((pane) => pane.pane_id)
@@ -72,18 +59,16 @@ function clearPanes() {
   panesTouched.value = true
   paneIds.value = []
 }
-function matchesDisclosure(profile: AgentSetupProfileSummary) {
-  const disclosure = props.setup.disclosure
-  return disclosure !== null && profile.provider_id === disclosure.provider_id && profile.model_id === disclosure.model_id
-}
 function submit() {
   localError.value = ''
-  const fingerprint = props.setup.disclosure?.disclosure_fingerprint
+  const disclosure = props.setup.disclosure
   if (props.busy) return
   if (!paneIds.value.length || paneIds.value.some((id) => !props.panes.some((pane) => pane.pane_id === id))) { localError.value = '请至少选择一个当前窗格。'; return }
-  if (!accepted.value || !fingerprint || props.setup.topology_revision === null) { localError.value = '请确认当前数据发送说明。'; return }
-  if (profileId.value ? !props.profiles.some((profile) => profile.profile_id === profileId.value && matchesDisclosure(profile)) : !displayName.value.trim()) { localError.value = '请选择与当前提供方匹配的 Profile 或填写新名称。'; return }
-  const common = { paneIds: [...paneIds.value], topologyRevision: props.setup.topology_revision, disclosureFingerprint: fingerprint, accepted: true as const }
-  emit('submit', profileId.value ? { ...common, kind: 'existing', profileId: profileId.value } : { ...common, kind: 'new', profileDisplayName: displayName.value.trim() })
+  if (disclosure === null || props.setup.topology_revision === null) { localError.value = '提供方配置暂不可用，请管理员完成部署。'; return }
+  const common = { paneIds: [...paneIds.value], topologyRevision: props.setup.topology_revision, disclosureFingerprint: disclosure.disclosure_fingerprint, accepted: true as const }
+  const matching = props.profiles.find((profile) => profile.provider_id === disclosure.provider_id && profile.model_id === disclosure.model_id)
+  emit('submit', matching
+    ? { ...common, kind: 'existing', profileId: matching.profile_id }
+    : { ...common, kind: 'new', profileDisplayName: `${disclosure.provider_id} · ${disclosure.model_id}` })
 }
 </script>

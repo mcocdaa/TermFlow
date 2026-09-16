@@ -102,7 +102,7 @@ it('uses the whole workspace on mobile without floating-window controls', async 
   w.unmount()
 })
 
-it.each(['binding_disclosure_stale', 'binding_disclosure_required'])('lets the user accept the current complete disclosure for %s', async (reasonCode) => {
+it.each(['binding_disclosure_stale', 'binding_disclosure_required'])('re-enables the binding for %s without any disclosure card', async (reasonCode) => {
   const runtime = createFakeRuntime()
   runtime.api.agents.getSetup = vi.fn(async () => ({
     state: 'unavailable',
@@ -118,11 +118,10 @@ it.each(['binding_disclosure_stale', 'binding_disclosure_required'])('lets the u
   await flushPromises()
 
   const recovery = w.get('[data-agent-disclosure-recovery]')
-  for (const value of ['deepseek', 'deepseek-v4-flash', 'https://api.deepseek.com', 'global', 'retention terms', 'retention-v1', 'policy-v1', 'DEEPSEEK_API_KEY', 'current-fingerprint']) {
-    expect(recovery.text()).toContain(value)
+  expect(recovery.text()).toContain('请重新启用 Agent')
+  for (const value of ['deepseek', 'https://api.deepseek.com', 'retention terms', 'DEEPSEEK_API_KEY', 'current-fingerprint']) {
+    expect(recovery.text()).not.toContain(value)
   }
-  expect(w.get('[data-action="accept-current-disclosure"]').attributes('disabled')).toBeDefined()
-  await w.get('[name="acceptCurrentDisclosure"]').setValue(true)
   await w.get('[data-action="accept-current-disclosure"]').trigger('click')
   await flushPromises()
   expect(runtime.api.agents.acceptDisclosure).toHaveBeenCalledWith(

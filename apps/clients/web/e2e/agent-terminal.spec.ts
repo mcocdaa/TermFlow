@@ -565,18 +565,14 @@ test(
     await expect(
       page.locator('[data-agent-panel-state="unconfigured"]'),
     ).toBeVisible()
-    await expect(page.getByText(DISCLOSURE_TERMS, { exact: false })).toBeVisible()
+    await expect(page.getByText('允许 Agent 访问的窗格')).toBeVisible()
 
-    await page.locator('input[name="profileDisplayName"]').fill(
-      'Terminal Agent Profile',
-    )
     await expect(page.locator('input[name="paneIds"][value="%0"]')).toBeChecked()
     await expect(page.locator('input[name="paneIds"][value="%1"]')).toBeChecked()
     await page.locator('input[name="paneIds"][value="%1"]').uncheck()
     await expect(
       page.locator('input[name="paneIds"][value="%1"]'),
     ).not.toBeChecked()
-    await page.locator('input[name="accepted"]').check()
     await page.getByRole('button', { name: '启用 Agent' }).click()
     await expect
       .poll(() => traffic.setupRequests.length)
