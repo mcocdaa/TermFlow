@@ -175,7 +175,8 @@ def test_release_compose_uses_published_images_without_building() -> None:
     services = release["services"]
     base_services = base["services"]
     overlay_services = overlay["services"]
-    assert set(services) == set(base_services) | {"provider-egress-proxy"}
+    assert set(services) == set(base_services)
+    assert "provider-egress-proxy" not in services
     for service in services.values():
         assert "build" not in service
 
@@ -214,7 +215,7 @@ def test_release_compose_uses_published_images_without_building() -> None:
     base_agent = base_services["opencode-agent"]
     assert agent["image"] == base_agent["image"]
     assert agent["depends_on"] == base_agent["depends_on"]
-    assert agent["networks"] == ["agent_internal", "provider_egress"]
+    assert agent["networks"] == ["agent_internal", "provider_uplink"]
     for key in (
         "command",
         "user",
@@ -244,8 +245,6 @@ def test_release_compose_uses_published_images_without_building() -> None:
         for key, value in base_services["opencode-init"].items()
         if key != "volumes"
     }
-    assert services["provider-egress-proxy"] == overlay_services["provider-egress-proxy"]
-
     assert {spec["name"] for spec in release["volumes"].values()} == {
         "termflow-data",
         "termflow-totp-key",
@@ -254,8 +253,8 @@ def test_release_compose_uses_published_images_without_building() -> None:
     networks = release["networks"]
     assert networks["default"]["internal"] is False
     assert networks["agent_internal"]["internal"] is True
-    assert networks["provider_egress"]["internal"] is True
     assert networks["provider_uplink"]["internal"] is False
+    assert "provider_egress" not in networks
 
     readme = Path("README.md").read_text()
     assert "compose.release.yaml" in readme

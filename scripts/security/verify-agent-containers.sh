@@ -93,7 +93,6 @@ mounts_are_exact() {
   mounts="$(inspect "$id" '{{json .Mounts}}')"
   local expected_volume="${PROJECT}-opencode-data"
   local opencode_source="${REPOSITORY_ROOT}/deploy/opencode-config.yaml"
-  local proxy_source="${REPOSITORY_ROOT}/deploy/provider-egress/squid.conf"
   if [[ "$kind" == agent ]]; then
     jq -e --arg volume "$expected_volume" --arg source "$opencode_source" '
       length == 2
@@ -101,7 +100,7 @@ mounts_are_exact() {
       and any(.[]; .Type == "bind" and .Source == $source and .Destination == "/etc/termflow/opencode-config.yaml" and (.RW | not))
     ' \
       >/dev/null <<<"$mounts" || fail "$service mounts"
-  elif [[ "$kind" == init ]]; then
+  else
     jq -e --arg volume "$expected_volume" '
       length == 1
       and .[0].Type == "volume"
@@ -109,15 +108,6 @@ mounts_are_exact() {
       and .[0].Destination == "/data"
       and .[0].RW
     ' >/dev/null <<<"$mounts" || fail "$service mounts"
-  else
-    jq -e --arg source "$proxy_source" '
-      length == 1
-      and .[0].Type == "bind"
-      and .[0].Source == $source
-      and .[0].Destination == "/etc/squid/squid.conf"
-      and (. [0].RW | not)
-    ' \
-      >/dev/null <<<"$mounts" || fail "$service mounts"
   fi
   jq -e 'all(.[]?; (.Source // "") | test("docker\\.sock$") | not)' >/dev/null <<<"$mounts" || fail "$service docker socket"
 }
@@ -125,6 +115,12 @@ forbidden_env_names_absent() {
   local service="$1" id="$2" pattern="$3" names
   names="$(inspect "$id" '{{json .Config.Env}}' | jq 'map(split("=")[0])')"
   jq -e --arg pattern "$pattern" 'all(.[]?; test($pattern) | not)' >/dev/null <<<"$names" || fail "$service secret env"
+}
+no_proxy_environment() {
+  local service="$1" id="$2" names
+  names="$(inspect "$id" '{{json .Config.Env}}' | jq 'map(split("=")[0])')"
+  jq -e 'all(.[]?; test("^(http_proxy|https_proxy|HTTP_PROXY|HTTPS_PROXY|no_proxy|NO_PROXY)$") | not)' \
+    >/dev/null <<<"$names" || fail "$service proxy env"
 }
 runtime_hardening() {
   local service="$1" id="$2" user="$3" image
@@ -186,25 +182,17 @@ if [[ "$MODE" == offline ]]; then
   network_metadata_contract "${PROJECT}_default" false default
 else
   control_id="$(container_id control-plane)"
-  proxy_id="$(container_id provider-egress-proxy)"
-  labels_are_exact provider-egress-proxy "$proxy_id"
-  networks_are_exact opencode-agent "$agent_id" "${PROJECT}_agent_internal" "${PROJECT}_provider_egress"
-  runtime_hardening provider-egress-proxy "$proxy_id" 13:13
-  scalar_is 'provider-egress-proxy running' "$proxy_id" '{{.State.Running}}' true
-  tmpfs_has 'provider-egress-proxy runtime tmpfs' "$proxy_id" /run/squid
-  tmpfs_has 'provider-egress-proxy log tmpfs' "$proxy_id" /var/log/squid
-  tmpfs_has 'provider-egress-proxy cache tmpfs' "$proxy_id" /var/spool/squid
-  positive_limits provider-egress-proxy "$proxy_id"
-  networks_are_exact provider-egress-proxy "$proxy_id" "${PROJECT}_provider_egress" "${PROJECT}_provider_uplink"
-  mounts_are_exact provider-egress-proxy "$proxy_id" proxy
-  forbidden_env_names_absent provider-egress-proxy "$proxy_id" '(TOKEN|KEY|PASSWORD|SECRET)'
+  # The live profile grants the runtime its own uplink network for direct
+  # provider TLS.  The frozen OpenCode permission map - not a network
+  # allowlist - is the tool-use control; the accepted boundary and its
+  # rationale live in docs/security.md ("运行时出网边界").
+  networks_are_exact opencode-agent "$agent_id" "${PROJECT}_agent_internal" "${PROJECT}_provider_uplink"
   network_contract "${PROJECT}_agent_internal" true agent_internal "$agent_id" "$control_id"
   network_metadata_contract "${PROJECT}_default" false default
-  network_contract "${PROJECT}_provider_egress" true provider_egress "$agent_id" "$proxy_id"
-  network_contract "${PROJECT}_provider_uplink" false provider_uplink "$proxy_id"
+  network_contract "${PROJECT}_provider_uplink" false provider_uplink "$agent_id"
+  no_proxy_environment opencode-agent "$agent_id"
 fi
 
 echo "agent-container-security: PASS"
 echo "mode=${MODE} project=${PROJECT}"
 echo "opencode-agent=${agent_id} opencode-init=${init_id}"
-[[ "$MODE" == offline ]] || echo "provider-egress-proxy=${proxy_id}"

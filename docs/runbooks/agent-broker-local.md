@@ -154,7 +154,8 @@ and its provider-policy evidence; use
 
 ## Start the live profile
 
-The supported Agent live slice always includes the allowlist proxy:
+The supported Agent live slice gives the runtime a dedicated direct provider
+uplink (no filtering proxy, see docs/security.md「运行时出网边界」):
 
 ```bash
 docker compose -p termflow-v020-local --env-file .env \
@@ -169,7 +170,8 @@ is documented in [the live-model runbook](agent-broker-live-model.md).
 
 The default Compose network is an ordinary bridge because B owns the explicit
 loopback host publish used by Web C and the A/C API. Only `agent_internal`
-(B to OpenCode) and the provider-egress segment are internal networks. Docker A
+(B to OpenCode) is an internal network; `provider_uplink` is a separate normal
+bridge used for direct provider TLS. Docker A
 is deployed separately; its network placement does not change B's host-facing
 network. For a same-host Docker A acceptance fixture, attach A to
 `termflow-v020-local_default` (or use the exact project-specific `_default`

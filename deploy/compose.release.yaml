@@ -2,16 +2,20 @@
 #
 # 只拉取 GHCR 上已发布的 Control Plane 镜像，不在本地构建，也不需要 checkout 源码。
 # 服务形状与 deploy/compose.yaml + deploy/compose.agent-live.yaml 的组合完全一致
-# （B + Web C、固定 OpenCode 运行时、allowlist provider egress proxy），差异只有：
-# control-plane 引用发布镜像而不是本地 build，且项目名、卷名与端口默认值面向生产。
+# （B + Web C、固定 OpenCode 运行时），差异只有：control-plane 引用发布镜像而不是
+# 本地 build，且项目名、卷名与端口默认值面向生产。
 #
 # 完整步骤见 docs/operations.md「发布镜像 Compose 部署」：
 #
 #   cp .env.example .env   # 固定版本：TERMFLOW_RELEASE_IMAGE_TAG=vX.Y.Z；跟随最新稳定版：latest
 #   docker compose --env-file .env -f compose.release.yaml up -d
 #
-# 该文件与 deploy/opencode-config.yaml、deploy/provider-egress/squid.conf 一起使用；
-# 这三个文件在同一个 tag 的源码树或 Release 目录里保持一致，不要混用版本。
+# 该文件与 deploy/opencode-config.yaml 一起使用；这两个文件在同一个 tag 的源码树或
+# Release 目录里保持一致，不要混用版本。
+#
+# 出网边界（与 live overlay 相同）：OpenCode 运行时直连 provider，没有过滤代理；
+# 模型能用的工具由 deploy/opencode-config.yaml 的 permission map 限制为 TermFlow MCP
+# 工具，运行时进程本身可访问互联网。见 docs/security.md「运行时出网边界」。
 name: termflow
 
 services:
@@ -164,14 +168,6 @@ services:
       TERMFLOW_AGENT_MCP_URL: http://control-plane:8000/api/v1/agent/mcp
       TERMFLOW_AGENT_MCP_TOKEN: ${OPENCODE_AGENT_MCP_TOKEN:?set OPENCODE_AGENT_MCP_TOKEN}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY}
-      HTTPS_PROXY: http://provider-egress-proxy:3128
-      NO_PROXY: control-plane,opencode-agent,localhost,127.0.0.1
-      # BusyBox wget (used by the pinned runtime image's diagnostics) reads
-      # lowercase http_proxy even for HTTPS URLs; keep the conventional
-      # HTTPS variants too so the runtime and probes share the same boundary.
-      http_proxy: http://provider-egress-proxy:3128
-      https_proxy: http://provider-egress-proxy:3128
-      no_proxy: control-plane,opencode-agent,localhost,127.0.0.1
     depends_on:
       opencode-init:
         condition: service_completed_successfully
@@ -191,10 +187,11 @@ services:
     expose:
       - "4096"
     networks:
-      # Internal network only: never attached to the public A/C network. The
-      # model runtime reaches the provider only through the allowlist proxy.
+      # Internal capability network only: the runtime is never attached to
+      # the A/C-facing default bridge.  Provider TLS traffic leaves through
+      # the dedicated uplink network directly (no filtering proxy).
       - agent_internal
-      - provider_egress
+      - provider_uplink
     user: "405:100"
     # The image's fixed `guest` UID 405 runs the server; /home/opencode is a
     # tmpfs (read-only rootfs, so no other HOME can be created) and the data
@@ -235,60 +232,6 @@ services:
       retries: 3
       start_period: 15s
 
-  # `ubuntu/squid:6.10-24.10_beta` index digest, resolved from Canonical's
-  # verified Docker Hub publisher page on 2026-09-07.  Runtime compatibility
-  # with this rootless/read-only profile must be checked before live rollout.
-  provider-egress-proxy:
-    image: ubuntu/squid:6.10-24.10_beta@sha256:c9f5212b147a766529c7b026e2bebed37b998d33d0066b658596af5eba7cc65c
-    user: "13:13"
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    volumes:
-      - type: bind
-        source: ./provider-egress/squid.conf
-        target: /etc/squid/squid.conf
-        read_only: true
-        bind:
-          create_host_path: false
-    tmpfs:
-      - /run/squid:size=8m,mode=0750,uid=13,gid=13
-      - /var/log/squid:size=8m,mode=0750,uid=13,gid=13
-      - /var/spool/squid:size=16m,mode=0750,uid=13,gid=13
-    expose:
-      - "3128"
-    networks:
-      - provider_egress
-      - provider_uplink
-    mem_limit: 128m
-    cpus: "0.50"
-    pids_limit: 128
-    healthcheck:
-      # The pinned Ubuntu image does not ship squidclient/curl/wget.  Bash's
-      # /dev/tcp is available in the image and verifies that Squid is
-      # accepting an HTTP request without contacting an external provider.
-      test:
-        - CMD
-        - bash
-        - -ec
-        - >-
-          exec 3<>/dev/tcp/127.0.0.1/3128;
-          printf 'GET http://127.0.0.1/ HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3;
-          IFS= read -r status <&3;
-          case "$$status" in HTTP/*) ;; *) exit 1 ;; esac
-      interval: 10s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "5"
-
 volumes:
   termflow-data:
     name: termflow-data
@@ -302,9 +245,10 @@ networks:
   # Keep capability-specific isolation in the networks below instead.
   default:
     internal: false
+  # B-to-runtime capability network; no route off the host.
   agent_internal:
     internal: true
-  provider_egress:
-    internal: true
+  # The runtime's only network with a route off the host; separate from
+  # B's A/C-facing default bridge.
   provider_uplink:
     internal: false

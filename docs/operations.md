@@ -74,8 +74,8 @@ docker compose --env-file .env -f deploy/compose.yaml up -d --build
 curl 版本；离线或审计场景建议下载该 tag 的源码包，只使用其中的 `deploy/` 目录。
 
 - `compose.release.yaml` 的服务形状与 `compose.yaml` + `compose.agent-live.yaml` 完全
-  一致（B + Web C、固定 OpenCode 运行时、allowlist provider egress proxy），差异只有
-  control-plane 引用发布镜像而不是本地 build，项目名为 `termflow`。
+  一致（B + Web C、固定 OpenCode 运行时），差异只有 control-plane 引用发布镜像而不是
+  本地 build，项目名为 `termflow`。
 - `TERMFLOW_RELEASE_IMAGE_TAG` 必填：固定版本写 Release 的精确 tag（推荐，可复现）；写
   `latest` 表示跟随最新稳定版，但 `latest` 只随稳定 tag 移动，无法复现历史证据。
 - `TERMFLOW_RELEASE_IMAGE_REPOSITORY` 可选：仓库 fork 时覆盖默认的
@@ -119,8 +119,8 @@ chmod 0600 .env
 scripts/deploy/agent-local-preflight.sh --env-file "$PWD/.env"
 ```
 
-通过 preflight 后，启动 B + Web C + OpenCode + provider allowlist proxy（完整动态
-验证步骤另见 [live-model runbook](runbooks/agent-broker-live-model.md)）：
+通过 preflight 后，启动 B + Web C + OpenCode（完整动态验证步骤另见
+[live-model runbook](runbooks/agent-broker-live-model.md)）：
 
 ```bash
 docker compose -p termflow-v020-local --env-file .env \
@@ -132,9 +132,11 @@ Compose 固定使用以下卷名，并且不会被旧的 `*_VOLUME` 环境变量
 主密钥）和 `termflow-v020-local-opencode-data`（OpenCode 会话）。升级或重建服务时
 保留这些卷；不要对该 project 使用 `down --volumes`，也不要把临时 E2E project 的
 卷名改成这些固定名称。B 的 host port 默认只绑定 `127.0.0.1:8765`；B 的默认网络是供
-宿主机端口发布以及 A/C 连接的普通 bridge。OpenCode 不加入这个网络，只在
-`agent_internal`（live overlay 另加 `provider_egress`）；这些 capability 网络保持
-`internal: true`，模型出口只能经 allowlist proxy。
+宿主机端口发布以及 A/C 连接的普通 bridge。OpenCode 不加入这个网络：capability 网络
+`agent_internal` 保持 `internal: true`，live overlay 另给它一条独立的普通 bridge
+`provider_uplink` 直连 provider（不运行过滤代理；模型工具面由
+`deploy/opencode-config.yaml` 的 permission map 限制，运行时出网边界与接受的残余风险
+见 [安全与隐私](security.md#运行时出网边界)）。
 
 `.env` 中的 `OPENCODE_AGENT_MCP_TOKEN` 是 B 与 OpenCode 共用的部署 bootstrap
 capability，必须由 binding/API 流程签发，并独立于管理员、provider、cleanup token。

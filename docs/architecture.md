@@ -34,9 +34,10 @@ HTTP/WS 进程和 Web 静态文件，A、Tauri 工程以及构建工具不在镜
 部署网络的角色也保持分离：B 的普通 default bridge 承载宿主机发布的 Web/API 端口，
 以及同机 Docker A 的出站连接；A 是客户端，主动向 B 建立 WebSocket/WSS，不是 B 的
 网关，也不需要向外开放端口。OpenCode 不加入这个 default bridge，只通过
-`agent_internal` 访问 B；live provider path 再经过 `provider_egress` 和 allowlist
-proxy。把 B 的 default bridge 标成 `internal: true` 会切断该 host-publish 路径，
-因此不能用它代替 capability 网络的隔离。
+`agent_internal` 访问 B；live provider path 另挂一条独立的普通 bridge
+`provider_uplink` 直连 provider，不使用过滤代理（运行时出网边界与接受的残余风险见
+[安全与隐私](security.md#运行时出网边界)）。把 B 的 default bridge 标成
+`internal: true` 会切断该 host-publish 路径，因此不能用它代替 capability 网络的隔离。
 
 ## 尺寸与显示
 

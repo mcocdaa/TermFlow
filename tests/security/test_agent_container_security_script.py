@@ -25,13 +25,11 @@ printf '%s\\n' "$*" >> "$TERMFLOW_TEST_DOCKER_LOG"
 args="$*"
 AGENT_ID=$(printf 'a%.0s' {1..64})
 INIT_ID=$(printf 'i%.0s' {1..64})
-PROXY_ID=$(printf 'p%.0s' {1..64})
 CONTROL_ID=$(printf 'd%.0s' {1..64})
 service=""
 case "$args" in
   *com.docker.compose.service=opencode-agent*) service=opencode-agent ;;
   *com.docker.compose.service=opencode-init*) service=opencode-init ;;
-  *com.docker.compose.service=provider-egress-proxy*) service=provider-egress-proxy ;;
   *com.docker.compose.service=control-plane*) service=control-plane ;;
 esac
 if [[ "$args" == *"network inspect"* ]]; then
@@ -41,20 +39,19 @@ if [[ "$args" == *"network inspect"* ]]; then
     audit_default)
       [[ "${TERMFLOW_FAKE_MODE:-ok}" == default-internal ]] && default_internal=true || default_internal=false
       printf '%s|{"com.docker.compose.project":"audit","com.docker.compose.network":"default"}|{"%s":{}}\\n' "$default_internal" "$CONTROL_ID" ;;
-    audit_provider_egress)
+    audit_provider_uplink)
       if [[ "${TERMFLOW_FAKE_EXTRA_MEMBER:-0}" == 1 ]]; then
-        printf 'true|{"com.docker.compose.project":"audit","com.docker.compose.network":"provider_egress"}|{"%s":{},"%s":{},"%s":{}}\\n' "$AGENT_ID" "$PROXY_ID" "$(printf 'x%.0s' {1..64})"
+        printf 'false|{"com.docker.compose.project":"audit","com.docker.compose.network":"provider_uplink"}|{"%s":{},"%s":{}}\\n' "$AGENT_ID" "$(printf 'x%.0s' {1..64})"
       else
-        printf 'true|{"com.docker.compose.project":"audit","com.docker.compose.network":"provider_egress"}|{"%s":{},"%s":{}}\\n' "$AGENT_ID" "$PROXY_ID"
+        printf 'false|{"com.docker.compose.project":"audit","com.docker.compose.network":"provider_uplink"}|{"%s":{}}\\n' "$AGENT_ID"
       fi ;;
-    audit_provider_uplink) printf 'false|{"com.docker.compose.project":"audit","com.docker.compose.network":"provider_uplink"}|{"%s":{}}\\n' "$PROXY_ID" ;;
   esac
   exit 0
 fi
 if [[ "$args" == *" ps "* || "$args" == ps* ]]; then
   if [[ "${TERMFLOW_FAKE_MODE:-ok}" == missing && "$service" == opencode-agent ]]; then exit 0; fi
   if [[ "${TERMFLOW_FAKE_MODE:-ok}" == duplicate && "$service" == opencode-agent ]]; then printf 'agent-a\\nagent-b\\n'; exit 0; fi
-  case "$service" in opencode-agent) printf '%s\\n' "$AGENT_ID";; opencode-init) printf '%s\\n' "$INIT_ID";; provider-egress-proxy) printf '%s\\n' "$PROXY_ID";; control-plane) printf '%s\\n' "$CONTROL_ID";; esac
+  case "$service" in opencode-agent) printf '%s\\n' "$AGENT_ID";; opencode-init) printf '%s\\n' "$INIT_ID";; control-plane) printf '%s\\n' "$CONTROL_ID";; esac
   exit 0
 fi
 id="${!#}"
@@ -62,12 +59,11 @@ if [[ "$args" == *"Config.Labels"* ]]; then
   case "$id" in
     "$AGENT_ID") echo '{"com.docker.compose.project":"audit","com.docker.compose.service":"opencode-agent"}' ;;
     "$INIT_ID") echo '{"com.docker.compose.project":"audit","com.docker.compose.service":"opencode-init"}' ;;
-    "$PROXY_ID") echo '{"com.docker.compose.project":"audit","com.docker.compose.service":"provider-egress-proxy"}' ;;
   esac
 elif [[ "$args" == *"Config.Image"* ]]; then
-  [[ "$id" == "$PROXY_ID" ]] && echo 'ubuntu/squid:6@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' || echo 'ghcr.io/anomalyco/opencode:1@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  echo 'ghcr.io/anomalyco/opencode:1@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 elif [[ "$args" == *"Config.User"* ]]; then
-  [[ "$id" == "$PROXY_ID" ]] && echo '13:13' || { [[ "$id" == "$INIT_ID" ]] && echo '0:0' || echo '405:100'; }
+  [[ "$id" == "$INIT_ID" ]] && echo '0:0' || echo '405:100'
 elif [[ "$args" == *"HostConfig.Privileged"* ]]; then echo false
 elif [[ "$args" == *"State.Running"* ]]; then [[ "$id" == "$INIT_ID" ]] && echo false || echo true
 elif [[ "$args" == *"State.ExitCode"* ]]; then echo 0
@@ -83,22 +79,22 @@ elif [[ "$args" == *"HostConfig.CapAdd"* ]]; then
   else echo '[]'
   fi
 elif [[ "$args" == *"HostConfig.SecurityOpt"* ]]; then echo '["no-new-privileges:true"]'
-elif [[ "$args" == *"HostConfig.Tmpfs"* ]]; then echo '{"/tmp":"x","/home/opencode":"x","/run/squid":"x","/var/log/squid":"x","/var/spool/squid":"x"}'
-elif [[ "$args" == *"HostConfig.PidsLimit"* ]]; then [[ "$id" == "$PROXY_ID" ]] && echo 128 || echo 512
+elif [[ "$args" == *"HostConfig.Tmpfs"* ]]; then echo '{"/tmp":"x","/home/opencode":"x"}'
+elif [[ "$args" == *"HostConfig.PidsLimit"* ]]; then echo 512
 elif [[ "$args" == *"HostConfig.Memory"* ]]; then echo 134217728
 elif [[ "$args" == *"HostConfig.NanoCpus"* ]]; then echo 500000000
 elif [[ "$args" == *"HostConfig.Ulimits"* ]]; then echo '[{"Name":"nofile","Soft":1024,"Hard":1024}]'
 elif [[ "$args" == *"Config.Env"* ]]; then
-  if [[ "${TERMFLOW_FAKE_B_SECRET:-0}" == 1 && "$id" == "$AGENT_ID" ]]; then echo '["HOME=/home/opencode","TERMFLOW_ADMIN_TOKEN=hidden-fixture"]'; else echo '["HOME=/home/opencode"]'; fi
+  if [[ "${TERMFLOW_FAKE_B_SECRET:-0}" == 1 && "$id" == "$AGENT_ID" ]]; then echo '["HOME=/home/opencode","TERMFLOW_ADMIN_TOKEN=hidden-fixture"]';
+  elif [[ "${TERMFLOW_FAKE_AGENT_PROXY_ENV:-0}" == 1 && "$id" == "$AGENT_ID" ]]; then echo '["HOME=/home/opencode","HTTPS_PROXY=http://provider-egress-proxy:3128"]';
+  else echo '["HOME=/home/opencode"]'; fi
 elif [[ "$args" == *"NetworkSettings.Networks"* ]]; then
-  if [[ "$id" == "$AGENT_ID" ]]; then [[ "${TERMFLOW_FAKE_MODE:-ok}" == opencode-uplink ]] && echo '{"audit_agent_internal":{},"audit_provider_egress":{},"audit_provider_uplink":{}}' || echo '{"audit_agent_internal":{},"audit_provider_egress":{}}';
-  elif [[ "$id" == "$PROXY_ID" ]]; then [[ "${TERMFLOW_FAKE_MODE:-ok}" == proxy-agent ]] && echo '{"audit_agent_internal":{},"audit_provider_egress":{},"audit_provider_uplink":{}}' || echo '{"audit_provider_egress":{},"audit_provider_uplink":{}}';
+  if [[ "$id" == "$AGENT_ID" ]]; then [[ "${TERMFLOW_FAKE_MODE:-ok}" == opencode-default ]] && echo '{"audit_agent_internal":{},"audit_provider_uplink":{},"audit_default":{}}' || echo '{"audit_agent_internal":{},"audit_provider_uplink":{}}';
   else echo '{}'; fi
 elif [[ "$args" == *"NetworkSettings.Ports"* ]]; then echo '{}'
 elif [[ "$args" == *"Mounts"* ]]; then
   if [[ "$id" == "$AGENT_ID" ]]; then
     if [[ "${TERMFLOW_FAKE_WRONG_SOURCE:-0}" == 1 ]]; then echo '[{"Type":"volume","Name":"audit-other-data","Source":"/var/lib/docker/volumes/audit-other-data/_data","Destination":"/data","RW":true},{"Type":"bind","Source":"/workspace/other.yaml","Destination":"/etc/termflow/opencode-config.yaml","RW":false}]'; else printf '[{"Type":"volume","Name":"audit-opencode-data","Source":"/var/lib/docker/volumes/audit-opencode-data/_data","Destination":"/data","RW":true},{"Type":"bind","Source":"%s/deploy/opencode-config.yaml","Destination":"/etc/termflow/opencode-config.yaml","RW":false}]\n' "$TERMFLOW_TEST_REPOSITORY_ROOT"; fi
-  elif [[ "$id" == "$PROXY_ID" ]]; then printf '[{"Type":"bind","Source":"%s/deploy/provider-egress/squid.conf","Destination":"/etc/squid/squid.conf","RW":false}]\n' "$TERMFLOW_TEST_REPOSITORY_ROOT";
   elif [[ "$id" == "$INIT_ID" ]]; then echo '[{"Type":"volume","Name":"audit-opencode-data","Source":"/var/lib/docker/volumes/audit-opencode-data/_data","Destination":"/data","RW":true}]';
   else echo '[]'; fi
 else echo ''
@@ -219,16 +215,34 @@ def test_init_cap_add_accepts_engine_prefix_but_rejects_a_wider_set(
             assert "chown" in result.stderr or "cap-add" in result.stderr
 
 
-def test_live_topology_rejects_opencode_on_uplink(tmp_path: Path) -> None:
-    result = _run(tmp_path, "live", "opencode-uplink")
+def test_live_topology_rejects_runtime_on_the_public_default_network(tmp_path: Path) -> None:
+    result = _run(tmp_path, "live", "opencode-default")
     assert result.returncode != 0
     assert "opencode-agent" in result.stderr
 
 
-def test_live_topology_rejects_proxy_on_agent_internal(tmp_path: Path) -> None:
-    result = _run(tmp_path, "live", "proxy-agent")
+def test_live_topology_rejects_runtime_proxy_environment(tmp_path: Path) -> None:
+    docker, log = _fake_docker(tmp_path)
+    environment = os.environ | {
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        "TERMFLOW_TEST_DOCKER_LOG": str(log),
+        "TERMFLOW_TEST_REPOSITORY_ROOT": str(ROOT),
+        "TERMFLOW_FAKE_AGENT_PROXY_ENV": "1",
+    }
+    result = subprocess.run(
+        [
+            str(ROOT / "scripts" / "security" / "verify-agent-containers.sh"),
+            "--mode",
+            "live",
+            "audit",
+        ],
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
     assert result.returncode != 0
-    assert "provider-egress-proxy" in result.stderr
+    assert "proxy env" in result.stderr
 
 
 def test_live_topology_rejects_internal_control_plane_default_network(
@@ -272,10 +286,10 @@ def test_live_network_contract_fails_closed_on_extra_member_or_wrong_internal(
         check=False,
     )
     assert result.returncode != 0
-    assert "provider_egress" in result.stderr
+    assert "provider_uplink" in result.stderr
 
 
-def test_inspector_rejects_privileged_runtime_and_proxy_socket_mount(tmp_path: Path) -> None:
+def test_inspector_rejects_privileged_runtime(tmp_path: Path) -> None:
     docker, log = _fake_docker(tmp_path)
     source = docker.read_text()
     docker.write_text(

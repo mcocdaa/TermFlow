@@ -24,10 +24,9 @@ TermFlow 让你通过浏览器、手机或原生客户端远程使用另一台�
 ```bash
 TAG=v0.2.0  # 换成 Release 页面的精确 tag
 BASE="https://raw.githubusercontent.com/mcocdaa/TermFlow/${TAG}"
-mkdir -p termflow/provider-egress && cd termflow
+mkdir -p termflow && cd termflow
 curl -fsSLO "${BASE}/deploy/compose.release.yaml"
 curl -fsSLO "${BASE}/deploy/opencode-config.yaml"
-curl -fsSLo provider-egress/squid.conf "${BASE}/deploy/provider-egress/squid.conf"
 curl -fsSLo .env "${BASE}/.env.example"
 chmod 0600 .env
 ```

@@ -9,7 +9,6 @@ REPOSITORY_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 BASE_COMPOSE="${REPOSITORY_ROOT}/deploy/compose.yaml"
 LIVE_COMPOSE="${REPOSITORY_ROOT}/deploy/compose.agent-live.yaml"
 OPENCODE_CONFIG="${REPOSITORY_ROOT}/deploy/opencode-config.yaml"
-PROXY_CONFIG="${REPOSITORY_ROOT}/deploy/provider-egress/squid.conf"
 
 usage() {
   echo "usage: $0 --env-file <absolute-path>" >&2
@@ -34,7 +33,7 @@ if [[ "$(stat -c '%a' "${ENV_FILE}")" != "600" ]]; then
   exit 1
 fi
 
-for required_file in "${BASE_COMPOSE}" "${LIVE_COMPOSE}" "${OPENCODE_CONFIG}" "${PROXY_CONFIG}"; do
+for required_file in "${BASE_COMPOSE}" "${LIVE_COMPOSE}" "${OPENCODE_CONFIG}"; do
   if [[ ! -f "${required_file}" ]]; then
     echo "$(basename "${required_file}") must be a regular file" >&2
     exit 1
@@ -141,20 +140,20 @@ rendered="$(docker compose --env-file "${ENV_FILE}" -p termflow-v020-local \
 jq -e '
   .name == "termflow-v020-local"
   # B serves Web C and the A/C API over a published host port.  The default
-  # network must therefore remain a normal bridge; only capability-specific
-  # backend networks are internal.
+  # network must therefore remain a normal bridge; only the capability
+  # network is internal, while the runtime uplink carries provider TLS
+  # directly (no filtering proxy by design, see docs/security.md).
   and ((.networks.default.internal // false) == false)
   and .networks.agent_internal.internal == true
-  and .networks.provider_egress.internal == true
   # Compose omits an explicit false from JSON; omitted and false both mean a
   # normal uplink network, while true must fail this gate.
   and ((.networks.provider_uplink.internal // false) == false)
-  and .services["opencode-agent"].networks == {"agent_internal":null,"provider_egress":null}
-  and .services["provider-egress-proxy"].networks == {"provider_egress":null,"provider_uplink":null}
-  and ((.services["provider-egress-proxy"].ports // []) | length == 0)
+  and .services["opencode-agent"].networks == {"agent_internal":null,"provider_uplink":null}
   and ([.volumes[]?.name] | sort) == ["termflow-v020-local-data","termflow-v020-local-opencode-data","termflow-v020-local-totp-key"]
   and .services["control-plane"].environment.TERMFLOW_AGENT_OPENCODE_MCP_TOKEN == .services["opencode-agent"].environment.TERMFLOW_AGENT_MCP_TOKEN
   and .services["control-plane"].environment.TERMFLOW_AGENT_PROVIDER_DEEPSEEK_CREDENTIAL_SOURCE == "DEEPSEEK_API_KEY"
+  and (.services["opencode-agent"].environment | has("HTTPS_PROXY") | not)
+  and (.services["opencode-agent"].environment | has("http_proxy") | not)
 ' >/dev/null <<<"${rendered}" || { echo "rendered Compose topology is unsafe" >&2; exit 1; }
 
 echo "agent-local-preflight: PASS"

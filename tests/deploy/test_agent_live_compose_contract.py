@@ -1,4 +1,4 @@
-"""Static contracts for the durable, proxy-only agent live topology."""
+"""Static contracts for the durable agent live topology (direct provider egress)."""
 
 # Exact Compose interpolation strings intentionally exceed the project line
 # length; splitting them would weaken the literal contract under test.
@@ -30,32 +30,33 @@ def test_base_opencode_config_bind_never_creates_missing_host_path() -> None:
     }
 
 
-def test_live_opencode_has_only_two_internal_networks() -> None:
+def test_live_opencode_joins_the_capability_network_and_the_uplink() -> None:
     live = _compose("compose.agent-live.yaml")
     assert live["services"]["opencode-agent"]["networks"] == [
         "agent_internal",
-        "provider_egress",
+        "provider_uplink",
     ]
     assert live["networks"]["agent_internal"] == {"internal": True}
-    assert live["networks"]["provider_egress"] == {"internal": True}
+    assert live["networks"]["provider_uplink"] == {"internal": False}
 
 
-def test_only_proxy_joins_provider_uplink() -> None:
+def test_only_the_runtime_joins_provider_uplink() -> None:
     live = _compose("compose.agent-live.yaml")
     members = {
         service
         for service, definition in live["services"].items()
         if "provider_uplink" in definition.get("networks", [])
     }
-    assert members == {"provider-egress-proxy"}
+    assert members == {"opencode-agent"}
     assert live["networks"]["provider_uplink"] == {"internal": False}
 
 
-def test_proxy_has_no_host_ports_and_no_agent_internal_membership() -> None:
-    proxy = _compose("compose.agent-live.yaml")["services"]["provider-egress-proxy"]
-    assert "ports" not in proxy
-    assert proxy["networks"] == ["provider_egress", "provider_uplink"]
-    assert "agent_internal" not in proxy["networks"]
+def test_live_topology_runs_no_filtering_proxy() -> None:
+    live = _compose("compose.agent-live.yaml")
+    assert "provider-egress-proxy" not in live["services"]
+    assert "provider_egress" not in live["networks"]
+    for definition in live["services"].values():
+        assert "provider_egress" not in definition.get("networks", [])
 
 
 def test_named_volumes_have_stable_explicit_names() -> None:
@@ -67,39 +68,17 @@ def test_named_volumes_have_stable_explicit_names() -> None:
     }
 
 
-def test_runtime_and_proxy_images_are_literal_digest_pins() -> None:
-    base = _compose("compose.yaml")
-    live = _compose("compose.agent-live.yaml")
-    for image in (
-        base["services"]["opencode-agent"]["image"],
-        live["services"]["provider-egress-proxy"]["image"],
-    ):
-        repository, digest = image.split("@sha256:", maxsplit=1)
-        assert repository and ":" in repository
-        assert len(digest) == 64
-        assert set(digest) <= set("0123456789abcdef")
+def test_runtime_image_is_a_literal_digest_pin() -> None:
+    image = _compose("compose.yaml")["services"]["opencode-agent"]["image"]
+    repository, digest = image.split("@sha256:", maxsplit=1)
+    assert repository and ":" in repository
+    assert len(digest) == 64
+    assert set(digest) <= set("0123456789abcdef")
 
 
-def test_squid_allows_only_deepseek_tls_connect_and_denies_everything_else() -> None:
-    config = (ROOT / "deploy" / "provider-egress" / "squid.conf").read_text(encoding="utf-8")
-    assert "pid_filename /run/squid/squid.pid" in config
-    assert "acl deepseek dstdomain -n api.deepseek.com" in config
-    assert "acl raw_ipv4 dstdom_regex -n" in config
-    assert "acl raw_ipv6 dstdom_regex -n" in config
-    assert "http_access allow manager localhost" in config
-    assert "acl tls_port port 443" in config
-    assert "http_access allow CONNECT deepseek tls_port" in config
-    assert "http_access deny all" in config
-    assert "acl Safe_ports" not in config
-    assert "access_log none" in config
-    assert "cache deny all" in config
-    proxy_healthcheck = _compose("compose.agent-live.yaml")["services"][
-        "provider-egress-proxy"
-    ]["healthcheck"]["test"]
-    assert proxy_healthcheck[:3] == ["CMD", "bash", "-ec"]
-    assert "/dev/tcp/127.0.0.1/3128" in proxy_healthcheck[3]
-    assert "case \"$$status\"" in proxy_healthcheck[3]
-    assert "squidclient" not in proxy_healthcheck[3]
+def test_live_runtime_has_no_proxy_environment() -> None:
+    environment = _compose("compose.agent-live.yaml")["services"]["opencode-agent"]["environment"]
+    assert environment == {"DEEPSEEK_API_KEY": "${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY}"}
 
 
 def test_opencode_config_selects_deepseek_without_literal_secret() -> None:
@@ -122,11 +101,6 @@ def test_opencode_config_selects_deepseek_without_literal_secret() -> None:
 def test_live_environment_uses_native_secret_reference_not_rendered_value() -> None:
     environment = _compose("compose.agent-live.yaml")["services"]["opencode-agent"]["environment"]
     assert environment["DEEPSEEK_API_KEY"] == "${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY}"
-    assert environment["HTTPS_PROXY"] == "http://provider-egress-proxy:3128"
-    assert environment["NO_PROXY"] == "control-plane,opencode-agent,localhost,127.0.0.1"
-    assert environment["http_proxy"] == "http://provider-egress-proxy:3128"
-    assert environment["https_proxy"] == "http://provider-egress-proxy:3128"
-    assert environment["no_proxy"] == "control-plane,opencode-agent,localhost,127.0.0.1"
     assert all("compose-contract-only" not in str(value) for value in environment.values())
 
 

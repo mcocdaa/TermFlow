@@ -43,7 +43,7 @@ def _sandbox(tmp_path: Path) -> tuple[Path, Path, Path]:
     docker = fake_bin / "docker"
     docker.write_text(
         '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$TERMFLOW_TEST_DOCKER_LOG"\n'
-        'if [[ "$*" == *"--format json"* ]]; then echo \'{"name":"termflow-v020-local","services":{"control-plane":{"environment":{"TERMFLOW_AGENT_OPENCODE_MCP_TOKEN":"shared-mcp","TERMFLOW_AGENT_PROVIDER_DEEPSEEK_CREDENTIAL_SOURCE":"DEEPSEEK_API_KEY"}},"opencode-agent":{"networks":{"agent_internal":null,"provider_egress":null},"environment":{"TERMFLOW_AGENT_MCP_TOKEN":"shared-mcp"}},"provider-egress-proxy":{"networks":{"provider_egress":null,"provider_uplink":null}}},"networks":{"default":{},"agent_internal":{"internal":true},"provider_egress":{"internal":true},"provider_uplink":{}},"volumes":{"a":{"name":"termflow-v020-local-opencode-data"},"b":{"name":"termflow-v020-local-data"},"c":{"name":"termflow-v020-local-totp-key"}}}\'; fi\n'
+        'if [[ "$*" == *"--format json"* ]]; then echo \'{"name":"termflow-v020-local","services":{"control-plane":{"environment":{"TERMFLOW_AGENT_OPENCODE_MCP_TOKEN":"shared-mcp","TERMFLOW_AGENT_PROVIDER_DEEPSEEK_CREDENTIAL_SOURCE":"DEEPSEEK_API_KEY"}},"opencode-agent":{"networks":{"agent_internal":null,"provider_uplink":null},"environment":{"TERMFLOW_AGENT_MCP_TOKEN":"shared-mcp"}}},"networks":{"default":{},"agent_internal":{"internal":true},"provider_uplink":{}},"volumes":{"a":{"name":"termflow-v020-local-opencode-data"},"b":{"name":"termflow-v020-local-data"},"c":{"name":"termflow-v020-local-totp-key"}}}\'; fi\n'
     )
     docker.chmod(0o755)
     env_file = tmp_path / "deployment.env"

@@ -83,12 +83,14 @@ scripts/security/verify-agent-containers.sh --mode live termflow-v020-local
 The expected path is:
 
 ```text
-B -- agent_internal -- OpenCode -- provider_egress -- proxy -- provider_uplink
+B -- agent_internal -- OpenCode -- provider_uplink -- (provider TLS, direct)
 ```
 
-Only the proxy may join `provider_uplink`; OpenCode must not join the default
-network or the uplink. The default network is B's normal host-facing bridge so
-Docker can provide the explicit loopback publish used by Web C and the A/C API.
+OpenCode is the only service on `provider_uplink` and must not join the default
+network; `provider_uplink` is a normal bridge dedicated to direct provider TLS
+(no filtering proxy, see docs/security.md「运行时出网边界」). The default
+network is B's normal host-facing bridge so Docker can provide the explicit
+loopback publish used by Web C and the A/C API.
 Docker A is deployed separately; on the same host it may join the exact
 `<compose-project>_default` bridge and use `http://control-plane:8000`, while a
 separate host uses B's canonical HTTPS/WSS origin (the local runbook's

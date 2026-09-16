@@ -186,9 +186,9 @@ services:
     expose:
       - "4096"
     networks:
-      # Internal network only: never attached to the public A/C network. The
-      # optional allowlisted provider_egress network (plan §16) is a
-      # deployment follow-up for model-provider egress.
+      # Internal network only: never attached to the public A/C network.
+      # The live/release overlay adds a separate normal bridge for direct
+      # model-provider egress (see docs/security.md「运行时出网边界」).
       - agent_internal
     user: "405:100"
     # The image's fixed `guest` UID 405 runs the server; /home/opencode is a

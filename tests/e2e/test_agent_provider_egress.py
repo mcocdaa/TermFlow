@@ -1,9 +1,15 @@
-"""Opt-in provider-egress checks for a disposable full Agent deployment.
+"""Opt-in provider-egress topology checks for a disposable Agent deployment.
 
 The fixture is intentionally disabled by default.  When enabled it owns a
-random Compose project and unique named volumes, starts B + OpenCode + the
-allowlist proxy together, and proves ownership before its scoped teardown.
-No stable project or pre-existing volume is ever addressed by this module.
+random Compose project and unique named volumes, starts B + OpenCode
+together, and proves ownership before its scoped teardown.  No stable
+project or pre-existing volume is ever addressed by this module.
+
+The accepted live boundary (docs/security.md「运行时出网边界」): the
+runtime has direct provider egress on a dedicated non-internal network and
+no filtering proxy, while its tool surface is restricted by the frozen
+OpenCode permission map.  These checks lock the topology and the absence of
+proxy configuration; they do not claim a domain-level allowlist.
 """
 
 from __future__ import annotations
@@ -342,7 +348,6 @@ def disposable_egress_project(
                 "control-plane",
                 "opencode-init",
                 "opencode-agent",
-                "provider-egress-proxy",
             ],
             cwd=ROOT,
             env=os.environ | env,
@@ -358,7 +363,6 @@ def disposable_egress_project(
                     "control-plane",
                     "opencode-init",
                     "opencode-agent",
-                    "provider-egress-proxy",
                 )
             )
             pytest.fail(
@@ -373,8 +377,8 @@ def disposable_egress_project(
             f"{project}-opencode-data",
         }
         assert set(volumes) == expected_volumes
-        assert len(containers) == 4
-        assert len(networks) == 4
+        assert len(containers) == 3
+        assert len(networks) == 3
         _assert_owned(project, containers, "container", env)
         _assert_owned(project, volumes, "volume", env)
         _assert_owned(project, networks, "network", env)
@@ -466,42 +470,45 @@ def _safe_probe_output(project: EgressProject, result: subprocess.CompletedProce
     return output[-2_000:].strip() or "no probe output"
 
 
-def test_allowed_provider_host_connects_through_proxy(
+def test_runtime_reaches_the_provider_directly_without_a_proxy(
     disposable_egress_project: EgressProject,
 ) -> None:
     result = _exec_probe(
         disposable_egress_project,
         "opencode-agent",
-        'test "$http_proxy" = "http://provider-egress-proxy:3128"; '
-        "output=\"$(printf 'CONNECT api.deepseek.com:443 HTTP/1.1\\r\\n"
-        "Host: api.deepseek.com:443\\r\\n\\r\\n' | "
-        'nc -w 8 provider-egress-proxy 3128 2>&1 || true)"; '
-        'printf "%s\n" "$output"; '
-        'printf "%s" "$output" | grep -Eq "^HTTP/[0-9.]+ 200 "',
+        'test -z "${http_proxy:-}" && test -z "${https_proxy:-}" '
+        '&& test -z "${HTTPS_PROXY:-}" && test -z "${HTTP_PROXY:-}"; '
+        "nc -w 8 api.deepseek.com 443 </dev/null",
     )
     assert result.returncode == 0, _safe_probe_output(disposable_egress_project, result)
 
 
-def test_other_domain_raw_ip_and_other_port_are_denied(
+def test_runtime_has_no_filtering_proxy_neighbour(
     disposable_egress_project: EgressProject,
 ) -> None:
-    for authority in (
-        "example.com:443",
-        "1.1.1.1:443",
-        "api.deepseek.com:8443",
-    ):
-        result = _exec_probe(
-            disposable_egress_project,
-            "opencode-agent",
-            f"output=\"$(printf 'CONNECT {authority} HTTP/1.1\\r\\n"
-            f"Host: {authority}\\r\\n\\r\\n' | "
-            "nc -w 8 provider-egress-proxy 3128 2>&1 || true)\"; "
-            'printf "%s" "$output" | grep -Eq "^HTTP/[0-9.]+ 403 "',
-        )
-        assert result.returncode == 0, _safe_probe_output(disposable_egress_project, result)
+    result = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "-aq",
+            "--filter",
+            f"label=com.docker.compose.project={disposable_egress_project.name}",
+            "--filter",
+            "label=com.docker.compose.service=provider-egress-proxy",
+        ],
+        env=os.environ | disposable_egress_project.env,
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+    assert not result.stdout.split()
 
 
-def test_opencode_direct_internet_path_is_absent(disposable_egress_project: EgressProject) -> None:
+def test_runtime_is_isolated_from_the_public_default_bridge(
+    disposable_egress_project: EgressProject,
+) -> None:
     runtime = _service_id(disposable_egress_project, "opencode-agent")
     networks = subprocess.run(
         ["docker", "inspect", "--format", "{{json .NetworkSettings.Networks}}", runtime],
@@ -512,27 +519,5 @@ def test_opencode_direct_internet_path_is_absent(disposable_egress_project: Egre
         check=True,
         timeout=20,
     ).stdout
-    assert "provider_uplink" not in networks
+    assert "provider_uplink" in networks
     assert "default" not in networks
-
-
-def test_proxy_cannot_reach_control_plane_agent_network(
-    disposable_egress_project: EgressProject,
-) -> None:
-    proxy = _service_id(disposable_egress_project, "provider-egress-proxy")
-    networks = subprocess.run(
-        ["docker", "inspect", "--format", "{{json .NetworkSettings.Networks}}", proxy],
-        env=os.environ | disposable_egress_project.env,
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=True,
-        timeout=20,
-    ).stdout
-    assert "agent_internal" not in networks
-    result = _exec_probe(
-        disposable_egress_project,
-        "provider-egress-proxy",
-        "! bash -c 'exec 3<>/dev/tcp/control-plane/8000' >/dev/null 2>&1",
-    )
-    assert result.returncode == 0, _safe_probe_output(disposable_egress_project, result)

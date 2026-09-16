@@ -99,6 +99,28 @@ TermFlow 工具；URL 和 AgentToken 通过 Compose 环境变量的 `{env:}` 插
 token 写入镜像或持久化卷。普通 B 重启不会自行推进 epoch，撤销或 profile 变更才会使旧
 epoch 失效。
 
+### 运行时出网边界
+
+OpenCode 运行时是第三方代码，模型输出的工具调用由它执行，因此按"不可信运行时"对待。
+TermFlow 的控制分两层：
+
+- **工具层（主控制）**：`deploy/opencode-config.yaml` 的 permission map 固定为
+  `"*": "deny"` + `termflow_*: allow`。模型只能调用 TermFlow MCP 工具（只读观察 +
+  审批写入），OpenCode 自带工具（bash、webfetch、read/write 等）全部不可用。
+- **网络层（接受的残余风险）**：live/release 部署给运行时一条独立的普通 bridge
+  `provider_uplink` 直连 provider，不运行过滤代理。因此**运行时进程本身可以访问
+  互联网**。这不是模型能力（工具层已封住），但第三方运行时、供应链、未来插件或配置
+  漂移可以用这条出口；provider 密钥也在该容器内。
+
+为什么接受：OpenCode 不提供"只访问某个域名"的出网策略，Docker 也不提供按域名的
+egress 控制（只有"有外网/没外网"的网络分段）。域名白名单必须依赖 L7 过滤代理，等价于
+多一个容器、一份 ACL 和一条上游镜像；单主机、单用户部署认为该残余风险可接受，换取
+更少的运维面。需要收紧时，部署方可以在自己的网络层加正向代理并只给运行时 `internal`
+网络 + 代理出口，TermFlow 不再内置这一层。
+
+`tests/e2e/test_agent_provider_egress.py` 锁定当前拓扑：运行时直连 provider、没有
+代理容器/代理环境变量、且不与 A/C 的 default bridge 同网。
+
 验证结果按证据等级区分，不能用较低等级的结果替代较高等级的运行时证明：
 
 | 等级 | 当前覆盖 | 限制 |
@@ -106,7 +128,7 @@ epoch 失效。
 | 静态/契约 | Python、TypeScript、Rust、Compose 配置、OpenCode fixture、工具 allowlist、`scripts/security/verify-agent-containers.sh` 的可执行检查 | 不证明容器已经启动，也不证明外部模型可用 |
 | 确定性产品跨进程 | `tests/e2e/test_agent_product_setup.py` + `test_agent_broker_process.py` 使用真实 A/tmux 和 B 子进程验证 setup 不重启 B、health drift/recovery、旧 epoch/错误 Host/撤销/运行中撤销、SSE replay/dedup、歧义动作 `delivery_unknown`、清理重试和 dead-letter；2026-09-08 组合运行 9 passed，另有 1 个运行中撤销场景通过 | 使用本地 fake OpenCode/provider，不证明真实容器或外部模型 |
 | 隔离真实浏览器 | `apps/clients/web/e2e/agent-chat.spec.ts` 与 `agent-terminal.spec.ts` 在 disposable Chromium 中验证登录、Agent 导航、setup、sidecar、隐私/a11y、runtime `503` fail-closed、reload persistence 和单 WebSocket；2026-09-08 desktop 通过，移动 portrait/landscape 亦通过 | 浏览器使用临时无外网环境；未连接稳定 OpenCode/MCP 或外部模型 |
-| 容器集成与出口 | `tests/e2e/test_agent_opencode_container.py` 的 pinned 1.18.18 生命周期/inspect smoke（1 passed）以及 `test_agent_provider_egress.py` 的 provider allow/deny、无直连、网络隔离（4 passed，均为 2026-09-08 记录） | 需要 Docker daemon、固定镜像和临时凭据；不覆盖 B/OpenCode/MCP 的真实产品编排或模型行为 |
+| 容器集成与出口 | `tests/e2e/test_agent_opencode_container.py` 的 pinned 1.18.18 生命周期/inspect smoke（1 passed）以及 `test_agent_provider_egress.py` 的直连 provider、无代理进程/代理环境、与 default bridge 隔离（3 passed，2026-09-16 记录） | 需要 Docker daemon、固定镜像和临时凭据；不覆盖 B/OpenCode/MCP 的真实产品编排或模型行为；不提供域名级白名单（见「运行时出网边界」） |
 | live 外部模型 | 2026-09-09 disposable Compose 部署完成真实 B → OpenCode → DeepSeek → approval → Docker A `echo 1` 路径：一次 approval 被消费，重复决定返回 HTTP 409，记录一次 tool start/completion，pane 有一条命令和一条独立输出 `1`，最终 assistant body 恰为 `1`；B/OpenCode 重建后 setup、conversation 和 A 在线状态保留 | 该运行使用 synthetic、明确标注未验证的 provider disclosure metadata，readiness 仍为 `configured_unverified`，所以不证明供应商的 no-training/retention/region 政策或稳定发布就绪；新鲜 re-auth、撤销/断线和 `once`/`reject` 仍是未完成的 release gate |
 
 容器检查脚本只读取明确指定的 Compose project，不执行 up、down 或删除操作。集成测试的
