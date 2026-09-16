@@ -31,6 +31,9 @@
   .muted { color: var(--color-text-muted); }
   form { display: grid; gap: var(--space-3); margin-block-start: var(--space-5); }
   input, textarea { min-height: 2.75rem; width: 100%; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-3); background: var(--color-elevated); }
+  select { min-height: 2.75rem; width: 100%; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 0 2.5rem 0 var(--space-3); background-color: var(--color-elevated); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%2394a3b8' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right var(--space-3) center; background-size: 1rem; color: inherit; font: inherit; appearance: none; }
+  select:disabled { opacity: .6; }
+  select option { background: var(--color-elevated); color: var(--color-text-primary); }
   input[type='checkbox'], input[type='radio'] { width: auto; min-height: 0; padding: 0; background: transparent; accent-color: var(--color-accent); }
   .primary-button, .text-button { min-height: 2.75rem; border: 1px solid var(--color-accent); border-radius: var(--radius-md); padding: var(--space-2) var(--space-4); background: var(--color-accent); color: var(--color-accent-contrast); font-weight: 700; }
   .text-button { margin-inline-start: var(--space-2); min-height: 2.25rem; background: transparent; color: var(--color-text-primary); }

@@ -33,6 +33,16 @@ export interface TerminalSessionOptions {
   scheduler: TerminalScheduler
   createId: () => string
   reconnectDelayMs?: number
+  /**
+   * Optional authentication probe used before a reconnect attempt.  The
+   * WebSocket upgrade for an expired browser session is rejected with HTTP
+   * 401 before the socket opens, so the browser reports an abnormal 1006
+   * close instead of the application's 4401 code.  Without this probe the
+   * session would retry forever; a definitive unauthenticated answer must
+   * resolve ``false`` so the UI can ask for a fresh login.  Probe failures
+   * (network errors) resolve ``true`` and keep the retry loop alive.
+   */
+  probeSession?: () => Promise<boolean>
 }
 
 export interface TerminalSessionLike {
@@ -163,8 +173,29 @@ export class TerminalSession implements TerminalSessionLike {
     this.reconnectAttempt += 1
     this.reconnectTimer = this.options.scheduler.set(() => {
       this.reconnectTimer = null
-      void this.connect()
+      void this.reattempt()
     }, delay)
+  }
+
+  private async reattempt(): Promise<void> {
+    if (this.disposed || this.suppressReconnect) return
+    const probe = this.options.probeSession
+    if (probe !== undefined) {
+      let authenticated = true
+      try {
+        authenticated = await probe()
+      } catch {
+        authenticated = true
+      }
+      if (this.disposed || this.suppressReconnect) return
+      if (!authenticated) {
+        this.suppressReconnect = true
+        this.callbacks.onStatus('closed')
+        this.callbacks.onAuthenticationRequired()
+        return
+      }
+    }
+    await this.connect()
   }
 
   async sendInput(data: string | Uint8Array): Promise<void> {

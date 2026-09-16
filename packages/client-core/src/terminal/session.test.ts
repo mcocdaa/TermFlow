@@ -125,4 +125,59 @@ describe('TerminalSession', () => {
     await capped.dispose()
     await session.dispose()
   })
+
+  it('asks for a fresh login instead of retrying when the session probe is unauthenticated', async () => {
+    const transport = new FakeTransport()
+    const scheduler = new FakeScheduler()
+    const callbacks = callbackSpies()
+    const probeSession = vi.fn(async () => false)
+    const session = new TerminalSession('term /7', callbacks, {
+      transport,
+      scheduler,
+      createId: () => ACTION_ID,
+      reconnectDelayMs: 25,
+      probeSession,
+    })
+    await session.connect()
+    expect(transport.requests).toHaveLength(1)
+
+    transport.emit({ type: 'close', code: 1006 })
+    expect(callbacks.onStatus).toHaveBeenLastCalledWith('reconnecting')
+    scheduler.runNext()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(probeSession).toHaveBeenCalledTimes(1)
+    expect(transport.requests).toHaveLength(1)
+    expect(callbacks.onStatus).toHaveBeenLastCalledWith('closed')
+    expect(callbacks.onAuthenticationRequired).toHaveBeenCalledTimes(1)
+    await session.dispose()
+  })
+
+  it('keeps retrying when the session probe cannot prove a logout', async () => {
+    const transport = new FakeTransport()
+    const scheduler = new FakeScheduler()
+    const callbacks = callbackSpies()
+    const probeSession = vi.fn(async () => {
+      throw new Error('network down')
+    })
+    const session = new TerminalSession('term /7', callbacks, {
+      transport,
+      scheduler,
+      createId: () => ACTION_ID,
+      reconnectDelayMs: 25,
+      probeSession,
+    })
+    await session.connect()
+
+    transport.emit({ type: 'close', code: 1006 })
+    scheduler.runNext()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(probeSession).toHaveBeenCalledTimes(1)
+    expect(transport.requests).toHaveLength(2)
+    expect(callbacks.onAuthenticationRequired).not.toHaveBeenCalled()
+    await session.dispose()
+  })
 })

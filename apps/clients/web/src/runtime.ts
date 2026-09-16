@@ -1,4 +1,4 @@
-import { createApiClient, parseNativeAuthorizationCallback, TerminalSession, type TerminalScheduler } from '@termflow/client-core'
+import { ApiError, createApiClient, parseNativeAuthorizationCallback, TerminalSession, type TerminalScheduler } from '@termflow/client-core'
 import type { ClientRuntime } from '@termflow/client-ui'
 import { createBrowserAgentCursorStore } from './adapters/browserAgentCursorStore'
 import { createBrowserAgentStreamTransport } from './adapters/browserAgentStreamTransport'
@@ -13,17 +13,26 @@ import { createBrowserVisibility } from './adapters/browserVisibility'
 function browserDependencies(): ClientRuntime {
   const clock = createBrowserClock()
   const terminalTransport = createBrowserTerminalTransport()
+  const api = createApiClient(createBrowserHttpTransport())
   const scheduler: TerminalScheduler = {
     set: (callback, delayMs) => clock.setTimeout(callback, delayMs),
     clear: (handle) => clock.clearTimeout(handle),
   }
   return {
     sensitiveAuthorization: { mode: 'browser-session' },
-    api: createApiClient(createBrowserHttpTransport()),
+    api,
     createTerminal: (termId, callbacks) => new TerminalSession(termId, callbacks, {
       transport: terminalTransport,
       scheduler,
       createId: () => globalThis.crypto.randomUUID(),
+      probeSession: async () => {
+        try {
+          await api.sessions.status()
+          return true
+        } catch (cause) {
+          return !(cause instanceof ApiError && cause.kind === 'authentication')
+        }
+      },
     }),
     // Agent ports (M6b spec §4.6): the fetch-stream agui transport and the
     // browser cursor store are the web composition root's only
