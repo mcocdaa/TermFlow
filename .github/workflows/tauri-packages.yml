@@ -145,7 +145,7 @@ jobs:
       - run: npm ci
       - name: Build unsigned NSIS installer
         run: npm run tauri:build --workspace @termflow/tauri-client -- --bundles nsis --ci
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: ${{ needs.validate-version.outputs.artifact_prefix }}-windows-x64-nsis
           path: apps/clients/tauri/src-tauri/target/release/bundle/nsis/*-setup.exe
@@ -209,7 +209,7 @@ jobs:
           cp apps/clients/tauri/src-tauri/target/release/bundle/deb/*.deb \
             apps/clients/tauri/src-tauri/target/release/bundle/appimage/*.AppImage \
             "$RUNNER_TEMP/termflow-linux/"
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: ${{ needs.validate-version.outputs.artifact_prefix }}-linux-x64
           path: ${{ runner.temp }}/termflow-linux/*
@@ -266,7 +266,7 @@ jobs:
             exit 1
           fi
           cp "$1" "$RUNNER_TEMP/termflow-artifacts/"
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: ${{ needs.validate-version.outputs.artifact_prefix }}-macos-arm64
           path: ${{ runner.temp }}/termflow-artifacts/*
@@ -399,7 +399,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/termflow-android"
           cp "$APK_PATH" \
             "$RUNNER_TEMP/termflow-android/TermFlow-${TERMFLOW_BUILD_VERSION}-android-arm64.apk"
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: ${{ needs.validate-version.outputs.artifact_prefix }}-android-arm64-apk
           path: ${{ runner.temp }}/termflow-android/*
@@ -457,7 +457,7 @@ jobs:
           fi
           ditto -c -k --sequesterRsrc --keepParent \
             "$1" "$RUNNER_TEMP/termflow-artifacts/TermFlow-ios-simulator-aarch64.app.zip"
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: ${{ needs.validate-version.outputs.artifact_prefix }}-ios-simulator-aarch64
           path: ${{ runner.temp }}/termflow-artifacts/TermFlow-ios-simulator-aarch64.app.zip
