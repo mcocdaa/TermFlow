@@ -6040,6 +6040,20 @@ class RepositoryBundle:
 
         counts: dict[str, int] = {}
         async with self._sessions() as session:
+            # ``auth_tokens.parent_token_id`` is a self-referencing foreign key
+            # without an ON DELETE action.  A rotated refresh token keeps
+            # pointing at the older token, which can expire first, so deleting
+            # expired rows directly violates the constraint and aborts startup.
+            # Unlink the children first (equivalent to ON DELETE SET NULL).
+            await session.execute(
+                update(AuthToken)
+                .where(
+                    AuthToken.parent_token_id.in_(
+                        select(AuthToken.id).where(AuthToken.expires_at < now)
+                    )
+                )
+                .values(parent_token_id=None)
+            )
             for name, model in (
                 ("enrollment_tokens", EnrollmentToken),
                 ("auth_tokens", AuthToken),

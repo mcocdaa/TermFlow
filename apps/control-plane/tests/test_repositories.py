@@ -308,6 +308,47 @@ async def test_purge_expired_removes_expired_rows_and_keeps_native_clients(
 
 
 @pytest.mark.asyncio
+async def test_purge_expired_unlinks_child_tokens_before_deleting_parents(
+    repositories: RepositoryBundle,
+) -> None:
+    observed_at = datetime.now(UTC)
+    past = observed_at - timedelta(minutes=5)
+    future = observed_at + timedelta(minutes=5)
+
+    parent = await repositories.auth_tokens.issue(
+        "expired-parent-token",
+        kind="cli",
+        scopes=("admin",),
+        key_thumbprint=None,
+        expires_at=past,
+        epoch=1,
+    )
+    assert parent is not None
+    child = await repositories.auth_tokens.issue(
+        "live-child-token",
+        kind="cli",
+        scopes=("admin",),
+        key_thumbprint=None,
+        expires_at=future,
+        epoch=1,
+        parent_token_id=parent.id,
+    )
+    assert child is not None
+
+    # ``auth_tokens.parent_token_id`` has no ON DELETE action, so the sweep
+    # must unlink the live child (equivalent to ON DELETE SET NULL) instead of
+    # aborting the whole startup purge with a foreign key violation.
+    counts = await repositories.purge_expired(now=observed_at)
+
+    assert counts["auth_tokens"] == 1
+    live = await repositories.auth_tokens.get_active(
+        "live-child-token", epoch=1, kind="cli", now=observed_at
+    )
+    assert live is not None
+    assert live.parent_token_id is None
+
+
+@pytest.mark.asyncio
 async def test_rotate_credentials_bumps_epoch_without_clearing_totp(
     repositories: RepositoryBundle,
 ) -> None:
