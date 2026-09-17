@@ -41,7 +41,10 @@ export function useTermAgent(options: { termId: MaybeRefOrGetter<string>; reques
 
   function selectConversation(id: string | null) {
     if (id !== null && !conversations.value.some((entry) => entry.conversation_id === id && entry.binding_id === bindingId.value)) {
-      selectedConversationId.value = null; error.value = '该会话不属于当前 Term。'; return
+      // A stale deep link (?agent=…) or a conversation whose binding was
+      // revoked must not strand the panel: fall back to this term's first
+      // conversation (or none) instead of surfacing a hard error.
+      selectedConversationId.value = conversations.value[0]?.conversation_id ?? null; return
     }
     selectedConversationId.value = id
   }

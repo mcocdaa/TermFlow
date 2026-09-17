@@ -132,7 +132,7 @@ const props = withDefaults(defineProps<{
   enabled: boolean
   variant?: 'page' | 'sidecar' | 'floating'
 }>(), { variant: 'page' })
-const emit = defineEmits<{ close: []; pendingCount: [count: number]; backendState: [state: string | null] }>()
+const emit = defineEmits<{ close: []; pendingCount: [count: number]; backendState: [state: string | null]; missing: [] }>()
 const approvalPanel = ref<InstanceType<typeof AgentApprovalPanel> | null>(null)
 const pendingCount = ref(0)
 function updatePendingCount(count: number) { pendingCount.value = count; emit('pendingCount', count) }
@@ -153,8 +153,15 @@ async function refreshParts() {
   try {
     const response = await runtime.api.agents.getConversationParts(props.conversationId)
     parts.value = response.parts ?? []
-  } catch {
-    // Transient while the runtime reconnects; the next poll retries.
+  } catch (cause) {
+    // A 404 means the conversation (or its binding) is gone for good: stop
+    // the poll and let the host drop the stale deep link instead of
+    // hammering B every two seconds. Anything else is transient while the
+    // runtime reconnects; the next poll retries.
+    if (cause instanceof ApiError && cause.status === 404) {
+      if (partsTimer !== null) { window.clearInterval(partsTimer); partsTimer = null }
+      emit('missing')
+    }
   }
 }
 onMounted(() => {

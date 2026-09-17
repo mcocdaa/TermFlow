@@ -26,12 +26,12 @@ it('ignores stale setup responses after the term changes', async () => {
   expect(h.state.setup.value?.term_id).toBe('t2')
   h.wrapper.unmount()
 })
-it('rejects a URL conversation owned by another binding', async () => {
+it('silently falls back when a URL conversation belongs to another binding', async () => {
   const h = harness(vi.fn(async () => ({ ...setupResponse(), state: 'ready', binding_id: 'b1' })))
-  h.runtime.api.agents.listConversations = vi.fn(async () => ({ conversations: [{ conversation_id: 'foreign', binding_id: 'b2' }] })) as never
+  h.runtime.api.agents.listConversations = vi.fn(async () => ({ conversations: [{ conversation_id: 'c1', binding_id: 'b1' }, { conversation_id: 'foreign', binding_id: 'b2' }] })) as never
   h.requested.value = 'foreign'; await flushPromises()
-  expect(h.state.selectedConversationId.value).toBeNull()
-  expect(h.state.error.value).toContain('会话')
+  expect(h.state.selectedConversationId.value).toBe('c1')
+  expect(h.state.error.value).toBe('')
   h.wrapper.unmount()
 })
 it('keeps one idempotency key across a failed user retry', async () => {

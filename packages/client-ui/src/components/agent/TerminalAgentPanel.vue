@@ -223,7 +223,7 @@
           </div>
         </div>
         <p v-if="error" class="agent-panel-error" role="alert">{{ error }}</p>
-        <AgentChatSession v-if="selectedConversationId" :key="selectedConversationId" :conversation-id="selectedConversationId" :enabled="true" variant="floating" @pending-count="forwardPending" @backend-state="backendState = $event" />
+        <AgentChatSession v-if="selectedConversationId" :key="selectedConversationId" :conversation-id="selectedConversationId" :enabled="true" variant="floating" @pending-count="forwardPending" @backend-state="backendState = $event" @missing="refreshAfterMissingConversation" />
         <p v-else class="terminal-agent-empty">选择历史会话或点击“新建会话”。</p>
       </div>
     </div>
@@ -322,6 +322,8 @@ async function deleteHistoryConversation(conversationId: string) {
     mutating.value = false
   }
 }
+
+function refreshAfterMissingConversation() { void refresh() }
 
 async function changeWritePolicy(policy: 'manual' | 'auto') {
   const binding = bindingId.value
