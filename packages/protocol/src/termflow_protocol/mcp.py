@@ -17,10 +17,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from .common import utc_now
 from .keys import MAX_KEY_SEQUENCE_LENGTH, NAMED_KEYS
-from .messages import validate_plain_text
+from .messages import MAX_TERMINAL_BYTES, validate_plain_text
 from .topology import PaneId
 
-MAX_PANE_READ_BYTES = 256 * 1024
+# Computer A rejects captures above the terminal payload bound
+# (MAX_TERMINAL_BYTES); the MCP read window must never exceed it, or
+# every default pane_read is refused with 'capture ceiling' on A.
+MAX_PANE_READ_BYTES = MAX_TERMINAL_BYTES
 MAX_PANE_READ_LINES = 1_000_000
 MAX_WATCH_MATCH_LENGTH = 1024
 

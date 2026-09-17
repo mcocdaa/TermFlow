@@ -13,6 +13,7 @@ from termflow_protocol import (
     WatchCreateParams,
 )
 from termflow_protocol.mcp import MAX_PANE_READ_BYTES
+from termflow_protocol.messages import MAX_TERMINAL_BYTES
 
 _CURSOR: dict[str, object] = {
     "instance_id": uuid4(),
@@ -68,3 +69,10 @@ def test_pane_read_params_max_bytes_respects_hard_bound() -> None:
             view="viewport",
             max_bytes=MAX_PANE_READ_BYTES + 1,
         )
+
+
+def test_pane_read_default_matches_the_terminal_capture_ceiling() -> None:
+    # Computer A rejects captures above the terminal payload bound, so the MCP
+    # read window (and its default) must never exceed MAX_TERMINAL_BYTES.
+    assert MAX_PANE_READ_BYTES == MAX_TERMINAL_BYTES
+    assert PaneReadParams(pane_id="%1", view="viewport").max_bytes == MAX_TERMINAL_BYTES

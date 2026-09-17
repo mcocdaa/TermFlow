@@ -28,6 +28,7 @@ from termflow_protocol import (
     WireMessage,
     parse_payload,
 )
+from termflow_protocol.mcp import MAX_PANE_READ_BYTES
 
 from termflow_node.tmux.capture import (
     CaptureCommandError,
@@ -95,7 +96,7 @@ _TOPOLOGY_EVENTS = {
 # A-side ceiling for one bounded capture, matching the protocol wire cap for
 # terminal payloads (MAX_TERMINAL_BYTES). Requests above it are rejected with
 # quota_exceeded instead of being honored.
-_MAX_CAPTURE_BYTES = 65_536
+_MAX_CAPTURE_BYTES = MAX_PANE_READ_BYTES
 
 
 class BridgeRuntime:
