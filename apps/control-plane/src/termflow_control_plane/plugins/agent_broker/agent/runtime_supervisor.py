@@ -351,6 +351,19 @@ class SupervisorConnector:
         self._runtimes.pop(runtime_ref, None)
         return result
 
+    def release(self, runtime_ref: RuntimeRef, binding_id: str) -> None:
+        """Forget one closed Binding's attestation for a runtime.
+
+        Revocation/disable retires the Binding, but its runtime association
+        lives in connector memory.  Without this release the deployment's
+        single runtime stays bound to the closed Binding, so every later
+        setup on the same runtime_ref fails admission with an 'already bound'
+        conflict until B restarts.
+        """
+        attested = self._runtimes.get(runtime_ref)
+        if attested is not None and attested.binding_id == binding_id:
+            self._runtimes.pop(runtime_ref, None)
+
     async def aclose(self) -> None:
         """Close an optional async transport owned by the runtime client.
 

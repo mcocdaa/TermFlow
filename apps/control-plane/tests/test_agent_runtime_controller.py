@@ -124,6 +124,11 @@ class _FakeRegistry:
     def pipeline_for(self, binding_id: UUID) -> _FakePipeline | None:
         return self.live.get(binding_id)
 
+    def release_supervisor_binding(
+        self, binding_id: UUID, runtime_ref: str | None
+    ) -> None:
+        self.events.append(f"release_supervisor:{binding_id}:{runtime_ref}")
+
 
 class _FakeSupervisor:
     def __init__(self) -> None:
@@ -447,6 +452,22 @@ async def test_fence_rotates_epoch_and_closes_authority(context: _Context) -> No
     assert result.readiness == "not_ready"
     assert context.registry.pipeline_for(binding.id) is None
     assert fenced == [("approvals", binding.id), ("streams", binding.id)]
+
+
+async def test_fence_releases_the_supervisor_runtime_for_closed_bindings(
+    context: _Context,
+) -> None:
+    binding = await _seed_binding(context, "release")
+    controller = _controller(context)
+    assert (await controller.reconcile(binding.id)).readiness == "ready"
+
+    await context.repositories.agent_bindings.set_status(
+        binding.id, "revoked", advance_runtime_epoch=True
+    )
+    result = await controller.fence(binding.id, rotate_epoch=False)
+
+    assert result.readiness == "disabled"
+    assert f"release_supervisor:{binding.id}:runtime-1" in context.registry.events
 
 
 async def test_reconcile_all_visits_every_persisted_binding(context: _Context) -> None:

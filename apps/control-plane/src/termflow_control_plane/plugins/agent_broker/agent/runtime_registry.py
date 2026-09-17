@@ -222,6 +222,16 @@ class AgentRuntimeRegistry:
         self._candidates: dict[UUID, RuntimeCandidate] = {}
         self.unavailable_bindings: dict[UUID, str] = {}
 
+    def release_supervisor_binding(
+        self, binding_id: UUID, runtime_ref: str | None
+    ) -> None:
+        """Release a closed Binding's supervisor attestation for its runtime."""
+        supervisor = self._supervisor
+        ref = (runtime_ref or "").strip()
+        if supervisor is None or not ref:
+            return
+        supervisor.release(RuntimeRef(ref), str(binding_id))
+
     async def build_candidate(self, binding: AgentBinding) -> RuntimeCandidate:
         """Resolve and activate one binding's runtime, fail closed on any doubt.
 

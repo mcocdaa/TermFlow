@@ -18,6 +18,10 @@ export function agentReasonMessage(code: string | null | undefined): string {
     provider_unavailable: '模型提供方暂不可用。',
     deployment_required: '请管理员完成 Agent 服务部署。',
     sensitive_action_reauthentication_required: '身份验证已失效，请重新操作。',
+    runtime_unreachable: '运行时暂时不可达，稍候会自动重试。',
+    mcp_not_connected: '运行时尚未连上控制面，稍候会自动重试。',
+    runtime_assignment_conflict: '运行时身份冲突，请点击“重新激活”修复。',
+    pipeline_start_failed: '运行时启动失败，请稍候重试或联系管理员。',
   }
   return messages[code ?? ''] ?? 'Agent 暂不可用，请稍后重试。'
 }

@@ -304,6 +304,24 @@ class TestRegister:
 
 
 class TestHealth:
+    async def test_release_frees_the_runtime_for_a_new_binding(
+        self, client: FakeRuntimeClient, provider: FakeSecretProvider
+    ) -> None:
+        connector = make_connector(client, provider)
+        await connector.register(BINDING_ID, RUNTIME_REF, 1, CAPABILITY_REF)
+        with pytest.raises(RuntimeBindingConflictError):
+            await connector.register(OTHER_BINDING_ID, RUNTIME_REF, 1, CAPABILITY_REF)
+
+        # A release for a different binding must not free the runtime.
+        connector.release(RUNTIME_REF, OTHER_BINDING_ID)
+        with pytest.raises(RuntimeBindingConflictError):
+            await connector.register(OTHER_BINDING_ID, RUNTIME_REF, 1, CAPABILITY_REF)
+
+        connector.release(RUNTIME_REF, BINDING_ID)
+        assert connector.accept_activation(RUNTIME_REF, 1) is False
+        await connector.register(OTHER_BINDING_ID, RUNTIME_REF, 1, CAPABILITY_REF)
+        assert connector.accept_activation(RUNTIME_REF, 1) is True
+
     async def test_unregistered_runtime_reports_unknown(
         self, client: FakeRuntimeClient, provider: FakeSecretProvider
     ) -> None:

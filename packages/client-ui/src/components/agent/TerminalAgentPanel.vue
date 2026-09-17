@@ -127,10 +127,22 @@
         <AgentSetupForm :setup="setup" :profiles="profiles" :panes="panes" :busy="mutating" :error="error" @submit="submitSetup" @refresh="refresh" />
       </section>
       <section v-else-if="setup?.state === 'deployment_required'" class="terminal-agent-panel__scroll" data-agent-panel-state="deployment_required">
-        <h3>需要部署 Agent 服务</h3><p>请管理员完成运行环境和提供方配置。</p><button type="button" :disabled="mutating" @click="refresh">检查部署状态</button>
+        <div class="agent-panel-empty">
+          <h3>需要部署 Agent 服务</h3>
+          <p>请管理员完成运行环境和提供方配置。</p>
+          <div class="agent-setup-form__actions">
+            <button type="button" class="text-button" :disabled="mutating" @click="refresh">检查部署状态</button>
+          </div>
+        </div>
       </section>
       <section v-else-if="setup?.state === 'activating'" class="terminal-agent-panel__scroll" data-agent-panel-state="activating" role="status">
-        <h3>Agent 正在激活</h3><button type="button" :disabled="mutating" @click="refresh">刷新状态</button>
+        <div class="agent-panel-empty">
+          <h3>Agent 正在激活</h3>
+          <p class="muted">运行时正在连接，稍候会自动刷新。</p>
+          <div class="agent-setup-form__actions">
+            <button type="button" class="text-button" :disabled="mutating" @click="refresh">刷新状态</button>
+          </div>
+        </div>
       </section>
       <section v-else-if="disclosureRecoveryRequired" class="terminal-agent-panel__scroll" data-agent-panel-state="unavailable" data-agent-disclosure-recovery>
         <h3>请重新启用 Agent</h3>
@@ -140,7 +152,14 @@
         <button type="button" :disabled="mutating" @click="refresh">刷新</button>
       </section>
       <section v-else-if="setup?.state !== 'ready'" class="terminal-agent-panel__scroll" data-agent-panel-state="unavailable">
-        <h3>{{ error ? 'Agent 暂不可用' : 'Agent 正在恢复' }}</h3><p role="alert">{{ error || '运行时还在连接中，稍候会自动刷新。' }}</p><button type="button" :disabled="mutating" @click="retry">重试</button><button v-if="bindingId && error" type="button" :disabled="mutating" @click="activate">重新激活</button>
+        <div class="agent-panel-empty">
+          <h3>{{ error ? 'Agent 暂不可用' : 'Agent 正在恢复' }}</h3>
+          <p role="alert">{{ error || '运行时还在连接中，稍候会自动刷新。' }}</p>
+          <div class="agent-setup-form__actions">
+            <button type="button" class="text-button" :disabled="mutating" @click="retry">重试</button>
+            <button v-if="bindingId" type="button" class="primary-button" :disabled="mutating" @click="activate">重新激活</button>
+          </div>
+        </div>
       </section>
       <div v-else data-agent-panel-state="ready" class="terminal-agent-panel__ready">
         <div v-if="pendingAutoPolicy" class="terminal-agent-policy__confirm" role="alertdialog" aria-label="确认完全放行" data-agent-policy-confirm>

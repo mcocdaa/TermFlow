@@ -148,6 +148,13 @@ class AgentRuntimeController:
                 invalidate_tokens=(rotate_epoch or binding.status != "enabled"),
             )
 
+            if binding.status not in _ACTIVE_DESIRED_STATES:
+                # The runtime association lives in the supervisor's memory;
+                # release it so a later setup can re-admit the same runtime.
+                self._registry.release_supervisor_binding(
+                    binding.id, binding.runtime_ref
+                )
+
             readiness = (
                 "not_ready"
                 if binding.status in _ACTIVE_DESIRED_STATES
