@@ -132,6 +132,55 @@ it.each(['binding_disclosure_stale', 'binding_disclosure_required'])('re-enables
   w.unmount()
 })
 
+it('lets the user adjust pane grants after setup through the settings toolbar', async () => {
+  const runtime = createFakeRuntime()
+  runtime.api.agents.getSetup = vi.fn(async () => ({
+    state: 'ready',
+    term_id: 't1',
+    binding_id: 'b1',
+    profiles: [],
+    disclosure: null,
+    topology_revision: 7,
+    pane_policy: { binding_id: 'b1', pane_ids: ['%0'], topology_revision: 7 },
+    runtime: { config_revision: 3 },
+  })) as never
+  runtime.api.agents.listConversations = vi.fn(async () => ({ conversations: [] })) as never
+  runtime.api.terms.topology = vi.fn(async () => ({
+    instance_id: 't1',
+    topology: {
+      session_id: '$0',
+      session_name: 'demo',
+      revision: 7,
+      windows: [{
+        window_id: '@0',
+        panes: [
+          { pane_id: '%0', window_id: '@0', title: 'bash', current_command: 'bash' },
+          { pane_id: '%1', window_id: '@0', title: 'node', current_command: 'node' },
+        ],
+      }],
+    },
+  })) as never
+  runtime.api.agents.replacePanePolicies = vi.fn(async () => ({ binding_id: 'b1', pane_ids: ['%0', '%1'], topology_revision: 7 })) as never
+  const w = mount(TerminalAgentPanel, { props: { termId: 't1', conversationId: null }, global: { plugins: [createClientUi(runtime)], stubs: { AgentChatSession: true } } })
+  await flushPromises()
+
+  expect(w.find('[data-agent-panel-settings]').exists()).toBe(false)
+  await w.get('[data-action="toggle-agent-settings"]').trigger('click')
+  expect(w.get('[data-agent-panel-settings]').text()).toContain('已选 1/2')
+  await w.get('input[name="paneIds"][value="%1"]').setValue(true)
+  expect(w.get('[data-agent-panel-settings]').text()).toContain('已选 2/2')
+  await w.get('[data-action="save-agent-settings"]').trigger('click')
+  await flushPromises()
+
+  expect(runtime.api.agents.replacePanePolicies).toHaveBeenCalledWith('b1', {
+    pane_ids: ['%0', '%1'],
+    topology_revision: 7,
+    expected_revision: 3,
+  })
+  expect(w.find('[data-agent-panel-settings]').exists()).toBe(false)
+  w.unmount()
+})
+
 it('defers focus and URL selection until a persistently mounted sidecar opens', async () => {
   if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
   const runtime = createFakeRuntime()

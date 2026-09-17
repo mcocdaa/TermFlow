@@ -48,6 +48,19 @@
         >
           <History :size="17" aria-hidden="true" />
         </button>
+        <button
+          v-if="bindingId"
+          type="button"
+          class="icon-button icon-only"
+          data-action="toggle-agent-settings"
+          aria-label="Agent 设置"
+          title="Agent 设置：调整可访问的窗格"
+          :aria-expanded="settingsOpen ? 'true' : 'false'"
+          :disabled="!isReady || mutating"
+          @click="toggleSettings"
+        >
+          <Settings :size="17" aria-hidden="true" />
+        </button>
       </div>
       <input
         v-if="renamingId !== null && renamingId === selectedConversationId"
@@ -100,10 +113,18 @@
     </div>
 
     <div class="terminal-agent-panel__content">
-      <section v-if="loading" class="terminal-agent-panel__scroll" data-agent-panel-state="loading" role="status">正在加载 Agent…</section>
+      <section v-if="settingsOpen && isReady" class="terminal-agent-panel__scroll" data-agent-panel-settings>
+        <h3 class="agent-setup-form__title">Agent 设置</h3>
+        <AgentPanePicker v-model="settingsPaneIds" :panes="panes" :disabled="mutating" />
+        <p v-if="settingsError" class="form-error" role="alert">{{ settingsError }}</p>
+        <div class="agent-setup-form__actions">
+          <button type="button" class="text-button" :disabled="mutating" data-action="cancel-agent-settings" @click="settingsOpen = false">取消</button>
+          <button type="button" class="primary-button" :disabled="mutating || !settingsPaneIds.length" data-action="save-agent-settings" @click="savePaneSettings">保存</button>
+        </div>
+      </section>
+      <section v-else-if="loading" class="terminal-agent-panel__scroll" data-agent-panel-state="loading" role="status">正在加载 Agent…</section>
       <section v-else-if="setup?.state === 'unconfigured'" class="terminal-agent-panel__scroll" data-agent-panel-state="unconfigured">
-        <AgentSetupForm :setup="setup" :profiles="profiles" :panes="panes" :busy="mutating" :error="error" @submit="submitSetup" />
-        <button type="button" class="text-button" :disabled="mutating" @click="refresh">刷新状态</button>
+        <AgentSetupForm :setup="setup" :profiles="profiles" :panes="panes" :busy="mutating" :error="error" @submit="submitSetup" @refresh="refresh" />
       </section>
       <section v-else-if="setup?.state === 'deployment_required'" class="terminal-agent-panel__scroll" data-agent-panel-state="deployment_required">
         <h3>需要部署 Agent 服务</h3><p>请管理员完成运行环境和提供方配置。</p><button type="button" :disabled="mutating" @click="refresh">检查部署状态</button>
@@ -206,12 +227,14 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { History, MessageSquarePlus, Move, Pencil, Trash2, X } from '@lucide/vue'
+import { History, MessageSquarePlus, Move, Pencil, Settings, Trash2, X } from '@lucide/vue'
 import type { AgentSetupResponse } from '@termflow/client-contracts'
+import { ApiError } from '@termflow/client-core'
 import { useFloatingPanel, type FloatingPanelResizeEdge } from '../../composables/useFloatingPanel'
-import { useTermAgent } from '../../composables/useTermAgent'
+import { agentReasonMessage, useTermAgent } from '../../composables/useTermAgent'
 import { useClientRuntime } from '../../runtime'
 import AgentChatSession from './AgentChatSession.vue'
+import AgentPanePicker from './AgentPanePicker.vue'
 import AgentSetupForm from './AgentSetupForm.vue'
 
 const props = withDefaults(defineProps<{ termId: string; conversationId: string | null; open?: boolean; mobilePage?: boolean }>(), { open: true, mobilePage: false })
@@ -233,7 +256,39 @@ const closeButton = ref<HTMLButtonElement | null>(null)
 const historyOpen = ref(false)
 const backendState = ref<string | null>(null)
 const pendingAutoPolicy = ref(false)
+const settingsOpen = ref(false)
+const settingsPaneIds = ref<string[]>([])
+const settingsError = ref('')
 const writePolicy = computed<'manual' | 'auto'>(() => setup.value?.write_policy === 'auto' ? 'auto' : 'manual')
+
+function toggleSettings() {
+  if (mutating.value || !isReady.value) return
+  settingsOpen.value = !settingsOpen.value
+  if (settingsOpen.value) {
+    settingsError.value = ''
+    settingsPaneIds.value = [...(setup.value?.pane_policy?.pane_ids ?? [])]
+    // Pick up panes that appeared after setup so the listed grants and the
+    // topology revision used on save are current.
+    void refresh()
+  }
+}
+
+async function savePaneSettings() {
+  const binding = bindingId.value
+  const revision = setup.value?.topology_revision
+  if (binding === null || revision === null || revision === undefined || mutating.value) return
+  settingsError.value = ''
+  mutating.value = true
+  try {
+    await runtime.api.agents.replacePanePolicies(binding, { pane_ids: [...settingsPaneIds.value], topology_revision: revision, expected_revision: setup.value?.runtime?.config_revision ?? null })
+    settingsOpen.value = false
+    await refresh()
+  } catch (cause) {
+    settingsError.value = cause instanceof ApiError ? agentReasonMessage(cause.code) : '无法保存窗格授权。'
+  } finally {
+    mutating.value = false
+  }
+}
 
 async function deleteHistoryConversation(conversationId: string) {
   if (mutating.value) return
@@ -313,7 +368,10 @@ const resizeLabels: Record<FloatingPanelResizeEdge, string> = {
   n: '上边缘', e: '右边缘', s: '下边缘', w: '左边缘', ne: '右上角', se: '右下角', sw: '左下角', nw: '左上角',
 }
 
-watch(() => setup.value?.state, (state) => { if (state) emit('readiness', state) }, { immediate: true })
+watch(() => setup.value?.state, (state) => {
+  if (state && state !== 'ready') settingsOpen.value = false
+  if (state) emit('readiness', state)
+}, { immediate: true })
 watch(selectedConversationId, (id) => { forwardPending(0); if (props.open) emit('selectConversation', id) })
 watch(() => props.open, (open, previous) => {
   if (!open) return

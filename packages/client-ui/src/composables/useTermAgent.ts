@@ -9,6 +9,7 @@ import { useSensitiveAuthorization } from './useSensitiveAuthorization'
 export function agentReasonMessage(code: string | null | undefined): string {
   const messages: Record<string, string> = {
     stale_topology: '窗格布局已变化，请刷新后重新选择。',
+    stale_binding_revision: 'Agent 配置已变化，请刷新后重试。',
     topology_unavailable: '窗格布局暂不可用，请连接终端后刷新。',
     disclosure_mismatch: '提供方披露已变化，请重新确认。',
     disclosure_required: '请确认当前提供方的数据发送说明。',
