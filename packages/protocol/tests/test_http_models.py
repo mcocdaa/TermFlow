@@ -416,6 +416,9 @@ def test_oauth_metadata_and_browser_preview_are_public_contracts() -> None:
             "terminal.write",
             "computers.read",
             "computers.write",
+            "agent.admin",
+            "agent.conversations.read",
+            "agent.conversations.write",
         ],
     )
     preview = OAuthAuthorizationPreviewResponse(

@@ -6,7 +6,9 @@ from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 import pytest
+from starlette.requests import Request
 from starlette.websockets import WebSocketDisconnect
+from termflow_control_plane.api.dependencies import _required_scope
 from termflow_control_plane.auth.dpop import DpopVerifier, jwk_thumbprint
 from termflow_control_plane.auth.oauth import OAuthService
 from termflow_control_plane.auth.secret_box import EncryptedSecret
@@ -15,6 +17,7 @@ from termflow_protocol import (
     OAuthAuthorizationDecisionRequest,
     OAuthPublicJwk,
 )
+from termflow_protocol.http import OAUTH_SCOPES
 
 from .oauth_helpers import (
     approve_authorization,
@@ -53,8 +56,42 @@ def test_oauth_metadata_uses_only_configured_canonical_issuer(client) -> None:
             "terminal.write",
             "computers.read",
             "computers.write",
+            "agent.admin",
+            "agent.conversations.read",
+            "agent.conversations.write",
         ],
     }
+
+
+def test_oauth_metadata_advertises_every_scope_the_api_enforces(client) -> None:
+    """Native clients request exactly scopes_supported, so a missing scope
+    silently locks them out of the matching API family (agent routes)."""
+
+    def required(path: str, method: str = "GET") -> str | None:
+        scope = {
+            "type": "http",
+            "method": method,
+            "path": path,
+            "headers": [],
+            "query_string": b"",
+            "scheme": "http",
+            "server": ("testserver", 80),
+        }
+        return _required_scope(Request(scope))
+
+    enforced = {
+        required("/api/v1/agent/admin/setup"),
+        required("/api/v1/agent/admin/bindings", "DELETE"),
+        required("/api/v1/agent/conversations", "POST"),
+        required("/api/v1/agent/stream"),
+    }
+    advertised = set(
+        client.get("/.well-known/oauth-authorization-server").json()["scopes_supported"]
+    )
+
+    assert None not in enforced
+    assert enforced <= advertised
+    assert advertised == set(OAUTH_SCOPES)
 
 
 def _device_request(jwk: dict[str, str]) -> tuple[dict[str, object], str]:

@@ -24,6 +24,9 @@ type OAuthScope = Literal[
     "terminal.write",
     "computers.read",
     "computers.write",
+    "agent.admin",
+    "agent.conversations.read",
+    "agent.conversations.write",
 ]
 
 type OAuthDeviceTokenErrorCode = Literal[
@@ -38,6 +41,9 @@ OAUTH_SCOPES: tuple[OAuthScope, ...] = (
     "terminal.write",
     "computers.read",
     "computers.write",
+    "agent.admin",
+    "agent.conversations.read",
+    "agent.conversations.write",
 )
 _ASCII_TOTP = re.compile(r"[0-9]{6}\Z", flags=re.ASCII)
 _PKCE_VALUE = re.compile(r"[A-Za-z0-9._~-]{43,128}\Z", flags=re.ASCII)

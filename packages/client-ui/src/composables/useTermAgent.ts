@@ -22,6 +22,7 @@ export function agentReasonMessage(code: string | null | undefined): string {
     mcp_not_connected: '运行时尚未连上控制面，稍候会自动重试。',
     runtime_assignment_conflict: '运行时身份冲突，请点击“重新激活”修复。',
     pipeline_start_failed: '运行时启动失败，请稍候重试或联系管理员。',
+    insufficient_scope: '当前客户端缺少 Agent 权限，请重新登录授权。',
   }
   return messages[code ?? ''] ?? 'Agent 暂不可用，请稍后重试。'
 }
