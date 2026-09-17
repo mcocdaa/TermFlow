@@ -46,6 +46,36 @@ Computer 的注册时间由 B 创建 Installation 时记录，最近在线时间
 访问设备的本地时区显示，不附加 GMT、UTC 或其他时区缩写。不同 C 设备看到的当地钟表
 时间可以不同，但对应同一个 B 记录的时间点。
 
+## 原生客户端的 DPoP nonce 与流式通道
+
+原生客户端（Tauri：Windows/macOS/Linux/Android/iOS）用 DPoP 绑定 access token；B 为每个
+JWK thumbprint 维护一个 nonce。nonce 在生命周期前半段保持稳定（`DpopVerifier` 只在剩余
+TTL 不足一半时轮换），并发请求因此可以共享同一个缓存值；携带过期 nonce 的请求会得到
+`401 use_dpop_nonce` 与新的 `DPoP-Nonce` 响应头。重放防护由 (jkt, jti) 有界缓存负责，
+与 nonce 轮换无关。
+
+客户端侧只有一个 nonce 重试实现（Rust `send_with_dpop_nonce`）：首试使用缓存 nonce，
+`401 + DPoP-Nonce` 时带上新值重试（最多 3 次），并记住任何响应携带的 nonce。token
+端点与 agent SSE 握手复用同一实现；WebView 适配层不做第二次重试。重试耗尽后：真正的
+认证失败（401 且无 `DPoP-Nonce`）→ 清会话回登录；仅 nonce 竞争的 401（带
+`DPoP-Nonce`）→ 视为瞬态 1006，因为新 nonce 已被记住。
+
+Agent SSE 与终端/事件 WebSocket 共用的关闭码：
+
+| code | 含义 | 客户端行为 |
+| --- | --- | --- |
+| 4401 | 认证 epoch 变化 / 凭证失效 | 清会话，回登录 |
+| 4403 | 缺 scope 或 Origin 不允许 | 会话保留，提示缺少权限，不重连 |
+| 4404 | 会话不存在 | 清除本地 cursor，提示会话已删除，不重连 |
+| 4410 | 订阅端过慢，事件被丢弃 | 从 REST 重放补齐后继续 |
+| 4412 | binding 被撤销 | 标记 binding 撤销，不重连 |
+| 1006 | 传输/服务端瞬态错误 | 退避重连 |
+
+WebSocket 认证失败在 **accept 之后** 以 4401/4403/4429 关闭：accept 前的 close 只能给
+客户端一个没有 code 的 HTTP 403，终端客户端无法区分“回登录”与“退避重试”。Computer A
+的 `/api/v1/bridge/connect` 目前仍是 accept 前 close，等 A 升级到包含同一约定的版本后
+再统一。
+
 ## 本地边界
 
 每个 Instance 使用独立、绝对且不可与默认 tmux 混淆的 `-S <socket>`。能访问这个
@@ -61,6 +91,8 @@ origin；添加电脑返回的登录命令也从它生成。反向代理部署�
 所有用户共享代理 IP 的预算。仅当 B 只能经由可信反向代理访问、且该代理覆写（而不是追加
 或保留）`X-Forwarded-For` 时，才可显式设置 `TERMFLOW_TRUST_PROXY=true` 按转发头计源；
 HTTP 请求与 WebSocket 连接的认证限速使用同一个来源解析函数，Uvicorn 不做代理头预改写。
+`protected_websocket` 的握手在验证成功后调用 `AuthRateLimiter.refund` 退回配额，因此正常
+重连不会耗尽预算，只有失败或恶意的握手消耗配额。
 非回环的明文 `PUBLIC_BASE_URL` 会在启动时
 拒绝；HTTPS 部署自动附加 HSTS 响应头。
 token 不放 URL。B 不持久化终端输入、输出、屏幕快照或录像；SQLite 和审计只含身份、
