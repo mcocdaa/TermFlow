@@ -176,6 +176,26 @@ class AuthRateLimiter:
             state.next_allowed_at = 0.0
             self._touch_locked(key, state, now)
 
+    def refund(self, purpose: str, source: str) -> None:
+        """Return one consumed token after a verified request.
+
+        Handshake budgets exist to bound *failed* or hostile attempts, but
+        `check` consumes a token before the credential is verified. Without
+        a refund, a burst of legitimate reconnects (each one verified) can
+        exhaust a small per-source budget and then lock the source out; a
+        success must not count against the abuse budget.
+        """
+
+        key = self._key(purpose, source)
+        now = self._clock()
+        with self._state_lock:
+            self._prune_locked(now)
+            state = self._states.get(key)
+            if state is None:
+                return
+            state.tokens = min(float(state.capacity), state.tokens + 1.0)
+            self._touch_locked(key, state, now)
+
     def prune(self) -> None:
         """Remove stale source state without exposing source identifiers."""
 

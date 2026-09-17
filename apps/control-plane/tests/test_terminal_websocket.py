@@ -178,8 +178,8 @@ def test_terminal_auth_origin_offline_and_native_bearer(
     url = f"/api/v1/terms/{instance_id}/terminal"
 
     with pytest.raises(WebSocketDisconnect) as invalid_origin:
-        with client.websocket_connect(url, headers={"Origin": "https://evil.example"}):
-            pass
+        with client.websocket_connect(url, headers={"Origin": "https://evil.example"}) as rejected:
+            rejected.receive_json()
     assert invalid_origin.value.code == 4403
 
     with client.websocket_connect(url, headers={"Origin": ORIGIN}) as offline:

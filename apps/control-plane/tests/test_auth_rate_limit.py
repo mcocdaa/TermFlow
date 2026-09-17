@@ -69,6 +69,30 @@ def test_source_bucket_allows_five_then_refills_once_per_minute() -> None:
     assert _rate_limited(limiter, "web_session", "192.0.2.1").retry_after == 60
 
 
+def test_refund_returns_a_verified_handshake_token_within_capacity() -> None:
+    clock = ManualClock()
+    limiter = _limiter(clock)
+
+    for _ in range(5):
+        limiter.check("protected_websocket", "192.0.2.1")
+    limiter.refund("protected_websocket", "192.0.2.1")
+
+    # The refunded token covers one more handshake, and a second check is
+    # still rate limited until the bucket refills.
+    limiter.check("protected_websocket", "192.0.2.1")
+    _rate_limited(limiter, "protected_websocket", "192.0.2.1")
+
+    # Refunds never exceed the configured capacity.
+    for _ in range(5):
+        limiter.refund("protected_websocket", "192.0.2.1")
+    for _ in range(5):
+        limiter.check("protected_websocket", "192.0.2.1")
+    _rate_limited(limiter, "protected_websocket", "192.0.2.1")
+
+    # Unknown sources are a no-op rather than an error.
+    limiter.refund("protected_websocket", "198.51.100.7")
+
+
 def test_purpose_budget_overrides_default_capacity_and_refill() -> None:
     clock = ManualClock()
     limiter = _limiter(clock, purpose_budgets={"oauth_device_token": (60, 1.0)})

@@ -162,8 +162,15 @@ class DpopVerifier:
         htu: str,
         expected_jkt: str | None = None,
         access_token: str | None = None,
-        rotate_nonce: bool = True,
     ) -> VerifiedDpop:
+        """Validate one proof and report the nonce the caller should hand out.
+
+        Policy: a verified nonce stays stable until it is within half of its
+        TTL, so parallel requests can share the client's cached nonce; a
+        proof that misses the current nonce raises ``DpopNonceRequired`` with
+        the value to use next. Replay protection is the bounded JTI cache,
+        not rotation.
+        """
         now = self._clock()
         try:
             header = jwt.get_unverified_header(proof)
@@ -254,7 +261,7 @@ class DpopVerifier:
             # the bounded JTI cache above, so the nonce only has to stay
             # fresh within its TTL window.
             nonce_age_limit = self._nonce_ttl / 2
-            if rotate_nonce and (current[1] - now) <= nonce_age_limit:
+            if (current[1] - now) <= nonce_age_limit:
                 next_nonce = self._rotate_nonce(jkt, now)
             else:
                 next_nonce = current[0]

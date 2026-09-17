@@ -833,8 +833,8 @@ def test_dpop_protects_native_event_websocket(client, admin_headers) -> None:
                     access_token=access,
                 ),
             },
-        ):
-            pass
+        ) as rejected:
+            rejected.receive_json()
     assert caught.value.code == 4401
 
 
@@ -871,8 +871,8 @@ def test_websocket_authentication_has_a_bounded_source_burst(client) -> None:
             with client.websocket_connect(
                 f"/api/v1/events?instance_id={uuid4()}",
                 headers={"Authorization": "Bearer invalid"},
-            ):
-                pass
+            ) as rejected:
+                rejected.receive_json()
         close_codes.append(caught.value.code)
 
     assert close_codes[:5] == [4401] * 5

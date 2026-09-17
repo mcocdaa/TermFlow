@@ -96,6 +96,11 @@ async def subscribe_events(
         dpop,
         required_scope="terminal.read",
     )
+    # Accept before rejecting so the client receives the application close
+    # code (4401/4403/4429) instead of an opaque HTTP 403: a pre-accept
+    # close cannot carry a code, and the terminal/agent clients use it to
+    # tell a dead credential from a retryable nonce or rate-limit state.
+    await websocket.accept()
     if authentication.close_code is not None:
         reason = (
             "Origin not allowed"
@@ -130,7 +135,6 @@ async def subscribe_events(
             reason=subscriber.close_reason,
         )
         return
-    await websocket.accept()
     try:
         if pane_id is not None and stream_id is not None and after_seq is not None:
             payload = PaneReplayRequestPayload(

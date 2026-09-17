@@ -249,7 +249,6 @@ def test_dpop_rejects_bad_proofs_and_verifies_resource_and_websocket_proofs() ->
         method="GET",
         htu="https://b.example/api/v1/events",
         expected_jkt=jkt,
-        rotate_nonce=False,
     )
     second = verifier.verify(
         _proof(
@@ -263,7 +262,6 @@ def test_dpop_rejects_bad_proofs_and_verifies_resource_and_websocket_proofs() ->
         method="GET",
         htu="https://b.example/api/v1/events",
         expected_jkt=jkt,
-        rotate_nonce=False,
     )
 
     assert first.next_nonce == ws_challenge.value.nonce

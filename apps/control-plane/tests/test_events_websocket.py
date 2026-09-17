@@ -21,8 +21,8 @@ def test_events_reject_invalid_admin_token(client) -> None:
         with client.websocket_connect(
             f"/api/v1/events?instance_id={uuid4()}",
             headers={"Authorization": "Bearer invalid"},
-        ):
-            pass
+        ) as rejected:
+            rejected.receive_json()
     assert caught.value.code == 4401
 
 
@@ -163,6 +163,6 @@ def test_browser_cookie_requires_exact_origin_for_event_websocket(
             with client.websocket_connect(
                 f"/api/v1/events?instance_id={instance_id}",
                 headers=headers,
-            ):
-                pass
+            ) as rejected:
+                rejected.receive_json()
         assert caught.value.code == expected_code

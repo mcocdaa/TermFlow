@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 from fastapi import Request, WebSocket
 
 from termflow_control_plane.auth.context import AdminAuthContext, as_utc
-from termflow_control_plane.auth.dpop import DpopInvalid, DpopVerifier
+from termflow_control_plane.auth.dpop import DpopInvalid, DpopNonceRequired, DpopVerifier
 from termflow_control_plane.auth.rate_limit import AuthRateLimiter, client_source
 from termflow_control_plane.auth.tokens import hash_token, secret_text_matches
 from termflow_control_plane.config import Settings
@@ -277,7 +277,12 @@ async def authenticate_admin_websocket(
     *,
     required_scope: str,
 ) -> WebSocketAuthentication:
-    """Apply the HTTP credential policy and return its exact persisted epoch."""
+    """Apply the HTTP credential policy and return its exact persisted epoch.
+
+    The handshake budget bounds hostile attempts; a verified handshake
+    refunds its token so a burst of legitimate reconnects cannot lock the
+    source out of a small per-source budget.
+    """
 
     limiter: AuthRateLimiter = websocket.app.state.auth_rate_limiter
     source = client_source(websocket)
@@ -285,6 +290,32 @@ async def authenticate_admin_websocket(
         limiter.check("protected_websocket", source)
     except TermFlowError:
         return WebSocketAuthentication(close_code=4429, epoch=None)
+    authentication = await _resolve_websocket_authentication(
+        websocket,
+        settings,
+        store,
+        repositories,
+        dpop,
+        limiter=limiter,
+        required_scope=required_scope,
+    )
+    if authentication.close_code is None:
+        limiter.refund("protected_websocket", source)
+    return authentication
+
+
+async def _resolve_websocket_authentication(
+    websocket: WebSocket,
+    settings: Settings,
+    store: BrowserSessionStore,
+    repositories: RepositoryBundle,
+    dpop: DpopVerifier,
+    *,
+    limiter: AuthRateLimiter,
+    required_scope: str,
+) -> WebSocketAuthentication:
+    """Resolve one WebSocket credential into its close code and epoch."""
+
     authorization = _websocket_authorization(websocket)
     origin = websocket.headers.get("origin")
     state = await repositories.auth_state.get()
@@ -354,9 +385,12 @@ async def authenticate_admin_websocket(
                 htu=htu,
                 expected_jkt=access.key_thumbprint,
                 access_token=bearer,
-                rotate_nonce=False,
             )
-    except TermFlowError:
+    except DpopNonceRequired:
+        # A WebSocket handshake cannot return the challenge header, so the
+        # client only learns the fresh nonce from its next HTTP response;
+        # 4429 tells it the failure is retryable freshness, not a dead
+        # credential.
         return WebSocketAuthentication(close_code=4429, epoch=None)
     except DpopInvalid:
         return WebSocketAuthentication(close_code=4401, epoch=None)

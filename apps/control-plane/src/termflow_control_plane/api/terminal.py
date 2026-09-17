@@ -274,6 +274,11 @@ async def connect_terminal(websocket: WebSocket, instance_id: UUID) -> None:
         dpop,
         required_scope="terminal.write",
     )
+    # Accept before rejecting so the client receives the application close
+    # code (4401/4403/4429) instead of an opaque HTTP 403: a pre-accept
+    # close cannot carry a code to the client, which then cannot tell a
+    # dead credential from a retryable nonce, scope, or rate-limit state.
+    await websocket.accept()
     if authentication.close_code is not None:
         await websocket.close(
             code=authentication.close_code,
@@ -290,7 +295,6 @@ async def connect_terminal(websocket: WebSocket, instance_id: UUID) -> None:
         return
 
     session_key = websocket_browser_session_key(websocket, settings, sessions)
-    await websocket.accept()
     raw_terminal_id = websocket.query_params.get("terminal_id")
     raw_stream_id = websocket.query_params.get("stream_id")
     raw_after_seq = websocket.query_params.get("after_seq")
