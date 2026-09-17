@@ -35,7 +35,7 @@ export interface TerminalSessionOptions {
   reconnectDelayMs?: number
   /**
    * Optional authentication probe used before a reconnect attempt.  The
-   * WebSocket upgrade for an expired browser session is rejected with HTTP
+   * transport upgrade for an expired browser session is rejected with HTTP
    * 401 before the socket opens, so the browser reports an abnormal 1006
    * close instead of the application's 4401 code.  Without this probe the
    * session would retry forever; a definitive unauthenticated answer must
