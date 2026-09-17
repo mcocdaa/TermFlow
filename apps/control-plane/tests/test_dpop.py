@@ -84,7 +84,8 @@ def test_dpop_nonce_verification_flow() -> None:
         )
 
     # The nonce-bound proof verifies, query components are ignored, and the
-    # nonce rotates for the next request.
+    # nonce stays stable until it approaches expiry so parallel requests can
+    # share it.
     proof = _proof(key, jwk, now=now, nonce=first.value.nonce)
     verified = verifier.verify(
         proof,
@@ -93,7 +94,7 @@ def test_dpop_nonce_verification_flow() -> None:
         expected_jkt=jkt,
     )
     assert verified.jkt == jkt
-    assert verified.next_nonce != first.value.nonce
+    assert verified.next_nonce == first.value.nonce
 
     # A replay of the exact same proof is rejected.
     with pytest.raises(DpopInvalid, match="replayed"):
@@ -103,6 +104,52 @@ def test_dpop_nonce_verification_flow() -> None:
             htu="https://b.example/api/v1/dashboard",
             expected_jkt=jkt,
         )
+
+
+def test_dpop_nonce_rotates_only_near_expiry() -> None:
+    """Concurrent native requests share one cached nonce: a rotation on every
+    response would make them invalidate each other (401 churn)."""
+
+    now = [datetime(2026, 8, 2, 8, tzinfo=UTC)]
+    key, jwk = _key_and_jwk()
+    verifier = DpopVerifier(clock=lambda: now[0])
+    jkt = jwk_thumbprint(jwk)
+
+    with pytest.raises(DpopNonceRequired) as challenge:
+        verifier.verify(
+            _proof(key, jwk, now=now[0], nonce=None),
+            method="GET",
+            htu="https://b.example/api/v1/dashboard",
+            expected_jkt=jkt,
+        )
+    nonce = challenge.value.nonce
+
+    def verify(jti: str) -> str:
+        return verifier.verify(
+            _proof(key, jwk, now=now[0], nonce=nonce, jti=jti),
+            method="GET",
+            htu="https://b.example/api/v1/dashboard",
+            expected_jkt=jkt,
+        ).next_nonce
+
+    # Early in the nonce lifetime every parallel request reuses it unchanged.
+    assert verify("parallel-request-1") == nonce
+    now[0] += timedelta(minutes=1)
+    assert verify("parallel-request-2") == nonce
+
+    # Past half of the TTL the next success hands out a fresh nonce.
+    now[0] += timedelta(minutes=2)
+    rotated = verify("parallel-request-3")
+    assert rotated != nonce
+
+    with pytest.raises(DpopNonceRequired) as reissued:
+        verifier.verify(
+            _proof(key, jwk, now=now[0], nonce=nonce, jti="stale-nonce-request"),
+            method="GET",
+            htu="https://b.example/api/v1/dashboard",
+            expected_jkt=jkt,
+        )
+    assert reissued.value.nonce == rotated
 
 
 def test_dpop_rejects_bad_proofs_and_verifies_resource_and_websocket_proofs() -> None:

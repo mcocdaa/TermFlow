@@ -246,7 +246,18 @@ class DpopVerifier:
                 raise DpopNonceRequired(nonce)
             self._jtis[replay_key] = now + self._replay_ttl
             self._jtis.move_to_end(replay_key)
-            next_nonce = self._rotate_nonce(jkt, now) if rotate_nonce else current[0]
+            # Keep a verified nonce stable until it approaches expiry instead
+            # of rotating on every response: parallel native requests share
+            # one cached nonce, so per-response rotation makes concurrent
+            # requests invalidate each other (401 churn, and stream commands
+            # exhausting their single nonce retry). Replay safety rests on
+            # the bounded JTI cache above, so the nonce only has to stay
+            # fresh within its TTL window.
+            nonce_age_limit = self._nonce_ttl / 2
+            if rotate_nonce and (current[1] - now) <= nonce_age_limit:
+                next_nonce = self._rotate_nonce(jkt, now)
+            else:
+                next_nonce = current[0]
             return VerifiedDpop(jkt=jkt, jti=jti, next_nonce=next_nonce)
 
     def _rotate_nonce(self, jkt: str, now: datetime) -> str:
