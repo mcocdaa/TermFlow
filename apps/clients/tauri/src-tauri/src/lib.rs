@@ -92,8 +92,6 @@ pub fn run() {
             auth::native_cancel_authorization_listener,
             auth::native_refresh_access,
             auth::native_clear_credentials,
-            auth::native_request_headers,
-            auth::native_remember_dpop_nonce,
             auth::native_http_request,
             agent_stream::native_agent_stream,
             agent_stream::native_agent_stream_cancel,

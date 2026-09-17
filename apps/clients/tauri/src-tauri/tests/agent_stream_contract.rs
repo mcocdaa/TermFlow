@@ -108,9 +108,9 @@ fn stream_url_forces_the_agui_wire_and_encodes_webview_parameters() {
 #[test]
 fn close_code_mapping_matches_the_browser_transport_contract() {
     assert_eq!(close_for_status(401), (4401, "authentication_required"));
-    assert_eq!(close_for_status(403), (4412, "binding_revoked"));
-    assert_eq!(close_for_status(404), (4412, "conversation_not_found"));
-    assert_eq!(close_for_status(400), (4412, "invalid_cursor"));
+    assert_eq!(close_for_status(403), (4403, "forbidden"));
+    assert_eq!(close_for_status(404), (4404, "conversation_not_found"));
+    assert_eq!(close_for_status(400), (1006, "http_error"));
     assert_eq!(close_for_status(503), (1006, "http_error"));
 }
 

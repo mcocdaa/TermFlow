@@ -31,15 +31,14 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 use futures_util::StreamExt;
-use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tauri::State;
 use tokio::sync::Notify;
 
 use crate::auth::{
-    assert_http_target, canonical_issuer, current_access_token, dpop_proof, remember_dpop_nonce,
-    remembered_dpop_nonce, safe_error, signing_key, NativeAuthState,
+    assert_http_target, canonical_issuer, current_access_token, safe_error, send_with_dpop_nonce,
+    NativeAuthState,
 };
 
 /// The Agent stream endpoint (`termflow_control_plane.api.agent_stream`,
@@ -86,9 +85,8 @@ pub fn build_stream_url(issuer: &str, params: &AgentStreamParams) -> Result<Stri
 pub fn close_for_status(status: u16) -> (u16, &'static str) {
     match status {
         401 => (4401, "authentication_required"),
-        403 => (4412, "binding_revoked"),
-        404 => (4412, "conversation_not_found"),
-        400 => (4412, "invalid_cursor"),
+        403 => (4403, "forbidden"),
+        404 => (4404, "conversation_not_found"),
         _ => (1006, "http_error"),
     }
 }
@@ -286,20 +284,6 @@ pub fn build_stream_request(
         .header("DPoP", proof)
 }
 
-/// Assemble one handshake attempt: GET with DPoP authorization signed
-/// exactly once per attempt (the 401 + `DPoP-Nonce` retry is the only path
-/// that signs a second proof).
-fn build_attempt(
-    state: &NativeAuthState,
-    issuer: &str,
-    url: &str,
-    access_token: &str,
-    nonce: Option<&str>,
-) -> Result<reqwest::RequestBuilder, String> {
-    let proof = dpop_proof(&signing_key(issuer)?, "GET", url, nonce, Some(access_token))?;
-    Ok(build_stream_request(&state.http, url, access_token, &proof))
-}
-
 /// Race one future against the cancel signal. `None` means the stream was
 /// cancelled before the future resolved.
 async fn cancel_guard<T>(cancel: &Arc<Notify>, future: impl Future<Output = T>) -> Option<T> {
@@ -352,49 +336,31 @@ async fn run_stream(
             None => return Err(error),
         },
     };
-    let remembered = remembered_dpop_nonce(state, issuer)?;
-
-    let first = cancel_guard(
+    // The shared sender owns the remembered nonce and the bounded
+    // `use_dpop_nonce` retry loop, so this handshake cannot drift from the
+    // HTTP and token paths (M6b spec: one nonce policy per client).
+    let response = match cancel_guard(
         cancel,
-        build_attempt(state, issuer, url, &access_token, remembered.as_deref())?.send(),
+        send_with_dpop_nonce(state, issuer, "GET", url, Some(&access_token), |proof| {
+            Ok(build_stream_request(&state.http, url, &access_token, proof))
+        }),
     )
-    .await;
-    let Some(first) = first else {
-        return Ok(()); // cancelled before the connection resolved
-    };
-    let first = first.map_err(|_| safe_error("offline"))?;
-    let response = if first.status() == StatusCode::UNAUTHORIZED {
-        if let Some(nonce) = first
-            .headers()
-            .get("DPoP-Nonce")
-            .and_then(|value| value.to_str().ok())
-        {
-            let second = cancel_guard(
-                cancel,
-                build_attempt(state, issuer, url, &access_token, Some(nonce))?.send(),
-            )
-            .await;
-            let Some(second) = second else {
-                return Ok(());
-            };
-            second.map_err(|_| safe_error("offline"))?
-        } else {
-            first
-        }
-    } else {
-        first
-    };
-    // Remember any nonce the server issued, mirroring native_http_request.
-    if let Some(nonce) = response
-        .headers()
-        .get("DPoP-Nonce")
-        .and_then(|value| value.to_str().ok())
+    .await
     {
-        remember_dpop_nonce(state, issuer, nonce)?;
-    }
+        None => return Ok(()), // cancelled before the connection resolved
+        Some(response) => response.map_err(|_| safe_error("offline"))?,
+    };
 
     if !response.status().is_success() {
-        let (code, reason) = close_for_status(response.status().as_u16());
+        let status = response.status().as_u16();
+        let (code, reason) = if status == 401 && response.headers().get("DPoP-Nonce").is_some() {
+            // Retries were exhausted on freshness challenges, not a dead
+            // session: the fresh nonce is already remembered, so reconnect
+            // (transient 1006) instead of clearing the session (4401).
+            (1006, "nonce_retry_exhausted")
+        } else {
+            close_for_status(status)
+        };
         let _ = channel.send(AgentStreamFrame::Close { code, reason });
         return Ok(());
     }
@@ -473,6 +439,8 @@ mod tests {
     use futures_util::FutureExt;
     use p256::ecdsa::SigningKey;
 
+    use crate::auth::dpop_proof;
+
     #[test]
     fn stream_url_pins_the_endpoint_and_forces_the_agui_wire() {
         let url = build_stream_url("https://b.example", &AgentStreamParams::default()).unwrap();
@@ -509,9 +477,9 @@ mod tests {
     #[test]
     fn close_codes_map_http_statuses_like_the_web_transport() {
         assert_eq!(close_for_status(401), (4401, "authentication_required"));
-        assert_eq!(close_for_status(403), (4412, "binding_revoked"));
-        assert_eq!(close_for_status(404), (4412, "conversation_not_found"));
-        assert_eq!(close_for_status(400), (4412, "invalid_cursor"));
+        assert_eq!(close_for_status(403), (4403, "forbidden"));
+        assert_eq!(close_for_status(404), (4404, "conversation_not_found"));
+        assert_eq!(close_for_status(400), (1006, "http_error"));
         assert_eq!(close_for_status(500), (1006, "http_error"));
         assert_eq!(close_for_status(503), (1006, "http_error"));
         assert_eq!(close_for_status(0), (1006, "http_error"));

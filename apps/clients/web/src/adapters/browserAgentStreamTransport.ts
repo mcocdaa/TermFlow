@@ -4,6 +4,7 @@
 //: AbortController cancel the stream precisely. Reconnect/backoff stays in
 //: AgentStreamSession — this transport never retries.
 import {
+  agentStreamCloseForStatus,
   parseAgentStreamFrameAgui,
   type AgentStreamConnectRequest,
   type AgentStreamConnection,
@@ -17,20 +18,6 @@ type Fetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 const AGENT_STREAM_PATH = '/api/v1/agent/stream'
 
 const browserFetch: Fetch = (input, init) => globalThis.fetch(input, init)
-
-/**
- * Initial HTTP status → terminal close frame (M6b spec §4.2). The session
- * already owns 4401 (authentication required, no reconnect) and 4412
- * (terminal binding/conversation closure) semantics; other failures are
- * transient 1006 so the session may retry.
- */
-function closeForStatus(status: number): { code: number, reason: string } {
-  if (status === 401) return { code: 4401, reason: 'authentication_required' }
-  if (status === 403) return { code: 4412, reason: 'binding_revoked' }
-  if (status === 404) return { code: 4412, reason: 'conversation_not_found' }
-  if (status === 400) return { code: 4412, reason: 'invalid_cursor' }
-  return { code: 1006, reason: 'http_error' }
-}
 
 /**
  * Build the agui stream URL. Relative path plus encoded query values; the
@@ -81,7 +68,7 @@ export function createBrowserAgentStreamTransport(
           signal: controller.signal,
         })
         if (!response.ok) {
-          const mapped = closeForStatus(response.status)
+          const mapped = agentStreamCloseForStatus(response.status)
           finish(mapped.code, mapped.reason)
           return { close }
         }

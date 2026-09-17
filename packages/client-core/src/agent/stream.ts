@@ -4,6 +4,8 @@ import { isValidAgentCursor, parseCursorSeq } from './cursorStore'
 import {
   AGENT_STREAM_CLOSE_AUTH_EPOCH,
   AGENT_STREAM_CLOSE_BINDING_REVOKED,
+  AGENT_STREAM_CLOSE_FORBIDDEN,
+  AGENT_STREAM_CLOSE_NOT_FOUND,
   AGENT_STREAM_CLOSE_TOO_SLOW,
   type AgentStreamConnectRequest,
   type AgentStreamConnection,
@@ -249,8 +251,15 @@ export class AgentStreamSession<TEvent = AgentEventResponse> {
       this.callbacks.onAuthenticationRequired()
       return
     }
-    if (code === AGENT_STREAM_CLOSE_BINDING_REVOKED) {
-      // Revocation closes the stream; the conversation is gone.
+    if (
+      code === AGENT_STREAM_CLOSE_BINDING_REVOKED
+      || code === AGENT_STREAM_CLOSE_FORBIDDEN
+      || code === AGENT_STREAM_CLOSE_NOT_FOUND
+    ) {
+      // Terminal closures that do not invalidate the session: the binding
+      // was revoked, the credential lacks access, or the conversation is
+      // gone. The host surfaces the reason and clears a persisted cursor
+      // only when the entity no longer exists.
       this.suppressReconnect = true
       this.callbacks.onStatus('closed')
       this.callbacks.onClosed({ code, reason })

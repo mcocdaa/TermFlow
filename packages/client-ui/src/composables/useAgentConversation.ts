@@ -8,6 +8,8 @@
 import {
   AgentStreamSession,
   AGENT_STREAM_CLOSE_BINDING_REVOKED,
+  AGENT_STREAM_CLOSE_FORBIDDEN,
+  AGENT_STREAM_CLOSE_NOT_FOUND,
   applyAguiEvent,
   createAgentHistoryState,
   fetchEventsSinceAgui,
@@ -111,6 +113,15 @@ export function useAgentConversation(options: UseAgentConversationOptions) {
           // Revoked bindings and deleted conversations can never resume
           // (M6b spec §4.4 clear timing).
           runtime.agentCursorStore.clear(options.conversationId)
+          return
+        }
+        if (info.code === AGENT_STREAM_CLOSE_NOT_FOUND) {
+          runtime.agentCursorStore.clear(options.conversationId)
+          toast.show({ text: '该会话不存在或已被删除。', tone: 'error' })
+          return
+        }
+        if (info.code === AGENT_STREAM_CLOSE_FORBIDDEN) {
+          toast.show({ text: '当前客户端没有访问该会话的权限，请重新登录授权。', tone: 'error' })
         }
       },
       onError: (error) => {

@@ -134,21 +134,6 @@ pub(crate) fn canonical_issuer(value: &str) -> Result<String, String> {
     Ok(url.origin().ascii_serialization())
 }
 
-fn assert_api_target(issuer: &str, target: &str) -> Result<Url, String> {
-    let url = Url::parse(target).map_err(|_| safe_error("url_invalid"))?;
-    if url.username() != "" || url.password().is_some() {
-        return Err(safe_error("url_not_allowed"));
-    }
-    let base = Url::parse(issuer).map_err(|_| safe_error("issuer_invalid"))?;
-    if url.origin() != base.origin() {
-        return Err(safe_error("url_not_allowed"));
-    }
-    if !url.path().starts_with("/api/") {
-        return Err(safe_error("url_not_allowed"));
-    }
-    Ok(url)
-}
-
 fn validate_dpop_signing_input(input: &[u8]) -> Result<(), String> {
     let text = std::str::from_utf8(input).map_err(|_| safe_error("signing_input_invalid"))?;
     let mut parts = text.split('.');
@@ -240,6 +225,59 @@ pub(crate) fn remembered_dpop_nonce(
         .map_err(|_| safe_error("auth_state_unavailable"))?
         .get(issuer)
         .cloned())
+}
+
+/// How many request attempts a DPoP nonce challenge may consume. Parallel
+/// native requests share one cached nonce, so a request can lose a rotation
+/// race even though its credential is valid; the retry picks up the fresh
+/// nonce the challenge carries. The server keeps the nonce stable until it
+/// nears expiry, so in steady state the first attempt succeeds.
+pub(crate) const MAX_NONCE_ATTEMPTS: usize = 3;
+
+/// Send one DPoP-authenticated request, retrying `use_dpop_nonce` challenges.
+///
+/// `build` receives the signed proof and returns the fully assembled request
+/// (method, body, extra headers). Every response nonce is remembered so the
+/// next request — including the token endpoint and WebSocket handshakes —
+/// starts from the freshest value. The final response is returned as-is so
+/// callers can tell a genuine auth failure (401 without a challenge) from an
+/// exhausted challenge loop (401 carrying `DPoP-Nonce`).
+pub(crate) async fn send_with_dpop_nonce<F>(
+    state: &NativeAuthState,
+    issuer: &str,
+    method: &str,
+    url: &str,
+    access_token: Option<&str>,
+    mut build: F,
+) -> Result<reqwest::Response, String>
+where
+    F: FnMut(&str) -> Result<reqwest::RequestBuilder, String>,
+{
+    let key = signing_key(issuer)?;
+    let mut nonce = remembered_dpop_nonce(state, issuer)?;
+    let mut last: Option<reqwest::Response> = None;
+    for _ in 0..MAX_NONCE_ATTEMPTS {
+        let proof = dpop_proof(&key, method, url, nonce.as_deref(), access_token)?;
+        let response = build(&proof)?
+            .send()
+            .await
+            .map_err(|_| safe_error("offline"))?;
+        let challenge = response
+            .headers()
+            .get("DPoP-Nonce")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        if let Some(value) = &challenge {
+            remember_dpop_nonce(state, issuer, value)?;
+        }
+        if response.status() == StatusCode::UNAUTHORIZED && challenge.is_some() {
+            nonce = challenge;
+            last = Some(response);
+            continue;
+        }
+        return Ok(response);
+    }
+    last.ok_or_else(|| safe_error("offline"))
 }
 
 fn token_error_revokes_credentials(body: &[u8]) -> bool {
@@ -365,49 +403,15 @@ async fn token_request(
     issuer: &str,
     body: Value,
 ) -> Result<TokenResponse, String> {
-    let key = signing_key(issuer)?;
     let endpoint = format!("{issuer}/api/v1/oauth/token");
-    let first_proof = dpop_proof(&key, "POST", &endpoint, None, None)?;
-    let first = state
-        .http
-        .post(&endpoint)
-        .header("DPoP", first_proof)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|_| safe_error("token_exchange_failed"))?;
-    let response = if first.status() == StatusCode::UNAUTHORIZED {
-        if let Some(nonce) = first
-            .headers()
-            .get("DPoP-Nonce")
-            .and_then(|value| value.to_str().ok())
-        {
-            let proof = dpop_proof(&key, "POST", &endpoint, Some(nonce), None)?;
-            state
-                .http
-                .post(&endpoint)
-                .header("DPoP", proof)
-                .json(&body)
-                .send()
-                .await
-                .map_err(|_| safe_error("token_exchange_failed"))?
-        } else {
-            first
-        }
-    } else {
-        first
-    };
-    // Remember any nonce the server issued, including on non-success responses
-    // such as authorization_pending.  Without this the next poll repeats the
-    // 401 nonce challenge, doubling requests per poll and exhausting the
-    // server's auth budget before the user can approve the device grant.
-    if let Some(nonce) = response
-        .headers()
-        .get("DPoP-Nonce")
-        .and_then(|value| value.to_str().ok())
-    {
-        remember_dpop_nonce(state, issuer, nonce)?;
-    }
+    // The first attempt starts from the cached nonce and every response
+    // nonce is remembered (including on non-success bodies such as
+    // authorization_pending), so device polling does not repeat a 401
+    // challenge on every tick.
+    let response = send_with_dpop_nonce(state, issuer, "POST", &endpoint, None, |proof| {
+        Ok(state.http.post(&endpoint).header("DPoP", proof).json(&body))
+    })
+    .await?;
     if !response.status().is_success() {
         let body = response.bytes().await.unwrap_or_default();
         if token_error_revokes_credentials(&body) {
@@ -805,47 +809,6 @@ pub fn native_clear_credentials(
     clear_native_credentials(&state, &issuer)
 }
 
-#[tauri::command]
-pub async fn native_request_headers(
-    state: State<'_, NativeAuthState>,
-    issuer: String,
-    method: String,
-    url: String,
-    nonce: Option<String>,
-) -> Result<NativeHeaders, String> {
-    let issuer = canonical_issuer(&issuer)?;
-    assert_api_target(&issuer, &url)?;
-    let access = current_access(&state, &issuer).await?;
-    let nonce = match nonce {
-        Some(value) => {
-            remember_dpop_nonce(&state, &issuer, &value)?;
-            Some(value)
-        }
-        None => remembered_dpop_nonce(&state, &issuer)?,
-    };
-    let proof = dpop_proof(
-        &signing_key(&issuer)?,
-        &method,
-        &url,
-        nonce.as_deref(),
-        Some(&access.access_token),
-    )?;
-    Ok(NativeHeaders {
-        authorization: format!("DPoP {}", access.access_token),
-        dpop: proof,
-    })
-}
-
-#[tauri::command]
-pub fn native_remember_dpop_nonce(
-    state: State<'_, NativeAuthState>,
-    issuer: String,
-    nonce: String,
-) -> Result<(), String> {
-    let issuer = canonical_issuer(&issuer)?;
-    remember_dpop_nonce(&state, &issuer, &nonce)
-}
-
 fn is_public_api_path(path: &str) -> bool {
     let path = path.split('?').next().unwrap_or(path);
     matches!(
@@ -916,7 +879,6 @@ pub async fn native_http_request(
     method: String,
     headers: Option<HashMap<String, String>>,
     body: Option<Value>,
-    nonce: Option<String>,
 ) -> Result<NativeHttpResponse, String> {
     let issuer = canonical_issuer(&issuer)?;
     let _ = assert_http_target(&issuer, &path)?;
@@ -928,14 +890,8 @@ pub async fn native_http_request(
     } else {
         Some(current_access(&state, &issuer).await?)
     };
-    let remembered = if is_public {
-        None
-    } else {
-        remembered_dpop_nonce(&state, &issuer)?
-    };
-    let effective_nonce = nonce.or(remembered);
 
-    let send = |request_nonce: Option<String>| -> Result<reqwest::RequestBuilder, String> {
+    let send = |proof: Option<&str>| -> Result<reqwest::RequestBuilder, String> {
         let mut builder = match method.as_str() {
             "GET" => state.http.get(&url),
             "POST" => state.http.post(&url),
@@ -947,20 +903,12 @@ pub async fn native_http_request(
             builder = builder.header(name, value);
         }
         if !is_public {
-            let key = signing_key(&issuer)?;
-            let proof = dpop_proof(
-                &key,
-                &method,
-                &url,
-                request_nonce.as_deref(),
-                access.as_ref().map(|value| value.access_token.as_str()),
-            )?;
             builder = builder
                 .header(
                     "Authorization",
                     format!("DPoP {}", access.as_ref().unwrap().access_token),
                 )
-                .header("DPoP", proof);
+                .header("DPoP", proof.unwrap_or_default());
         }
         if let Some(value) = &body {
             builder = builder.json(value);
@@ -968,35 +916,30 @@ pub async fn native_http_request(
         Ok(builder)
     };
 
-    let first = send(effective_nonce.clone())?
-        .send()
-        .await
-        .map_err(|_| safe_error("request_failed"))?;
-    let response = if first.status() == StatusCode::UNAUTHORIZED && !is_public {
-        if let Some(nonce) = first
-            .headers()
-            .get("DPoP-Nonce")
-            .and_then(|value| value.to_str().ok())
-        {
-            send(Some(nonce.to_owned()))?
-                .send()
-                .await
-                .map_err(|_| safe_error("request_failed"))?
-        } else {
-            first
-        }
+    let response = if is_public {
+        send(None)?
+            .send()
+            .await
+            .map_err(|_| safe_error("request_failed"))?
     } else {
-        first
+        send_with_dpop_nonce(
+            &state,
+            &issuer,
+            &method,
+            &url,
+            access.as_ref().map(|value| value.access_token.as_str()),
+            |proof| send(Some(proof)),
+        )
+        .await
+        .map_err(|error| {
+            if error == "offline" {
+                safe_error("request_failed")
+            } else {
+                error
+            }
+        })?
     };
-    if !is_public {
-        if let Some(nonce) = response
-            .headers()
-            .get("DPoP-Nonce")
-            .and_then(|value| value.to_str().ok())
-        {
-            remember_dpop_nonce(&state, &issuer, nonce)?;
-        }
-    }
+
     let status = response.status().as_u16();
     let response_headers = response
         .headers()
@@ -1080,16 +1023,6 @@ mod tests {
             Some("nonce-two".to_owned())
         );
         assert!(remember_dpop_nonce(&state, "https://one.example", "bad nonce").is_err());
-    }
-
-    #[test]
-    fn api_target_must_match_issuer_origin_and_api_prefix() {
-        let issuer = "https://b.example";
-        assert!(assert_api_target(issuer, "https://b.example/api/v1/dashboard").is_ok());
-        assert!(assert_api_target(issuer, "https://attacker.example/api/v1/dashboard").is_err());
-        assert!(assert_api_target(issuer, "https://b.example/other").is_err());
-        assert!(assert_api_target(issuer, "https://b.example/").is_err());
-        assert!(assert_api_target(issuer, "https://user:pass@b.example/api/v1/dashboard").is_err());
     }
 
     #[test]
