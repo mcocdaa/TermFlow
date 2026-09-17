@@ -430,6 +430,106 @@ async def test_setup_reconfiguration_reuses_binding_and_advances_revision(ctx):
 
 
 @pytest.mark.asyncio
+async def test_setup_rearms_revoked_capability_after_binding_revoke(ctx):
+    db, repos, term_id, profile, (catalog, fingerprint) = ctx
+    service = AgentProvisioningService(
+        repos,
+        topology={term_id: {"revision": 3, "pane_ids": ["%0"]}},
+        catalog=catalog,
+        bootstrap_secret="bootstrap",
+    )
+    first = await service.setup(_command(term_id, profile.id, fingerprint), {})
+    assert first.binding_id is not None
+    closed = await repos.agent_bindings.set_status(
+        first.binding_id, "revoked", advance_runtime_epoch=True
+    )
+    assert closed is not None
+
+    # The deployment bootstrap secret is re-issued for the new Binding; the
+    # unique token hash forces the revoked row to be re-armed instead of
+    # inserting a duplicate (previously a 500 UNIQUE violation).
+    second = await service.setup(
+        _command(term_id, profile.id, fingerprint, key=uuid4()), {}
+    )
+    assert second.binding_id is not None
+    assert second.binding_id != first.binding_id
+
+    async with db.session_factory() as session:
+        tokens = list(await session.scalars(select(AgentToken)))
+        assert len(tokens) == 1
+        binding = await session.get(AgentBinding, second.binding_id)
+        assert binding is not None
+        assert tokens[0].binding_id == second.binding_id
+        assert tokens[0].revoked_at is None
+        assert tokens[0].binding_epoch == binding.runtime_epoch
+        assert tokens[0].token_hash == digest_secret("bootstrap")
+
+
+@pytest.mark.asyncio
+async def test_setup_allocates_a_fresh_runtime_epoch_after_revoke(ctx):
+    db, repos, term_id, profile, (catalog, fingerprint) = ctx
+    service = AgentProvisioningService(
+        repos,
+        topology={term_id: {"revision": 3, "pane_ids": ["%0"]}},
+        catalog=catalog,
+        bootstrap_secret="bootstrap",
+    )
+    first = await service.setup(_command(term_id, profile.id, fingerprint), {})
+    assert first.binding_id is not None
+    assert (
+        await repos.agent_runtime_bindings.compare_and_set_ready(
+            first.binding_id, 1, fingerprint, 1
+        )
+        is True
+    )
+    await repos.agent_bindings.set_status(
+        first.binding_id, "revoked", advance_runtime_epoch=True
+    )
+
+    second = await service.setup(
+        _command(term_id, profile.id, fingerprint, key=uuid4()), {}
+    )
+    assert second.binding_id is not None
+    async with db.session_factory() as session:
+        binding = await session.get(AgentBinding, second.binding_id)
+        assert binding is not None
+        assert binding.runtime_epoch == 3
+    # The fresh epoch must not collide with the closed Binding's observed row.
+    assert (
+        await repos.agent_runtime_bindings.compare_and_set_ready(
+            second.binding_id, 1, fingerprint, 3
+        )
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_setup_rejects_a_capability_active_for_another_binding(ctx):
+    db, repos, term_id, profile, (catalog, fingerprint) = ctx
+    service = AgentProvisioningService(
+        repos,
+        topology={term_id: {"revision": 3, "pane_ids": ["%0"]}},
+        catalog=catalog,
+        bootstrap_secret="bootstrap",
+    )
+    first = await service.setup(_command(term_id, profile.id, fingerprint), {})
+    assert first.binding_id is not None
+
+    other = await repos.agent_profiles.create(
+        display_name="other",
+        backend_kind="opencode",
+        config='{"model_id":"deepseek-reasoner","provider_id":"deepseek"}',
+    )
+    other_config, _ = canonicalize_profile_config(other.config)
+    other_fingerprint = catalog.disclosure_fingerprint(other_config)
+    with pytest.raises(Exception) as exc:
+        await service.setup(
+            _command(term_id, other.id, other_fingerprint, key=uuid4()), {}
+        )
+    assert getattr(exc.value, "code", None) == "capability_conflict"
+
+
+@pytest.mark.asyncio
 async def test_setup_accepts_injected_server_owned_runtime_assignment(ctx):
     db, repos, term_id, profile, (catalog, fingerprint) = ctx
 

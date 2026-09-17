@@ -19,7 +19,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from pydantic import SecretStr
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 
 from termflow_control_plane.errors import TermFlowError
 from termflow_control_plane.persistence.models import (
@@ -642,6 +642,40 @@ class AgentProvisioningService:
                             "The Agent runtime assignment epoch is stale.",
                         )
 
+            if (
+                assignment is not None
+                and is_new_binding
+                and self._runtime_assignment is None
+            ):
+                # The default assignment is deterministic and does not know
+                # about previously closed Bindings.  Runtime rows are unique
+                # per (runtime_ref, observed epoch), so a fresh Binding must
+                # start above every epoch this runtime has ever used;
+                # otherwise re-setup after a revoke collides with the closed
+                # Binding's observed row.
+                highest_binding_epoch = await session.scalar(
+                    select(func.max(AgentBinding.runtime_epoch)).where(
+                        AgentBinding.runtime_ref == assignment.runtime_ref
+                    )
+                )
+                highest_observed_epoch = await session.scalar(
+                    select(func.max(AgentRuntimeBinding.observed_runtime_epoch)).where(
+                        AgentRuntimeBinding.observed_runtime_ref
+                        == assignment.runtime_ref
+                    )
+                )
+                used_epochs = [
+                    epoch
+                    for epoch in (highest_binding_epoch, highest_observed_epoch)
+                    if epoch is not None
+                ]
+                if used_epochs and assignment.runtime_epoch <= max(used_epochs):
+                    assignment = AgentRuntimeAssignment(
+                        runtime_ref=assignment.runtime_ref,
+                        runtime_epoch=max(used_epochs) + 1,
+                        capability_ref=assignment.capability_ref,
+                    )
+
             assignment_changed = assignment is not None and (
                 binding.runtime_ref != assignment.runtime_ref
                 or binding.runtime_epoch != assignment.runtime_epoch
@@ -809,17 +843,48 @@ class AgentProvisioningService:
                         )
                         .values(revoked_at=now)
                     )
-                session.add(
-                    AgentToken(
-                        binding_id=binding.id,
-                        token_hash=token_hash,
-                        scopes=json.dumps(
-                            ["terminal.observe", "terminal.write"], separators=(",", ":")
-                        ),
-                        expiry_epoch=int(now.timestamp()) + 31536000,
-                        binding_epoch=binding.runtime_epoch or 1,
-                    )
+                # ``agent_tokens.token_hash`` is globally unique: one
+                # deployment bootstrap secret maps to exactly one capability
+                # row.  A previous Binding may have been revoked, leaving its
+                # row behind while the same secret is re-issued here, so
+                # re-arm that row instead of inserting a duplicate hash.  A
+                # capability that is still active for another Binding must
+                # never be hijacked silently.
+                prior = await session.scalar(
+                    select(AgentToken)
+                    .where(AgentToken.token_hash == token_hash)
+                    .limit(1)
                 )
+                if prior is not None and prior.revoked_at is None:
+                    prior_binding = await session.get(AgentBinding, prior.binding_id)
+                    if prior_binding is not None and prior_binding.status in (
+                        "enabled",
+                        "pending",
+                        "ready",
+                    ):
+                        raise TermFlowError(
+                            "capability_conflict",
+                            409,
+                            "The deployment bootstrap capability is already "
+                            "active for another Binding.",
+                        )
+                capability: dict[str, object] = {
+                    "binding_id": binding.id,
+                    "scopes": json.dumps(
+                        ["terminal.observe", "terminal.write"], separators=(",", ":")
+                    ),
+                    "expiry_epoch": int(now.timestamp()) + 31536000,
+                    "binding_epoch": binding.runtime_epoch or 1,
+                    "revoked_at": None,
+                }
+                if prior is not None:
+                    await session.execute(
+                        update(AgentToken)
+                        .where(AgentToken.id == prior.id)
+                        .values(**capability)
+                    )
+                else:
+                    session.add(AgentToken(token_hash=token_hash, **capability))
             else:
                 # Same-epoch idempotent setup leaves the existing capability
                 # row untouched; in particular it never rebinds a token to a
