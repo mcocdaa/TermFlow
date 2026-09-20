@@ -102,7 +102,7 @@ jobs:
             --generate-notes \
             --notes "Windows package is unsigned. Android release APK uses the fixed TermFlow signing certificate; rc.3/rc.4 Android users must uninstall once before installing rc.5. iOS is Simulator-only." \
             "${prerelease[@]}"
-      - uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
         with:
           subject-path: "release-assets/*"
       - uses: sigstore/cosign-installer@f713795cb21599bc4e5c4b58cbad1da852d7eeb9  # v3
