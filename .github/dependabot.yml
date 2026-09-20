@@ -11,11 +11,7 @@ updates:
         patterns: ['*']
         update-types: ['minor', 'patch']
     ignore:
-      - dependency-name: "vue-router"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "vitest"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "typescript"
+      - dependency-name: "*"
         update-types: ["version-update:semver-major"]
     commit-message:
       prefix: 'chore(deps)'
@@ -30,6 +26,9 @@ updates:
       uv-minor-patch:
         patterns: ['*']
         update-types: ['minor', 'patch']
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: 'chore(deps)'
 
@@ -43,6 +42,9 @@ updates:
       actions:
         patterns: ['*']
         update-types: ['minor', 'patch']
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # Docker 基础镜像（deploy 目录）
   - package-ecosystem: docker
@@ -52,6 +54,9 @@ updates:
     groups:
       docker-images:
         patterns: ['*']
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: docker-compose
     directory: /deploy
@@ -60,3 +65,6 @@ updates:
     groups:
       compose-services:
         patterns: ['*']
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
