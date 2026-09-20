@@ -3,7 +3,7 @@ name = "termflow-protocol"
 version = "0.2.0"
 description = "Versioned wire contracts for TermFlow"
 requires-python = ">=3.12"
-dependencies = ["pydantic>=2.10,<3"]
+dependencies = ["pydantic>=2.13.5,<3"]
 
 [build-system]
 requires = ["hatchling"]
