@@ -1,5 +1,15 @@
 # TermFlow
 
+> 通过浏览器、手机与原生客户端安全远程控制 tmux 终端与 Agent Broker 事件流。
+
+[![Family: *Flow](https://img.shields.io/badge/family-*Flow-8A2BE2.svg)](https://github.com/mcocdaa)
+[![CI](https://github.com/mcocdaa/TermFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/mcocdaa/TermFlow/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/mcocdaa/TermFlow?display_name=tag&sort=semver)](https://github.com/mcocdaa/TermFlow/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
+[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](deploy/compose.yaml)
+
 TermFlow 让你通过浏览器、手机或原生客户端远程使用另一台电脑上的 tmux 终端。
 
 ```text
