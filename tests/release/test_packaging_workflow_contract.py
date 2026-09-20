@@ -350,7 +350,7 @@ def test_every_native_runner_materializes_before_reading_package_manifests() -> 
         rust_cache = next(
             index
             for index, step in enumerate(steps)
-            if step.get("uses") == "Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c"
+            if str(step.get("uses", "")).startswith("Swatinem/rust-cache@")
         )
         npm_install = next(
             index
