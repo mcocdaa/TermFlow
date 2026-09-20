@@ -19,7 +19,7 @@ dependencies = [
   "sqlalchemy>=2.0,<3",
   "termflow-protocol",
   "typer>=0.15,<1",
-  "uvicorn[standard]>=0.34,<1",
+  "uvicorn[standard]>=0.53.0,<1",
 ]
 
 [project.scripts]
