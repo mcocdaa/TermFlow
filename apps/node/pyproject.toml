@@ -27,7 +27,7 @@ termflow-protocol = { workspace = true }
 
 [dependency-groups]
 dev = [
-  "mypy>=1.14,<2",
+  "mypy>=2.3.1,<3",
   "pyinstaller>=6.12,<7",
   "pexpect>=4.9,<5",
   "pytest>=8,<10",
