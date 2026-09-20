@@ -9,7 +9,7 @@ dependencies = [
   "pydantic-settings>=2.7,<3",
   "termflow-protocol",
   "typer>=0.15,<1",
-  "websockets>=14,<17",
+  "websockets>=17.1,<18",
 ]
 
 [project.scripts]
