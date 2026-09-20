@@ -1,0 +1,30 @@
+name: Feature Request (功能需求)
+description: 提出新的功能建议或改进想法
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        我们欢迎任何有助于提升产品体验或拓展生态能力的建议！
+  - type: textarea
+    id: problem
+    attributes:
+      label: 目标场景与痛点 (Problem / Motivation)
+      description: 该功能旨在解决什么问题？或在什么场景下会用到？
+      placeholder: 我希望在 ... 时能够 ...，因为目前 ...
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: 建议的方案 (Proposed Solution)
+      description: 请清晰描述你希望的功能实现方式或用户体验。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 考虑过的替代方案 (Alternatives Considered)
+      description: 是否考虑过其他临时绕过方式或现有工具？
+    validations:
+      required: false

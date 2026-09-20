@@ -1,0 +1,53 @@
+name: Bug Report (问题报告)
+description: 提交运行错误、异常行为或缺陷
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你帮助改进本项目！提交 Bug 前请先在已有的 Issue 中搜索是否已有相同问题。
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述 (Description)
+      description: 请清晰、简要地描述遇到的问题或异常行为。
+      placeholder: 在执行 ... 时出现了 ...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤 (Steps to Reproduce)
+      description: 请提供逐步复现该问题的详细步骤。
+      placeholder: |
+        1. 运行 '...'
+        2. 点击 '...'
+        3. 查看错误信息
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为 (Expected Behavior)
+      description: 描述你期望发生的结果。
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: 错误日志与堆栈 (Logs / Traceback)
+      description: 请粘贴相关终端输出、Docker 容器日志或浏览器控制台报错。
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: environment
+    attributes:
+      label: 运行环境 (Environment)
+      description: 系统与依赖环境信息。
+      value: |
+        - OS: [e.g. Ubuntu 22.04 / macOS 14 / Windows 11]
+        - Docker Version: [e.g. 24.0.5]
+        - Browser / Node / Python Version:
+    validations:
+      required: true
