@@ -167,17 +167,11 @@ def _binding_info(binding: AgentBinding) -> ApprovalBindingInfo:
 
 def _map_approval_error(exc: ApprovalError) -> TermFlowError:
     if isinstance(exc, ApprovalNotFound):
-        return TermFlowError(
-            "approval_not_found", 404, "The Approval Request does not exist."
-        )
+        return TermFlowError("approval_not_found", 404, "The Approval Request does not exist.")
     if isinstance(exc, ApprovalExpired):
-        return TermFlowError(
-            "approval_expired", 410, "The Approval Request has expired."
-        )
+        return TermFlowError("approval_expired", 410, "The Approval Request has expired.")
     if isinstance(exc, ApprovalRevoked):
-        return TermFlowError(
-            "approval_revoked", 409, "The Approval Request has been revoked."
-        )
+        return TermFlowError("approval_revoked", 409, "The Approval Request has been revoked.")
     if isinstance(exc, ApprovalAlreadyDecided):
         return TermFlowError(
             "approval_already_decided",
@@ -209,9 +203,7 @@ async def _approval_detail(
 ) -> ApprovalDetailResponse:
     approval = await repositories.approvals.get_by_id(approval_id)
     if approval is None:
-        raise TermFlowError(
-            "approval_not_found", 404, "The Approval Request does not exist."
-        )
+        raise TermFlowError("approval_not_found", 404, "The Approval Request does not exist.")
     binding = await repositories.agent_bindings.get_by_id(approval.binding_id)
     if binding is None:
         raise TermFlowError(
@@ -245,9 +237,7 @@ async def list_approvals(
     async with sessions() as session:
         rows = await session.scalars(statement)
         approvals = list(rows)
-    return ApprovalListResponse(
-        approvals=[_approval_response(approval) for approval in approvals]
-    )
+    return ApprovalListResponse(approvals=[_approval_response(approval) for approval in approvals])
 
 
 @router.get("/{approval_id}", response_model=ApprovalDetailResponse)
@@ -270,9 +260,7 @@ async def decide_approval(
 ) -> ApprovalDetailResponse:
     if request.decision == "approve" and not auth.is_fresh(
         now=datetime.now(UTC),
-        maximum_age=timedelta(
-            seconds=settings.agent_sensitive_action_max_age_seconds
-        ),
+        maximum_age=timedelta(seconds=settings.agent_sensitive_action_max_age_seconds),
     ):
         raise TermFlowError(
             "approval_reauthentication_required",
@@ -282,9 +270,7 @@ async def decide_approval(
     policy = _shared_policy(http_request, repositories, sessions)
     epoch = await persisted_authentication_epoch(repositories)
     decision = (
-        ApprovalDecision.APPROVED
-        if request.decision == "approve"
-        else ApprovalDecision.DENIED
+        ApprovalDecision.APPROVED if request.decision == "approve" else ApprovalDecision.DENIED
     )
     try:
         await policy.decide(

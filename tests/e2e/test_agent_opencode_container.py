@@ -414,8 +414,7 @@ def test_pinned_opencode_health_session_resume_abort_and_delete(
     health_raw = _exec_wget(
         project,
         _with_basic_auth(
-            'wget -q -O- --header "Authorization: Basic $auth" '
-            "http://127.0.0.1:4096/global/health"
+            'wget -q -O- --header "Authorization: Basic $auth" http://127.0.0.1:4096/global/health'
         ),
     )
     health = json.loads(health_raw)
@@ -452,9 +451,7 @@ def test_pinned_opencode_health_session_resume_abort_and_delete(
             'wget -q -O- --header "Authorization: Basic $auth" '
             '--header "Content-Type: application/json" '
             '--post-data \'{"parts":[{"type":"text","text":"do not call a model"}]}\' '
-            "http://127.0.0.1:4096/session/"
-            + session_id
-            + "/prompt_async?directory=%2Ftmp"
+            "http://127.0.0.1:4096/session/" + session_id + "/prompt_async?directory=%2Ftmp"
         ),
     )
     # The pinned API returns 204 for prompt_async; an empty body is expected.
@@ -464,9 +461,7 @@ def test_pinned_opencode_health_session_resume_abort_and_delete(
         project,
         _with_basic_auth(
             'wget -q -O- --header "Authorization: Basic $auth" '
-            "--post-data '' http://127.0.0.1:4096/session/"
-            + session_id
-            + "/abort?directory=%2Ftmp"
+            "--post-data '' http://127.0.0.1:4096/session/" + session_id + "/abort?directory=%2Ftmp"
         ),
     )
     assert json.loads(abort_raw) is True
@@ -485,9 +480,7 @@ def test_pinned_opencode_health_session_resume_abort_and_delete(
         project,
         _with_basic_auth(
             'wget -q -O- --header "Authorization: Basic $auth" '
-            "http://127.0.0.1:4096/session/"
-            + session_id
-            + "?directory=%2Ftmp"
+            "http://127.0.0.1:4096/session/" + session_id + "?directory=%2Ftmp"
         ),
     )
     resumed = json.loads(resumed_raw)

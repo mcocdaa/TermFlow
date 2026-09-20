@@ -176,11 +176,7 @@ class BridgeRuntime:
         if self._topology == topology:
             return
         self._topology = topology
-        pane_ids = {
-            pane.pane_id
-            for window in topology.windows
-            for pane in window.panes
-        }
+        pane_ids = {pane.pane_id for window in topology.windows for pane in window.panes}
         for pane_id in self.buffers.pane_ids - pane_ids:
             self.buffers.remove(pane_id)
         self.input_handler.retain_panes(pane_ids)
@@ -378,9 +374,7 @@ class BridgeRuntime:
         ):
             raise ValueError("tail_lines cannot be combined with start_line or end_line")
         full_history = (
-            request.start_line is None
-            and request.end_line is None
-            and request.tail_lines is None
+            request.start_line is None and request.end_line is None and request.tail_lines is None
         )
         rendered = await self.control.capture_pane_bounded(
             request.pane_id,

@@ -1,0 +1,50 @@
+@layer tokens {
+  :root[data-theme='tokyo-night'] {
+    color-scheme: dark;
+    --color-page: #1a1b26;
+    --color-panel: #16161e;
+    --color-elevated: #24283b;
+    --color-terminal: #13141c;
+    --color-terminal-foreground: #c0caf5;
+    --color-terminal-selection: #33467c;
+    --terminal-black: #15161e;
+    --terminal-red: #f7768e;
+    --terminal-green: #9ece6a;
+    --terminal-yellow: #e0af68;
+    --terminal-blue: #7aa2f7;
+    --terminal-magenta: #bb9af7;
+    --terminal-cyan: #7dcfff;
+    --terminal-white: #a9b1d6;
+    --terminal-bright-black: #414868;
+    --terminal-bright-red: #ff899d;
+    --terminal-bright-green: #b9f27c;
+    --terminal-bright-yellow: #ffc777;
+    --terminal-bright-blue: #82aaff;
+    --terminal-bright-magenta: #c099ff;
+    --terminal-bright-cyan: #86e1fc;
+    --terminal-bright-white: #c8d3f5;
+    --color-border: #292e42;
+    --color-text-primary: #c0caf5;
+    --color-text-secondary: #9aa5ce;
+    --color-text-muted: #565f89;
+    --color-accent: #7aa2f7;
+    --color-accent-contrast: #15161e;
+    --color-focus: #82aaff;
+    --color-online: #9ece6a;
+    --color-warning: #e0af68;
+    --color-danger: #f7768e;
+    --color-qr-foreground: #7aa2f7;
+    --color-qr-background: #16161e;
+    --shadow-panel: 0 18px 55px #00000073;
+    --radius-sm: 0.35rem;
+    --radius-md: 0.65rem;
+    --radius-lg: 1rem;
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-5: 1.5rem;
+    --font-ui: Inter, ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  }
+}

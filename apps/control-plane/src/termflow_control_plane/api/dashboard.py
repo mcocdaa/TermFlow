@@ -111,9 +111,7 @@ async def get_dashboard(
         metrics=DashboardMetrics(
             online_terms=sum(term.online for term in terms),
             total_terms=len(terms),
-            active_panes=sum(
-                term.active_pane_count for term in terms if term.online
-            ),
+            active_panes=sum(term.active_pane_count for term in terms if term.online),
             interactions_24h=interactions,
             computers=len(computers),
         ),

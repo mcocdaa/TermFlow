@@ -90,9 +90,7 @@ def test_https_deployment_emits_strict_transport_security(tmp_path: Path) -> Non
     ) as client:
         response = client.get("/")
 
-    assert response.headers["strict-transport-security"] == (
-        "max-age=63072000; includeSubDomains"
-    )
+    assert response.headers["strict-transport-security"] == ("max-age=63072000; includeSubDomains")
 
 
 def test_docs_and_openapi_are_disabled_by_default(tmp_path: Path) -> None:

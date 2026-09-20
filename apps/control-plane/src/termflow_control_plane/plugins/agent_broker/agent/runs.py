@@ -138,8 +138,7 @@ class AgentRunStateMachine:
         )
         if started is None:
             raise RunStateError(
-                f"cannot start run {run_id}: "
-                "repository rejected the queued -> running transition"
+                f"cannot start run {run_id}: repository rejected the queued -> running transition"
             )
         if backend_run_id is not None:
             updated = await self._agent_runs.set_backend_run_id(run_id, backend_run_id)

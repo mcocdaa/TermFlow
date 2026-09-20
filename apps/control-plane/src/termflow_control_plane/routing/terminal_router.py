@@ -244,15 +244,9 @@ class TerminalRouter:
     async def forward_from_bridge(self, message: WireMessage) -> bool:
         terminal = await self._hub.current(message.instance_id)
         forwarded = await self._hub.forward(message)
-        if terminal is None or str(message.payload.get("terminal_id")) != str(
-            terminal.terminal_id
-        ):
+        if terminal is None or str(message.payload.get("terminal_id")) != str(terminal.terminal_id):
             return forwarded
-        if (
-            message.type is MessageType.TERMINAL_OPENED
-            and forwarded
-            and not terminal.open_audited
-        ):
+        if message.type is MessageType.TERMINAL_OPENED and forwarded and not terminal.open_audited:
             terminal.open_audited = True
             self._record("terminal.open", terminal)
         elif message.type is MessageType.TERMINAL_ACTION_RESULT:

@@ -64,12 +64,8 @@ def upgrade() -> None:
         sa.Column("actor", sa.String(256), nullable=True),
         sa.Column("outcome", sa.String(32), nullable=True),
         sa.Column("error_code", sa.String(64), nullable=True),
-        sa.ForeignKeyConstraint(
-            ["approval_id"], ["approval_requests.id"], ondelete="CASCADE"
-        ),
-        sa.ForeignKeyConstraint(
-            ["binding_id"], ["agent_bindings.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["approval_id"], ["approval_requests.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["binding_id"], ["agent_bindings.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
             ["conversation_id"], ["agent_conversations.id"], ondelete="CASCADE"
         ),

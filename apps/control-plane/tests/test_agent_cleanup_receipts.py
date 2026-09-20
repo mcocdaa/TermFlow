@@ -315,9 +315,7 @@ def test_deletion_manifest_covers_every_owned_artifact_with_explicit_policy(clie
         assert by_kind["sqlite_wal_backup"][0].policy_reason
         assert by_kind["sqlite_wal_backup"][0].policy_version == "v0.2.0"
 
-        result = await AgentCleanupCoordinator(repositories).process_due_receipts(
-            job.id, _clock()
-        )
+        result = await AgentCleanupCoordinator(repositories).process_due_receipts(job.id, _clock())
         assert result.state == "pending"
         assert any(
             row.artifact_kind == "runtime_volume"

@@ -78,9 +78,7 @@ def _write_resources(
                 b"compiled adaptive background",
             )
         elif compiled_adaptive:
-            archive.writestr(
-                "res/mipmap-anydpi-v26/ic_launcher.xml", adaptive.read_bytes()
-            )
+            archive.writestr("res/mipmap-anydpi-v26/ic_launcher.xml", adaptive.read_bytes())
         if compiled_resource_table:
             archive.writestr("resources.arsc", b"unrelated compiled resources")
     return apk, generated
@@ -186,8 +184,7 @@ def test_parses_indented_signer_digest() -> None:
 
 def test_parses_v31_signer_digest() -> None:
     signer_output = (
-        "Signer (minSdkVersion=33, maxSdkVersion=2147483647) "
-        "certificate SHA-256 digest: a1:b2:c3\n"
+        "Signer (minSdkVersion=33, maxSdkVersion=2147483647) certificate SHA-256 digest: a1:b2:c3\n"
     )
 
     assert parse_signers(signer_output) == ("A1B2C3",)
@@ -229,8 +226,7 @@ def test_rejects_ambiguous_package_or_signer_output() -> None:
         match="found 2 unique certificate fingerprints: AA, BB",
     ):
         parse_signers(
-            "Signer #1 certificate SHA-256 digest: aa\n"
-            "Signer #2 certificate SHA-256 digest: bb\n"
+            "Signer #1 certificate SHA-256 digest: aa\nSigner #2 certificate SHA-256 digest: bb\n"
         )
 
 

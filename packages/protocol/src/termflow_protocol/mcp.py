@@ -114,9 +114,8 @@ class PaneReadParams(ToolModel):
                 raise ValueError("line ranges are not valid when view is 'since'")
         elif self.cursor is not None:
             raise ValueError("cursor is only valid when view is 'since'")
-        if (
-            self.tail_lines is not None
-            and (self.start_line is not None or self.end_line is not None)
+        if self.tail_lines is not None and (
+            self.start_line is not None or self.end_line is not None
         ):
             raise ValueError("tail_lines cannot be combined with start_line or end_line")
         if (

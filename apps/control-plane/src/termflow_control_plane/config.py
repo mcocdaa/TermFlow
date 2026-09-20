@@ -126,9 +126,7 @@ class Settings(BaseSettings):
     # activatable only when the deployment owner explicitly supplies complete
     # retention/region metadata and verifies ``no_training=true``.
     agent_provider_deepseek_endpoint_origin: str = "https://api.deepseek.com"
-    agent_provider_deepseek_model_ids: Annotated[tuple[str, ...], NoDecode] = (
-        "deepseek-v4-flash",
-    )
+    agent_provider_deepseek_model_ids: Annotated[tuple[str, ...], NoDecode] = ("deepseek-v4-flash",)
     agent_provider_deepseek_region: str | None = None
     agent_provider_deepseek_retention_terms: str | None = None
     agent_provider_deepseek_retention_version: str | None = None

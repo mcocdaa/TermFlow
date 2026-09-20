@@ -4,9 +4,7 @@ from termflow_control_plane.auth.pkce import create_s256_challenge, verify_s256
 def test_rfc7636_s256_vector() -> None:
     verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
 
-    assert create_s256_challenge(verifier) == (
-        "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
-    )
+    assert create_s256_challenge(verifier) == ("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
     assert verify_s256(
         verifier,
         "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",

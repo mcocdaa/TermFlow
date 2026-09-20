@@ -151,15 +151,9 @@ class AgentRuntimeController:
             if binding.status not in _ACTIVE_DESIRED_STATES:
                 # The runtime association lives in the supervisor's memory;
                 # release it so a later setup can re-admit the same runtime.
-                self._registry.release_supervisor_binding(
-                    binding.id, binding.runtime_ref
-                )
+                self._registry.release_supervisor_binding(binding.id, binding.runtime_ref)
 
-            readiness = (
-                "not_ready"
-                if binding.status in _ACTIVE_DESIRED_STATES
-                else "disabled"
-            )
+            readiness = "not_ready" if binding.status in _ACTIVE_DESIRED_STATES else "disabled"
             reason = None if readiness == "disabled" else _RUNTIME_ASSIGNMENT_CONFLICT
             observed = await self._repositories.agent_runtime_bindings.mark_unavailable(
                 binding_id,
@@ -407,9 +401,7 @@ class AgentRuntimeController:
                 # has promoted the candidate.  Shield cleanup so cancellation
                 # never leaves ``ready`` persisted with a live/untracked map.
                 await self._shield_cleanup_candidate_failure(binding_id, candidate)
-                await self._mark_unavailable_safely(
-                    binding_id, "not_ready", _PIPELINE_START_FAILED
-                )
+                await self._mark_unavailable_safely(binding_id, "not_ready", _PIPELINE_START_FAILED)
                 raise
             except Exception:
                 await self._cleanup_candidate_failure(binding_id, candidate)
@@ -443,9 +435,7 @@ class AgentRuntimeController:
         except (TermFlowError, ValueError):
             fingerprint = None
         disclosure = (
-            await self._repositories.agent_provider_disclosures.get_current(
-                binding.id, fingerprint
-            )
+            await self._repositories.agent_provider_disclosures.get_current(binding.id, fingerprint)
             if fingerprint is not None
             else None
         )
@@ -543,9 +533,7 @@ class AgentRuntimeController:
             operations.append(
                 (
                     "agent tokens",
-                    lambda: self._repositories.agent_tokens.expire_all_for_binding(
-                        binding_id
-                    ),
+                    lambda: self._repositories.agent_tokens.expire_all_for_binding(binding_id),
                 )
             )
         approval_fencer = self._approval_fencer

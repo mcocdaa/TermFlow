@@ -56,7 +56,9 @@ function callbackSpies(): TerminalSessionCallbacks {
   }
 }
 
-async function setup() {
+import type { TerminalSessionOptions } from './session'
+
+async function setup(options: Partial<TerminalSessionOptions> = {}) {
   const transport = new FakeTransport()
   const scheduler = new FakeScheduler()
   const callbacks = callbackSpies()
@@ -65,6 +67,9 @@ async function setup() {
     scheduler,
     createId: () => ACTION_ID,
     reconnectDelayMs: 25,
+    random: () => 1.0,
+    heartbeatIntervalMs: 0,
+    ...options,
   })
   await session.connect()
   return { session, transport, scheduler, callbacks }
@@ -114,7 +119,7 @@ describe('TerminalSession', () => {
 
     const cappedTransport = new FakeTransport()
     const cappedScheduler = new FakeScheduler()
-    const capped = new TerminalSession('term', callbackSpies(), { transport: cappedTransport, scheduler: cappedScheduler, createId: () => ACTION_ID, reconnectDelayMs: 8_000 })
+    const capped = new TerminalSession('term', callbackSpies(), { transport: cappedTransport, scheduler: cappedScheduler, createId: () => ACTION_ID, reconnectDelayMs: 8_000, random: () => 1.0 })
     await capped.connect()
     cappedTransport.emit({ type: 'close', code: 1006 })
     expect(cappedScheduler.pending[0]?.delay).toBe(8_000)
@@ -136,6 +141,7 @@ describe('TerminalSession', () => {
       scheduler,
       createId: () => ACTION_ID,
       reconnectDelayMs: 25,
+      random: () => 1.0,
       probeSession,
     })
     await session.connect()
@@ -166,6 +172,7 @@ describe('TerminalSession', () => {
       scheduler,
       createId: () => ACTION_ID,
       reconnectDelayMs: 25,
+      random: () => 1.0,
       probeSession,
     })
     await session.connect()
@@ -179,5 +186,49 @@ describe('TerminalSession', () => {
     expect(transport.requests).toHaveLength(2)
     expect(callbacks.onAuthenticationRequired).not.toHaveBeenCalled()
     await session.dispose()
+  })
+
+  it('proactively sends terminal.ping on heartbeat intervals and accepts terminal.pong', async () => {
+    const { session, transport, scheduler } = await setup({ heartbeatIntervalMs: 5_000 })
+    transport.emit({ type: 'open' })
+    ready(transport)
+
+    const heartbeatHandle = scheduler.pending.find((h) => !h.cancelled && h.delay === 5_000)
+    expect(heartbeatHandle).toBeDefined()
+
+    // Trigger heartbeat tick
+    scheduler.runNext()
+    await Promise.resolve()
+
+    // Ping frame sent to connection
+    const sent = transport.connections[0]?.text ?? []
+    expect(sent.some((msg) => msg.includes('"terminal.ping"'))).toBe(true)
+
+    // Receive pong frame from server
+    transport.emit({ type: 'text', data: JSON.stringify({ type: 'terminal.pong', terminal_id: TERMINAL_1, timestamp: Date.now() }) })
+    await session.dispose()
+  })
+
+  it('detects a zombie connection on heartbeat timeout and triggers hot reconnect', async () => {
+    const { session, transport, scheduler, callbacks } = await setup({ heartbeatIntervalMs: 1_000, heartbeatTimeoutMs: 100 })
+    transport.emit({ type: 'open' })
+    ready(transport)
+
+    // First ping sent
+    scheduler.runNext()
+    await Promise.resolve()
+
+    // Advance clock past timeout without any traffic
+    const originalNow = Date.now
+    try {
+      Date.now = () => originalNow() + 500
+      scheduler.runNext()
+      await Promise.resolve()
+      // Should have triggered reconnect
+      expect(callbacks.onStatus).toHaveBeenCalledWith('reconnecting')
+    } finally {
+      Date.now = originalNow
+      await session.dispose()
+    }
   })
 })

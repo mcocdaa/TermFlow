@@ -98,8 +98,7 @@ Typer command signature:
 def login(
     server: str = typer.Option(..., "--server"),
     enrollment_token: str = typer.Option(..., "--enrollment-token", prompt=True, hide_input=True),
-) -> None:
-    ...
+) -> None: ...
 ```
 
 Call the async client, persist the returned Installation configuration, print only the
@@ -272,7 +271,13 @@ Start:
 
 ```python
 [
-    "tmux", "-S", str(socket_path), "-C", "attach-session", "-t", session_name,
+    "tmux",
+    "-S",
+    str(socket_path),
+    "-C",
+    "attach-session",
+    "-t",
+    session_name,
 ]
 ```
 
@@ -547,7 +552,9 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_tmux_output_is_buffered_before_network_publish(bridge_runtime, control_source) -> None:
+async def test_tmux_output_is_buffered_before_network_publish(
+    bridge_runtime, control_source
+) -> None:
     control_source.emit_output("%1", b"hello\xff")
     event = await bridge_runtime.next_outbound()
     assert event.type == "pane.output"

@@ -263,9 +263,7 @@ class AgentEventCursor:
         *,
         limit: int | None = None,
     ) -> list[AgentEvent]:
-        return await self._repository.list_since_cursor(
-            conversation_id, cursor, limit=limit
-        )
+        return await self._repository.list_since_cursor(conversation_id, cursor, limit=limit)
 
     async def list_for_conversation(
         self,

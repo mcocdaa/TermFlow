@@ -86,16 +86,14 @@ def test_existing_unified_auth_database_is_upgraded_with_oauth_request_state(tmp
             config = _migration_config(connection)
             command.upgrade(config, "0002")
             old_columns = {
-                column["name"]
-                for column in inspect(connection).get_columns("oauth_authorizations")
+                column["name"] for column in inspect(connection).get_columns("oauth_authorizations")
             }
             assert "request_state" not in old_columns
             connection.commit()
 
             command.upgrade(config, "head")
             new_columns = {
-                column["name"]
-                for column in inspect(connection).get_columns("oauth_authorizations")
+                column["name"] for column in inspect(connection).get_columns("oauth_authorizations")
             }
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
             connection.commit()
@@ -410,8 +408,7 @@ async def test_auth_challenge_is_destroyed_at_the_attempt_limit(
         )
         assert await repositories.auth_challenges.fail_attempt(challenge_id) is False
         assert (
-            await repositories.auth_challenges.consume(challenge_id, "web_login", epoch=1)
-            is None
+            await repositories.auth_challenges.consume(challenge_id, "web_login", epoch=1) is None
         )
     finally:
         await database.dispose()
@@ -599,9 +596,7 @@ async def test_reset_increments_epoch_and_invalidates_auth_artifacts_but_keeps_c
         async with database.session_factory() as session:
             assert await session.scalar(select(func.count(TotpSetup.id))) == 0
         audit = await repositories.auth_audit.list_all()
-        assert [(event.operation, event.result) for event in audit] == [
-            ("auth.reset", "reset")
-        ]
+        assert [(event.operation, event.result) for event in audit] == [("auth.reset", "reset")]
     finally:
         await database.dispose()
 
@@ -715,10 +710,7 @@ async def test_refresh_replay_revokes_the_entire_token_family(tmp_path) -> None:
             )
             is None
         )
-        assert (
-            await repositories.auth_tokens.get_active("refresh-replacement", epoch=1)
-            is None
-        )
+        assert await repositories.auth_tokens.get_active("refresh-replacement", epoch=1) is None
     finally:
         await database.dispose()
 
@@ -912,6 +904,7 @@ async def test_unrecognized_unversioned_database_fails_closed(tmp_path) -> None:
         await database.initialize()
     await database.dispose()
 
+
 @pytest.mark.asyncio
 async def test_unversioned_database_with_unknown_core_columns_fails_closed(tmp_path) -> None:
     path = tmp_path / "unknown-column.db"
@@ -990,9 +983,7 @@ async def test_unversioned_database_that_violates_v2_uniqueness_fails_closed(tmp
     with sqlite3.connect(path) as connection:
         table_names = {
             row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
         columns = {row[1] for row in connection.execute("PRAGMA table_info(enrollment_tokens)")}
     assert "audit_events" not in table_names

@@ -409,7 +409,15 @@ The browser adapter alone maps `http/https` to `ws/wss`, creates `WebSocket`, co
 Extend `tests/test_client_workspace_contract.py` to scan `packages/client-core/src` and reject these strings:
 
 ```python
-for forbidden in ("from 'vue'", 'from "vue"', "window.", "document.", "localStorage", "new WebSocket", "@tauri"):
+for forbidden in (
+    "from 'vue'",
+    'from "vue"',
+    "window.",
+    "document.",
+    "localStorage",
+    "new WebSocket",
+    "@tauri",
+):
     assert forbidden not in source
 ```
 

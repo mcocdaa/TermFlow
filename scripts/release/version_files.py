@@ -41,9 +41,7 @@ INTERNAL_NPM_NAMES = frozenset(
         "@termflow/client-ui",
     }
 )
-UV_PACKAGES = frozenset(
-    {"termflow-control-plane", "termflow-node", "termflow-protocol"}
-)
+UV_PACKAGES = frozenset({"termflow-control-plane", "termflow-node", "termflow-protocol"})
 CARGO_PACKAGES = frozenset({"termflow-client"})
 DEPENDENCY_SECTIONS = (
     "dependencies",
@@ -65,9 +63,7 @@ _PYTHON_VERSION = re.compile(
     r'^(?P<prefix>__version__\s*=\s*")[^"]+(?P<suffix>"\s*)$', re.MULTILINE
 )
 _LOCK_NAME = re.compile(r'^\s*name = "([^"]+)"', re.MULTILINE)
-_LOCK_VERSION = re.compile(
-    r'^(?P<prefix>\s*version = ")[^"]+(?P<suffix>"\s*)$', re.MULTILINE
-)
+_LOCK_VERSION = re.compile(r'^(?P<prefix>\s*version = ")[^"]+(?P<suffix>"\s*)$', re.MULTILINE)
 
 
 def _read_json(path: Path) -> dict[str, object]:
@@ -184,9 +180,7 @@ def _read_python_version(path: Path) -> str:
 
 def _materialize_python_version(path: Path, version: str) -> None:
     source = path.read_text()
-    updated, count = _PYTHON_VERSION.subn(
-        rf'\g<prefix>{version}\g<suffix>', source
-    )
+    updated, count = _PYTHON_VERSION.subn(rf"\g<prefix>{version}\g<suffix>", source)
     if count != 1:
         raise ValueError(f"{path}: expected exactly one __version__ assignment")
     path.write_text(updated)
@@ -255,9 +249,7 @@ def _materialize_lock_versions(
         if name_match is None or name_match.group(1) not in package_names:
             continue
         name = name_match.group(1)
-        updated, count = _LOCK_VERSION.subn(
-            rf'\g<prefix>{version}\g<suffix>', block, count=1
-        )
+        updated, count = _LOCK_VERSION.subn(rf"\g<prefix>{version}\g<suffix>", block, count=1)
         if count != 1 or name in seen:
             raise ValueError(f"{path}: expected one versioned package block for {name}")
         pieces[index] = updated
@@ -336,17 +328,12 @@ def verify_materialized_version(root: Path, expected: str) -> list[str]:
     require(TAURI_CONFIG, str(_read_json(root / TAURI_CONFIG).get("version")))
     android = _read_json(root / ANDROID_CONFIG)
     android_bundle = android.get("bundle")
-    android_config = (
-        android_bundle.get("android") if isinstance(android_bundle, dict) else None
-    )
-    android_code = (
-        android_config.get("versionCode") if isinstance(android_config, dict) else None
-    )
+    android_config = android_bundle.get("android") if isinstance(android_bundle, dict) else None
+    android_code = android_config.get("versionCode") if isinstance(android_config, dict) else None
     expected_android_code = android_version_code(expected)
     if android_code != expected_android_code:
         errors.append(
-            f"{ANDROID_CONFIG}: expected versionCode {expected_android_code}, "
-            f"found {android_code}"
+            f"{ANDROID_CONFIG}: expected versionCode {expected_android_code}, found {android_code}"
         )
     apple_core = _version_core(expected)
     for relative, platform in ((MACOS_CONFIG, "macOS"), (IOS_CONFIG, "iOS")):
@@ -354,14 +341,11 @@ def verify_materialized_version(root: Path, expected: str) -> list[str]:
         bundle = config.get("bundle")
         platform_config = bundle.get(platform) if isinstance(bundle, dict) else None
         bundle_version = (
-            platform_config.get("bundleVersion")
-            if isinstance(platform_config, dict)
-            else None
+            platform_config.get("bundleVersion") if isinstance(platform_config, dict) else None
         )
         if str(config.get("version")) != apple_core:
             errors.append(
-                f"{relative}: expected platform version {apple_core}, "
-                f"found {config.get('version')}"
+                f"{relative}: expected platform version {apple_core}, found {config.get('version')}"
             )
         if str(bundle_version) != apple_core:
             errors.append(

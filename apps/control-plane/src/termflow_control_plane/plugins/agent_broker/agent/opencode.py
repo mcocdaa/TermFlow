@@ -290,9 +290,7 @@ class OpenCodeAdapter:
             json=body,
         )
         if response.status_code >= 300:
-            raise RuntimeError(
-                f"opencode session create failed: HTTP {response.status_code}"
-            )
+            raise RuntimeError(f"opencode session create failed: HTTP {response.status_code}")
         payload = _require_mapping(response)
         session_id = payload.get("id")
         if not isinstance(session_id, str) or not session_id:
@@ -405,9 +403,7 @@ class OpenCodeAdapter:
         ref = request.conversation_ref
         try:
             response = await self._client.post(
-                self._url(
-                    f"/session/{ref.provider_ref}/permissions/{request.permission_ref}"
-                ),
+                self._url(f"/session/{ref.provider_ref}/permissions/{request.permission_ref}"),
                 params={"directory": self.directory},
                 json={"response": response_body},
             )
@@ -426,9 +422,7 @@ class OpenCodeAdapter:
             message=f"opencode permission response returned HTTP {response.status_code}",
         )
 
-    async def reconcile(
-        self, ref: BackendConversationRef
-    ) -> BackendConversationSnapshot:
+    async def reconcile(self, ref: BackendConversationRef) -> BackendConversationSnapshot:
         """Prove session message state (``GET /session/:id/message``).
 
         The message list is fetched with a bounded ``limit`` (pin §2).
@@ -466,13 +460,9 @@ class OpenCodeAdapter:
                 state=BackendRuntimeState.CONTEXT_LOST,
                 resumable=False,
             )
-        return _unavailable_snapshot(
-            ref, f"message list returned HTTP {response.status_code}"
-        )
+        return _unavailable_snapshot(ref, f"message list returned HTTP {response.status_code}")
 
-    async def delete_conversation(
-        self, ref: BackendConversationRef
-    ) -> BackendOperationResult:
+    async def delete_conversation(self, ref: BackendConversationRef) -> BackendOperationResult:
         """Idempotent backend cleanup (``DELETE /session/:id``).
 
         ``2xx`` → ``confirmed``; ``404`` also → ``confirmed`` because the
@@ -683,11 +673,7 @@ class OpenCodeAdapter:
             scope,
             event_id=event_id,
             session_id=session_id,
-            kind=(
-                AgentEventKind.THINKING_COMPLETED
-                if finished
-                else AgentEventKind.THINKING_DELTA
-            ),
+            kind=(AgentEventKind.THINKING_COMPLETED if finished else AgentEventKind.THINKING_DELTA),
             backend_message_id=thinking_id,
             part_id=thinking_id,
             text=text,
@@ -1234,9 +1220,7 @@ def _require_list(response: Any) -> list[Any] | None:
     return payload
 
 
-def _unavailable_snapshot(
-    ref: BackendConversationRef, detail: str
-) -> BackendConversationSnapshot:
+def _unavailable_snapshot(ref: BackendConversationRef, detail: str) -> BackendConversationSnapshot:
     """Build an explicit ``unknown``/unavailable reconcile snapshot."""
     return BackendConversationSnapshot(
         conversation_ref=ref,

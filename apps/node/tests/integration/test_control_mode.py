@@ -20,9 +20,7 @@ async def test_control_mode_observes_output_and_topology(tmp_path) -> None:
         runner.run_command("split-window", "-t", "main")
         topology = TopologyReader(runner).read()
         assert sum(len(window.panes) for window in topology.windows) == 2
-        pane_id = next(
-            pane.pane_id for pane in topology.windows[0].panes if pane.active
-        )
+        pane_id = next(pane.pane_id for pane in topology.windows[0].panes if pane.active)
         marker = "TERMFLOW_CONTROL_MARKER"
         runner.run_command("send-keys", "-t", pane_id, f"printf {marker}", "Enter")
 

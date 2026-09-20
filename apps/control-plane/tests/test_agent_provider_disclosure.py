@@ -25,9 +25,7 @@ async def repositories(tmp_path) -> AsyncIterator[RepositoryBundle]:
 
 
 async def _binding(repositories: RepositoryBundle) -> UUID:
-    installation = await repositories.installations.create(
-        digest_secret("disclosure-installation")
-    )
+    installation = await repositories.installations.create(digest_secret("disclosure-installation"))
     term = await repositories.instances.register_or_rotate(
         uuid4(),
         installation.id,
@@ -117,6 +115,7 @@ async def test_current_disclosure_lookup_rejects_revoked_or_nonmatching_acceptan
     assert history[0].accepted_at == accepted_at.replace(tzinfo=None)
     assert history[0].revoked_at == revoked_at.replace(tzinfo=None)
     assert all("credential" not in column.name for column in history[0].__table__.columns)
-    assert "credential" not in inspect.signature(
-        repositories.agent_provider_disclosures.create
-    ).parameters
+    assert (
+        "credential"
+        not in inspect.signature(repositories.agent_provider_disclosures.create).parameters
+    )

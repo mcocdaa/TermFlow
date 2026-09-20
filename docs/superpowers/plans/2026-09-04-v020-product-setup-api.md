@@ -65,8 +65,9 @@ class AgentSetupResult:
 
 
 class AgentProvisioningService:
-    def __init__(self, repositories, sessions, topology, catalog,
-                 bootstrap_secret, controller) -> None:
+    def __init__(
+        self, repositories, sessions, topology, catalog, bootstrap_secret, controller
+    ) -> None:
         self._repositories = repositories
         self._sessions = sessions
         self._topology = topology

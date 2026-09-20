@@ -13,4 +13,3 @@ def test_token_hash_does_not_contain_raw_token() -> None:
     digest = hash_token(token)
     assert token not in digest
     assert len(digest) == 64
-

@@ -26,6 +26,8 @@ from termflow_protocol import (
     TerminalErrorFrame,
     TerminalOpenedPayload,
     TerminalOutputPayload,
+    TerminalPingFrame,
+    TerminalPongFrame,
     TerminalReadyFrame,
     TerminalSizeFrame,
     TerminalSizePayload,
@@ -251,6 +253,10 @@ async def _receive_terminal_input(
                 await terminal_router.request_close(terminal, close.reason)
                 terminal.terminate(close.reason)
                 return
+            elif frame_type == "terminal.ping":
+                ping = TerminalPingFrame.model_validate(raw)
+                pong = TerminalPongFrame(terminal_id=terminal.terminal_id, timestamp=ping.timestamp)
+                await websocket.send_text(pong.model_dump_json())
             else:
                 raise ValueError
         except (TerminalRouteError, ValidationError, ValueError, TypeError) as exc:

@@ -39,6 +39,7 @@ def _binding(
     )
     assert created.status_code == 201, created.text
     binding_id = UUID(created.json()["binding_id"])
+
     async def seed_runtime_authority() -> None:
         # Runtime identity is server-owned.  These epoch-focused tests seed
         # the repository aggregate directly instead of reviving the legacy
@@ -137,9 +138,7 @@ def test_profile_config_change_and_rename_preserve_runtime_epoch(
     configured = client.patch(
         f"/api/v1/agent/admin/profiles/{profile_id}",
         headers=admin_headers,
-        json={
-            "config": '{"model_id":"deepseek-reasoner","provider_id":"deepseek"}'
-        },
+        json={"config": '{"model_id":"deepseek-reasoner","provider_id":"deepseek"}'},
     )
     assert configured.status_code == 200, configured.text
     after_config = client.get(
@@ -202,9 +201,7 @@ def test_profile_config_update_stops_all_affected_bindings_in_one_batch(
     response = client.patch(
         f"/api/v1/agent/admin/profiles/{profile_id}",
         headers=admin_headers,
-        json={
-            "config": '{"model_id":"deepseek-reasoner","provider_id":"deepseek"}'
-        },
+        json={"config": '{"model_id":"deepseek-reasoner","provider_id":"deepseek"}'},
     )
 
     assert response.status_code == 200, response.text
@@ -236,9 +233,7 @@ def test_profile_config_update_returns_stable_error_when_batch_shutdown_fails(
     response = client.patch(
         f"/api/v1/agent/admin/profiles/{profile_id}",
         headers=admin_headers,
-        json={
-            "config": '{"model_id":"deepseek-reasoner","provider_id":"deepseek"}'
-        },
+        json={"config": '{"model_id":"deepseek-reasoner","provider_id":"deepseek"}'},
     )
 
     assert response.status_code == 500

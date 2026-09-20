@@ -144,9 +144,7 @@ def test_decide_approve_and_deny_via_api_with_double_decision_guard(
     binding_id = _seed_binding(client, admin_headers, provision_term)
     conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
     conversation_id = UUID(str(conversation["conversation_id"]))
-    approval_id = _seed_approval(
-        client, binding_id=binding_id, conversation_id=conversation_id
-    )
+    approval_id = _seed_approval(client, binding_id=binding_id, conversation_id=conversation_id)
 
     _authenticate_browser(client)
     approved = client.post(
@@ -188,9 +186,7 @@ def test_approve_requires_fresh_auth_but_safe_deny_does_not(
     binding_id = _seed_binding(client, admin_headers, provision_term)
     conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
     conversation_id = UUID(str(conversation["conversation_id"]))
-    approval_id = _seed_approval(
-        client, binding_id=binding_id, conversation_id=conversation_id
-    )
+    approval_id = _seed_approval(client, binding_id=binding_id, conversation_id=conversation_id)
 
     blocked = client.post(
         f"/api/v1/agent/approvals/{approval_id}/decide",
@@ -235,9 +231,7 @@ def test_fresh_browser_auth_can_approve(client, admin_headers, provision_term) -
     assert approved.json()["state"] == "approved"
 
 
-def test_revoke_and_conversation_listing_via_api(
-    client, admin_headers, provision_term
-) -> None:
+def test_revoke_and_conversation_listing_via_api(client, admin_headers, provision_term) -> None:
     binding_id = _seed_binding(client, admin_headers, provision_term)
     first_conversation = _create_conversation(
         client, admin_headers, binding_id=binding_id, title="first"
@@ -248,9 +242,7 @@ def test_revoke_and_conversation_listing_via_api(
     first_id = UUID(str(first_conversation["conversation_id"]))
     second_id = UUID(str(second_conversation["conversation_id"]))
 
-    approval_one = _seed_approval(
-        client, binding_id=binding_id, conversation_id=first_id
-    )
+    approval_one = _seed_approval(client, binding_id=binding_id, conversation_id=first_id)
     approval_two = _seed_approval(
         client,
         binding_id=binding_id,

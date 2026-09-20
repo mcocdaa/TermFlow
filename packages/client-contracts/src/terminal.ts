@@ -6,6 +6,7 @@ import type {
   TerminalClosedFrame,
   TerminalCloseReason,
   TerminalErrorFrame,
+  TerminalPongFrame,
   TerminalReadyFrame,
   TerminalSizeFrame,
 } from './generated'
@@ -17,6 +18,7 @@ export type TerminalControl =
   | TerminalErrorFrame
   | TerminalClosedFrame
   | TerminalActionResultFrame
+  | TerminalPongFrame
 
 const TERMINAL_ACTIONS = new Set<TerminalAction>([
   'split_left_right',
@@ -95,6 +97,12 @@ export function parseTerminalControl(text: string): TerminalControl | null {
       return uuid(value.action_id) && typeof value.ok === 'boolean' && hasOwn(value, 'error_code') && nullableString(value.error_code)
         ? { type: value.type, terminal_id: value.terminal_id, action_id: value.action_id, ok: value.ok, error_code: value.error_code }
         : null
+    case 'terminal.pong':
+      return {
+        type: value.type,
+        terminal_id: value.terminal_id,
+        timestamp: typeof value.timestamp === 'number' ? value.timestamp : null,
+      }
     default:
       return null
   }

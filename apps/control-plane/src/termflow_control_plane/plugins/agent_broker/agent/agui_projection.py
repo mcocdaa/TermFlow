@@ -79,9 +79,7 @@ def _safe_error_code(payload: dict[str, object], *, kind: str) -> str | None:
 def validate_wire(wire: str) -> None:
     """Fail closed on unknown wire values (spec §5: 400 ``invalid_wire``)."""
     if wire not in _KNOWN_WIRES:
-        raise TermFlowError(
-            "invalid_wire", 400, "The Agent stream wire format is invalid."
-        )
+        raise TermFlowError("invalid_wire", 400, "The Agent stream wire format is invalid.")
 
 
 class ProjectionDropCounts(NamedTuple):
@@ -246,11 +244,7 @@ def _project_tool_completed(
     # counts are only projected when the canonical payload recorded them
     # (they are not observable at the adapter boundary).
     if "status" not in payload:
-        status = (
-            "error"
-            if payload.get("error_code") or payload.get("error_message")
-            else "success"
-        )
+        status = "error" if payload.get("error_code") or payload.get("error_message") else "success"
     else:
         status = str(payload["status"])
     summary: dict[str, object] = {
@@ -290,9 +284,7 @@ def _project_permission_requested(
     # correlation key C can join on, and ``approval_request_id`` appears when
     # a later milestone writes one.
     if payload.get("approval_request_id") is not None:
-        value: dict[str, object] = {
-            "approval_request_id": str(payload["approval_request_id"])
-        }
+        value: dict[str, object] = {"approval_request_id": str(payload["approval_request_id"])}
     elif payload.get("tool_call_id") is not None:
         value = {"tool_call_id": str(payload["tool_call_id"])}
     else:

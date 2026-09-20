@@ -14,9 +14,5 @@ from termflow_protocol.keys import (
 def test_canonical_key_bytes_is_compact_and_position_sensitive() -> None:
     assert canonical_key_bytes(("enter", "space")) == b'["enter","space"]'
     assert canonical_key_bytes(["enter", "space"]) == b'["enter","space"]'
-    assert canonical_key_bytes(("enter", "space")) != canonical_key_bytes(
-        ("space", "enter")
-    )
-    assert canonical_key_bytes(("ctrl-c", "enter")) != canonical_key_bytes(
-        ("enter", "ctrl-c")
-    )
+    assert canonical_key_bytes(("enter", "space")) != canonical_key_bytes(("space", "enter"))
+    assert canonical_key_bytes(("ctrl-c", "enter")) != canonical_key_bytes(("enter", "ctrl-c"))

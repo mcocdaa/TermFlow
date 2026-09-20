@@ -476,17 +476,13 @@ async def _run_guarded(
                         raise MCPError(
                             code=INVALID_REQUEST,
                             message=f"tool {name.value} requires a request_key",
-                            data={
-                                "termflow_error_code": TermFlowErrorCode.INVALID_REQUEST.value
-                            },
+                            data={"termflow_error_code": TermFlowErrorCode.INVALID_REQUEST.value},
                         )
                     if len(request_key) > 128:
                         raise MCPError(
                             code=INVALID_REQUEST,
                             message="request_key must be 1-128 characters",
-                            data={
-                                "termflow_error_code": TermFlowErrorCode.INVALID_REQUEST.value
-                            },
+                            data={"termflow_error_code": TermFlowErrorCode.INVALID_REQUEST.value},
                         )
                     kwargs["tool_call_id"] = request_key
                 if params is None:
@@ -639,9 +635,7 @@ def _register_tools(
     # Self-check: the registered surface must equal the declared served set,
     # so the milestone contract cannot silently drift (plan §10, M5.2).
     if tuple(name for name, _, _, _ in specs) != SERVED_TOOLS:
-        raise ToolConfigDriftError(
-            "the tool registration drifted from SERVED_TOOLS"
-        )
+        raise ToolConfigDriftError("the tool registration drifted from SERVED_TOOLS")
     for name, handler, param_model, result_model in specs:
         server.add_tool(
             _guarded_tool(
@@ -799,9 +793,7 @@ def pinned_allowlist_from_fixture(config_text: str) -> frozenset[str]:
     else (``*`` deny, built-in tools) is ignored.  Raises on malformed input.
     """
     # The fixture body is JSON with comment lines; strip those, then parse.
-    body = "".join(
-        line for line in config_text.splitlines() if not line.lstrip().startswith("#")
-    )
+    body = "".join(line for line in config_text.splitlines() if not line.lstrip().startswith("#"))
     try:
         config = json.loads(body)
     except ValueError as exc:
@@ -809,8 +801,4 @@ def pinned_allowlist_from_fixture(config_text: str) -> frozenset[str]:
     permission = config.get("permission")
     if not isinstance(permission, dict):
         raise ValueError("the pinned OpenCode config has no permission section")
-    return frozenset(
-        key
-        for key in permission
-        if key != "*" and key.startswith("termflow_")
-    )
+    return frozenset(key for key in permission if key != "*" and key.startswith("termflow_"))

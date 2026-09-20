@@ -277,12 +277,8 @@ async def test_purge_expired_removes_expired_rows_and_keeps_native_clients(
     past = observed_at - timedelta(minutes=5)
     future = observed_at + timedelta(minutes=5)
 
-    await repositories.enrollments.create(
-        hash_token("purge-enrollment"), past
-    )
-    await repositories.enrollments.create(
-        hash_token("keep-enrollment"), future
-    )
+    await repositories.enrollments.create(hash_token("purge-enrollment"), past)
+    await repositories.enrollments.create(hash_token("keep-enrollment"), future)
     issued = await repositories.auth_tokens.issue(
         hash_token("purge-cli-token"),
         kind="cli",

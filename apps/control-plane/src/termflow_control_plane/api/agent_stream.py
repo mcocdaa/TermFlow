@@ -107,10 +107,7 @@ SSE_RESET = "reset"
 
 
 def _sse_frame(name: str, payload: dict[str, object]) -> str:
-    return (
-        f"event: {name}\n"
-        f"data: {json.dumps(payload, separators=(",", ":"), default=str)}\n\n"
-    )
+    return f"event: {name}\ndata: {json.dumps(payload, separators=(',', ':'), default=str)}\n\n"
 
 
 def _parse_cursor(cursor: str) -> tuple[int, int] | None:
@@ -203,15 +200,11 @@ async def _replay_events(
         return
 
     max_seq = await event_cursor.current_seq(conversation_id)
-    too_old = cursor is not None and (
-        cursor[0] != auth_epoch or cursor[1] > max_seq
-    )
+    too_old = cursor is not None and (cursor[0] != auth_epoch or cursor[1] > max_seq)
     if not too_old and cursor is not None and cursor[1] > 0 and max_seq > 0:
         # Retention may have removed events before the cursor: if the earliest
         # retained event is after the cursor, continuity cannot be proven.
-        earliest = await event_cursor.list_for_conversation(
-            conversation_id, limit=1, offset=0
-        )
+        earliest = await event_cursor.list_for_conversation(conversation_id, limit=1, offset=0)
         if earliest and cursor[1] < earliest[0].database_seq:
             too_old = True
     if too_old:
@@ -267,9 +260,7 @@ async def _live_loop(
     seen_event_ids: set[UUID] = set()
     while True:
         try:
-            event = await asyncio.wait_for(
-                subscriber.queue.get(), timeout=_STREAM_POLL_SECONDS
-            )
+            event = await asyncio.wait_for(subscriber.queue.get(), timeout=_STREAM_POLL_SECONDS)
         except TimeoutError:
             event = None
         if await persisted_authentication_epoch(repositories) != auth_epoch:
@@ -373,9 +364,7 @@ async def stream_agent_events(
 
     parsed_cursor = _parse_cursor(cursor) if cursor is not None else None
     if cursor is not None and parsed_cursor is None:
-        raise TermFlowError(
-            "invalid_cursor", 400, "The Agent stream cursor is invalid."
-        )
+        raise TermFlowError("invalid_cursor", 400, "The Agent stream cursor is invalid.")
 
     binding_id: UUID | None = None
     if conversation_id is not None:

@@ -55,13 +55,10 @@ def _run_sqlite(connection: Connection) -> None:
             with context.begin_transaction():
                 context.run_migrations()
                 _post_migration_validate(connection)
-                violations = connection.exec_driver_sql(
-                    "PRAGMA foreign_key_check"
-                ).fetchmany(1)
+                violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchmany(1)
                 if violations:
                     raise RuntimeError(
-                        "SQLite migration introduced a foreign-key violation: "
-                        f"{violations[0]!r}"
+                        f"SQLite migration introduced a foreign-key violation: {violations[0]!r}"
                     )
         except BaseException:
             connection.rollback()

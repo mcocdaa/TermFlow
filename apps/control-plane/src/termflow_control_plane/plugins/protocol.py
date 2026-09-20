@@ -91,9 +91,7 @@ class BackendOperationResult(ContractModel):
 
     @field_validator("evidence")
     @classmethod
-    def _bound_evidence(
-        cls, value: tuple[EvidenceRecord, ...]
-    ) -> tuple[EvidenceRecord, ...]:
+    def _bound_evidence(cls, value: tuple[EvidenceRecord, ...]) -> tuple[EvidenceRecord, ...]:
         if len(value) > MAX_EVIDENCE_ITEMS:
             raise ValueError(f"evidence must not exceed {MAX_EVIDENCE_ITEMS} records")
         return value
@@ -152,9 +150,7 @@ class InMemoryFeatureRouteRegistry:
         _require_non_empty(owner, "route owner")
         _require_non_empty(method, "HTTP method")
         if path != _AGENT_ROUTE_PREFIX and not path.startswith(_AGENT_ROUTE_PREFIX + "/"):
-            raise ValueError(
-                f"plugin routes must live under {_AGENT_ROUTE_PREFIX}, got {path!r}"
-            )
+            raise ValueError(f"plugin routes must live under {_AGENT_ROUTE_PREFIX}, got {path!r}")
         self._routes.append(
             RouteEntry(method=method, path=path, handler=handler, owner=owner, policy=policy)
         )
@@ -268,9 +264,7 @@ class AuthPort(Protocol):
 
     async def authenticate(self, token: str) -> object: ...
 
-    async def authorize(
-        self, permission: str, *, resource: object | None = None
-    ) -> bool: ...
+    async def authorize(self, permission: str, *, resource: object | None = None) -> bool: ...
 
 
 @runtime_checkable

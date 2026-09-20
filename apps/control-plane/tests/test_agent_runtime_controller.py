@@ -124,9 +124,7 @@ class _FakeRegistry:
     def pipeline_for(self, binding_id: UUID) -> _FakePipeline | None:
         return self.live.get(binding_id)
 
-    def release_supervisor_binding(
-        self, binding_id: UUID, runtime_ref: str | None
-    ) -> None:
+    def release_supervisor_binding(self, binding_id: UUID, runtime_ref: str | None) -> None:
         self.events.append(f"release_supervisor:{binding_id}:{runtime_ref}")
 
 

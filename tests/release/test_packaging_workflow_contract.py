@@ -13,18 +13,12 @@ def _workflow(path: Path) -> dict[object, object]:
 
 
 def _step_index(steps: list[dict[str, object]], marker: str) -> int:
-    return next(
-        index
-        for index, step in enumerate(steps)
-        if marker in str(step.get("run", ""))
-    )
+    return next(index for index, step in enumerate(steps) if marker in str(step.get("run", "")))
 
 
 def _step_index_by_action(steps: list[dict[str, object]], action: str) -> int:
     return next(
-        index
-        for index, step in enumerate(steps)
-        if str(step.get("uses", "")).startswith(action)
+        index for index, step in enumerate(steps) if str(step.get("uses", "")).startswith(action)
     )
 
 
@@ -110,8 +104,8 @@ def test_node_docker_artifact_and_tag_publication_are_separated() -> None:
         assert required in text
     assert "if: ${{ needs.prepare.outputs.is_release == 'true' }}" in text
     assert "is_prerelease: ${{ steps.context.outputs.is_prerelease }}" in text
-    assert 'IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}' in text
-    assert 'RELEASE_TAG: ${{ needs.prepare.outputs.tag }}' in text
+    assert "IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}" in text
+    assert "RELEASE_TAG: ${{ needs.prepare.outputs.tag }}" in text
     assert '[[ "$IS_PRERELEASE" == "false" ]]' in text
     assert "TERMFLOW_BUILD_VERSION" in text
 
@@ -130,9 +124,7 @@ def test_node_materializes_version_before_docker_builds() -> None:
             if "scripts/release/prepare_version.py" in str(step.get("run", ""))
         )
         build = next(
-            index
-            for index, step in enumerate(steps)
-            if build_marker in str(step.get("run", ""))
+            index for index, step in enumerate(steps) if build_marker in str(step.get("run", ""))
         )
         assert materialize < build
 
@@ -176,8 +168,8 @@ def test_control_plane_manual_artifact_and_tag_publication_are_separated() -> No
         assert required in text
     assert "if: ${{ needs.prepare.outputs.is_release == 'true' }}" in text
     assert "is_prerelease: ${{ steps.context.outputs.is_prerelease }}" in text
-    assert 'IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}' in text
-    assert 'RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}' in text
+    assert "IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}" in text
+    assert "RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}" in text
     assert '[[ "$IS_PRERELEASE" == "false" ]]' in text
     assert '[[ "$RELEASE_TAG" != *-* ]]' not in text
     assert "TERMFLOW_BUILD_VERSION" in text
@@ -197,9 +189,7 @@ def test_control_plane_materializes_each_image_build_checkout() -> None:
             if "scripts/release/prepare_version.py" in str(step.get("run", ""))
         )
         build = next(
-            index
-            for index, step in enumerate(steps)
-            if build_marker in str(step.get("run", ""))
+            index for index, step in enumerate(steps) if build_marker in str(step.get("run", ""))
         )
         assert materialize < build
 
@@ -240,8 +230,7 @@ def test_client_workflow_is_manual_and_reusable() -> None:
         "ANDROID_SIGNING_CERT_SHA256",
     }
     assert all(
-        secret["required"] is False
-        for secret in triggers["workflow_call"]["secrets"].values()
+        secret["required"] is False for secret in triggers["workflow_call"]["secrets"].values()
     )
     assert workflow["permissions"] == {"contents": "read"}
     jobs = workflow["jobs"]
@@ -288,12 +277,12 @@ def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() ->
         "android build --ci --target aarch64 --apk",
         "android build --debug --ci --target aarch64 --apk",
         "ios build --debug --ci --target aarch64-sim --no-sign",
-            "gen/apple/build/arm64-sim/*.app",
-            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
-            "RUNNER_TEMP/termflow-linux",
-            "RUNNER_TEMP/termflow-artifacts",
-            "RUNNER_TEMP/termflow-android",
-        ):
+        "gen/apple/build/arm64-sim/*.app",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        "RUNNER_TEMP/termflow-linux",
+        "RUNNER_TEMP/termflow-artifacts",
+        "RUNNER_TEMP/termflow-android",
+    ):
         assert required in text
     for forbidden in ("contents: write", "gh release", "softprops/action-gh-release"):
         assert forbidden not in text
@@ -306,7 +295,8 @@ def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() ->
     }
     for job_name, paths in expected_paths.items():
         upload = next(
-            step for step in jobs[job_name]["steps"]
+            step
+            for step in jobs[job_name]["steps"]
             if step.get("uses")
             == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
         )["with"]
@@ -320,9 +310,7 @@ def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() ->
 def test_linux_builds_deb_once_before_bounded_appimage_retries() -> None:
     text = CLIENT_WORKFLOW.read_text()
 
-    deb_command = (
-        "npm run tauri:build --workspace @termflow/tauri-client -- --bundles deb --ci"
-    )
+    deb_command = "npm run tauri:build --workspace @termflow/tauri-client -- --bundles deb --ci"
     appimage_wrapper = "scripts/release/build_linux_appimage.sh"
 
     assert text.count(deb_command) == 1
@@ -375,9 +363,7 @@ def test_android_release_is_signed_verified_and_iconized() -> None:
     system_bars = _step_index(steps, "configure_android_system_bars.py")
     icon = _step_index(steps, "icon app-icon-mobile.svg")
     signing = _step_index(steps, "configure_android_signing.py")
-    release_build = _step_index(
-        steps, "android build --ci --target aarch64 --apk"
-    )
+    release_build = _step_index(steps, "android build --ci --target aarch64 --apk")
     resolve = _step_index(steps, "apk_path=")
     verify = _step_index(steps, "verify_android_apk.py")
     upload = _step_index_by_action(steps, "actions/upload-artifact@")
@@ -390,9 +376,7 @@ def test_android_release_is_signed_verified_and_iconized() -> None:
     assert steps[release_build]["if"] == (
         "${{ needs.validate-version.outputs.android_release_build == 'true' }}"
     )
-    debug_build = _step_index(
-        steps, "android build --debug --ci --target aarch64 --apk"
-    )
+    debug_build = _step_index(steps, "android build --debug --ci --target aarch64 --apk")
     assert steps[debug_build]["if"] == (
         "${{ needs.validate-version.outputs.android_release_build != 'true' }}"
     )

@@ -129,9 +129,7 @@ async def create_browser_session(
                 source,
                 error_code=AuthAuditErrorCode.INVALID_CREDENTIALS,
             )
-            raise TermFlowError(
-                "authentication_failed", 401, "Authentication failed."
-            ) from exc
+            raise TermFlowError("authentication_failed", 401, "Authentication failed.") from exc
     limiter.record_success("web_session", source)
     await audit.record(
         AuthAuditOperation.WEB_SESSION_LOGIN,

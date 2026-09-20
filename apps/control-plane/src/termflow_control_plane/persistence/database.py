@@ -178,13 +178,10 @@ def _validate_known_unversioned_schema(connection: Connection) -> None:
         audit_columns = {column["name"] for column in inspector.get_columns("audit_events")}
         if audit_columns != {column.name for column in _CORE_TABLES["audit_events"].columns}:
             raise UnrecognizedDatabaseSchema(
-                "unrecognized unversioned Control Plane database schema; "
-                "refusing automatic upgrade"
+                "unrecognized unversioned Control Plane database schema; refusing automatic upgrade"
             )
 
-    v2_instance_columns = {
-        column["name"] for column in inspector.get_columns("instances")
-    }
+    v2_instance_columns = {column["name"] for column in inspector.get_columns("instances")}
     if set(_V2_ADDITIONS["instances"]) <= v2_instance_columns:
         ownership_foreign_keys = inspector.get_foreign_keys("instances")
         if ownership_foreign_keys and not any(
@@ -193,20 +190,15 @@ def _validate_known_unversioned_schema(connection: Connection) -> None:
             for foreign_key in ownership_foreign_keys
         ):
             raise UnrecognizedDatabaseSchema(
-                "unrecognized unversioned Control Plane database schema; "
-                "refusing automatic upgrade"
+                "unrecognized unversioned Control Plane database schema; refusing automatic upgrade"
             )
     for table_name in _REQUIRED_UNVERSIONED_TABLES:
         duplicate = connection.execute(
-            text(
-                f"SELECT 1 FROM {table_name} GROUP BY token_hash "
-                "HAVING COUNT(*) > 1 LIMIT 1"
-            )
+            text(f"SELECT 1 FROM {table_name} GROUP BY token_hash HAVING COUNT(*) > 1 LIMIT 1")
         ).first()
         if duplicate is not None:
             raise UnrecognizedDatabaseSchema(
-                "unrecognized unversioned Control Plane database schema; "
-                "refusing automatic upgrade"
+                "unrecognized unversioned Control Plane database schema; refusing automatic upgrade"
             )
     orphan = connection.execute(
         text(
@@ -261,9 +253,7 @@ def _prepare_unversioned_v2(connection: Connection) -> None:
             )
         )
         connection.execute(text("DROP TABLE instances"))
-        connection.execute(
-            text("ALTER TABLE instances__termflow_v2 RENAME TO instances")
-        )
+        connection.execute(text("ALTER TABLE instances__termflow_v2 RENAME TO instances"))
     cast(Table, AuditEvent.__table__).create(connection, checkfirst=True)
     for table_name, table in _CORE_TABLES.items():
         for index in table.indexes:
@@ -285,9 +275,7 @@ def _validate_head_schema(connection: Connection) -> None:
             "unrecognized versioned Control Plane database schema; refusing to start"
         )
     for table_name, table in Base.metadata.tables.items():
-        inspected_columns = {
-            column["name"]: column for column in inspector.get_columns(table_name)
-        }
+        inspected_columns = {column["name"]: column for column in inspector.get_columns(table_name)}
         actual_columns = set(inspected_columns)
         expected_columns = {column.name for column in table.columns}
         if actual_columns != expected_columns:
@@ -339,19 +327,14 @@ def _validate_head_schema(connection: Connection) -> None:
             for index in inspector.get_indexes(table_name)
         }
         if any(
-            actual_indexes.get(name) != signature
-            for name, signature in expected_indexes.items()
+            actual_indexes.get(name) != signature for name, signature in expected_indexes.items()
         ):
             raise UnrecognizedDatabaseSchema(
                 "unrecognized versioned Control Plane database schema; refusing to start"
             )
-    state_rows = connection.execute(
-        text("SELECT id, epoch FROM authentication_state")
-    ).all()
+    state_rows = connection.execute(text("SELECT id, epoch FROM authentication_state")).all()
     if len(state_rows) != 1 or state_rows[0][0] != 1 or state_rows[0][1] < 1:
-        raise UnrecognizedDatabaseSchema(
-            "unrecognized authentication state; refusing to start"
-        )
+        raise UnrecognizedDatabaseSchema("unrecognized authentication state; refusing to start")
 
 
 def _validate_core_schema(connection: Connection) -> None:
@@ -379,9 +362,7 @@ def _validate_core_schema(connection: Connection) -> None:
             raise UnrecognizedDatabaseSchema(
                 "core schema metadata is incomplete; refusing to start"
             )
-        inspected_columns = {
-            column["name"]: column for column in inspector.get_columns(table_name)
-        }
+        inspected_columns = {column["name"]: column for column in inspector.get_columns(table_name)}
         expected_columns = {column.name for column in table.columns}
         optional_later = set(_POST_CORE_COLUMNS.get(table_name, ()))
         required_columns = expected_columns - optional_later
@@ -437,20 +418,15 @@ def _validate_core_schema(connection: Connection) -> None:
             for index in inspector.get_indexes(table_name)
         }
         if any(
-            actual_indexes.get(name) != signature
-            for name, signature in expected_indexes.items()
+            actual_indexes.get(name) != signature for name, signature in expected_indexes.items()
         ):
             raise UnrecognizedDatabaseSchema(
                 "unrecognized core Control Plane database schema; refusing to start"
             )
 
-    state_rows = connection.execute(
-        text("SELECT id, epoch FROM authentication_state")
-    ).all()
+    state_rows = connection.execute(text("SELECT id, epoch FROM authentication_state")).all()
     if len(state_rows) != 1 or state_rows[0][0] != 1 or state_rows[0][1] < 1:
-        raise UnrecognizedDatabaseSchema(
-            "unrecognized authentication state; refusing to start"
-        )
+        raise UnrecognizedDatabaseSchema("unrecognized authentication state; refusing to start")
 
 
 def _upgrade(
@@ -466,8 +442,7 @@ def _upgrade(
             _prepare_unversioned_v2(connection)
         except IntegrityError as exc:
             raise UnrecognizedDatabaseSchema(
-                "unrecognized unversioned Control Plane database schema; "
-                "refusing automatic upgrade"
+                "unrecognized unversioned Control Plane database schema; refusing automatic upgrade"
             ) from exc
         if connection.dialect.name == "sqlite":
             connection.commit()
@@ -499,11 +474,13 @@ class Database:
     def __init__(self, url: str) -> None:
         self.engine: AsyncEngine = create_async_engine(url)
         if self.engine.url.get_backend_name() == "sqlite":
+
             @event.listens_for(self.engine.sync_engine, "connect")
             def enable_foreign_keys(connection: Any, _record: Any) -> None:
                 cursor = connection.cursor()
                 cursor.execute("PRAGMA foreign_keys=ON")
                 cursor.close()
+
         self.session_factory = async_sessionmaker(
             self.engine,
             class_=AsyncSession,

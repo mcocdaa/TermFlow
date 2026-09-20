@@ -44,9 +44,7 @@ async def _create_binding(
     capability_ref: str = "capability-a",
 ) -> UUID:
     repositories = context.repositories
-    installation = await repositories.installations.create(
-        digest_secret(f"installation-{name}")
-    )
+    installation = await repositories.installations.create(digest_secret(f"installation-{name}"))
     term = await repositories.instances.register_or_rotate(
         uuid4(),
         installation.id,

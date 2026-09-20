@@ -12,8 +12,7 @@ def test_native_webview_network_capabilities_are_removed_and_opener_allowed() ->
 
         assert "websocket:default" not in permissions
         assert not any(
-            isinstance(permission, dict)
-            and permission.get("identifier") == "http:default"
+            isinstance(permission, dict) and permission.get("identifier") == "http:default"
             for permission in permissions
         )
         assert "opener:default" in permissions

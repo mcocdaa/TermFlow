@@ -246,9 +246,7 @@ def test_enrollment_response_carries_env_authoritative_server_command() -> None:
         token=raw_token,
         expires_at=datetime.now(UTC),
         server_url="https://relay.example.com",
-        login_command=(
-            "termflow login --server https://relay.example.com " f"--code {raw_token}"
-        ),
+        login_command=(f"termflow login --server https://relay.example.com --code {raw_token}"),
     )
 
     assert response.server_url == "https://relay.example.com"

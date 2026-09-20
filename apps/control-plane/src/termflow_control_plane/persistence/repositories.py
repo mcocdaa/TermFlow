@@ -4910,9 +4910,7 @@ class ApprovalRepository:
             )
             return approval
 
-    async def find_pending_for_conversation(
-        self, conversation_id: UUID
-    ) -> ApprovalRequest | None:
+    async def find_pending_for_conversation(self, conversation_id: UUID) -> ApprovalRequest | None:
         """Return the oldest pending approval of one conversation, if any."""
         async with self._sessions() as session:
             approval: ApprovalRequest | None = await session.scalar(
@@ -5502,9 +5500,7 @@ class CleanupJobRepository:
                 .where(
                     AgentCleanupReceipt.cleanup_job_id == job_id,
                     AgentCleanupReceipt.state == "pending",
-                    AgentCleanupReceipt.artifact_kind.in_(
-                        _INTERNAL_CLEANUP_RECEIPT_KINDS
-                    ),
+                    AgentCleanupReceipt.artifact_kind.in_(_INTERNAL_CLEANUP_RECEIPT_KINDS),
                 )
                 .limit(1)
             )
@@ -5702,9 +5698,7 @@ class CleanupJobRepository:
                     select(AgentCleanupReceipt).where(
                         AgentCleanupReceipt.cleanup_job_id == job_id,
                         AgentCleanupReceipt.state == "pending",
-                        AgentCleanupReceipt.artifact_kind.in_(
-                            _INTERNAL_CLEANUP_RECEIPT_KINDS
-                        ),
+                        AgentCleanupReceipt.artifact_kind.in_(_INTERNAL_CLEANUP_RECEIPT_KINDS),
                     )
                 )
             )
@@ -5740,9 +5734,7 @@ class CleanupJobRepository:
                     AgentCleanupReceipt.id == receipt_id,
                     AgentCleanupReceipt.cleanup_job_id == job_id,
                     AgentCleanupReceipt.artifact_ref == artifact_ref,
-                    AgentCleanupReceipt.artifact_kind.in_(
-                        _HELPER_CLEANUP_RECEIPT_KINDS
-                    ),
+                    AgentCleanupReceipt.artifact_kind.in_(_HELPER_CLEANUP_RECEIPT_KINDS),
                     AgentCleanupReceipt.state == "pending",
                     AgentCleanupReceipt.confirmation_key.is_(None),
                 )
@@ -5860,9 +5852,7 @@ class CleanupJobRepository:
                         # state: a target-level retry failure must never
                         # overwrite "awaiting deployment confirmation" with a
                         # B-side error.
-                        AgentCleanupReceipt.artifact_kind.in_(
-                            _INTERNAL_CLEANUP_RECEIPT_KINDS
-                        ),
+                        AgentCleanupReceipt.artifact_kind.in_(_INTERNAL_CLEANUP_RECEIPT_KINDS),
                     )
                     .values(
                         attempt_count=AgentCleanupReceipt.attempt_count + 1,

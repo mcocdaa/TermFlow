@@ -259,9 +259,9 @@ class LiveConnection:
                 f"capture request for instance {request.instance_id} submitted "
                 f"to connection {self.instance_id}"
             )
-        future: asyncio.Future[
-            PaneCaptureResultPayload | PaneCaptureErrorPayload
-        ] = asyncio.get_running_loop().create_future()
+        future: asyncio.Future[PaneCaptureResultPayload | PaneCaptureErrorPayload] = (
+            asyncio.get_running_loop().create_future()
+        )
         self.pending_captures[request.request_id] = future
         message = WireMessage(
             type=MessageType.PANE_CAPTURE_REQUEST,

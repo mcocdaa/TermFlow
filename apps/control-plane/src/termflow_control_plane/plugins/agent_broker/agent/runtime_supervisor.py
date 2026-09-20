@@ -232,8 +232,7 @@ class SupervisorConnector:
             )
         if observed.epoch != epoch:
             raise EpochAttestationError(
-                f"runtime {runtime_ref} reports epoch {observed.epoch}, "
-                f"expected {epoch}"
+                f"runtime {runtime_ref} reports epoch {observed.epoch}, expected {epoch}"
             )
         self._runtimes[runtime_ref] = _AttestedRuntime(
             binding_id=binding_id,

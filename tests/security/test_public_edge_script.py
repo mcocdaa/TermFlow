@@ -22,5 +22,5 @@ def test_public_edge_script_locks_every_live_check() -> None:
 def test_public_edge_script_refuses_redirects_and_requires_fail_fast_curl() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
 
-    assert '--location' not in source
+    assert "--location" not in source
     assert "--fail" in source

@@ -70,8 +70,7 @@ def test_installer_defaults_to_the_rendered_repository(tmp_path: Path) -> None:
     installer = _render_installer(tmp_path, repository="fork-owner/TermFlow")
 
     assert (
-        "https://github.com/fork-owner/TermFlow/releases/download/${TAG}"
-        in installer.read_text()
+        "https://github.com/fork-owner/TermFlow/releases/download/${TAG}" in installer.read_text()
     )
     assert "github.com/mcocdaa/TermFlow" not in installer.read_text()
 
@@ -129,9 +128,7 @@ def render_installer(
         raise ValueError(f"Repository must be an owner/repository slug: {repository}")
     source = template.read_text()
     if source.count("@TAG@") != 1 or source.count("@REPOSITORY@") != 1:
-        raise ValueError(
-            f"{template}: expected exactly one @TAG@ and one @REPOSITORY@ placeholder"
-        )
+        raise ValueError(f"{template}: expected exactly one @TAG@ and one @REPOSITORY@ placeholder")
     return source.replace("@TAG@", tag).replace("@REPOSITORY@", repository)
 ```
 
@@ -230,7 +227,7 @@ def test_node_workflow_owns_names_retention_and_build_commands() -> None:
         "scripts/release/build_node_bundle.sh",
         "scripts/release/render_node_installer.py",
         "scripts/release/verify_node_bundle.sh",
-        "--repository \"$GITHUB_REPOSITORY\"",
+        '--repository "$GITHUB_REPOSITORY"',
         "actions/upload-artifact@v4",
         "release-assets/SHA256SUMS",
     ):

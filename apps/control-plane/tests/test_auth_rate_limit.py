@@ -276,9 +276,7 @@ def test_control_plane_returns_structured_429_with_retry_after(client: TestClien
     assert response.status_code == 429
     assert response.headers["Retry-After"] == "60"
     assert response.json()["error"]["code"] == "rate_limited"
-    assert response.json()["error"]["message"] == (
-        "Authentication is temporarily unavailable."
-    )
+    assert response.json()["error"]["message"] == ("Authentication is temporarily unavailable.")
 
 
 def test_real_browser_login_enforces_backoff_and_emits_safe_audit(client: TestClient) -> None:

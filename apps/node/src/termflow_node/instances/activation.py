@@ -67,9 +67,7 @@ class InstanceActivator:
         except InstanceResolutionError as exc:
             raise ActivationError(str(exc)) from exc
         except (OSError, RuntimeError, ValueError) as exc:
-            raise ActivationError(
-                "Remote activation failed; local tmux was not changed."
-            ) from exc
+            raise ActivationError("Remote activation failed; local tmux was not changed.") from exc
 
         if record.remote_access is RemoteAccessState.ACTIVE:
             return ActivationResult(record, False)
@@ -109,9 +107,7 @@ class InstanceActivator:
                     }
                 )
                 self._instance_store.save(rollback)
-                raise ActivationError(
-                    "Bridge failed to start after registration."
-                ) from exc
+                raise ActivationError("Bridge failed to start after registration.") from exc
             return ActivationResult(started, True)
         except ActivationError:
             raise
@@ -122,9 +118,7 @@ class InstanceActivator:
             RuntimeError,
             ValueError,
         ) as exc:
-            raise ActivationError(
-                "Remote activation failed; local tmux was not changed."
-            ) from exc
+            raise ActivationError("Remote activation failed; local tmux was not changed.") from exc
 
 
 def default_instance_activator(store: InstanceStore) -> InstanceActivator:

@@ -112,8 +112,7 @@ async def test_terminal_protocol_drives_real_pty_actions_and_safe_detach(tmp_pat
         )
         assert len(topology.read().windows[0].panes) == 2
         assert any(
-            message.type is MessageType.TERMINAL_ACTION_RESULT
-            and message.payload["ok"] is True
+            message.type is MessageType.TERMINAL_ACTION_RESULT and message.payload["ok"] is True
             for message in messages
         )
 

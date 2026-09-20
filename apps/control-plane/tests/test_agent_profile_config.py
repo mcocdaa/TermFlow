@@ -73,16 +73,12 @@ def test_profile_config_accepts_an_existing_json_string() -> None:
         '{ "provider_id": "deepseek", "model_id": "deepseek-v4-flash" }'
     )
 
-    assert parsed == AgentProfileConfig(
-        provider_id="deepseek", model_id="deepseek-v4-flash"
-    )
+    assert parsed == AgentProfileConfig(provider_id="deepseek", model_id="deepseek-v4-flash")
     assert encoded == CANONICAL_CONFIG
 
 
 def test_profile_config_is_frozen() -> None:
-    config = AgentProfileConfig(
-        provider_id="deepseek", model_id="deepseek-v4-flash"
-    )
+    config = AgentProfileConfig(provider_id="deepseek", model_id="deepseek-v4-flash")
 
     with pytest.raises(ValidationError):
         config.model_id = "deepseek-reasoner"
@@ -114,15 +110,11 @@ def test_invalid_profile_config_maps_to_one_stable_error(value: object) -> None:
 
 def test_profile_config_enforces_field_length_bounds() -> None:
     _assert_stable_error(
-        lambda: canonicalize_profile_config(
-            {"provider_id": "p" * 65, "model_id": "model"}
-        ),
+        lambda: canonicalize_profile_config({"provider_id": "p" * 65, "model_id": "model"}),
         "invalid_profile_config",
     )
     _assert_stable_error(
-        lambda: canonicalize_profile_config(
-            {"provider_id": "provider", "model_id": "m" * 129}
-        ),
+        lambda: canonicalize_profile_config({"provider_id": "provider", "model_id": "m" * 129}),
         "invalid_profile_config",
     )
 
@@ -130,9 +122,7 @@ def test_profile_config_enforces_field_length_bounds() -> None:
 def test_provider_catalog_resolves_known_provider_and_model() -> None:
     entry = _catalog_entry()
     catalog = ProviderCatalog([entry])
-    config = AgentProfileConfig(
-        provider_id="deepseek", model_id="deepseek-v4-flash"
-    )
+    config = AgentProfileConfig(provider_id="deepseek", model_id="deepseek-v4-flash")
 
     assert catalog.resolve(config) is entry
 
@@ -254,9 +244,7 @@ def test_disclosure_fingerprint_changes_for_every_server_owned_disclosure_field(
     field_name: str,
     new_value: object,
 ) -> None:
-    config = AgentProfileConfig(
-        provider_id="deepseek", model_id="deepseek-v4-flash"
-    )
+    config = AgentProfileConfig(provider_id="deepseek", model_id="deepseek-v4-flash")
     entry = _catalog_entry()
     first = ProviderCatalog([entry]).disclosure_fingerprint(config)
     changed = replace(entry, **{field_name: new_value})
@@ -265,9 +253,7 @@ def test_disclosure_fingerprint_changes_for_every_server_owned_disclosure_field(
 
 
 def test_disclosure_fingerprint_changes_with_catalog_provider_and_models() -> None:
-    config = AgentProfileConfig(
-        provider_id="deepseek", model_id="deepseek-v4-flash"
-    )
+    config = AgentProfileConfig(provider_id="deepseek", model_id="deepseek-v4-flash")
     first_entry = _catalog_entry()
     first = ProviderCatalog([first_entry]).disclosure_fingerprint(config)
 
@@ -286,21 +272,15 @@ def test_disclosure_fingerprint_changes_with_catalog_provider_and_models() -> No
 
 def test_disclosure_fingerprint_changes_with_selected_model() -> None:
     catalog = ProviderCatalog([_catalog_entry()])
-    flash = AgentProfileConfig(
-        provider_id="deepseek", model_id="deepseek-v4-flash"
-    )
-    reasoner = AgentProfileConfig(
-        provider_id="deepseek", model_id="deepseek-reasoner"
-    )
+    flash = AgentProfileConfig(provider_id="deepseek", model_id="deepseek-v4-flash")
+    reasoner = AgentProfileConfig(provider_id="deepseek", model_id="deepseek-reasoner")
 
     assert catalog.disclosure_fingerprint(flash) != catalog.disclosure_fingerprint(reasoner)
 
 
 def test_fingerprint_includes_credential_source_name_but_no_credential() -> None:
     raw_credential = "raw-provider-secret-must-never-leak"
-    config = AgentProfileConfig(
-        provider_id="deepseek", model_id="deepseek-v4-flash"
-    )
+    config = AgentProfileConfig(provider_id="deepseek", model_id="deepseek-v4-flash")
     first = ProviderCatalog(
         [_catalog_entry(credential_source="OPENAI_API_KEY")]
     ).disclosure_fingerprint(config)
@@ -324,9 +304,7 @@ def test_settings_catalog_is_fail_closed_until_disclosure_is_complete(
         agent_provider_deepseek_retention_version="2026-09-01",
         agent_provider_deepseek_no_training=no_training,
     )
-    config = AgentProfileConfig(
-        provider_id="deepseek", model_id="deepseek-v4-flash"
-    )
+    config = AgentProfileConfig(provider_id="deepseek", model_id="deepseek-v4-flash")
 
     _assert_stable_error(
         lambda: ProviderCatalog.from_settings(incomplete).resolve(config),
@@ -359,9 +337,7 @@ def test_settings_catalog_fails_closed_for_incomplete_disclosure_text(
     value: str | None,
 ) -> None:
     settings = _complete_settings(**{field_name: value})
-    config = AgentProfileConfig(
-        provider_id="deepseek", model_id="deepseek-v4-flash"
-    )
+    config = AgentProfileConfig(provider_id="deepseek", model_id="deepseek-v4-flash")
 
     _assert_stable_error(
         lambda: ProviderCatalog.from_settings(settings).resolve(config),
@@ -376,12 +352,8 @@ def test_settings_catalog_fails_closed_for_incomplete_disclosure_text(
 def test_settings_catalog_fails_closed_for_unknown_or_raw_credential_source(
     credential_source: str,
 ) -> None:
-    settings = _complete_settings(
-        agent_provider_deepseek_credential_source=credential_source
-    )
-    config = AgentProfileConfig(
-        provider_id="deepseek", model_id="deepseek-v4-flash"
-    )
+    settings = _complete_settings(agent_provider_deepseek_credential_source=credential_source)
+    config = AgentProfileConfig(provider_id="deepseek", model_id="deepseek-v4-flash")
 
     _assert_stable_error(
         lambda: ProviderCatalog.from_settings(settings).resolve(config),
@@ -397,9 +369,7 @@ def test_settings_catalog_normalizes_server_owned_disclosure_text() -> None:
         agent_provider_deepseek_credential_source=" OPENAI_API_KEY ",
         agent_provider_deepseek_policy_version=" 2026-08-01 ",
     )
-    config = AgentProfileConfig(
-        provider_id="deepseek", model_id="deepseek-v4-flash"
-    )
+    config = AgentProfileConfig(provider_id="deepseek", model_id="deepseek-v4-flash")
 
     entry = ProviderCatalog.from_settings(settings).resolve(config)
 
@@ -417,9 +387,7 @@ def test_settings_catalog_normalizes_and_deduplicates_model_ids() -> None:
             "deepseek-v4-flash",
         )
     )
-    config = AgentProfileConfig(
-        provider_id="deepseek", model_id="deepseek-v4-flash"
-    )
+    config = AgentProfileConfig(provider_id="deepseek", model_id="deepseek-v4-flash")
 
     entry = ProviderCatalog.from_settings(settings).resolve(config)
 
@@ -431,9 +399,7 @@ def test_settings_catalog_fails_closed_for_empty_model_ids(
     model_ids: tuple[str, ...],
 ) -> None:
     settings = _complete_settings(agent_provider_deepseek_model_ids=model_ids)
-    config = AgentProfileConfig(
-        provider_id="deepseek", model_id="deepseek-v4-flash"
-    )
+    config = AgentProfileConfig(provider_id="deepseek", model_id="deepseek-v4-flash")
 
     _assert_stable_error(
         lambda: ProviderCatalog.from_settings(settings).resolve(config),
@@ -443,9 +409,7 @@ def test_settings_catalog_fails_closed_for_empty_model_ids(
 
 def test_settings_constructs_complete_server_owned_deepseek_catalog_entry() -> None:
     settings = _complete_settings()
-    config = AgentProfileConfig(
-        provider_id="deepseek", model_id="deepseek-v4-flash"
-    )
+    config = AgentProfileConfig(provider_id="deepseek", model_id="deepseek-v4-flash")
 
     entry = ProviderCatalog.from_settings(settings).resolve(config)
 
@@ -492,9 +456,7 @@ def test_profile_api_create_stores_canonical_config_without_server_disclosure(
     assert "OPENAI_API_KEY" not in response.text
 
     profile_id = UUID(response.json()["profile_id"])
-    stored = client.portal.call(
-        client.app.state.repositories.agent_profiles.get_by_id, profile_id
-    )
+    stored = client.portal.call(client.app.state.repositories.agent_profiles.get_by_id, profile_id)
     assert stored is not None
     assert stored.config == CANONICAL_CONFIG
 
@@ -518,17 +480,13 @@ def test_profile_api_update_stores_canonical_config(
     updated = client.patch(
         f"/api/v1/agent/admin/profiles/{profile_id}",
         headers=admin_headers,
-        json={
-            "config": '{"provider_id":"deepseek", "model_id":"deepseek-reasoner"}'
-        },
+        json={"config": '{"provider_id":"deepseek", "model_id":"deepseek-reasoner"}'},
     )
 
     assert updated.status_code == 200, updated.text
     expected = '{"model_id":"deepseek-reasoner","provider_id":"deepseek"}'
     assert updated.json()["config"] == expected
-    stored = client.portal.call(
-        client.app.state.repositories.agent_profiles.get_by_id, profile_id
-    )
+    stored = client.portal.call(client.app.state.repositories.agent_profiles.get_by_id, profile_id)
     assert stored is not None
     assert stored.config == expected
 

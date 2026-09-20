@@ -20,9 +20,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _emit_github_outputs(
-    *, version: str, tag: str, is_release: bool, is_prerelease: bool
-) -> None:
+def _emit_github_outputs(*, version: str, tag: str, is_release: bool, is_prerelease: bool) -> None:
     output_path = os.environ.get("GITHUB_OUTPUT")
     if not output_path:
         return

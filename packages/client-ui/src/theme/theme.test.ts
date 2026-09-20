@@ -43,4 +43,34 @@ describe('theme state', () => {
     expect(first.preferences.save).toHaveBeenCalledWith('graphite-signal')
     expect(second.preferences.save).not.toHaveBeenCalled()
   })
+
+  it('validates all classic geek themes', () => {
+    expect(isThemeId('catppuccin-mocha')).toBe(true)
+    expect(isThemeId('catppuccin-latte')).toBe(true)
+    expect(isThemeId('tokyo-night')).toBe(true)
+    expect(isThemeId('nord')).toBe(true)
+    expect(isThemeId('dracula')).toBe(true)
+    expect(isThemeId('solarized-dark')).toBe(true)
+    expect(isThemeId('solarized-light')).toBe(true)
+  })
+
+  it('detects system preferred theme with matchMedia', () => {
+    const originalMatchMedia = window.matchMedia
+    try {
+      window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+        matches: query === '(prefers-color-scheme: light)',
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }))
+      const { theme } = setup(null)
+      expect(theme.active.value).toBe('cloud-cobalt')
+    } finally {
+      window.matchMedia = originalMatchMedia
+    }
+  })
 })

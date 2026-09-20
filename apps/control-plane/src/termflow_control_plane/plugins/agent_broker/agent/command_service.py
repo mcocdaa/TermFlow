@@ -435,9 +435,7 @@ class CommandService:
                 state,
             )
             raise self._decision_failure(approval.id, state)
-        return await self._send_and_settle(
-            approval, principal, params, operation, incarnation
-        )
+        return await self._send_and_settle(approval, principal, params, operation, incarnation)
 
     def _schedule_late_completion(
         self,
@@ -483,9 +481,7 @@ class CommandService:
         except asyncio.CancelledError:
             raise
         except Exception:  # pragma: no cover - defensive boundary
-            logger.warning(
-                "late approval completion failed for %s", approval.id, exc_info=True
-            )
+            logger.warning("late approval completion failed for %s", approval.id, exc_info=True)
 
     async def _create_approval(
         self,
@@ -513,9 +509,7 @@ class CommandService:
             input_bytes=context.input_bytes,
         )
 
-    async def _recorded_outcome(
-        self, approval_id: UUID
-    ) -> tuple[str | None, str | None]:
+    async def _recorded_outcome(self, approval_id: UUID) -> tuple[str | None, str | None]:
         """The audit-recorded ``(outcome, error_code)`` of a settled approval.
 
         Replays of a settled write report the original result, so the receipt
@@ -643,8 +637,7 @@ class CommandService:
             await self._best_effort_revoke(approval.id, actor="system:auth_epoch_changed")
             raise TermFlowToolError(
                 TermFlowErrorCode.POLICY_DENIED,
-                "the authentication epoch changed after the approval; "
-                "the write was not executed",
+                "the authentication epoch changed after the approval; the write was not executed",
             )
         # 2) The approval must not have expired (the sweep finishes the row).
         expires_at = self._aware(approval.expires_at)
@@ -670,9 +663,7 @@ class CommandService:
         # turn an approved write into a send.  ``pending``/``ready`` remain in
         # ``_ACTIVE_BINDING_STATES`` for pre-0011 compatibility, but they must
         # still have a modern observed-ready row before execution.
-        runtime = await self._repositories.agent_runtime_bindings.get_by_binding(
-            binding.id
-        )
+        runtime = await self._repositories.agent_runtime_bindings.get_by_binding(binding.id)
         runtime_ready = (
             runtime is not None
             and runtime.readiness == "ready"
@@ -730,9 +721,7 @@ class CommandService:
         while an approval is waiting.  An explicit pane row always wins over
         the ``*`` consent sentinel and an absent row denies by default.
         """
-        explicit = await self._repositories.pane_policies.pane_allowed(
-            binding_id, pane_id
-        )
+        explicit = await self._repositories.pane_policies.pane_allowed(binding_id, pane_id)
         if explicit is not None:
             return explicit is True
         consent = await self._repositories.pane_policies.pane_allowed(binding_id, "*")
@@ -791,9 +780,7 @@ class CommandService:
                 input_bytes=input_bytes,
             )
             raise
-        await self._settle_consume(
-            approval.id, outcome="confirmed", input_bytes=input_bytes
-        )
+        await self._settle_consume(approval.id, outcome="confirmed", input_bytes=input_bytes)
         return self._result(params, operation, approval.id)
 
     def _result(

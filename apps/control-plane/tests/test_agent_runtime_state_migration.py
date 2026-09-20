@@ -428,32 +428,39 @@ def test_0011_downgrade_failure_is_atomic_and_retryable(tmp_path: Path) -> None:
             )
         ).all()
         assert schema_after == schema_before
-        assert connection.execute(
-            text("SELECT * FROM agent_bindings WHERE id = :id"),
-            {"id": binding_id},
-        ).one() == data_before["binding"]
-        assert connection.execute(
-            text("SELECT * FROM auth_tokens WHERE id = :id"),
-            {"id": token_id},
-        ).one() == data_before["token"]
-        assert connection.execute(
-            text(
-                """
+        assert (
+            connection.execute(
+                text("SELECT * FROM agent_bindings WHERE id = :id"),
+                {"id": binding_id},
+            ).one()
+            == data_before["binding"]
+        )
+        assert (
+            connection.execute(
+                text("SELECT * FROM auth_tokens WHERE id = :id"),
+                {"id": token_id},
+            ).one()
+            == data_before["token"]
+        )
+        assert (
+            connection.execute(
+                text(
+                    """
                 SELECT * FROM agent_provider_disclosure_acceptances
                 WHERE id = :id
                 """
-            ),
-            {"id": acceptance_id},
-        ).one() == data_before["acceptance"]
+                ),
+                {"id": acceptance_id},
+            ).one()
+            == data_before["acceptance"]
+        )
 
         _downgrade(connection, "0010")
         assert _revision(connection) == "0010"
         assert "authenticated_at" not in {
             column["name"] for column in inspect(connection).get_columns("auth_tokens")
         }
-        assert "agent_provider_disclosure_acceptances" not in inspect(
-            connection
-        ).get_table_names()
+        assert "agent_provider_disclosure_acceptances" not in inspect(connection).get_table_names()
         assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
         assert connection.exec_driver_sql("PRAGMA foreign_key_check").all() == []
 

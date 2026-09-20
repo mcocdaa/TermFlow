@@ -56,9 +56,7 @@ def _seed_binding(
     return term.instance_id, UUID(str(binding.json()["binding_id"]))
 
 
-async def _job_state(
-    client: TestClient, job_id: UUID
-) -> AgentCleanupJob | None:
+async def _job_state(client: TestClient, job_id: UUID) -> AgentCleanupJob | None:
     session_factory = client.app.state.session_factory
     async with session_factory() as session:
         return await session.get(AgentCleanupJob, job_id)
@@ -167,9 +165,7 @@ def test_cleanup_retry_first_sweep_recovers_unhandled_jobs(
             repositories, client.app.state.agent_runtime_registry
         )
         # A normal sweep honors the backoff and sees nothing.
-        retried, completed = await run_cleanup_retry(
-            repositories, handlers=handlers, now=now
-        )
+        retried, completed = await run_cleanup_retry(repositories, handlers=handlers, now=now)
         assert (retried, completed) == (0, 0)
 
         # The first (startup) sweep with retry_unhandled completes it.
@@ -420,9 +416,7 @@ def test_run_agent_recovery_fences_inbox_then_runs_then_cleanup(
             source="user",
             now=now,
         )
-        await repositories.agent_inbox.claim(
-            item.id, "crashed-worker", lease_seconds=60, now=now
-        )
+        await repositories.agent_inbox.claim(item.id, "crashed-worker", lease_seconds=60, now=now)
         later = now + timedelta(minutes=5)
         run = await repositories.agent_runs.create(
             conversation_id=conversation.id,
@@ -438,9 +432,9 @@ def test_run_agent_recovery_fences_inbox_then_runs_then_cleanup(
         observed: list[str] = []
 
         async def _term_handler(job: AgentCleanupJob) -> None:
-            assert (
-                await repositories.agent_runs.get_by_id(run.id)
-            ).run_state == "unknown", "cleanup ran before run fencing"
+            assert (await repositories.agent_runs.get_by_id(run.id)).run_state == "unknown", (
+                "cleanup ran before run fencing"
+            )
             observed.append("cleanup")
 
         report = await run_agent_recovery(

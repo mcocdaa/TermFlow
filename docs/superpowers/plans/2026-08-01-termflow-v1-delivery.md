@@ -72,8 +72,16 @@ child processes. Start B using:
 
 ```python
 [
-    "uv", "run", "--package", "termflow-control-plane",
-    "termflow-control", "serve", "--host", "127.0.0.1", "--port", str(port),
+    "uv",
+    "run",
+    "--package",
+    "termflow-control-plane",
+    "termflow-control",
+    "serve",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    str(port),
 ]
 ```
 

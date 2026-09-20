@@ -35,8 +35,7 @@ async def _issue_enrollment(settings: Settings) -> str:
         raw_token = issue_token()
         await repositories.enrollments.create(
             hash_token(raw_token),
-            datetime.now(UTC)
-            + timedelta(seconds=settings.enrollment_token_ttl_seconds),
+            datetime.now(UTC) + timedelta(seconds=settings.enrollment_token_ttl_seconds),
         )
         return raw_token
     finally:
@@ -74,9 +73,7 @@ def create_enrollment() -> None:
 def reset_totp() -> None:
     """Clear TOTP and revoke credentials after an explicit local confirmation."""
 
-    typer.echo(
-        "This clears TOTP and revokes all active Web, native, and CLI credentials."
-    )
+    typer.echo("This clears TOTP and revokes all active Web, native, and CLI credentials.")
     typer.confirm("Continue with the authentication reset?", abort=True)
     epoch = asyncio.run(_reset_authentication(_settings()))
     typer.echo(f"Authentication reset complete; epoch {epoch} is now active.")

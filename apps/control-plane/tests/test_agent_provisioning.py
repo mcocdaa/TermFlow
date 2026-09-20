@@ -368,9 +368,7 @@ async def test_setup_reconfiguration_reuses_binding_and_advances_revision(ctx):
         persisted_profile.config = profile.config
         await session.commit()
     changed_profile_config, _ = canonicalize_profile_config(profile.config)
-    changed_profile_fingerprint = changed_catalog.disclosure_fingerprint(
-        changed_profile_config
-    )
+    changed_profile_fingerprint = changed_catalog.disclosure_fingerprint(changed_profile_config)
     fourth = await service.setup(
         _command(
             term_id,
@@ -392,9 +390,7 @@ async def test_setup_reconfiguration_reuses_binding_and_advances_revision(ctx):
         assert binding.runtime_epoch == 1
         assert binding.capability_ref == f"termflow-mcp:{binding.id}"
         policies = list(
-            await session.scalars(
-                select(PanePolicy).where(PanePolicy.binding_id == binding.id)
-            )
+            await session.scalars(select(PanePolicy).where(PanePolicy.binding_id == binding.id))
         )
         assert {policy.pane_id for policy in policies if policy.allowed} == {"%1"}
         disclosures = list(
@@ -411,8 +407,7 @@ async def test_setup_reconfiguration_reuses_binding_and_advances_revision(ctx):
             for row in disclosures
         )
         assert any(
-            row.disclosure_fingerprint == changed_fingerprint
-            and row.revoked_at is not None
+            row.disclosure_fingerprint == changed_fingerprint and row.revoked_at is not None
             for row in disclosures
         )
 
@@ -448,9 +443,7 @@ async def test_setup_rearms_revoked_capability_after_binding_revoke(ctx):
     # The deployment bootstrap secret is re-issued for the new Binding; the
     # unique token hash forces the revoked row to be re-armed instead of
     # inserting a duplicate (previously a 500 UNIQUE violation).
-    second = await service.setup(
-        _command(term_id, profile.id, fingerprint, key=uuid4()), {}
-    )
+    second = await service.setup(_command(term_id, profile.id, fingerprint, key=uuid4()), {})
     assert second.binding_id is not None
     assert second.binding_id != first.binding_id
 
@@ -482,13 +475,9 @@ async def test_setup_allocates_a_fresh_runtime_epoch_after_revoke(ctx):
         )
         is True
     )
-    await repos.agent_bindings.set_status(
-        first.binding_id, "revoked", advance_runtime_epoch=True
-    )
+    await repos.agent_bindings.set_status(first.binding_id, "revoked", advance_runtime_epoch=True)
 
-    second = await service.setup(
-        _command(term_id, profile.id, fingerprint, key=uuid4()), {}
-    )
+    second = await service.setup(_command(term_id, profile.id, fingerprint, key=uuid4()), {})
     assert second.binding_id is not None
     async with db.session_factory() as session:
         binding = await session.get(AgentBinding, second.binding_id)
@@ -523,9 +512,7 @@ async def test_setup_rejects_a_capability_active_for_another_binding(ctx):
     other_config, _ = canonicalize_profile_config(other.config)
     other_fingerprint = catalog.disclosure_fingerprint(other_config)
     with pytest.raises(Exception) as exc:
-        await service.setup(
-            _command(term_id, other.id, other_fingerprint, key=uuid4()), {}
-        )
+        await service.setup(_command(term_id, other.id, other_fingerprint, key=uuid4()), {})
     assert getattr(exc.value, "code", None) == "capability_conflict"
 
 

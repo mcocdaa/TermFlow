@@ -286,9 +286,7 @@ def _apply_upgrade(*, sqlite_batch: bool) -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["term_id"], ["instances.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(
-            ["binding_id"], ["agent_bindings.id"], ondelete="SET NULL"
-        ),
+        sa.ForeignKeyConstraint(["binding_id"], ["agent_bindings.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
@@ -330,9 +328,7 @@ def _apply_downgrade(*, sqlite_batch: bool) -> None:
 
     op.drop_index("ix_agent_setup_receipts_binding_id", table_name="agent_setup_receipts")
     op.drop_index("ix_agent_setup_receipts_term_id", table_name="agent_setup_receipts")
-    op.drop_index(
-        "ix_agent_setup_receipts_idempotency_key", table_name="agent_setup_receipts"
-    )
+    op.drop_index("ix_agent_setup_receipts_idempotency_key", table_name="agent_setup_receipts")
     op.drop_table("agent_setup_receipts")
 
     op.drop_index(

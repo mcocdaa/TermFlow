@@ -95,20 +95,15 @@ class ReuseDecision:
             )
         if self.decision in _NON_ADOPT_DECISIONS and self.required_port is not None:
             raise ValueError(
-                f"{self.candidate}: {self.decision.value} must not declare a "
-                "required_port"
+                f"{self.candidate}: {self.decision.value} must not declare a required_port"
             )
         if self.decision is ReuseDecisionKind.ADOPT_DIRECT:
             if not (self.pinned_version or "").strip():
-                raise ValueError(
-                    f"{self.candidate}: ADOPT_DIRECT requires a pinned_version"
-                )
+                raise ValueError(f"{self.candidate}: ADOPT_DIRECT requires a pinned_version")
             if not (self.license or "").strip():
                 raise ValueError(f"{self.candidate}: ADOPT_DIRECT requires a license")
             if not (self.contract_fixture or "").strip():
-                raise ValueError(
-                    f"{self.candidate}: ADOPT_DIRECT requires a contract_fixture"
-                )
+                raise ValueError(f"{self.candidate}: ADOPT_DIRECT requires a contract_fixture")
 
 
 REUSE_DECISIONS: tuple[ReuseDecision, ...] = (
@@ -124,8 +119,7 @@ REUSE_DECISIONS: tuple[ReuseDecision, ...] = (
         license="MIT",
         sbom_owner="termflow-control-plane",
         contract_fixture=(
-            "packages/protocol mcp.py; MCP handshake in "
-            "tests/fixtures/opencode/opencode-pin.md"
+            "packages/protocol mcp.py; MCP handshake in tests/fixtures/opencode/opencode-pin.md"
         ),
         notes=(
             "Do not hand-write JSON-RPC/MCP framing; keep AgentToken, Origin/Host, "
@@ -161,9 +155,7 @@ REUSE_DECISIONS: tuple[ReuseDecision, ...] = (
     ReuseDecision(
         candidate="Pluggy",
         decision=ReuseDecisionKind.ADOPT_NARROWLY,
-        reuse_boundary=(
-            "In-process hook dispatch for the trusted B Feature Plugin registry"
-        ),
+        reuse_boundary=("In-process hook dispatch for the trusted B Feature Plugin registry"),
         required_port=TermFlowPort.B_FEATURE_CONTEXT,
         license="MIT",
         sbom_owner="termflow-control-plane",
@@ -214,9 +206,7 @@ REUSE_DECISIONS: tuple[ReuseDecision, ...] = (
     ReuseDecision(
         candidate="pyte",
         decision=ReuseDecisionKind.EVALUATE,
-        reuse_boundary=(
-            "Stateful VT/ANSI terminal rendering for Observation Service"
-        ),
+        reuse_boundary=("Stateful VT/ANSI terminal rendering for Observation Service"),
         required_port=TermFlowPort.TERMINAL_OBSERVATION_PORT,
         license="LGPL-3.0",
         sbom_owner="termflow-control-plane",
@@ -232,8 +222,7 @@ REUSE_DECISIONS: tuple[ReuseDecision, ...] = (
         candidate="libtmux",
         decision=ReuseDecisionKind.PARTIAL_REUSE,
         reuse_boundary=(
-            "Non-streaming tmux object traversal, provisioning, and isolated test "
-            "fixtures"
+            "Non-streaming tmux object traversal, provisioning, and isolated test fixtures"
         ),
         required_port=TermFlowPort.TERMINAL_COMMAND_PORT,
         license="MIT",
@@ -247,9 +236,7 @@ REUSE_DECISIONS: tuple[ReuseDecision, ...] = (
     ReuseDecision(
         candidate="Temporal / Restate",
         decision=ReuseDecisionKind.FUTURE_OPTION,
-        reuse_boundary=(
-            "Durable workflows, timers, signals, retries, and crash recovery"
-        ),
+        reuse_boundary=("Durable workflows, timers, signals, retries, and crash recovery"),
         notes=(
             "0.3+ option, not a 0.2 default; could replace much of the custom "
             "Watch/Inbox scheduler but requires a workflow service/worker "
@@ -260,8 +247,7 @@ REUSE_DECISIONS: tuple[ReuseDecision, ...] = (
         candidate="NATS JetStream / Redis Streams",
         decision=ReuseDecisionKind.FUTURE_OPTION,
         reuse_boundary=(
-            "Durable event transport, replay, consumer groups, and multi-worker "
-            "delivery"
+            "Durable event transport, replay, consumer groups, and multi-worker delivery"
         ),
         notes=(
             "Future scale-out option; must not replace B's canonical authorization/"

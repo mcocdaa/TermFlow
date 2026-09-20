@@ -125,16 +125,12 @@ class FakeRegistrationClient:
         instance: LocalInstance,
         store: InstanceStore,
     ) -> LocalInstance:
-        assert installation.installation_token.get_secret_value() == (
-            "installation-private-token"
-        )
+        assert installation.installation_token.get_secret_value() == ("installation-private-token")
         assert store is self.store
         self.registered_ids.append(instance.instance_id)
         if self.error is not None:
             raise self.error
-        registered = instance.model_copy(
-            update={"instance_token": SecretStr(FRESH_SECRET)}
-        )
+        registered = instance.model_copy(update={"instance_token": SecretStr(FRESH_SECRET)})
         store.save(registered)
         return registered
 
@@ -244,9 +240,7 @@ async def test_activate_prerequisite_failure_retains_activation_required(
     required = _required_record(store.root)
     store.save(required)
     manager = FakeManager(required, store, tmux_error=tmux_error)
-    activator, _, _, client = _activator(
-        store, required, config=config, manager=manager
-    )
+    activator, _, _, client = _activator(store, required, config=config, manager=manager)
 
     with pytest.raises(ActivationError, match="local tmux was not changed"):
         await activator.activate(str(required.instance_id))

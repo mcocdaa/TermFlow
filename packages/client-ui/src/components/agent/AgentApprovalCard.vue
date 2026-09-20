@@ -8,13 +8,20 @@
   >
     <header class="agent-approval-card__header">
       <strong class="agent-approval-card__tool" data-agent-approval-tool>{{ tool }}</strong>
+      <span class="agent-risk-badge" :class="risk.badgeClass" :data-agent-risk-level="risk.level">{{ risk.label }}</span>
       <span class="agent-approval-card__state" :data-agent-approval-state="rawState">{{ stateLabel }}</span>
     </header>
-    <p v-if="evidence !== null" class="agent-approval-card__evidence" data-agent-approval-evidence>{{ evidence }}</p>
+    <div v-if="evidence !== null" class="agent-approval-card__evidence" data-agent-approval-evidence>
+      <AgentCollapsibleOutput v-if="isDiff(evidence)" :content="evidence" />
+      <span v-else>{{ evidence }}</span>
+    </div>
     <div v-if="detail !== null" class="agent-approval-card__detail">
       <p class="agent-approval-card__field"><span class="agent-approval-card__label">Pane</span><span data-agent-approval-pane>{{ pane }}</span></p>
       <p class="agent-approval-card__field"><span class="agent-approval-card__label">操作</span><span data-agent-approval-operation>{{ operation }}</span></p>
-      <p class="agent-approval-card__summary" data-agent-approval-summary>{{ summary }}</p>
+      <div class="agent-approval-card__summary" data-agent-approval-summary>
+        <AgentCollapsibleOutput v-if="isDiff(summary)" :content="summary" />
+        <span v-else>{{ summary }}</span>
+      </div>
       <p class="agent-approval-card__hash" :data-agent-approval-hash="detail.canonical_hash">摘要 #{{ detail.canonical_hash.slice(0, 8) }}</p>
     </div>
     <p v-else-if="detailFailed" class="agent-approval-card__fallback" data-agent-approval-detail-failed-text>详情不可用</p>
@@ -50,6 +57,9 @@ import {
   whenApprovalListLoadsSettled,
 } from '../../composables/useAgentApprovals'
 import { useClientRuntime } from '../../runtime'
+import { assessRisk, type RiskAssessment } from '../../utils/risk'
+import { isUnifiedDiff } from '../../utils/diff'
+import AgentCollapsibleOutput from './AgentCollapsibleOutput.vue'
 
 const props = defineProps<{
   /** CUSTOM-event-derived record, exactly as tracked by the history reducer. */
@@ -127,4 +137,12 @@ function formatExpiry(iso: string): string {
   const pad = (value: number) => String(value).padStart(2, '0')
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC`
 }
+
+const isDiff = (text: string | null) => text !== null && isUnifiedDiff(text)
+const risk = computed<RiskAssessment>(() => assessRisk({
+  operation: operation.value !== '详情不可用' ? operation.value : null,
+  summary: summary.value !== '详情不可用' ? summary.value : null,
+  toolName: tool.value !== '工具调用' ? tool.value : null,
+  evidence: evidence.value,
+}))
 </script>

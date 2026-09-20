@@ -82,9 +82,7 @@ ProfileConfigProvider = Callable[[UUID], Awaitable[object | None]]
 
 _PROFILE_MISSING = "agent profile is missing; activation fails closed"
 _PROFILE_LOOKUP_FAILED = "agent profile lookup failed; activation fails closed"
-_PROFILE_CONFIG_INVALID = (
-    "agent profile configuration is invalid; activation fails closed"
-)
+_PROFILE_CONFIG_INVALID = "agent profile configuration is invalid; activation fails closed"
 _PROFILE_PROVIDER_UNAVAILABLE = (
     "agent profile provider or model is unavailable; activation fails closed"
 )
@@ -208,12 +206,9 @@ class AgentRuntimeRegistry:
         self._endpoint_provider = endpoint_provider or _settings_endpoint_provider(settings)
         self._adapter_factory = adapter_factory or _build_opencode_adapter
         self._profile_config_provider = (
-            profile_config_provider
-            or self._repository_profile_config_provider(repositories)
+            profile_config_provider or self._repository_profile_config_provider(repositories)
         )
-        self._provider_catalog = provider_catalog or ProviderCatalog.from_settings(
-            settings
-        )
+        self._provider_catalog = provider_catalog or ProviderCatalog.from_settings(settings)
         self._bindings: dict[UUID, _BoundRuntime] = {}
         # Candidate and live endpoint checks share one lock.  This prevents a
         # concurrently-built candidate from racing a publication and exposing
@@ -222,9 +217,7 @@ class AgentRuntimeRegistry:
         self._candidates: dict[UUID, RuntimeCandidate] = {}
         self.unavailable_bindings: dict[UUID, str] = {}
 
-    def release_supervisor_binding(
-        self, binding_id: UUID, runtime_ref: str | None
-    ) -> None:
+    def release_supervisor_binding(self, binding_id: UUID, runtime_ref: str | None) -> None:
         """Release a closed Binding's supervisor attestation for its runtime."""
         supervisor = self._supervisor
         ref = (runtime_ref or "").strip()
@@ -434,8 +427,7 @@ class AgentRuntimeRegistry:
             # candidate to the live mapping.  In that case the candidate is
             # still registry-owned and must not be stopped by the stale caller.
             live_owned = any(
-                runtime.pipeline is candidate.pipeline
-                for runtime in self._bindings.values()
+                runtime.pipeline is candidate.pipeline for runtime in self._bindings.values()
             )
         if removed or not live_owned:
             await self._close_candidate(candidate)

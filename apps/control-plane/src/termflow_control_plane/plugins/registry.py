@@ -57,18 +57,13 @@ class FeatureRegistry:
 
     def register(self, plugin: BFeaturePlugin, *, enabled: bool = True) -> None:
         if not isinstance(plugin, BFeaturePlugin):
-            raise PluginRegistrationError(
-                f"plugin does not satisfy BFeaturePlugin: {plugin!r}"
-            )
+            raise PluginRegistrationError(f"plugin does not satisfy BFeaturePlugin: {plugin!r}")
         for registered in self._plugins:
             if registered.plugin is plugin:
                 raise PluginRegistrationError(
                     f"duplicate plugin id: plugin {plugin.id!r} is already registered"
                 )
-            if (
-                registered.plugin.id == plugin.id
-                and registered.plugin.version == plugin.version
-            ):
+            if registered.plugin.id == plugin.id and registered.plugin.version == plugin.version:
                 raise PluginRegistrationError(
                     f"duplicate plugin (id, version): {plugin.id!r} "
                     f"version {plugin.version!r} is already registered"

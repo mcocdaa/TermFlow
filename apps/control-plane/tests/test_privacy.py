@@ -249,11 +249,14 @@ def test_pending_totp_secret_is_encrypted_and_absent_from_logs_and_repr(
     )
     app = create_app(settings=settings, database=Database(settings.database_url))
     with TestClient(app) as test_client:
-        assert test_client.post(
-            "/api/v1/admin/sessions",
-            headers={"Origin": "http://127.0.0.1:8000"},
-            json={"admin_token": "admin-token-that-is-long-enough-for-tests"},
-        ).status_code == 201
+        assert (
+            test_client.post(
+                "/api/v1/admin/sessions",
+                headers={"Origin": "http://127.0.0.1:8000"},
+                json={"admin_token": "admin-token-that-is-long-enough-for-tests"},
+            ).status_code
+            == 201
+        )
         setup = test_client.post(
             "/api/v1/admin/totp/setups",
             headers={"Origin": "http://127.0.0.1:8000"},

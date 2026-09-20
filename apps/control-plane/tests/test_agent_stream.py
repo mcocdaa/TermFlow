@@ -273,23 +273,15 @@ class _GeneratorStream:
         client.portal.call(self._task.result)
 
 
-def test_happy_path_subscribe_append_receive(
-    client, admin_headers, provision_term
-) -> None:
+def test_happy_path_subscribe_append_receive(client, admin_headers, provision_term) -> None:
     binding_id = _seed_binding(client, admin_headers, provision_term)
-    conversation = _create_conversation(
-        client, admin_headers, binding_id=binding_id
-    )
+    conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
     conversation_id = UUID(str(conversation["conversation_id"]))
     epoch = _current_auth_epoch(client)
 
     with _GeneratorStream(client, conversation_id=conversation_id) as stream:
-        seq = _append_event(
-            client, conversation_id, kind="message_delta", dedup_key="live-1"
-        )
-        frames = stream.wait_for(
-            lambda f: any(name == "agent_event" for name, _d in f)
-        )
+        seq = _append_event(client, conversation_id, kind="message_delta", dedup_key="live-1")
+        frames = stream.wait_for(lambda f: any(name == "agent_event" for name, _d in f))
 
     assert seq == 1
     name, data = frames[0]
@@ -307,13 +299,9 @@ def test_happy_path_subscribe_append_receive(
     assert int(parts[1]) == 1
 
 
-def test_replay_from_cursor_preserves_order(
-    client, admin_headers, provision_term
-) -> None:
+def test_replay_from_cursor_preserves_order(client, admin_headers, provision_term) -> None:
     binding_id = _seed_binding(client, admin_headers, provision_term)
-    conversation = _create_conversation(
-        client, admin_headers, binding_id=binding_id
-    )
+    conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
     conversation_id = UUID(str(conversation["conversation_id"]))
     epoch = _current_auth_epoch(client)
     for index in (1, 2, 3):
@@ -324,15 +312,9 @@ def test_replay_from_cursor_preserves_order(
             dedup_key=f"pre-{index}",
         )
 
-    with _GeneratorStream(
-        client, conversation_id=conversation_id, cursor=(epoch, 1)
-    ) as stream:
-        seq_4 = _append_event(
-            client, conversation_id, kind="run_completed", dedup_key="live-4"
-        )
-        frames = stream.wait_for(
-            lambda f: sum(1 for name, _d in f if name == "agent_event") >= 3
-        )
+    with _GeneratorStream(client, conversation_id=conversation_id, cursor=(epoch, 1)) as stream:
+        seq_4 = _append_event(client, conversation_id, kind="run_completed", dedup_key="live-4")
+        frames = stream.wait_for(lambda f: sum(1 for name, _d in f if name == "agent_event") >= 3)
 
     events = [data["event"] for name, data in frames if name == "agent_event"]
     assert [event["database_seq"] for event in events] == [2, 3, 4]
@@ -344,18 +326,12 @@ def test_replay_from_cursor_preserves_order(
     assert seq_4 == 4  # the live append is the fourth event
 
 
-def test_binding_revocation_closes_stream_in_band(
-    client, admin_headers, provision_term
-) -> None:
+def test_binding_revocation_closes_stream_in_band(client, admin_headers, provision_term) -> None:
     binding_id = _seed_binding(client, admin_headers, provision_term)
-    conversation = _create_conversation(
-        client, admin_headers, binding_id=binding_id
-    )
+    conversation = _create_conversation(client, admin_headers, binding_id=binding_id)
     conversation_id = UUID(str(conversation["conversation_id"]))
 
-    with _GeneratorStream(
-        client, conversation_id=conversation_id, binding_id=binding_id
-    ) as stream:
+    with _GeneratorStream(client, conversation_id=conversation_id, binding_id=binding_id) as stream:
         _set_binding_status(client, binding_id, "revoked")
         _append_event(client, conversation_id, dedup_key="after-revoke")
         stream.wait_for(lambda f: any(name == "closed" for name, _d in f))

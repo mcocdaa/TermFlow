@@ -56,8 +56,10 @@ def _request(
 def _native_jwk() -> dict[str, str]:
     key = ec.generate_private_key(ec.SECP256R1())
     numbers = key.public_key().public_numbers()
+
     def encode(value: bytes) -> str:
         return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
     return {
         "kty": "EC",
         "crv": "P-256",
@@ -198,9 +200,9 @@ def test_prompt_login_cannot_reuse_existing_browser_session(client) -> None:
 
     jwk = _native_jwk()
     verifier = "v" * 43
-    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(
-        b"="
-    ).decode()
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    )
     response = client.get(
         "/api/v1/oauth/authorize",
         params={
@@ -239,9 +241,9 @@ def test_authorization_code_deny_accepts_existing_browser_session(client) -> Non
 
     jwk = _native_jwk()
     verifier = "d" * 43
-    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(
-        b"="
-    ).decode()
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    )
     response = client.get(
         "/api/v1/oauth/authorize",
         params={

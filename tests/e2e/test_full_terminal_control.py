@@ -31,10 +31,7 @@ def _terminal(
     url = f"ws://127.0.0.1:{system.port}/api/v1/terms/{instance_id}/terminal"
     if resume is not None:
         terminal_id, stream_id, after_seq = resume
-        url += (
-            f"?terminal_id={terminal_id}&stream_id={stream_id}"
-            f"&after_seq={after_seq}"
-        )
+        url += f"?terminal_id={terminal_id}&stream_id={stream_id}&after_seq={after_seq}"
     return connect(
         url,
         origin=system.base_url,
@@ -141,10 +138,13 @@ def test_browser_cookie_controls_a_real_tmux_client_without_resizing_a(
             assert (replacement_ready["rows"], replacement_ready["cols"]) == original_size
 
     assert termflow_system.local_tmux_is_alive(instance)
-    assert sum(
-        len(window["panes"])
-        for window in termflow_system.topology(instance.instance_id)["windows"]
-    ) == 2
+    assert (
+        sum(
+            len(window["panes"])
+            for window in termflow_system.topology(instance.instance_id)["windows"]
+        )
+        == 2
+    )
 
     inspected = [
         path

@@ -90,9 +90,7 @@ class FakeRemote:
     async def emit(self, data: bytes) -> None:
         self._seq += 1
         self.ring.append(self._seq, data)
-        await self._on_output(
-            RemoteOutputChunk(self.terminal_id, self.stream_id, self._seq, data)
-        )
+        await self._on_output(RemoteOutputChunk(self.terminal_id, self.stream_id, self._seq, data))
 
     async def abnormal_exit(self) -> None:
         await self._on_closed("internal_error")

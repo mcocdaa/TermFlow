@@ -91,7 +91,7 @@ name and make its conditional UPDATE return both columns in one statement. Accep
 `EnrollmentCreateRequest | None` in the endpoint, persist the name, and create Installation with:
 
 ```python
-display_name=consumed.display_name or request.hostname
+display_name = consumed.display_name or request.hostname
 ```
 
 - [ ] **Step 8: Verify GREEN and commit**

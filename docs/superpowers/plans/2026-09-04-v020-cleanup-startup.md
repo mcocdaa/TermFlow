@@ -355,8 +355,9 @@ class AgentStartupResult:
 
 
 class AgentStartupCoordinator:
-    def __init__(self, fencing, controller, topology, backend, watches,
-                 dispatcher, cleanup) -> None:
+    def __init__(
+        self, fencing, controller, topology, backend, watches, dispatcher, cleanup
+    ) -> None:
         self._fencing = fencing
         self._controller = controller
         self._topology = topology

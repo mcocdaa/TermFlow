@@ -107,6 +107,7 @@ async def test_readiness_rejects_missing_failed_or_malformed_mcp_state() -> None
         "not-json",
     )
     for payload in payloads:
+
         def handler(request: httpx.Request, payload=payload) -> httpx.Response:
             if request.url.path == "/global/health":
                 return httpx.Response(200, json={"healthy": True})
@@ -234,9 +235,7 @@ async def test_health_rejects_non_200_and_unhealthy_bodies() -> None:
     finally:
         await client.aclose()
 
-    server_error = _client(
-        lambda request: httpx.Response(503), epoch_resolver=_epoch_2
-    )
+    server_error = _client(lambda request: httpx.Response(503), epoch_resolver=_epoch_2)
     try:
         health = await server_error.health(RUNTIME_REF)
     finally:

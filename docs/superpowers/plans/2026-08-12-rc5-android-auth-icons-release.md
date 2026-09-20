@@ -486,6 +486,7 @@ def test_android_version_codes_preserve_release_order() -> None:
         10_161,
     ]
 
+
 @pytest.mark.parametrize("version", ["1.0.0-dev.20", "1.0.0-rc.39", "2100.0.0"])
 def test_android_rank_overflow_is_rejected(version: str) -> None:
     with pytest.raises(ValueError, match="mobile bundle"):
@@ -584,6 +585,7 @@ def test_rejects_known_template_launcher_hash(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="template launcher"):
         verify_launcher_resources(apk, generated_res(tmp_path))
 
+
 def test_parses_package_and_signer_contract() -> None:
     assert parse_badging(BADGING) == AndroidPackageMetadata(
         package_name="io.termflow.client",
@@ -620,18 +622,20 @@ python scripts/release/verify_android_apk.py \
 实现要点：
 
 ```py
-KNOWN_TEMPLATE_LAUNCHER_SHA256 = frozenset({
-    "75322a261ba38a23a25647af0d1298f204f3b3fafd317b8122a1b9a1f38284ff",
-    "2425d59d27578f75ca97d31d9ae8385898badce3d6a1774bfc2f0fd191dc12c7",
-    "320e552422179b81dae014ee6cc00561bd6e7455767b28f5518b8862a8c7987c",
-    "7a9ae0632bfe5b28a1e6e9a7b38982fef62be07c95de46c26bd4f901ac6b9753",
-    "44e5c3dc1dfb392f65e3dbcc9b986d30f10dd95b57e306657e56281b572fa684",
-    "b1d19b8b78d0ed6903dd35b7640afba29b4cf02f3780e0d1cd46d9ebcbc93695",
-    "0b250fc4451dfd1e5a41128234d93225726a2984448b0b966af25677b167d8de",
-    "ab9397c9827aef4b3a1f1f917fc722d54abcf26488880c8bf9c724d1e59ab905",
-    "dae1ff05b101efea50e4b622fe6a3af8ba8f761162fa7c4fd864adc7cb39eeac",
-    "27cf0cdbc78bec8b9a14eaedb084c541a3c191fe5db89766e831fbfd21ce955d",
-})
+KNOWN_TEMPLATE_LAUNCHER_SHA256 = frozenset(
+    {
+        "75322a261ba38a23a25647af0d1298f204f3b3fafd317b8122a1b9a1f38284ff",
+        "2425d59d27578f75ca97d31d9ae8385898badce3d6a1774bfc2f0fd191dc12c7",
+        "320e552422179b81dae014ee6cc00561bd6e7455767b28f5518b8862a8c7987c",
+        "7a9ae0632bfe5b28a1e6e9a7b38982fef62be07c95de46c26bd4f901ac6b9753",
+        "44e5c3dc1dfb392f65e3dbcc9b986d30f10dd95b57e306657e56281b572fa684",
+        "b1d19b8b78d0ed6903dd35b7640afba29b4cf02f3780e0d1cd46d9ebcbc93695",
+        "0b250fc4451dfd1e5a41128234d93225726a2984448b0b966af25677b167d8de",
+        "ab9397c9827aef4b3a1f1f917fc722d54abcf26488880c8bf9c724d1e59ab905",
+        "dae1ff05b101efea50e4b622fe6a3af8ba8f761162fa7c4fd864adc7cb39eeac",
+        "27cf0cdbc78bec8b9a14eaedb084c541a3c191fe5db89766e831fbfd21ce955d",
+    }
+)
 
 LAUNCHER_NAMES = ("ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png")
 DENSITIES = ("mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi")
@@ -734,11 +738,12 @@ Tauri 2.11.4 的 `android init` 模板默认没有 release `signingConfigs`，�
 ```py
 def test_configures_release_signing_once() -> None:
     updated = configure_gradle(TAURI_2_11_4_GRADLE_FIXTURE)
-    assert 'import java.io.FileInputStream' in updated
+    assert "import java.io.FileInputStream" in updated
     assert 'create("release")' in updated
     assert 'rootProject.file("keystore.properties")' in updated
     assert 'signingConfig = signingConfigs.getByName("release")' in updated
     assert configure_gradle(updated) == updated
+
 
 def test_rejects_unknown_template() -> None:
     with pytest.raises(ValueError, match="unsupported Tauri Android Gradle template"):

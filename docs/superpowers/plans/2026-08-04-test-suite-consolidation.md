@@ -202,11 +202,13 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
+
 @dataclass(frozen=True, slots=True)
 class ProvisionedComputer:
     installation_id: UUID
     installation_token: str
     response: dict[str, object]
+
 
 @dataclass(frozen=True, slots=True)
 class ProvisionedTerm:
@@ -239,9 +241,7 @@ def provision_computer(
             json={"display_name": display_name} if display_name is not None else None,
         )
         enrollment.raise_for_status()
-        install_payload: dict[str, object] = {
-            "enrollment_token": enrollment.json()["token"]
-        }
+        install_payload: dict[str, object] = {"enrollment_token": enrollment.json()["token"]}
         for key, value in (
             ("hostname", hostname),
             ("platform", platform),

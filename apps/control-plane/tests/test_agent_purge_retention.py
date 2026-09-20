@@ -148,10 +148,7 @@ def test_retention_constants_are_wired_from_the_contract_matrix() -> None:
         AGENT_ASSEMBLY_CHECKPOINT_RETENTION
         == RETENTION_MATRIX[DataClass.ASSEMBLY_CHECKPOINTS].retention
     )
-    assert (
-        AGENT_FINAL_TIMELINE_RETENTION
-        == RETENTION_MATRIX[DataClass.FINAL_MESSAGES].retention
-    )
+    assert AGENT_FINAL_TIMELINE_RETENTION == RETENTION_MATRIX[DataClass.FINAL_MESSAGES].retention
 
 
 def test_purge_sweeps_agent_events_by_retention_class(

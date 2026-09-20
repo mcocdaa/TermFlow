@@ -36,15 +36,19 @@ def test_native_clients_are_managed_only_by_same_origin_web_session(client, admi
     assert registered["display_name"] == "Desktop C"
     client_id = registered["client_id"]
 
-    assert client.get(
-        "/api/v1/admin/clients", headers={"Origin": "https://evil.example"}
-    ).status_code == 403
+    assert (
+        client.get("/api/v1/admin/clients", headers={"Origin": "https://evil.example"}).status_code
+        == 403
+    )
 
-    assert client.patch(
-        f"/api/v1/admin/clients/{client_id}",
-        headers={"Origin": "https://evil.example"},
-        json={"display_name": "Renamed C"},
-    ).status_code == 403
+    assert (
+        client.patch(
+            f"/api/v1/admin/clients/{client_id}",
+            headers={"Origin": "https://evil.example"},
+            json={"display_name": "Renamed C"},
+        ).status_code
+        == 403
+    )
     renamed = client.patch(
         f"/api/v1/admin/clients/{client_id}",
         headers={"Origin": ORIGIN},
@@ -53,14 +57,13 @@ def test_native_clients_are_managed_only_by_same_origin_web_session(client, admi
     assert renamed.status_code == 200
     assert renamed.json()["display_name"] == "Renamed C"
 
-    deleted = client.delete(
-        f"/api/v1/admin/clients/{client_id}", headers={"Origin": ORIGIN}
-    )
+    deleted = client.delete(f"/api/v1/admin/clients/{client_id}", headers={"Origin": ORIGIN})
     assert deleted.status_code == 200
     assert deleted.json() == {"ok": True}
-    assert client.delete(
-        f"/api/v1/admin/clients/{client_id}", headers={"Origin": ORIGIN}
-    ).status_code == 404
+    assert (
+        client.delete(f"/api/v1/admin/clients/{client_id}", headers={"Origin": ORIGIN}).status_code
+        == 404
+    )
 
 
 def test_denied_or_abandoned_authorization_is_not_an_authorized_client(client) -> None:

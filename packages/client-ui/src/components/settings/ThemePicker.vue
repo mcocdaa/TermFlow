@@ -35,9 +35,16 @@ import { useTheme } from '../../theme/theme'
 const { active: activeTheme, select: selectTheme } = useTheme()
 
 const themes: ReadonlyArray<{ id: ThemeId; label: string }> = [
-  { id: 'graphite-signal', label: '石墨信号' },
+  { id: 'graphite-signal', label: '石墨信号 (默认)' },
   { id: 'cloud-cobalt', label: '云端钴蓝' },
   { id: 'midnight-indigo', label: '午夜靛蓝' },
+  { id: 'catppuccin-mocha', label: 'Catppuccin Mocha' },
+  { id: 'catppuccin-latte', label: 'Catppuccin Latte' },
+  { id: 'tokyo-night', label: 'Tokyo Night' },
+  { id: 'nord', label: 'Nord' },
+  { id: 'dracula', label: 'Dracula' },
+  { id: 'solarized-dark', label: 'Solarized Dark' },
+  { id: 'solarized-light', label: 'Solarized Light' },
 ]
 const radioButtons = ref<HTMLButtonElement[]>([])
 

@@ -83,9 +83,7 @@ async def _seed_binding(repositories: RepositoryBundle, *, runtime_epoch: int = 
         config='{"model": "default"}',
     )
     display_name = f"term-{uuid4().hex[:8]}"
-    installation = await repositories.installations.create(
-        digest_secret(f"computer-{uuid4().hex}")
-    )
+    installation = await repositories.installations.create(digest_secret(f"computer-{uuid4().hex}"))
     term = await repositories.instances.register_or_rotate(
         uuid4(),
         installation.id,
@@ -349,9 +347,7 @@ def _initialize(client: TestClient, token: str) -> dict[str, str]:
     return headers
 
 
-def _call_tool(
-    client: TestClient, headers: dict[str, str], name: str, arguments: dict
-) -> dict:
+def _call_tool(client: TestClient, headers: dict[str, str], name: str, arguments: dict) -> dict:
     response = client.post(
         MCP_STREAMABLE_HTTP_PATH,
         json={
@@ -371,9 +367,7 @@ def _build_server(repositories: RepositoryBundle, commands: FakeCommands) -> MCP
 
     return build_mcp_server(
         observation=FakeObservation(),
-        continuation=WatchContinuationService(
-            repositories.watches, repositories.agent_bindings
-        ),
+        continuation=WatchContinuationService(repositories.watches, repositories.agent_bindings),
         policy_checker=repositories,
         token_auth=AgentTokenAuthenticator(repositories),
         sessions=repositories.session_factory,  # type: ignore[attr-defined]

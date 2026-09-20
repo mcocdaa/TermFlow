@@ -47,8 +47,4 @@ class ClientSizeResolver:
         if candidates:
             latest = max(candidates, key=lambda client: client.activity)
             self._last_observed = TerminalSize(latest.rows, latest.cols)
-        return (
-            self._last_observed
-            or self._creation_size
-            or TerminalSize(rows=24, cols=80)
-        )
+        return self._last_observed or self._creation_size or TerminalSize(rows=24, cols=80)

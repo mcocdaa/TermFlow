@@ -1,0 +1,50 @@
+@layer tokens {
+  :root[data-theme='catppuccin-mocha'] {
+    color-scheme: dark;
+    --color-page: #1e1e2e;
+    --color-panel: #181825;
+    --color-elevated: #313244;
+    --color-terminal: #11111b;
+    --color-terminal-foreground: #cdd6f4;
+    --color-terminal-selection: #45475a;
+    --terminal-black: #45475a;
+    --terminal-red: #f38ba8;
+    --terminal-green: #a6e3a1;
+    --terminal-yellow: #f9e2af;
+    --terminal-blue: #89b4fa;
+    --terminal-magenta: #cba6f7;
+    --terminal-cyan: #94e2d5;
+    --terminal-white: #bac2de;
+    --terminal-bright-black: #585b70;
+    --terminal-bright-red: #f38ba8;
+    --terminal-bright-green: #a6e3a1;
+    --terminal-bright-yellow: #f9e2af;
+    --terminal-bright-blue: #89b4fa;
+    --terminal-bright-magenta: #cba6f7;
+    --terminal-bright-cyan: #94e2d5;
+    --terminal-bright-white: #a6adc8;
+    --color-border: #45475a;
+    --color-text-primary: #cdd6f4;
+    --color-text-secondary: #a6adc8;
+    --color-text-muted: #7f849c;
+    --color-accent: #cba6f7;
+    --color-accent-contrast: #11111b;
+    --color-focus: #b4befe;
+    --color-online: #a6e3a1;
+    --color-warning: #f9e2af;
+    --color-danger: #f38ba8;
+    --color-qr-foreground: #cba6f7;
+    --color-qr-background: #181825;
+    --shadow-panel: 0 18px 55px #00000066;
+    --radius-sm: 0.35rem;
+    --radius-md: 0.65rem;
+    --radius-lg: 1rem;
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-5: 1.5rem;
+    --font-ui: Inter, ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  }
+}

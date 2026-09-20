@@ -75,8 +75,9 @@
 ```python
 MAX_AGENT_EVENT_PAYLOAD_BYTES = 64 * 1024
 AGUI_PROTOCOL_VERSION = "0.1.19"
-AGUI_STATE_PATH = "/backend"                      # STATE_DELTA patch 路径
+AGUI_STATE_PATH = "/backend"  # STATE_DELTA patch 路径
 AGUI_PERMISSION_CUSTOM = "termflow.permission_requested"
+
 
 def project_agent_event(
     event: AgentEvent, payload: dict[str, object] | None

@@ -197,9 +197,7 @@ def verify_launcher_resources(apk: Path, generated_res: Path) -> None:
         names = set(archive.namelist())
         if "resources.arsc" not in names:
             raise ValueError("APK is missing the compiled Android resource table")
-        archive_pngs = [
-            (name, archive.read(name)) for name in names if name.endswith(".png")
-        ]
+        archive_pngs = [(name, archive.read(name)) for name in names if name.endswith(".png")]
         for apk_name, actual in archive_pngs:
             digest = hashlib.sha256(actual).hexdigest()
             if Path(apk_name).name in LAUNCHER_NAMES and digest in KNOWN_TEMPLATE_LAUNCHER_SHA256:
@@ -220,8 +218,7 @@ def verify_launcher_resources(apk: Path, generated_res: Path) -> None:
                 )
                 if match_index is None:
                     raise ValueError(
-                        "APK is missing generated launcher image: "
-                        f"{density}/{launcher_name}"
+                        f"APK is missing generated launcher image: {density}/{launcher_name}"
                     )
                 archive_pngs.pop(match_index)
 

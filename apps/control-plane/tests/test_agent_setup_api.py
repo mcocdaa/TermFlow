@@ -472,7 +472,6 @@ def test_write_policy_switches_between_manual_and_auto(setup_client: Any) -> Non
     assert switched.status_code == 200, switched.text
     assert switched.json()["write_policy"] == "auto"
 
-
     invalid = client.put(
         f"/api/v1/agent/admin/bindings/{binding_id}/write-policy",
         headers=headers,

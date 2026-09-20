@@ -198,8 +198,7 @@ def _canonical_payload_json(notification: BackendNotification) -> str:
     # also protects future adapters that accidentally populate both fields.
     safe_error_code = _safe_error_code(notification)
     redact_error_detail = (
-        notification.kind is AgentEventKind.RUN_FAILED
-        or safe_error_code is not None
+        notification.kind is AgentEventKind.RUN_FAILED or safe_error_code is not None
     )
     payload: dict[str, object] = {
         "kind": notification.kind.value,
@@ -221,11 +220,7 @@ def _canonical_payload_json(notification: BackendNotification) -> str:
     elif notification.kind is AgentEventKind.TOOL_COMPLETED:
         # Plan §7 tool-activity status: a failed call carries error fields;
         # anything else completed without error.
-        payload["status"] = (
-            "error"
-            if safe_error_code is not None
-            else "success"
-        )
+        payload["status"] = "error" if safe_error_code is not None else "success"
     elif notification.kind is AgentEventKind.BACKEND_STATE_CHANGED:
         payload["state"] = notification.payload.summary
         payload["epoch"] = notification.scope.runtime_epoch
@@ -785,9 +780,7 @@ class AgentPipelineService:
                 if row.conversation_id in tried:
                     continue
                 tried.add(row.conversation_id)
-                envelope = await self.inbox_machine.claim_next(
-                    conversation_id=row.conversation_id
-                )
+                envelope = await self.inbox_machine.claim_next(conversation_id=row.conversation_id)
                 if envelope is not None:
                     self._alert_stale_watch_rows(stale)
                     return envelope
@@ -966,20 +959,15 @@ class AgentPipelineService:
                 )
             except Exception:
                 logger.exception(
-                    "Agent pipeline %s: supervisor activation check raised; "
-                    "failing closed",
+                    "Agent pipeline %s: supervisor activation check raised; failing closed",
                     self.binding_id,
                 )
                 self._pending_payloads.pop(envelope.id, None)
-                await self._fail_run_and_delivery(
-                    run_id, started, error_code="runtime_not_ready"
-                )
+                await self._fail_run_and_delivery(run_id, started, error_code="runtime_not_ready")
                 return
             if not accepted:
                 self._pending_payloads.pop(envelope.id, None)
-                await self._fail_run_and_delivery(
-                    run_id, started, error_code="runtime_not_ready"
-                )
+                await self._fail_run_and_delivery(run_id, started, error_code="runtime_not_ready")
                 return
 
         # 7) Render + submit (spec §2 step 7).
@@ -1072,9 +1060,7 @@ class AgentPipelineService:
             return await self._persisted_user_payload(envelope)
         return None
 
-    async def _persisted_user_payload(
-        self, envelope: InboxEnvelope
-    ) -> UserMessageInput | None:
+    async def _persisted_user_payload(self, envelope: InboxEnvelope) -> UserMessageInput | None:
         """Reconstruct a user message payload from its persisted message row.
 
         A digest match proves the re-submission text; a missing row or body
@@ -1480,10 +1466,15 @@ class AgentPipelineService:
             if expected_revision is not None and runtime_repo is not None:
                 try:
                     text = notification.payload.text
-                    if notification.kind in (
-                        AgentEventKind.MESSAGE_DELTA,
-                        AgentEventKind.MESSAGE_COMPLETED,
-                    ) and isinstance(text, str) and bool(text.strip()):
+                    if (
+                        notification.kind
+                        in (
+                            AgentEventKind.MESSAGE_DELTA,
+                            AgentEventKind.MESSAGE_COMPLETED,
+                        )
+                        and isinstance(text, str)
+                        and bool(text.strip())
+                    ):
                         verify = getattr(runtime_repo, "compare_and_set_provider_verified", None)
                         if callable(verify):
                             await verify(self.binding_id, expected_revision)
@@ -1548,9 +1539,7 @@ class AgentPipelineService:
         # Active runs are queried through the binding join (M4.5 §5): the
         # previous conversation-listing iteration (default limit 50) silently
         # skipped the 51st+ conversation's active runs.
-        runs = await self._repositories.agent_runs.list_active_for_binding(
-            self.binding_id
-        )
+        runs = await self._repositories.agent_runs.list_active_for_binding(self.binding_id)
         for run in runs:
             ref_row = await self._repositories.agent_backend_conversations.get_by_conversation(
                 run.conversation_id

@@ -417,9 +417,7 @@ def upgrade() -> None:
         sa.Column("next_attempt_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["watch_id"], ["watches.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(
-            ["inbox_item_id"], ["agent_inbox_items.id"], ondelete="SET NULL"
-        ),
+        sa.ForeignKeyConstraint(["inbox_item_id"], ["agent_inbox_items.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_watch_deliveries_watch_id", "watch_deliveries", ["watch_id"])
@@ -453,9 +451,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["term_id"], ["instances.id"], ondelete="SET NULL"),
-        sa.ForeignKeyConstraint(
-            ["installation_id"], ["installations.id"], ondelete="SET NULL"
-        ),
+        sa.ForeignKeyConstraint(["installation_id"], ["installations.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_agent_cleanup_jobs_term_id", "agent_cleanup_jobs", ["term_id"])

@@ -34,9 +34,7 @@ async def create_enrollment_token(
     request: Annotated[EnrollmentCreateRequest | None, Body()] = None,
 ) -> EnrollmentCreateResponse:
     raw_token = issue_token()
-    expires_at = datetime.now(UTC) + timedelta(
-        seconds=settings.enrollment_token_ttl_seconds
-    )
+    expires_at = datetime.now(UTC) + timedelta(seconds=settings.enrollment_token_ttl_seconds)
     await repositories.enrollments.create(
         hash_token(raw_token),
         expires_at,

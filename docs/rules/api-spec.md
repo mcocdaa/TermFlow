@@ -47,6 +47,7 @@ import importlib
 from fastapi import FastAPI
 from XXXX.settings import API_VERSION
 
+
 def register_routers(app: FastAPI):
     version_package_name = f"{__name__}.{API_VERSION}"
 
@@ -56,11 +57,7 @@ def register_routers(app: FastAPI):
         raise RuntimeError(f"API 版本模块不存在: {version_package_name}")
 
     if hasattr(version_package, "router"):
-        app.include_router(
-            version_package.router,
-            prefix="/api",
-            tags=[API_VERSION.upper()]
-        )
+        app.include_router(version_package.router, prefix="/api", tags=[API_VERSION.upper()])
 ```
 
 ### 模块路由汇总 `api/v1/__init__.py` 或 `api/v1/C/__init__.py`
@@ -96,6 +93,7 @@ import importlib
 from pathlib import Path
 from typing import List, Optional
 
+
 def include_routers_from_directory(
     parent_router: APIRouter,
     package_name: str,
@@ -103,7 +101,7 @@ def include_routers_from_directory(
     *,
     skip_modules: Optional[List[str]] = None,
     auto_tag: bool = False,
-    auto_prefix: bool = False
+    auto_prefix: bool = False,
 ) -> None:
     if skip_modules is None:
         skip_modules = []
@@ -174,6 +172,7 @@ include_routers_from_directory() 扫描目录
 from fastapi import APIRouter
 
 router = APIRouter()
+
 
 @router.get("/A")
 async def get_list():

@@ -5,6 +5,7 @@ import {
   type TerminalBindingSnapshotFrame,
   type TerminalReadyFrame,
 } from '@termflow/client-contracts'
+import { calculateDecorrelatedJitterDelay } from './jitter'
 import type {
   TerminalConnectRequest,
   TerminalConnection,
@@ -33,14 +34,12 @@ export interface TerminalSessionOptions {
   scheduler: TerminalScheduler
   createId: () => string
   reconnectDelayMs?: number
+  maxReconnectDelayMs?: number
+  random?: () => number
+  heartbeatIntervalMs?: number
+  heartbeatTimeoutMs?: number
   /**
-   * Optional authentication probe used before a reconnect attempt.  The
-   * transport upgrade for an expired browser session is rejected with HTTP
-   * 401 before the socket opens, so the browser reports an abnormal 1006
-   * close instead of the application's 4401 code.  Without this probe the
-   * session would retry forever; a definitive unauthenticated answer must
-   * resolve ``false`` so the UI can ask for a fresh login.  Probe failures
-   * (network errors) resolve ``true`` and keep the retry loop alive.
+   * Optional authentication probe used before a reconnect attempt.
    */
   probeSession?: () => Promise<boolean>
 }
@@ -65,7 +64,15 @@ export class TerminalSession implements TerminalSessionLike {
   private terminalId: string | null = null
   private streamId: string | null = null
   private lastSeq = 0
+  private heartbeatTimer: unknown | null = null
+  private lastReceivedAt = 0
+  private lastPingSentAt = 0
+  private lastReconnectDelay = 0
   private readonly reconnectDelayMs: number
+  private readonly maxReconnectDelayMs: number
+  private readonly random: () => number
+  private readonly heartbeatIntervalMs: number
+  private readonly heartbeatTimeoutMs: number
 
   constructor(
     private readonly termId: string,
@@ -73,6 +80,10 @@ export class TerminalSession implements TerminalSessionLike {
     private readonly options: TerminalSessionOptions,
   ) {
     this.reconnectDelayMs = options.reconnectDelayMs ?? 1_000
+    this.maxReconnectDelayMs = options.maxReconnectDelayMs ?? 10_000
+    this.random = options.random ?? Math.random
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? 15_000
+    this.heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? 5_000
   }
 
   async connect(): Promise<void> {
@@ -101,6 +112,7 @@ export class TerminalSession implements TerminalSessionLike {
   }
 
   private handleEvent(event: TerminalTransportEvent): void {
+    this.lastReceivedAt = Date.now()
     if (event.type === 'open') return
     if (event.type === 'binary') {
       if (this.ready) {
@@ -131,8 +143,14 @@ export class TerminalSession implements TerminalSessionLike {
         this.terminalId = control.terminal_id
         this.ready = true
         this.reconnectAttempt = 0
+        this.lastReconnectDelay = 0
+        this.lastReceivedAt = Date.now()
         this.callbacks.onStatus('connected')
         this.callbacks.onReady(control)
+        this.startHeartbeat()
+        break
+      case 'terminal.pong':
+        this.lastPingSentAt = 0
         break
       case 'terminal.size':
         this.callbacks.onSize({ rows: control.rows, cols: control.cols })
@@ -147,6 +165,7 @@ export class TerminalSession implements TerminalSessionLike {
         this.callbacks.onActionResult(control)
         break
       case 'terminal.closed':
+        this.stopHeartbeat()
         this.ready = false
         this.suppressReconnect = control.reason === 'replaced' || control.reason === 'instance_offline' || control.reason === 'client_closed'
         this.callbacks.onClosed(control.reason)
@@ -156,7 +175,42 @@ export class TerminalSession implements TerminalSessionLike {
     }
   }
 
+  private startHeartbeat(): void {
+    if (this.heartbeatIntervalMs <= 0 || this.disposed) return
+    this.stopHeartbeat()
+    this.heartbeatTimer = this.options.scheduler.set(() => {
+      this.heartbeatTimer = null
+      void this.checkHeartbeat()
+    }, this.heartbeatIntervalMs)
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer !== null) {
+      this.options.scheduler.clear(this.heartbeatTimer)
+      this.heartbeatTimer = null
+    }
+  }
+
+  private async checkHeartbeat(): Promise<void> {
+    if (this.disposed || !this.ready || this.connection === null) return
+    const now = Date.now()
+    if (this.lastPingSentAt > 0 && now - this.lastReceivedAt >= this.heartbeatTimeoutMs) {
+      this.handleClose(1006)
+      return
+    }
+    this.lastPingSentAt = now
+    try {
+      await this.connection.sendText(JSON.stringify({ type: 'terminal.ping', timestamp: now }))
+    } catch {
+      this.handleClose(1006)
+      return
+    }
+    this.startHeartbeat()
+  }
+
   private handleClose(code: number): void {
+    this.stopHeartbeat()
+    this.lastPingSentAt = 0
     this.connectionGeneration += 1
     this.connection = null
     this.ready = false
@@ -169,7 +223,14 @@ export class TerminalSession implements TerminalSessionLike {
     }
     if (this.disposed || this.suppressReconnect) return
     this.callbacks.onStatus('reconnecting')
-    const delay = Math.min(10_000, this.reconnectDelayMs * 2 ** this.reconnectAttempt)
+    const delay = calculateDecorrelatedJitterDelay(
+      this.reconnectDelayMs,
+      this.maxReconnectDelayMs,
+      this.reconnectAttempt,
+      this.lastReconnectDelay,
+      this.random,
+    )
+    this.lastReconnectDelay = delay
     this.reconnectAttempt += 1
     this.reconnectTimer = this.options.scheduler.set(() => {
       this.reconnectTimer = null
@@ -219,6 +280,8 @@ export class TerminalSession implements TerminalSessionLike {
 
   async dispose(): Promise<void> {
     this.disposed = true
+    this.stopHeartbeat()
+    this.lastPingSentAt = 0
     this.connectionGeneration += 1
     if (this.reconnectTimer !== null) this.options.scheduler.clear(this.reconnectTimer)
     this.reconnectTimer = null

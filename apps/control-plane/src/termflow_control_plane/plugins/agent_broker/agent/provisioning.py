@@ -331,11 +331,7 @@ class AgentProvisioningService:
             return "recovery_failed"
         if "mcp_not_connected" in detail:
             return "mcp_not_connected"
-        if (
-            "pipeline_start_failed" in detail
-            or "pipeline" in detail
-            or "start" in detail
-        ):
+        if "pipeline_start_failed" in detail or "pipeline" in detail or "start" in detail:
             return "pipeline_start_failed"
         if "runtime_assignment_conflict" in detail or "assignment" in detail:
             return "runtime_assignment_conflict"
@@ -381,9 +377,7 @@ class AgentProvisioningService:
                 receipt = cast(
                     AgentSetupReceipt | None,
                     await session.scalar(
-                        select(AgentSetupReceipt).where(
-                            AgentSetupReceipt.idempotency_key == key
-                        )
+                        select(AgentSetupReceipt).where(AgentSetupReceipt.idempotency_key == key)
                     ),
                 )
         if receipt is None:
@@ -413,9 +407,7 @@ class AgentProvisioningService:
             )
         async with self._sessions() as session:
             result = await session.execute(
-                select(AgentSetupReceipt).where(
-                    AgentSetupReceipt.idempotency_key == key
-                )
+                select(AgentSetupReceipt).where(AgentSetupReceipt.idempotency_key == key)
             )
             receipt = cast(AgentSetupReceipt | None, result.scalar_one_or_none())
             if receipt is None:
@@ -479,9 +471,7 @@ class AgentProvisioningService:
             if not owns_receipt:
                 if not secrets.compare_digest(receipt.request_digest, request_digest):
                     await session.rollback()
-                    raise TermFlowError(
-                        "idempotency_conflict", 409, "Idempotency key was reused."
-                    )
+                    raise TermFlowError("idempotency_conflict", 409, "Idempotency key was reused.")
                 result = self._result_from_receipt(receipt)
                 await session.rollback()
                 return result
@@ -588,8 +578,7 @@ class AgentProvisioningService:
                 )
             )
             current_fingerprints = {
-                disclosure.disclosure_fingerprint
-                for disclosure in current_disclosures
+                disclosure.disclosure_fingerprint for disclosure in current_disclosures
             }
 
             # Runtime identity is server-owned.  Resolve an injected provider
@@ -642,11 +631,7 @@ class AgentProvisioningService:
                             "The Agent runtime assignment epoch is stale.",
                         )
 
-            if (
-                assignment is not None
-                and is_new_binding
-                and self._runtime_assignment is None
-            ):
+            if assignment is not None and is_new_binding and self._runtime_assignment is None:
                 # The default assignment is deterministic and does not know
                 # about previously closed Bindings.  Runtime rows are unique
                 # per (runtime_ref, observed epoch), so a fresh Binding must
@@ -660,8 +645,7 @@ class AgentProvisioningService:
                 )
                 highest_observed_epoch = await session.scalar(
                     select(func.max(AgentRuntimeBinding.observed_runtime_epoch)).where(
-                        AgentRuntimeBinding.observed_runtime_ref
-                        == assignment.runtime_ref
+                        AgentRuntimeBinding.observed_runtime_ref == assignment.runtime_ref
                     )
                 )
                 used_epochs = [
@@ -851,9 +835,7 @@ class AgentProvisioningService:
                 # capability that is still active for another Binding must
                 # never be hijacked silently.
                 prior = await session.scalar(
-                    select(AgentToken)
-                    .where(AgentToken.token_hash == token_hash)
-                    .limit(1)
+                    select(AgentToken).where(AgentToken.token_hash == token_hash).limit(1)
                 )
                 if prior is not None and prior.revoked_at is None:
                     prior_binding = await session.get(AgentBinding, prior.binding_id)
@@ -879,9 +861,7 @@ class AgentProvisioningService:
                 }
                 if prior is not None:
                     await session.execute(
-                        update(AgentToken)
-                        .where(AgentToken.id == prior.id)
-                        .values(**capability)
+                        update(AgentToken).where(AgentToken.id == prior.id).values(**capability)
                     )
                 else:
                     session.add(AgentToken(token_hash=token_hash, **capability))
@@ -965,9 +945,7 @@ class AgentProvisioningService:
                 select(AgentBinding)
                 .where(
                     AgentBinding.term_id == term_id,
-                    AgentBinding.status.in_(
-                        ("disabled", "enabled", "pending", "ready")
-                    ),
+                    AgentBinding.status.in_(("disabled", "enabled", "pending", "ready")),
                 )
                 .order_by(AgentBinding.created_at.desc())
                 .limit(1)

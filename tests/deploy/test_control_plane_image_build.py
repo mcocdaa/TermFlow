@@ -9,14 +9,12 @@ BUILD_SCRIPT = ROOT / "scripts/build-control-plane-image.sh"
 
 
 def test_control_plane_entrypoint_never_dereferences_owned_symlinks() -> None:
-    entrypoint = (ROOT / "deploy/entrypoint.control-plane.sh").read_text(
-        encoding="utf-8"
-    )
+    entrypoint = (ROOT / "deploy/entrypoint.control-plane.sh").read_text(encoding="utf-8")
 
     assert 'chown -h termflow:termflow "${dir}"' in entrypoint
     assert 'find "${dir}" -xdev -exec chown -h termflow:termflow {} +' in entrypoint
     assert 'chown termflow:termflow "${dir}"' not in entrypoint
-    assert '-exec chown termflow:termflow {} +' not in entrypoint
+    assert "-exec chown termflow:termflow {} +" not in entrypoint
 
 
 def _fake_docker(tmp_path: Path) -> tuple[Path, Path]:
@@ -80,9 +78,7 @@ def test_control_plane_image_build_retries_then_succeeds(tmp_path: Path) -> None
     assert len(commands) == 3
     assert all(
         command.startswith(
-            "build -f "
-            f"{ROOT / 'deploy/Dockerfile.control-plane'} "
-            "-t termflow-control-plane:test "
+            f"build -f {ROOT / 'deploy/Dockerfile.control-plane'} -t termflow-control-plane:test "
         )
         for command in commands
     )

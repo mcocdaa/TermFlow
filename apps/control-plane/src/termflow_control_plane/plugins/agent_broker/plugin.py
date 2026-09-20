@@ -274,9 +274,7 @@ async def run_cleanup_retry(
             await repositories.cleanup_jobs.record_attempt(
                 job.id,
                 next_attempt_at=observed + _AGENT_CLEANUP_RETRY_BACKOFF,
-                last_error=(
-                    f"no cleanup handler registered for target_kind={job.target_kind!r}"
-                ),
+                last_error=(f"no cleanup handler registered for target_kind={job.target_kind!r}"),
             )
             retried += 1
             continue

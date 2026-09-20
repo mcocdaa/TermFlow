@@ -472,9 +472,7 @@ class ApprovalPolicy:
             await self._record_event(approval, event_type="expired")
         return len(swept)
 
-    async def recover_orphaned_approvals(
-        self, *, now: datetime | None = None
-    ) -> tuple[int, int]:
+    async def recover_orphaned_approvals(self, *, now: datetime | None = None) -> tuple[int, int]:
         """B-restart recovery: finish approvals with no living waiter (§5).
 
         ``pending`` approvals were never decided and have no waiter after a
@@ -516,9 +514,7 @@ class ApprovalPolicy:
                 update(ApprovalRequest)
                 .where(
                     ApprovalRequest.id == approval_id,
-                    ApprovalRequest.state.in_(
-                        tuple(state.value for state in where_states)
-                    ),
+                    ApprovalRequest.state.in_(tuple(state.value for state in where_states)),
                 )
                 .values(
                     state=new_state.value,
@@ -567,11 +563,7 @@ class ApprovalPolicy:
         async with self._sessions() as session:
             result = await session.execute(
                 update(ApprovalRequest)
-                .where(
-                    ApprovalRequest.state.in_(
-                        tuple(state.value for state in where_states)
-                    )
-                )
+                .where(ApprovalRequest.state.in_(tuple(state.value for state in where_states)))
                 .values(
                     state=new_state.value,
                     decided_at=observed_at,
@@ -582,9 +574,7 @@ class ApprovalPolicy:
             rows = list(result.scalars())
             await session.commit()
         for approval in rows:
-            await self._record_event(
-                approval, event_type=new_state.value, actor=actor
-            )
+            await self._record_event(approval, event_type=new_state.value, actor=actor)
         return len(rows)
 
     async def _record_event(

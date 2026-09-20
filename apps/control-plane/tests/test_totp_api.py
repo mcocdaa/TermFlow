@@ -169,9 +169,9 @@ def test_enabled_totp_changes_login_to_opaque_challenge_and_rejects_replay(
     totp_client,
 ) -> None:
     secret = _enable_totp(totp_client)
-    assert totp_client.delete(
-        "/api/v1/admin/session", headers={"Origin": ORIGIN}
-    ).status_code == 200
+    assert (
+        totp_client.delete("/api/v1/admin/session", headers={"Origin": ORIGIN}).status_code == 200
+    )
 
     challenge = _login(totp_client)
     replay_challenge = _login(totp_client)
@@ -219,9 +219,7 @@ def test_disable_confirm_and_reconfigure_require_fresh_totp(totp_client) -> None
     assert second.json()["error"]["code"] == "authentication_failed"
     # Clear the progressive backoff the failed confirm recorded so the
     # reconfigure confirm later in this test is not rate-limited.
-    totp_client.app.state.auth_rate_limiter.record_success(
-        "totp_setup_confirm", "testclient"
-    )
+    totp_client.app.state.auth_rate_limiter.record_success("totp_setup_confirm", "testclient")
 
     # Enable requires the session cookie, an exact allowed origin, the primary
     # token, and a fresh (not replayed) TOTP code.
