@@ -128,10 +128,13 @@ def test_agent_migration_failure_keeps_core_lifespan_and_degrades_capabilities(
 
     with TestClient(app_module.create_app(settings=settings)) as client:
         assert client.get("/healthz").status_code == 200
-        assert client.get(
-            "/api/v1/dashboard",
-            headers={"Authorization": "Bearer admin-token-that-is-long-enough-for-tests"},
-        ).status_code == 200
+        assert (
+            client.get(
+                "/api/v1/dashboard",
+                headers={"Authorization": "Bearer admin-token-that-is-long-enough-for-tests"},
+            ).status_code
+            == 200
+        )
         capabilities = client.get("/api/v1/agent/capabilities").json()
         assert capabilities["state"] == "degraded"
         assert capabilities["reason_code"] == "recovery_failed"

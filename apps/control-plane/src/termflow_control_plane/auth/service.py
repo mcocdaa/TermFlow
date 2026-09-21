@@ -154,9 +154,7 @@ class AuthenticationService:
     async def complete_web_login(self, challenge_id: UUID, code: str) -> bool:
         """Complete a TOTP challenge, preserving the legacy boolean contract."""
 
-        return (
-            await self.complete_web_login_with_context(challenge_id, code)
-        ) is not None
+        return (await self.complete_web_login_with_context(challenge_id, code)) is not None
 
     async def complete_web_login_with_context(
         self,
@@ -229,17 +227,14 @@ class AuthenticationService:
         if not self.primary_token_matches(admin_token):
             raise AuthenticationRejected
         if state.totp_enabled_at is not None and (
-            totp_code is None
-            or not await self._verify_fresh_totp_for_state(state, totp_code)
+            totp_code is None or not await self._verify_fresh_totp_for_state(state, totp_code)
         ):
             raise AuthenticationRejected
         if not scopes or len(scopes) != len(set(scopes)):
             raise AuthenticationRejected
         raw_token = issue_token()
         authenticated_at = as_utc(self._clock())
-        expires_at = self._clock() + timedelta(
-            seconds=self._settings.auth_cli_token_ttl_seconds
-        )
+        expires_at = self._clock() + timedelta(seconds=self._settings.auth_cli_token_ttl_seconds)
         try:
             await self._repositories.auth_tokens.issue(
                 raw_token,

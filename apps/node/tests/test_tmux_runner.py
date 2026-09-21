@@ -27,9 +27,7 @@ def test_frozen_tmux_process_does_not_expose_pyinstaller_library_paths(monkeypat
     monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/tmp/pyinstaller-private")
     monkeypatch.setattr(runner_module.subprocess, "run", fake_run)
 
-    runner_module._subprocess_run(
-        ["tmux", "-V"], capture_output=True, text=True, check=False
-    )
+    runner_module._subprocess_run(["tmux", "-V"], capture_output=True, text=True, check=False)
 
     environment = captured["env"]
     assert isinstance(environment, dict)

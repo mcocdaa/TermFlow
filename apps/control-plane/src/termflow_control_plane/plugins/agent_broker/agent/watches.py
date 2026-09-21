@@ -215,12 +215,8 @@ class PaneExitDetector:
     ) -> bool:
         if before is None:
             return False
-        before_panes = {
-            pane.pane_id: pane for window in before.windows for pane in window.panes
-        }
-        after_panes = {
-            pane.pane_id: pane for window in after.windows for pane in window.panes
-        }
+        before_panes = {pane.pane_id: pane for window in before.windows for pane in window.panes}
+        after_panes = {pane.pane_id: pane for window in after.windows for pane in window.panes}
         before_pane = before_panes.get(pane_id)
         if before_pane is None:
             return False
@@ -1010,8 +1006,7 @@ class WatchEngine:
                 except Exception:
                     self.diagnostics.wire_messages_failed += 1
                     logger.exception(
-                        "Watch engine: dropping failed wire message "
-                        "(type=%s message_id=%s)",
+                        "Watch engine: dropping failed wire message (type=%s message_id=%s)",
                         message.type.value,
                         message.message_id,
                     )
@@ -1067,9 +1062,7 @@ class WatchEngine:
                     pane_id=pane_id,
                     previous_stream_id=stream_id,
                     reason=(
-                        "stream_changed"
-                        if acceptance is CursorAcceptance.STREAM_CHANGED
-                        else "gap"
+                        "stream_changed" if acceptance is CursorAcceptance.STREAM_CHANGED else "gap"
                     ),
                     observed_at=observed_at,
                     event_id=event_id,
@@ -1111,9 +1104,7 @@ class WatchEngine:
                                 excerpt=text,
                             ),
                         )
-                        fired = await self._fire_in_session(
-                            session, runtime, evidence, observed_at
-                        )
+                        fired = await self._fire_in_session(session, runtime, evidence, observed_at)
                         if fired is not None:
                             triggers.append(fired)
                             fired_pairs.append((runtime, fired))
@@ -1125,9 +1116,7 @@ class WatchEngine:
                     continue
                 row = await session.get(Watch, runtime.watch_id)
                 if row is not None and row.state == "active":
-                    row.matcher_state = json.dumps(
-                        runtime.matcher.state(), separators=(",", ":")
-                    )
+                    row.matcher_state = json.dumps(runtime.matcher.state(), separators=(",", ":"))
             await session.commit()
         for runtime, fired in fired_pairs:
             self._apply_trigger_state(runtime, fired)
@@ -1464,8 +1453,7 @@ class WatchEngine:
                 await self.on_fired(trigger)
             except Exception:
                 logger.exception(
-                    "Watch engine: trigger sink delivery failed for "
-                    "delivery key %s",
+                    "Watch engine: trigger sink delivery failed for delivery key %s",
                     trigger.delivery.delivery_key,
                 )
 

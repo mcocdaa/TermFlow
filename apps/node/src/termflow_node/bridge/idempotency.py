@@ -65,9 +65,7 @@ class IdempotencyResults:
             return None
 
     def _evict_completed(self) -> None:
-        completed = sum(
-            isinstance(value, CommandResultPayload) for value in self._entries.values()
-        )
+        completed = sum(isinstance(value, CommandResultPayload) for value in self._entries.values())
         if completed <= self._max_entries:
             return
         for key, value in tuple(self._entries.items()):

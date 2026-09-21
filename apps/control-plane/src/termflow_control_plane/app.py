@@ -390,9 +390,7 @@ class _ProductionRuntimeGate:
     """
 
     @staticmethod
-    def build(
-        *, settings: Settings, repositories: RepositoryBundle
-    ) -> SupervisorConnector:
+    def build(*, settings: Settings, repositories: RepositoryBundle) -> SupervisorConnector:
         async def resolve_epoch(runtime_ref: RuntimeRef) -> int:
             return await resolve_binding_runtime_epoch(
                 runtime_ref,
@@ -617,6 +615,7 @@ def create_app(
             runtime=runtime_supervisor,
         )
         app.state.feature_context = feature_context
+
         # Deterministic restart recovery (plan §17: B restarts): fence stale
         # inbox claims, mark stuck runs unknown, then retry pending cleanup
         # tombstones.  Fail-safe by design: errors are logged, never fatal.
@@ -627,6 +626,7 @@ def create_app(
                 app.state.repositories,
                 approval_policy=app.state.approval_policy,
             )
+
         app.state.agent_broker_plugin.bind_startup_fencing(recover_agent_fence)
         # M4.5 runtime wiring (spec §3a/§7): the registry and watch engine
         # need the lifespan-built repositories, session factory, and hubs, so
@@ -650,6 +650,7 @@ def create_app(
                 supervisor=runtime_supervisor,
                 provider_catalog=provider_catalog,
             )
+
             async def _fence_approvals(binding_id: UUID) -> object:
                 return await app.state.approval_policy.revoke_for_binding(
                     binding_id,
@@ -665,9 +666,7 @@ def create_app(
                     return False
                 expected_hash = digest_secret(configured.get_secret_value())
                 now_epoch = int(datetime.now(UTC).timestamp())
-                tokens = await app.state.repositories.agent_tokens.list_for_binding(
-                    binding.id
-                )
+                tokens = await app.state.repositories.agent_tokens.list_for_binding(binding.id)
                 return any(
                     token.revoked_at is None
                     and token.expiry_epoch > now_epoch
@@ -694,9 +693,7 @@ def create_app(
                 return {
                     "revision": topology.revision,
                     "pane_ids": [
-                        pane.pane_id
-                        for window in topology.windows
-                        for pane in window.panes
+                        pane.pane_id for window in topology.windows for pane in window.panes
                     ],
                 }
 

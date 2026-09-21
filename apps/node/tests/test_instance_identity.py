@@ -234,9 +234,7 @@ def test_attach_keeps_tmux_but_does_not_launch_required_bridge(tmp_path) -> None
     launcher.assert_not_called()
 
 
-def test_stop_bridge_terminates_matching_process_and_clears_pid(
-    tmp_path, monkeypatch
-) -> None:
+def test_stop_bridge_terminates_matching_process_and_clears_pid(tmp_path, monkeypatch) -> None:
     store = InstanceStore(tmp_path / "instances")
     instance_id = uuid4()
     record = LocalInstance(

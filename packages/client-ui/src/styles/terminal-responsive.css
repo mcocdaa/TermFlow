@@ -19,8 +19,13 @@
     .desktop-action-menu { display: block; }
     .mobile-keybar-shell { position: static; grid-row: 3; z-index: 40; min-width: 0; width: 100%; max-width: 100%; display: block; overflow: hidden; padding: var(--space-2) max(var(--space-2), env(safe-area-inset-right)) var(--space-2) max(var(--space-2), env(safe-area-inset-left)); padding-block-end: max(var(--space-2), env(safe-area-inset-bottom)); border-block-start: 1px solid var(--color-border); background: var(--color-panel); }
     .mobile-keybar { min-width: 0; width: 100%; max-width: 100%; display: flex; gap: var(--space-1); overflow-x: auto; overflow-y: hidden; touch-action: pan-x; overscroll-behavior-x: none; overscroll-behavior-y: none; }
-    .mobile-keybar button { flex: 1 0 auto; min-width: 3.25rem; min-height: 2.6rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-elevated); }
+    .mobile-keybar button { flex: 0 0 auto; min-width: 2.75rem; min-height: 2.5rem; padding: 0 var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-elevated); font-family: var(--font-mono); font-size: 0.88rem; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; user-select: none; }
     .mobile-keybar button[aria-pressed='true'] { border-color: var(--color-accent); background: var(--color-accent); color: var(--color-accent-contrast); }
+    .mobile-keybar button:active { transform: scale(0.94); }
+    .mobile-keybar-divider { width: 1px; height: 1.8rem; background: var(--color-border); align-self: center; margin: 0 var(--space-1); flex-shrink: 0; opacity: 0.6; }
+    .mobile-key-btn--danger:active { border-color: var(--color-danger); color: var(--color-danger); }
+    .mobile-key-btn--primary { color: var(--color-accent); font-weight: 700; }
+    .mobile-key-btn--nav { min-width: 2.5rem; font-size: 1.05rem; }
     .terminal-agent-panel--mobile-page { inset: 0; width: 100%; max-width: none; height: 100%; min-width: 0; min-height: 0; border: 0; border-radius: 0; box-shadow: none; padding-block-end: env(safe-area-inset-bottom); }
     .terminal-agent-panel__title { font-size: .95rem; }
     .terminal-agent-panel__statusbar { min-height: 2.25rem; padding: var(--space-1) var(--space-2); }

@@ -249,9 +249,7 @@ class TerminalHub:
         """Synchronously revoke established terminals owned by a browser session."""
 
         matches = [
-            terminal
-            for terminal in self._current.values()
-            if terminal.session_key == session_key
+            terminal for terminal in self._current.values() if terminal.session_key == session_key
         ]
         for terminal in matches:
             terminal.terminate("client_closed")

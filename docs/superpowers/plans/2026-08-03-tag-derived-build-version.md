@@ -146,16 +146,16 @@ entries in `uv.lock`, `package-lock.json`, and Cargo.lock, call `materialize_ver
 assert verify_materialized_version(tmp_path, "1.4.0-rc.2") == []
 assert json.loads((tmp_path / "package.json").read_text())["version"] == "1.4.0-rc.2"
 assert (
-    json.loads((tmp_path / "apps/clients/web/package.json").read_text())
-    ["dependencies"]["@termflow/client-core"]
+    json.loads((tmp_path / "apps/clients/web/package.json").read_text())["dependencies"][
+        "@termflow/client-core"
+    ]
     == "1.4.0-rc.2"
 )
-assert 'name = "termflow-node"\nversion = "1.4.0-rc.2"' in (
-    tmp_path / "uv.lock"
-).read_text()
-assert 'name = "termflow-client"\nversion = "1.4.0-rc.2"' in (
-    tmp_path / "apps/clients/tauri/src-tauri/Cargo.lock"
-).read_text()
+assert 'name = "termflow-node"\nversion = "1.4.0-rc.2"' in (tmp_path / "uv.lock").read_text()
+assert (
+    'name = "termflow-client"\nversion = "1.4.0-rc.2"'
+    in (tmp_path / "apps/clients/tauri/src-tauri/Cargo.lock").read_text()
+)
 ```
 
 Run the materializer twice and assert the second tree digest is unchanged. Assert a fixture string

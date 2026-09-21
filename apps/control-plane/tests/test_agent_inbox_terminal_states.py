@@ -71,9 +71,7 @@ async def _seed_conversation(repos: RepositoryBundle) -> UUID:
         backend_kind="opencode",
         config='{"model": "default"}',
     )
-    installation = await repos.installations.create(
-        digest_secret(f"computer-{uuid4().hex}")
-    )
+    installation = await repos.installations.create(digest_secret(f"computer-{uuid4().hex}"))
     display_name = f"term-{uuid4().hex[:8]}"
     term = await repos.instances.register_or_rotate(
         uuid4(),
@@ -139,9 +137,7 @@ async def _started_item(
 ) -> tuple[UUID, InboxDeliveryStateMachine]:
     """Enqueue + claim + start one item; returns (item_id, machine)."""
     observed = clock()
-    item_id = await _enqueue(
-        repos, conversation_id, observed=observed, key=key
-    )
+    item_id = await _enqueue(repos, conversation_id, observed=observed, key=key)
     machine = machine or _machine(repos, clock=clock)
     claimed = await machine.claim_next(conversation_id=conversation_id)
     assert claimed is not None and claimed.id == item_id
@@ -171,9 +167,7 @@ async def test_mark_started_persists_submission_metadata(
     observed = datetime.now(UTC)
     clock = Clock(observed)
     conversation_id = await _seed_conversation(repositories)
-    item_id, _ = await _started_item(
-        repositories, conversation_id, clock=clock, key="started"
-    )
+    item_id, _ = await _started_item(repositories, conversation_id, clock=clock, key="started")
 
     rows = await _rows(repositories, conversation_id)
     assert [row.delivery_state for row in rows] == ["dispatched"]
@@ -192,9 +186,7 @@ async def test_mark_started_requires_live_claim_owner(
     clock = Clock(observed)
     conversation_id = await _seed_conversation(repositories)
     machine = _machine(repositories, clock=clock)
-    item_id = await _enqueue(
-        repositories, conversation_id, observed=observed, key="fence"
-    )
+    item_id = await _enqueue(repositories, conversation_id, observed=observed, key="fence")
     claimed = await machine.claim_next(conversation_id=conversation_id)
     assert claimed is not None and claimed.id == item_id
 
@@ -220,19 +212,13 @@ async def test_mark_delivered_persists_terminal_and_frees_gate(
     observed = datetime.now(UTC)
     clock = Clock(observed)
     conversation_id = await _seed_conversation(repositories)
-    first_id, machine = await _started_item(
-        repositories, conversation_id, clock=clock, key="first"
-    )
-    second_id = await _enqueue(
-        repositories, conversation_id, observed=observed, key="second"
-    )
+    first_id, machine = await _started_item(repositories, conversation_id, clock=clock, key="first")
+    second_id = await _enqueue(repositories, conversation_id, observed=observed, key="second")
 
     # While the first turn is dispatched, the second item is never claimed.
     assert await machine.claim_next(conversation_id=conversation_id) is None
 
-    envelope = machine._envelope(
-        (await _rows(repositories, conversation_id))[0]
-    )
+    envelope = machine._envelope((await _rows(repositories, conversation_id))[0])
     envelope.delivery_state = "dispatched"
     delivered = await machine.mark_delivered(envelope)
     assert delivered.delivery_state == "delivered"
@@ -254,9 +240,7 @@ async def test_delivered_item_is_never_reclaimed(
     observed = datetime.now(UTC)
     clock = Clock(observed)
     conversation_id = await _seed_conversation(repositories)
-    item_id, machine = await _started_item(
-        repositories, conversation_id, clock=clock, key="only"
-    )
+    item_id, machine = await _started_item(repositories, conversation_id, clock=clock, key="only")
     row = (await _rows(repositories, conversation_id))[0]
     assert row.id == item_id
     envelope = machine._envelope(row)
@@ -272,9 +256,7 @@ async def test_mark_delivered_from_non_dispatched_raises(
     clock = Clock(observed)
     conversation_id = await _seed_conversation(repositories)
     machine = _machine(repositories, clock=clock)
-    item_id = await _enqueue(
-        repositories, conversation_id, observed=observed, key="pending"
-    )
+    item_id = await _enqueue(repositories, conversation_id, observed=observed, key="pending")
     pending = machine._envelope((await _rows(repositories, conversation_id))[0])
     assert pending.id == item_id and pending.delivery_state == "pending"
 
@@ -319,9 +301,7 @@ async def test_recover_stale_fences_expired_started_submission_from_database(
     observed = datetime.now(UTC)
     clock = Clock(observed)
     conversation_id = await _seed_conversation(repositories)
-    item_id, machine = await _started_item(
-        repositories, conversation_id, clock=clock, key="crash"
-    )
+    item_id, machine = await _started_item(repositories, conversation_id, clock=clock, key="crash")
 
     clock.advance(seconds=61)
     # Simulated restart: a fresh machine has no in-memory submission state;
@@ -347,15 +327,11 @@ async def test_recover_stale_reconciled_started_becomes_delivered(
     observed = datetime.now(UTC)
     clock = Clock(observed)
     conversation_id = await _seed_conversation(repositories)
-    item_id, _ = await _started_item(
-        repositories, conversation_id, clock=clock, key="rec"
-    )
+    item_id, _ = await _started_item(repositories, conversation_id, clock=clock, key="rec")
 
     clock.advance(seconds=61)
     restarted = _machine(repositories, clock=clock)
-    recovered = await restarted.recover_stale(
-        now=clock(), reconciled_ids={item_id}
-    )
+    recovered = await restarted.recover_stale(now=clock(), reconciled_ids={item_id})
     assert [item.id for item in recovered] == [item_id]
     assert recovered[0].delivery_state == "delivered"
     assert recovered[0].submission_state == "accepted"
@@ -372,9 +348,7 @@ async def test_recover_stale_not_started_claim_may_retry(
     clock = Clock(observed)
     conversation_id = await _seed_conversation(repositories)
     machine = _machine(repositories, clock=clock)
-    item_id = await _enqueue(
-        repositories, conversation_id, observed=observed, key="nurse"
-    )
+    item_id = await _enqueue(repositories, conversation_id, observed=observed, key="nurse")
     claimed = await machine.claim_next(conversation_id=conversation_id)
     assert claimed is not None and claimed.id == item_id
     assert claimed.submission_state == "not_started"
@@ -403,9 +377,7 @@ async def test_cancel_requested_keeps_gate_until_cancelled(
     first_id, machine = await _started_item(
         repositories, conversation_id, clock=clock, key="cancel"
     )
-    second_id = await _enqueue(
-        repositories, conversation_id, observed=observed, key="after"
-    )
+    second_id = await _enqueue(repositories, conversation_id, observed=observed, key="after")
 
     row = (await _rows(repositories, conversation_id))[0]
     assert row.id == first_id

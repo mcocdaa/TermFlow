@@ -42,9 +42,7 @@ def upgrade() -> None:
         sa.Column("seq", sa.Integer(), nullable=False),
         sa.Column("observed_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["instance_id"], ["instances.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["instance_id"], ["instances.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("instance_id", "pane_id"),
     )
 

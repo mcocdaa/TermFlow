@@ -122,12 +122,10 @@ def test_checked_in_client_contracts_match_python_models_and_render_enums(
     assert 'delivery_state: "pending" | "delivered" | "failed" | "dead_lettered"' in rendered
     assert 'status: "success" | "error" | "cancelled" | "unknown"' in rendered
     assert (
-        'state: "connecting" | "ready" | "unavailable" | "context_lost" | '
-        '"reconciling" | "closed"'
+        'state: "connecting" | "ready" | "unavailable" | "context_lost" | "reconciling" | "closed"'
     ) in rendered
     assert (
-        'actor_kind: "user_session" | "client" | "watch_engine" | "timer" | '
-        '"backend" | "system"'
+        'actor_kind: "user_session" | "client" | "watch_engine" | "timer" | "backend" | "system"'
     ) in rendered
 
     checked = _run_generator("--check")

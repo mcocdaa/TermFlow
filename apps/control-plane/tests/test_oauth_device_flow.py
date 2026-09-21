@@ -202,9 +202,7 @@ async def test_device_authorization_expiry_deny_and_atomic_exchange(tmp_path, mo
             expires_at=now + timedelta(minutes=15),
             now=now,
         )
-        await repositories.oauth_authorizations.mark_approved(
-            rollback.id, epoch=1, now=now
-        )
+        await repositories.oauth_authorizations.mark_approved(rollback.id, epoch=1, now=now)
 
         async def fail_insert(*args, **kwargs):
             return None

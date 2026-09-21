@@ -246,9 +246,7 @@ class OAuthService:
         )
         expected = self._settings.admin_token.get_secret_value()
         authenticated = (
-            session_authenticated
-            if supplied is None
-            else hmac.compare_digest(supplied, expected)
+            session_authenticated if supplied is None else hmac.compare_digest(supplied, expected)
         )
         if not authenticated:
             await self._record_decision_failure(request.transaction_id, state.epoch)

@@ -152,6 +152,7 @@ Commit: `git add apps/control-plane/src/termflow_control_plane/api/instances.py 
 # from termflow_node.instances.models import InstanceLifecycle, LocalInstance
 # from termflow_protocol import InstanceListResponse, InstanceResponse
 
+
 def _record(store: InstanceStore, name: str) -> LocalInstance:
     instance_id = uuid4()
     return LocalInstance(
@@ -179,11 +180,15 @@ async def test_sync_marks_local_records_missing_from_b(tmp_path):
     store.save(local)
     client = FakeControlPlaneClient(remote_instances=[])
 
-    result = await InstanceSynchronizer(store, client, InstallationConfig(
-        server_url="https://relay.example.com",
-        installation_id=uuid4(),
-        installation_token="installation-token-for-test",
-    )).sync()
+    result = await InstanceSynchronizer(
+        store,
+        client,
+        InstallationConfig(
+            server_url="https://relay.example.com",
+            installation_id=uuid4(),
+            installation_token="installation-token-for-test",
+        ),
+    ).sync()
 
     assert result.remote_deleted == [local.instance_id]
     assert store.load(local.instance_id).remote_status == RemoteInstanceStatus.REMOTE_DELETED
@@ -222,14 +227,14 @@ class LocalInstance(BaseModel):
 在 `ControlPlaneClient` 加入：
 
 ```python
-async def list_owned_instances(
-    self, installation: InstallationConfig
-) -> InstanceListResponse:
+async def list_owned_instances(self, installation: InstallationConfig) -> InstanceListResponse:
     base_url = validate_server_url(str(installation.server_url))
     async with httpx.AsyncClient(transport=self._transport, timeout=10.0) as client:
         response = await client.get(
             f"{base_url}/api/v1/instances/mine",
-            headers={"Authorization": f"Bearer {installation.installation_token.get_secret_value()}"},
+            headers={
+                "Authorization": f"Bearer {installation.installation_token.get_secret_value()}"
+            },
         )
         response.raise_for_status()
         return InstanceListResponse.model_validate(response.json())
@@ -266,9 +271,7 @@ def from_defaults(cls) -> "InstanceSynchronizer":
 def sync() -> None:
     installation = ConfigStore.default().load()
     result = asyncio.run(
-        InstanceSynchronizer(
-            InstanceStore.default(), ControlPlaneClient(), installation
-        ).sync()
+        InstanceSynchronizer(InstanceStore.default(), ControlPlaneClient(), installation).sync()
     )
     typer.echo(result.summary())
     if result.error is not None:

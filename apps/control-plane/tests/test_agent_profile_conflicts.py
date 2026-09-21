@@ -301,9 +301,7 @@ def test_profile_config_and_authority_invalidation_roll_back_together_on_name_co
             profile = await session.get(AgentProfile, profile_id)
             binding = await session.get(AgentBinding, binding_id)
             runtime = await session.scalar(
-                select(AgentRuntimeBinding).where(
-                    AgentRuntimeBinding.binding_id == binding_id
-                )
+                select(AgentRuntimeBinding).where(AgentRuntimeBinding.binding_id == binding_id)
             )
             disclosure = await session.scalar(
                 select(AgentProviderDisclosureAcceptance).where(
@@ -365,9 +363,7 @@ def test_concurrent_profile_config_updates_preserve_revision_and_stale_authority
             stored_profile = await session.get(AgentProfile, profile_id)
             stored_binding = await session.get(AgentBinding, binding.id)
             runtime = await session.scalar(
-                select(AgentRuntimeBinding).where(
-                    AgentRuntimeBinding.binding_id == binding.id
-                )
+                select(AgentRuntimeBinding).where(AgentRuntimeBinding.binding_id == binding.id)
             )
             assert stored_profile is not None and stored_binding is not None
             assert runtime is not None

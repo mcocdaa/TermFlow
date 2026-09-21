@@ -311,9 +311,7 @@ class RemoteTmuxClient:
                     )
             return_code = await process.wait()
             if not self._closing:
-                await self._notify_closed(
-                    "client_closed" if return_code == 0 else "internal_error"
-                )
+                await self._notify_closed("client_closed" if return_code == 0 else "internal_error")
         except asyncio.CancelledError:
             raise
         except (OSError, RuntimeError):

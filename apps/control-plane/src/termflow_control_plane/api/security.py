@@ -109,9 +109,7 @@ async def create_cli_token(
         async with limiter.verification_slot():
             issued = await authentication.issue_cli_token(
                 request.admin_token.get_secret_value(),
-                request.totp_code.get_secret_value()
-                if request.totp_code is not None
-                else None,
+                request.totp_code.get_secret_value() if request.totp_code is not None else None,
                 tuple(request.scopes),
             )
     except AuthenticationRejected as exc:

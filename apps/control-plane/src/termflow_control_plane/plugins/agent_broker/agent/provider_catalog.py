@@ -20,18 +20,11 @@ if TYPE_CHECKING:
 
 _INVALID_PROFILE_CONFIG = "The Agent Profile config is invalid."
 _UNKNOWN_PROVIDER = "The Agent Profile provider or model is unavailable."
-ALLOWED_PROVIDER_CREDENTIAL_SOURCES = frozenset(
-    {"OPENAI_API_KEY", "DEEPSEEK_API_KEY"}
-)
+ALLOWED_PROVIDER_CREDENTIAL_SOURCES = frozenset({"OPENAI_API_KEY", "DEEPSEEK_API_KEY"})
 
 
 def _validate_identifier(value: object, *, field_name: str, max_length: int) -> None:
-    if (
-        not isinstance(value, str)
-        or not value
-        or value != value.strip()
-        or len(value) > max_length
-    ):
+    if not isinstance(value, str) or not value or value != value.strip() or len(value) > max_length:
         raise ValueError(f"{field_name} must be a normalized non-empty string")
 
 
@@ -47,9 +40,7 @@ def _validate_endpoint_origin(value: object) -> None:
         parsed = urlsplit(value)
         port = parsed.port
     except ValueError:
-        raise ValueError(
-            "endpoint_origin must be a canonical absolute HTTP(S) origin"
-        ) from None
+        raise ValueError("endpoint_origin must be a canonical absolute HTTP(S) origin") from None
     if (
         parsed.scheme not in {"http", "https"}
         or not parsed.hostname
@@ -163,18 +154,10 @@ class ProviderCatalog:
             normalized_model_ids.append(normalized)
         model_ids = frozenset(normalized_model_ids)
         region = (settings.agent_provider_deepseek_region or "").strip()
-        retention_terms = (
-            settings.agent_provider_deepseek_retention_terms or ""
-        ).strip()
-        retention_version = (
-            settings.agent_provider_deepseek_retention_version or ""
-        ).strip()
-        credential_source = (
-            settings.agent_provider_deepseek_credential_source or ""
-        ).strip()
-        policy_version = (
-            settings.agent_provider_deepseek_policy_version or ""
-        ).strip()
+        retention_terms = (settings.agent_provider_deepseek_retention_terms or "").strip()
+        retention_version = (settings.agent_provider_deepseek_retention_version or "").strip()
+        credential_source = (settings.agent_provider_deepseek_credential_source or "").strip()
+        policy_version = (settings.agent_provider_deepseek_policy_version or "").strip()
         if (
             not model_ids
             or not all(model_ids)

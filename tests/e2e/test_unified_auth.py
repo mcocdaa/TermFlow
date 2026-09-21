@@ -254,19 +254,20 @@ def test_real_process_totp_enable_login_replay_and_disable(
             env={
                 **os.environ,
                 "TERMFLOW_ADMIN_TOKEN": termflow_system.admin_token,
-                "TERMFLOW_DATABASE_URL": (
-                    f"sqlite+aiosqlite:///{termflow_system.database_path}"
-                ),
+                "TERMFLOW_DATABASE_URL": (f"sqlite+aiosqlite:///{termflow_system.database_path}"),
             },
             timeout=30,
             check=False,
         )
         assert reset.returncode == 0, reset.stdout + reset.stderr
         assert web.get("/api/v1/admin/session").status_code == 401
-        assert web.post(
-            "/api/v1/admin/sessions",
-            json={"admin_token": termflow_system.admin_token},
-        ).status_code == 201
+        assert (
+            web.post(
+                "/api/v1/admin/sessions",
+                json={"admin_token": termflow_system.admin_token},
+            ).status_code
+            == 201
+        )
         assert web.get("/api/v1/admin/totp").json() == {
             "configured": False,
             "enabled": False,
@@ -324,11 +325,11 @@ def test_real_process_native_dpop_rotation_replay_and_key_binding(termflow_syste
             token_path,
             headers={
                 "DPoP": _dpop(
-                        key,
-                        jwk,
-                        method="POST",
-                        htu=token_url,
-                        nonce=dashboard.headers["dpop-nonce"],
+                    key,
+                    jwk,
+                    method="POST",
+                    htu=token_url,
+                    nonce=dashboard.headers["dpop-nonce"],
                 )
             },
             json=refresh_body,

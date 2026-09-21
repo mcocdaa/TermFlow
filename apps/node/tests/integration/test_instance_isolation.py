@@ -58,8 +58,7 @@ class NoopInput:
 @pytest.mark.asyncio
 async def test_two_private_servers_remain_independent(tmp_path) -> None:
     runners = [
-        TmuxRunner((tmp_path / name / "tmux.sock").absolute())
-        for name in ("first", "second")
+        TmuxRunner((tmp_path / name / "tmux.sock").absolute()) for name in ("first", "second")
     ]
     for runner in runners:
         runner.socket_path.parent.mkdir(mode=0o700)

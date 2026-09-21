@@ -80,9 +80,7 @@ class BrowserSessionStore:
 
     def _prune(self, now: datetime) -> None:
         expired = [
-            digest
-            for digest, session in self._sessions.items()
-            if session.expires_at <= now
+            digest for digest, session in self._sessions.items() if session.expires_at <= now
         ]
         for digest in expired:
             self._remove(digest)

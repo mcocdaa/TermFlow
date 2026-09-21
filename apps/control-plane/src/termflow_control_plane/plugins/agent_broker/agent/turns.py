@@ -176,9 +176,7 @@ class BackendSubmitResult(BackendModel):
 
     @field_validator("evidence")
     @classmethod
-    def evidence_is_bounded(
-        cls, value: tuple[EvidenceRecord, ...]
-    ) -> tuple[EvidenceRecord, ...]:
+    def evidence_is_bounded(cls, value: tuple[EvidenceRecord, ...]) -> tuple[EvidenceRecord, ...]:
         return _validate_evidence_bounded(value)
 
 
@@ -192,9 +190,7 @@ class BackendOperationResult(BackendModel):
 
     @field_validator("evidence")
     @classmethod
-    def evidence_is_bounded(
-        cls, value: tuple[EvidenceRecord, ...]
-    ) -> tuple[EvidenceRecord, ...]:
+    def evidence_is_bounded(cls, value: tuple[EvidenceRecord, ...]) -> tuple[EvidenceRecord, ...]:
         return _validate_evidence_bounded(value)
 
 
@@ -243,9 +239,7 @@ class BackendConversationSnapshot(BackendModel):
 
     @field_validator("evidence")
     @classmethod
-    def evidence_is_bounded(
-        cls, value: tuple[EvidenceRecord, ...]
-    ) -> tuple[EvidenceRecord, ...]:
+    def evidence_is_bounded(cls, value: tuple[EvidenceRecord, ...]) -> tuple[EvidenceRecord, ...]:
         return _validate_evidence_bounded(value)
 
 

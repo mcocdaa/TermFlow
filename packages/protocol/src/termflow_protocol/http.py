@@ -806,3 +806,14 @@ class TerminalActionFrame(HttpModel):
 class TerminalCloseFrame(HttpModel):
     type: Literal["terminal.close"] = "terminal.close"
     reason: Literal["client_closed"] = "client_closed"
+
+
+class TerminalPingFrame(HttpModel):
+    type: Literal["terminal.ping"] = "terminal.ping"
+    timestamp: int | None = None
+
+
+class TerminalPongFrame(HttpModel):
+    type: Literal["terminal.pong"] = "terminal.pong"
+    terminal_id: UUID
+    timestamp: int | None = None

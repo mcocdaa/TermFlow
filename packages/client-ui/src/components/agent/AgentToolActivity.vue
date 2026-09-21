@@ -21,7 +21,7 @@
       <span class="agent-tool-activity__status" data-agent-tool-status-label>{{ statusLabel }}</span>
     </div>
     <div v-if="expanded && hasSummary" :id="summaryId" class="agent-tool-activity__summary" data-agent-tool-summary>
-      <p class="agent-tool-activity__summary-text">{{ summaryText }}</p>
+      <AgentCollapsibleOutput class="agent-tool-activity__summary-text" :content="summaryText" :status="call.status" />
     </div>
   </div>
 </template>
@@ -37,6 +37,7 @@
 import { computed, ref, useId } from 'vue'
 import { ChevronDown, ChevronRight } from '@lucide/vue'
 import { stripAnsiOsc, type AgentToolCallState } from '@termflow/client-core'
+import AgentCollapsibleOutput from './AgentCollapsibleOutput.vue'
 
 const props = defineProps<{
   /** Tool call record, exactly as tracked by the M6b history reducer. */

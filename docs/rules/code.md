@@ -95,10 +95,12 @@ elif status == "approved":
 ```python
 from enum import Enum
 
+
 class SessionStatus(Enum):
     RAW = "raw"
     CURATED = "curated"
     APPROVED = "approved"
+
 
 if status == SessionStatus.RAW:
     ...
@@ -113,14 +115,12 @@ if status == SessionStatus.RAW:
 
 **✗ 错误示例:**
 ```python
-def get_session(self, session_id):
-    ...
+def get_session(self, session_id): ...
 ```
 
 **✓ 正确示例:**
 ```python
-def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
-    ...
+def get_session(self, session_id: str) -> Optional[Dict[str, Any]]: ...
 ```
 
 ---

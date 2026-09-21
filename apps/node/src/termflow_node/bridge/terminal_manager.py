@@ -164,9 +164,7 @@ class TerminalManager:
             and self._current is not None
             and self._backpressure_task is None
         ):
-            self._backpressure_task = asyncio.create_task(
-                self._close_for_backpressure()
-            )
+            self._backpressure_task = asyncio.create_task(self._close_for_backpressure())
         return published
 
     async def _close_for_backpressure(self) -> None:
@@ -247,8 +245,7 @@ class TerminalManager:
             return
         for _ in range(100):
             if any(
-                client.tty == slave_tty
-                for client in self._runner.list_clients(self._session_id)
+                client.tty == slave_tty for client in self._runner.list_clients(self._session_id)
             ):
                 return
             await asyncio.sleep(0.01)
@@ -357,8 +354,7 @@ class TerminalManager:
         if current is not None and request.terminal_id == current.remote.terminal_id:
             after_seq = request.after_seq
             exact_resume = (
-                request.resume_stream_id == current.remote.stream_id
-                and after_seq is not None
+                request.resume_stream_id == current.remote.stream_id and after_seq is not None
             )
             if exact_resume:
                 assert after_seq is not None

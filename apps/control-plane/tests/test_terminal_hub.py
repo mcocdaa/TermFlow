@@ -131,13 +131,16 @@ async def test_exact_browser_cursor_resumes_the_same_terminal_and_rejects_mismat
 
     assert resumed is terminal
     assert resumed.resume_cursor == (stream_id, 1)
-    assert await hub.resume(
-        instance_id,
-        session_key="different-session",
-        terminal_id=terminal.terminal_id,
-        stream_id=stream_id,
-        after_seq=1,
-    ) is None
+    assert (
+        await hub.resume(
+            instance_id,
+            session_key="different-session",
+            terminal_id=terminal.terminal_id,
+            stream_id=stream_id,
+            after_seq=1,
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio

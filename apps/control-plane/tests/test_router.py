@@ -125,9 +125,7 @@ async def test_input_waits_for_an_inflight_initial_topology() -> None:
         ),
     )
 
-    task = asyncio.create_task(
-        router.send_input(connection.instance_id, "%1", "x", False, uuid4())
-    )
+    task = asyncio.create_task(router.send_input(connection.instance_id, "%1", "x", False, uuid4()))
     await asyncio.sleep(0)
     assert not task.done()
 

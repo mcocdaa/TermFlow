@@ -25,9 +25,20 @@ export function isThemeId(value: string | null): value is ThemeId {
   return value !== null && (themeIds as readonly string[]).includes(value)
 }
 
+export function detectSystemPreferredTheme(): ThemeId {
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    try {
+      if (window.matchMedia('(prefers-color-scheme: light)').matches) {
+        return 'cloud-cobalt'
+      }
+    } catch {}
+  }
+  return DEFAULT_THEME
+}
+
 export function createThemeState(preferences: ThemePreferences, target: ThemeTarget): ThemeState {
   const stored = preferences.load()
-  const initial = isThemeId(stored) ? stored : DEFAULT_THEME
+  const initial = isThemeId(stored) ? stored : detectSystemPreferredTheme()
   const active = ref<ThemeId>(initial)
   target.apply(initial)
   return {

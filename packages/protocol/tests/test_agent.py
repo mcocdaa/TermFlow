@@ -69,9 +69,7 @@ def test_agent_input_rejects_unknown_kind() -> None:
 
 def test_system_notification_text_is_plain_text_with_byte_cap() -> None:
     payload = {"notification_type": "notice", "text": "maintenance soon"}
-    parsed = parse_agent_input(
-        _input_dict("system_notification", "system", "system", payload)
-    )
+    parsed = parse_agent_input(_input_dict("system_notification", "system", "system", payload))
     assert parsed.payload.text == "maintenance soon"
 
     with pytest.raises(ValidationError, match="control"):

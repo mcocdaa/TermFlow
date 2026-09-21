@@ -31,11 +31,7 @@ def test_live_terminal_body_is_absent_from_b_and_node_files(termflow_system) -> 
         if path.is_file() and not path.name.endswith(".sock")
     ]
     assert all(SENTINEL not in path.read_bytes() for path in inspected)
-    b_files = [
-        path
-        for path in inspected
-        if path.name.startswith("control-plane")
-    ]
+    b_files = [path for path in inspected if path.name.startswith("control-plane")]
     registered = termflow_system.instance_store.load(instance.instance_id)
     assert registered.instance_token is not None
     instance_token = registered.instance_token.get_secret_value().encode()

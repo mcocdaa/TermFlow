@@ -18,7 +18,7 @@
 - [ ] **Step 1: Change the fixture to tmux's real default output**
 
 ```python
-stdout=(
+stdout = (
     'bind-key -T prefix \\" split-window\n'
     "bind-key -T prefix \\% split-window -h\n"
     "bind-key -T prefix c new-window\n"

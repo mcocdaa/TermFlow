@@ -247,6 +247,7 @@ class AgentCapabilitiesResponse(BaseModel):
     delegated_write_grants_enabled: bool = False
     speech_to_text_enabled: bool = False
 
+
 @router.get("/capabilities", response_model=AgentCapabilitiesResponse)
 async def get_agent_capabilities(
     request: Request,

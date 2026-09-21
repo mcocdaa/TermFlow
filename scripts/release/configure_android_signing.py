@@ -59,7 +59,7 @@ def configure_gradle(source: str) -> str:
     )
     source = source.replace(
         _RELEASE_MARKER,
-        f'{_RELEASE_MARKER}            {_CONFIGURED_MARKER}\n',
+        f"{_RELEASE_MARKER}            {_CONFIGURED_MARKER}\n",
         1,
     )
     return source
@@ -85,9 +85,7 @@ def write_keystore_properties(path: Path, environment: Mapping[str, str]) -> Non
         "keyAlias": environment["ANDROID_KEY_ALIAS"],
         "storeFile": environment["ANDROID_KEYSTORE_PATH"],
     }
-    path.write_text(
-        "".join(f"{key}={_escape_property(value)}\n" for key, value in values.items())
-    )
+    path.write_text("".join(f"{key}={_escape_property(value)}\n" for key, value in values.items()))
 
 
 def _parser() -> argparse.ArgumentParser:

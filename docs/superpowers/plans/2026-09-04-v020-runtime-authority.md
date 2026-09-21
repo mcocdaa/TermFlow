@@ -82,9 +82,7 @@ class ProviderCatalogEntry:
 
 def canonicalize_profile_config(value: object) -> tuple[AgentProfileConfig, str]:
     parsed = AgentProfileConfig.model_validate(value)
-    encoded = json.dumps(
-        parsed.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
-    )
+    encoded = json.dumps(parsed.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
     return parsed, encoded
 ```
 

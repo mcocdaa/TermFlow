@@ -195,9 +195,7 @@ async def test_instance_delete_is_exact_and_keeps_installation_and_audit(
     await repositories.instances.register_or_rotate(
         retained_id, installation.id, "retained", hash_token("retained-token")
     )
-    await repositories.audit.record(
-        "term.before-delete", deleted_id, None, None, "ok", None
-    )
+    await repositories.audit.record("term.before-delete", deleted_id, None, None, "ok", None)
 
     assert await repositories.instances.delete(deleted_id) is True
     assert await repositories.instances.delete(deleted_id) is False
@@ -268,9 +266,7 @@ def test_offline_delete_revokes_token_keeps_computer_and_allows_fresh_registrati
 
     response = client.delete(f"/api/v1/terms/{instance_id}", headers=admin_headers)
     assert response.status_code == 204
-    assert client.portal.call(
-        client.app.state.repositories.instances.get, instance_id
-    ) is None
+    assert client.portal.call(client.app.state.repositories.instances.get, instance_id) is None
 
     dashboard = client.get("/api/v1/dashboard", headers=admin_headers).json()
     assert dashboard["metrics"]["total_terms"] == 0
@@ -309,9 +305,7 @@ def test_online_and_unknown_terms_are_not_deleted(client, admin_headers) -> None
         online = client.delete(f"/api/v1/terms/{instance_id}", headers=admin_headers)
         assert online.status_code == 409
         assert online.json()["error"]["code"] == "instance_online"
-    assert client.portal.call(
-        client.app.state.repositories.instances.get, instance_id
-    ) is not None
+    assert client.portal.call(client.app.state.repositories.instances.get, instance_id) is not None
 ```
 
 Add a race-boundary Bridge test:
@@ -330,9 +324,7 @@ def test_retired_bridge_is_rejected_before_live_publish(client, admin_headers) -
         ):
             pass
     assert caught.value.code == 4401
-    assert client.portal.call(
-        client.app.state.registry.maybe_get, instance_id
-    ) is None
+    assert client.portal.call(client.app.state.registry.maybe_get, instance_id) is None
 ```
 
 - [ ] **Step 2: Verify failure**
@@ -444,18 +436,22 @@ def test_v2_loads_active_and_next_save_writes_v3(tmp_path) -> None:
     directory = store.instance_dir(instance_id)
     directory.mkdir(parents=True, mode=0o700)
     path = store.metadata_path(instance_id)
-    path.write_text(json.dumps({
-        "schema_version": 2,
-        "instance_id": str(instance_id),
-        "name": "legacy-v2",
-        "session_id": "$7",
-        "session_name": "legacy-v2",
-        "socket_path": str(directory / "tmux.sock"),
-        "created_at": datetime.now(UTC).isoformat(),
-        "bridge_pid": None,
-        "instance_token": None,
-        "lifecycle": "running",
-    }))
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "instance_id": str(instance_id),
+                "name": "legacy-v2",
+                "session_id": "$7",
+                "session_name": "legacy-v2",
+                "socket_path": str(directory / "tmux.sock"),
+                "created_at": datetime.now(UTC).isoformat(),
+                "bridge_pid": None,
+                "instance_token": None,
+                "lifecycle": "running",
+            }
+        )
+    )
     path.chmod(0o600)
 
     record = store.load(instance_id)
@@ -700,9 +696,7 @@ def test_attach_keeps_tmux_but_does_not_launch_required_bridge(tmp_path) -> None
     )
     fake = FakeRunner(record.socket_path, session_name=record.name)
     launcher = Mock(return_value=999)
-    manager = InstanceManager(
-        store, bridge_launcher=launcher, runner_factory=lambda path: fake
-    )
+    manager = InstanceManager(store, bridge_launcher=launcher, runner_factory=lambda path: fake)
 
     attached, argv = manager.attach(str(record.instance_id))
     assert argv[-1] == record.session_id
@@ -726,9 +720,7 @@ Expected: FAIL because attach/doctor relaunch any missing Bridge.
 def require_running_tmux(self, record: LocalInstance) -> None:
     target = record.session_id
     if target is None or not self._runner_factory(record.socket_path).is_alive(target):
-        raise InstanceResolutionError(
-            f"Instance {record.instance_id} tmux server is not running"
-        )
+        raise InstanceResolutionError(f"Instance {record.instance_id} tmux server is not running")
 
 
 def stop_bridge(self, record: LocalInstance) -> LocalInstance:
@@ -736,14 +728,10 @@ def stop_bridge(self, record: LocalInstance) -> LocalInstance:
     if pid is not None and self._is_expected_bridge(pid, record.instance_id):
         os.kill(pid, signal.SIGTERM)
         deadline = time.monotonic() + 5
-        while time.monotonic() < deadline and self._is_expected_bridge(
-            pid, record.instance_id
-        ):
+        while time.monotonic() < deadline and self._is_expected_bridge(pid, record.instance_id):
             time.sleep(0.05)
         if self._is_expected_bridge(pid, record.instance_id):
-            raise BridgeStartError(
-                f"Bridge process for Instance {record.instance_id} did not stop"
-            )
+            raise BridgeStartError(f"Bridge process for Instance {record.instance_id} did not stop")
     stopped = record.model_copy(update={"bridge_pid": None})
     self._store.save(stopped)
     return stopped
@@ -764,12 +752,7 @@ Use `require_running_tmux` in attach. Call `start_bridge` only for active state.
 - [ ] **Step 4: Gate doctor repair**
 
 ```python
-if (
-    repair
-    and tmux_alive
-    and not bridge_alive
-    and record.remote_access is RemoteAccessState.ACTIVE
-):
+if repair and tmux_alive and not bridge_alive and record.remote_access is RemoteAccessState.ACTIVE:
     try:
         pid = launch_bridge(
             record,
@@ -813,9 +796,7 @@ Cover success with same UUID/fresh token/Bridge PID, active no-op, ambiguous nam
 @pytest.mark.asyncio
 async def test_activate_registers_same_uuid_and_starts_fresh_bridge(tmp_path) -> None:
     required = required_record(tmp_path)
-    registered = required.model_copy(
-        update={"instance_token": SecretStr("fresh-token")}
-    )
+    registered = required.model_copy(update={"instance_token": SecretStr("fresh-token")})
     started = registered.model_copy(
         update={"remote_access": RemoteAccessState.ACTIVE, "bridge_pid": 9876}
     )
@@ -916,16 +897,12 @@ class InstanceActivator:
                     }
                 )
                 self._instance_store.save(rollback)
-                raise ActivationError(
-                    "Bridge failed to start after registration."
-                ) from exc
+                raise ActivationError("Bridge failed to start after registration.") from exc
             return ActivationResult(started, True)
         except ActivationError:
             raise
         except Exception as exc:
-            raise ActivationError(
-                "Remote activation failed; local tmux was not changed."
-            ) from exc
+            raise ActivationError("Remote activation failed; local tmux was not changed.") from exc
 ```
 
 Fixed public errors must not echo httpx bodies, server messages, or tokens. Registration may create an offline server row before a later Bridge launch failure; retry rotates it safely.
@@ -955,9 +932,7 @@ git commit -m "feat(node): add explicit term activation transaction"
 - [ ] **Step 1: Write failing CLI tests**
 
 ```python
-def test_activate_command_reports_success_without_credentials(
-    tmp_path, monkeypatch
-) -> None:
+def test_activate_command_reports_success_without_credentials(tmp_path, monkeypatch) -> None:
     result_record = _record(tmp_path, "alpha").model_copy(
         update={"remote_access": RemoteAccessState.ACTIVE}
     )
@@ -1005,9 +980,7 @@ def activate(identifier: str) -> None:
     if result.activated:
         typer.echo(f"Activated {result.instance.instance_id}")
     else:
-        typer.echo(
-            f"Remote access already active for {result.instance.instance_id}"
-        )
+        typer.echo(f"Remote access already active for {result.instance.instance_id}")
 ```
 
 Do not echo raw dependency exceptions. Preserve safe ambiguous candidate UUIDs.
@@ -1579,19 +1552,20 @@ for project in ("desktop", "mobile-portrait", "mobile-landscape"):
     offline_id = uuid4()
     response = httpx.post(
         f"{base_url}/api/v1/instances/register",
-        headers={
-            "Authorization": "Bearer "
-            + installation.installation_token.get_secret_value()
-        },
+        headers={"Authorization": "Bearer " + installation.installation_token.get_secret_value()},
         json={"instance_id": str(offline_id), "name": f"offline-{project}"},
         timeout=3,
     )
     response.raise_for_status()
     offline_ids[project] = str(offline_id)
-print(json.dumps({
-    "online_term_id": str(instance.instance_id),
-    "offline_term_ids": offline_ids,
-}))
+print(
+    json.dumps(
+        {
+            "online_term_id": str(instance.instance_id),
+            "offline_term_ids": offline_ids,
+        }
+    )
+)
 ```
 
 Parse this JSON in `run-web-e2e.sh`, export `TERMFLOW_E2E_TERM_ID` and `TERMFLOW_E2E_OFFLINE_TERM_IDS`, and clean up only the real local tmux Term.

@@ -23,10 +23,21 @@ describe('ThemePicker', () => {
     global: { plugins: [createClientUi(createFakeRuntime(), { theme })] },
   })
 
-  it('shows three named radio options and persists only the selected identifier through the theme port', async () => {
+  it('shows named radio options and persists only the selected identifier through the theme port', async () => {
     const wrapper = mountPicker()
     const radios = wrapper.findAll('[role="radio"]')
-    expect(radios.map((radio) => radio.text())).toEqual(['石墨信号', '云端钴蓝', '午夜靛蓝'])
+    expect(radios.map((radio) => radio.text())).toEqual([
+      '石墨信号 (默认)',
+      '云端钴蓝',
+      '午夜靛蓝',
+      'Catppuccin Mocha',
+      'Catppuccin Latte',
+      'Tokyo Night',
+      'Nord',
+      'Dracula',
+      'Solarized Dark',
+      'Solarized Light',
+    ])
 
     await radios[1]!.trigger('click')
 
@@ -54,7 +65,7 @@ describe('ThemePicker', () => {
     const wrapper = mountPicker()
     const group = wrapper.get('[role="radiogroup"]')
     expect(group.attributes('data-layout')).toBe('theme-grid')
-    expect(group.element.children).toHaveLength(3)
+    expect(group.element.children).toHaveLength(10)
     expect([...group.element.children].every((child) => child.classList.contains('theme-option'))).toBe(true)
 
     const css = readFileSync(resolve(process.cwd(), 'src/styles/app.css'), 'utf8')

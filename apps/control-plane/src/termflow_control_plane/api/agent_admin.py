@@ -721,12 +721,9 @@ async def _validate_server_runtime_assignment(
     # Existing assignments are server-created and may be opaque.  They can be
     # retained, but an identity change must use the reference deployment's
     # server policy rather than arbitrary client strings.
-    unchanged = (
-        runtime_ref == binding.runtime_ref and capability_ref == binding.capability_ref
-    )
+    unchanged = runtime_ref == binding.runtime_ref and capability_ref == binding.capability_ref
     reference_assignment = (
-        runtime_ref == "opencode-agent"
-        and capability_ref == f"termflow-mcp:{binding.id}"
+        runtime_ref == "opencode-agent" and capability_ref == f"termflow-mcp:{binding.id}"
     )
     if not unchanged and not reference_assignment:
         raise TermFlowError(
@@ -931,9 +928,7 @@ async def _update_profile_and_invalidate_bindings(
         try:
             async with session.begin():
                 profile = await session.scalar(
-                    select(AgentProfile)
-                    .where(AgentProfile.id == profile_id)
-                    .with_for_update()
+                    select(AgentProfile).where(AgentProfile.id == profile_id).with_for_update()
                 )
                 if profile is None:
                     return None, ()
@@ -1410,8 +1405,7 @@ async def update_agent_binding_runtime(
         body.capability_ref,
     )
     identity_changed = (
-        body.runtime_ref != binding.runtime_ref
-        or body.capability_ref != binding.capability_ref
+        body.runtime_ref != binding.runtime_ref or body.capability_ref != binding.capability_ref
     )
     try:
         updated = await repositories.agent_bindings.update_desired_runtime(

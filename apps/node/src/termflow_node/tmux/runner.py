@@ -211,9 +211,7 @@ class TmuxRunner:
                 "#{client_termname}",
             )
         )
-        result = self._execute(
-            "list-clients", "-t", target, "-F", format_string, check=False
-        )
+        result = self._execute("list-clients", "-t", target, "-F", format_string, check=False)
         if result.returncode != 0:
             return []
         clients: list[TmuxClient] = []

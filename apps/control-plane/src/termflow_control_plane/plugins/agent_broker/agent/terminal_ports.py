@@ -283,10 +283,7 @@ class ObservationService:
     async def _request_incarnation(self, instance_id: UUID, params: PaneReadParams) -> int:
         if params.cursor is not None:
             known = await self.resolve_cursor(instance_id, params.pane_id)
-            if (
-                known is not None
-                and known.pane_incarnation != params.cursor.pane_incarnation
-            ):
+            if known is not None and known.pane_incarnation != params.cursor.pane_incarnation:
                 raise TermFlowToolError(
                     TermFlowErrorCode.INCARNATION_CHANGED,
                     f"pane {params.pane_id} was replaced; the read cursor is stale",
@@ -340,9 +337,7 @@ class ObservationService:
                 pane_incarnation=incarnation,
             )
         except ValueError as exc:
-            raise TermFlowToolError(
-                TermFlowErrorCode.INVALID_REQUEST, str(exc)
-            ) from exc
+            raise TermFlowToolError(TermFlowErrorCode.INVALID_REQUEST, str(exc)) from exc
 
     @staticmethod
     def _map_capture_error(error: PaneCaptureErrorPayload) -> TermFlowToolError:
@@ -480,9 +475,7 @@ class WatchContinuationService:
         self._watches = watches
         self._bindings = bindings
 
-    async def create_watch(
-        self, binding_id: UUID, params: WatchCreateParams
-    ) -> WatchCreateResult:
+    async def create_watch(self, binding_id: UUID, params: WatchCreateParams) -> WatchCreateResult:
         envelope = json.dumps(
             {
                 "v": 1,
@@ -538,9 +531,7 @@ class WatchContinuationService:
             )
         return WatchGetResult(watch=_to_detail(watch, await self._instance_id(watch.binding_id)))
 
-    async def cancel_watch(
-        self, binding_id: UUID, params: WatchCancelParams
-    ) -> WatchCancelResult:
+    async def cancel_watch(self, binding_id: UUID, params: WatchCancelParams) -> WatchCancelResult:
         watch = await self._watches.get_by_id(params.watch_id)
         if watch is None or watch.binding_id != binding_id:
             raise TermFlowToolError(

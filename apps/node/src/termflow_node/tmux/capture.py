@@ -35,9 +35,7 @@ class CaptureCommandError(RuntimeError):
     def __init__(self, argv: list[str], exit_code: int) -> None:
         self.argv = tuple(argv)
         self.exit_code = exit_code
-        super().__init__(
-            f"tmux capture-pane failed with exit code {exit_code}: {self.argv!r}"
-        )
+        super().__init__(f"tmux capture-pane failed with exit code {exit_code}: {self.argv!r}")
 
 
 class CaptureRun(Protocol):
@@ -70,9 +68,7 @@ def capture_argv(
     """
     if tail_lines is not None and (start_line is not None or end_line is not None):
         raise ValueError("tail_lines cannot be combined with start_line or end_line")
-    if full_history and (
-        start_line is not None or end_line is not None or tail_lines is not None
-    ):
+    if full_history and (start_line is not None or end_line is not None or tail_lines is not None):
         raise ValueError("full_history cannot be combined with a bounded range")
     argv = ["tmux", "-S", str(socket_path), "capture-pane", "-p"]
     if join_wrapped:

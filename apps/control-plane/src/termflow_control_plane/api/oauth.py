@@ -251,9 +251,10 @@ async def decide_native_authorization(
                     if exc.code == "origin_not_allowed" and request.headers.get("origin") is None:
                         state = await repositories.auth_state.get()
                         policy = browser_cookie_policy(settings)
-                        if sessions.get_record(
-                            request.cookies.get(policy.name), epoch=state.epoch
-                        ) is None:
+                        if (
+                            sessions.get_record(request.cookies.get(policy.name), epoch=state.epoch)
+                            is None
+                        ):
                             raise TermFlowError(
                                 "authentication_failed", 401, "Authentication failed."
                             ) from exc

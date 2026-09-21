@@ -164,9 +164,7 @@ async def test_epoch_watcher_syncs_hubs_when_cookie_request_advanced_store_first
             auth_epoch=2,
         )
         assert replacement.auth_epoch == 2
-        assert not (
-            await event_hub.subscribe(instance_id=None, auth_epoch=2)
-        ).closed.is_set()
+        assert not (await event_hub.subscribe(instance_id=None, auth_epoch=2)).closed.is_set()
     finally:
         stop.set()
         if watcher is not None:

@@ -85,9 +85,7 @@ async def _seed_binding(repositories: RepositoryBundle):
         config='{"model": "default"}',
     )
     display_name = f"term-{uuid4().hex[:8]}"
-    installation = await repositories.installations.create(
-        digest_secret(f"computer-{uuid4().hex}")
-    )
+    installation = await repositories.installations.create(digest_secret(f"computer-{uuid4().hex}"))
     term = await repositories.instances.register_or_rotate(
         uuid4(),
         installation.id,
@@ -288,9 +286,7 @@ async def test_changed_arguments_under_the_same_key_conflict(stack) -> None:
     )
     principal = _principal(binding)
     seeded = _text_params(conversation.id, request_key="req-1", text="make test")
-    approval = await _seed_approval(
-        repositories, binding, principal, seeded, "send_text"
-    )
+    approval = await _seed_approval(repositories, binding, principal, seeded, "send_text")
     commands = _commands(repositories, factory)
     changed = _text_params(conversation.id, request_key="req-1", text="make lint")
 
@@ -315,9 +311,7 @@ async def test_consumed_retry_returns_the_original_receipt(stack) -> None:
     approval = await _seed_approval(
         repositories, binding, principal, params, "send_text", state="consumed"
     )
-    await _seed_outcome(
-        repositories, binding, approval, event_type="consumed", outcome="confirmed"
-    )
+    await _seed_outcome(repositories, binding, approval, event_type="consumed", outcome="confirmed")
     commands = _commands(repositories, factory)
 
     result = await commands.send_text(principal, params, tool_call_id="req-1")
@@ -398,9 +392,7 @@ async def test_new_request_key_is_not_blocked_by_a_settled_neighbour(stack) -> N
     old = await _seed_approval(
         repositories, binding, principal, settled, "send_text", state="consumed"
     )
-    await _seed_outcome(
-        repositories, binding, old, event_type="consumed", outcome="confirmed"
-    )
+    await _seed_outcome(repositories, binding, old, event_type="consumed", outcome="confirmed")
     commands = _commands(repositories, factory)
     fresh = _text_params(conversation.id, request_key="req-new", text="make lint")
 
@@ -421,20 +413,14 @@ async def test_new_request_key_is_not_blocked_by_a_settled_neighbour(stack) -> N
 async def test_request_key_scope_is_one_conversation(stack) -> None:
     repositories, factory = stack
     binding = await _seed_binding(repositories)
-    first = await repositories.agent_conversations.create(
-        binding_id=binding.id, title="first"
-    )
-    second = await repositories.agent_conversations.create(
-        binding_id=binding.id, title="second"
-    )
+    first = await repositories.agent_conversations.create(binding_id=binding.id, title="first")
+    second = await repositories.agent_conversations.create(binding_id=binding.id, title="second")
     principal = _principal(binding)
     params = _text_params(first.id, request_key="req-1")
     approval = await _seed_approval(
         repositories, binding, principal, params, "send_text", state="consumed"
     )
-    await _seed_outcome(
-        repositories, binding, approval, event_type="consumed", outcome="confirmed"
-    )
+    await _seed_outcome(repositories, binding, approval, event_type="consumed", outcome="confirmed")
     commands = _commands(repositories, factory)
 
     result = await commands.send_text(principal, params, tool_call_id="req-1")
@@ -468,9 +454,7 @@ async def test_send_keys_retry_matches_its_own_reviewed_scope(stack) -> None:
     approval = await _seed_approval(
         repositories, binding, principal, params, "send_keys", state="consumed"
     )
-    await _seed_outcome(
-        repositories, binding, approval, event_type="consumed", outcome="confirmed"
-    )
+    await _seed_outcome(repositories, binding, approval, event_type="consumed", outcome="confirmed")
     commands = _commands(repositories, factory)
 
     result = await commands.send_keys(principal, params, tool_call_id="keys-1")

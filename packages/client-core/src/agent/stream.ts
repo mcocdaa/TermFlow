@@ -1,6 +1,7 @@
 import type { AgentEventResponse } from '@termflow/client-contracts'
 import type { AguiEvent, AguiReplayBatch } from './agui'
 import { isValidAgentCursor, parseCursorSeq } from './cursorStore'
+import { calculateDecorrelatedJitterDelay } from '../terminal/jitter'
 import {
   AGENT_STREAM_CLOSE_AUTH_EPOCH,
   AGENT_STREAM_CLOSE_BINDING_REVOKED,
@@ -24,36 +25,19 @@ export interface AgentStreamCloseInfo {
 export interface AgentStreamCallbacks<TEvent = AgentEventResponse> {
   onStatus: (status: AgentStreamStatus) => void
   onEvent: (event: TEvent) => void
-  /**
-   * cursor_too_old: the server minted a fresh cursor instead of silently
-   * skipping events; the caller must reload state from REST history. Also
-   * fired after a global-stream 4410 (stream_too_slow) close, where the
-   * dropped live range cannot be recovered through replay: the cursor is
-   * the last delivered position ('' when nothing was delivered yet).
-   */
   onReset: (cursor: string) => void
   onClosed: (info: AgentStreamCloseInfo) => void
   onError: (error: { code: string, message?: string }) => void
   onAuthenticationRequired: () => void
 }
 
-/**
- * Wire-discriminated options: canonical sessions supply ``replay`` (per-event
- * ``database_seq`` dedup, unchanged behaviour); agui sessions supply
- * ``replayAgui`` (batch watermark replay, M6b spec §4.3) and may set
- * ``seedFromSeq`` for the cold-start seed (§4.4).
- */
 export type AgentStreamOptions<TEvent = AgentEventResponse> = {
   transport: AgentStreamTransport<TEvent>
   scheduler: AgentStreamScheduler
-  /**
-   * Opaque cursor restored from persistence (hot recovery, M6b spec §4.4):
-   * the session subscribes with it directly and skips the REST seed. Invalid
-   * cursors are treated as a cold start — persistence is an optimization,
-   * never a correctness dependency.
-   */
   initialCursor?: string
   reconnectDelayMs?: number
+  maxReconnectDelayMs?: number
+  random?: () => number
 } & (
   | { replay: (conversationId: string, sinceSeq: number) => Promise<AgentEventResponse[]> }
   | {
@@ -94,10 +78,13 @@ export class AgentStreamSession<TEvent = AgentEventResponse> {
   private disposed = false
   private suppressReconnect = false
   private reconnectAttempt = 0
+  private lastReconnectDelay = 0
   private cursor: string | null = null
   private lastSeq = 0
   private readonly recentEventIds = new Set<string>()
   private readonly reconnectDelayMs: number
+  private readonly maxReconnectDelayMs: number
+  private readonly random: () => number
   private readonly aguiMode: boolean
   private readonly replayFn: ((conversationId: string, sinceSeq: number) => Promise<AgentEventResponse[]>) | null
   private readonly replayAguiFn: ((conversationId: string, sinceSeq: number) => Promise<AguiReplayBatch>) | null
@@ -113,6 +100,8 @@ export class AgentStreamSession<TEvent = AgentEventResponse> {
     private readonly options: AgentStreamOptions<TEvent>,
   ) {
     this.reconnectDelayMs = options.reconnectDelayMs ?? 1_000
+    this.maxReconnectDelayMs = options.maxReconnectDelayMs ?? 10_000
+    this.random = options.random ?? Math.random
     if ('replayAgui' in options) {
       this.aguiMode = true
       this.replayFn = null
@@ -371,7 +360,14 @@ export class AgentStreamSession<TEvent = AgentEventResponse> {
 
   private scheduleReconnect(): void {
     this.callbacks.onStatus('reconnecting')
-    const delay = Math.min(MAX_RECONNECT_DELAY_MS, this.reconnectDelayMs * 2 ** this.reconnectAttempt)
+    const delay = calculateDecorrelatedJitterDelay(
+      this.reconnectDelayMs,
+      this.maxReconnectDelayMs,
+      this.reconnectAttempt,
+      this.lastReconnectDelay,
+      this.random,
+    )
+    this.lastReconnectDelay = delay
     this.reconnectAttempt += 1
     this.reconnectTimer = this.options.scheduler.set(() => {
       this.reconnectTimer = null

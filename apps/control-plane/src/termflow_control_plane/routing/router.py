@@ -136,9 +136,7 @@ class CommandRouter:
             instance_id=instance_id,
             payload=payload.model_dump(mode="json"),
         )
-        future: asyncio.Future[CommandResultPayload] = (
-            asyncio.get_running_loop().create_future()
-        )
+        future: asyncio.Future[CommandResultPayload] = asyncio.get_running_loop().create_future()
         connection.pending[command_id] = future
         try:
             try:
@@ -215,7 +213,11 @@ class CommandRouter:
             connection = await self._registry.get(instance_id)
         except InstanceOffline as exc:
             await self._record(
-                instance_id, pane_id, input_bytes, "rejected", "instance_offline",
+                instance_id,
+                pane_id,
+                input_bytes,
+                "rejected",
+                "instance_offline",
                 operation="pane.keys",
             )
             raise TermFlowError(
@@ -281,9 +283,7 @@ class CommandRouter:
             instance_id=instance_id,
             payload=payload.model_dump(mode="json"),
         )
-        future: asyncio.Future[CommandResultPayload] = (
-            asyncio.get_running_loop().create_future()
-        )
+        future: asyncio.Future[CommandResultPayload] = asyncio.get_running_loop().create_future()
         connection.pending[command_id] = future
         try:
             try:
@@ -364,9 +364,7 @@ class CommandRouter:
                     _BRIDGE_ERROR_STATUS.get(error_code, 409),
                     "The Bridge rejected the command.",
                 )
-            await self._record(
-                instance_id, pane_id, input_bytes, "ok", None, operation="pane.keys"
-            )
+            await self._record(instance_id, pane_id, input_bytes, "ok", None, operation="pane.keys")
             return result
         finally:
             connection.pending.pop(command_id, None)
@@ -407,9 +405,7 @@ class CommandRouter:
             instance_id=instance_id,
             payload=payload.model_dump(mode="json"),
         )
-        future: asyncio.Future[TermRenameResultPayload] = (
-            asyncio.get_running_loop().create_future()
-        )
+        future: asyncio.Future[TermRenameResultPayload] = asyncio.get_running_loop().create_future()
         connection.pending_renames[command_id] = future
         try:
             try:

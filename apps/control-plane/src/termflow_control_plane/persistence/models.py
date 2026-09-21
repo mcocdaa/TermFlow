@@ -230,9 +230,7 @@ class AuthToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     # The original strong-authentication time survives token refresh/rotation.
     # Legacy tokens cannot prove one, so migration 0011 leaves this NULL.
-    authenticated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None
-    )
+    authenticated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -310,9 +308,7 @@ class AgentBinding(Base):
     runtime_ref: Mapped[str | None] = mapped_column(String(128), default=None)
     runtime_epoch: Mapped[int | None] = mapped_column(Integer, default=None)
     capability_ref: Mapped[str | None] = mapped_column(String(128), default=None)
-    config_revision: Mapped[int] = mapped_column(
-        Integer, default=1, server_default=text("1")
-    )
+    config_revision: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
@@ -353,9 +349,7 @@ class AgentProviderDisclosureAcceptance(Base):
     accepted_auth_epoch: Mapped[int] = mapped_column(Integer)
     actor_kind: Mapped[str] = mapped_column(String(32))
     actor_ref: Mapped[str] = mapped_column(String(256))
-    revoked_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None
-    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     __table_args__ = (
         Index(
@@ -378,9 +372,7 @@ class AgentSetupReceipt(Base):
     __tablename__ = "agent_setup_receipts"
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
-    idempotency_key: Mapped[UUID] = mapped_column(
-        Uuid(as_uuid=True), unique=True, index=True
-    )
+    idempotency_key: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), unique=True, index=True)
     request_digest: Mapped[str] = mapped_column(String(64))
     state: Mapped[str] = mapped_column(
         String(32), default="activating", server_default=text("'activating'")
@@ -498,18 +490,12 @@ class AgentRuntimeBinding(Base):
         server_default=text("'unprovisioned'"),
     )
     reason_code: Mapped[str | None] = mapped_column(String(64), default=None)
-    observed_runtime_ref: Mapped[str | None] = mapped_column(
-        String(128), default=None
-    )
+    observed_runtime_ref: Mapped[str | None] = mapped_column(String(128), default=None)
     observed_runtime_epoch: Mapped[int | None] = mapped_column(Integer, default=None)
-    observed_capability_ref: Mapped[str | None] = mapped_column(
-        String(128), default=None
-    )
+    observed_capability_ref: Mapped[str | None] = mapped_column(String(128), default=None)
     applied_revision: Mapped[int | None] = mapped_column(Integer, default=None)
     config_fingerprint: Mapped[str | None] = mapped_column(String(64), default=None)
-    last_health_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None
-    )
+    last_health_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     transition_started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
@@ -518,24 +504,18 @@ class AgentRuntimeBinding(Base):
         default="configured_unverified",
         server_default=text("'configured_unverified'"),
     )
-    provider_verified_revision: Mapped[int | None] = mapped_column(
-        Integer, default=None
-    )
+    provider_verified_revision: Mapped[int | None] = mapped_column(Integer, default=None)
     provider_last_checked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
-    provider_reason_code: Mapped[str | None] = mapped_column(
-        String(64), default=None
-    )
+    provider_reason_code: Mapped[str | None] = mapped_column(String(64), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "binding_id", name="uq_agent_runtime_bindings_binding_id"
-        ),
+        UniqueConstraint("binding_id", name="uq_agent_runtime_bindings_binding_id"),
         UniqueConstraint(
             "observed_runtime_ref",
             "observed_runtime_epoch",
@@ -583,12 +563,8 @@ class AgentInboxItem(Base):
     delivery_state: Mapped[str] = mapped_column(String(32))
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     claim_owner: Mapped[str | None] = mapped_column(String(128), default=None)
-    claim_expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None
-    )
-    next_attempt_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None
-    )
+    claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     # causation_id is the input that caused this one; the root input in a
     # chain has none, so the column is nullable.
     causation_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), default=None)
@@ -649,14 +625,10 @@ class AgentRun(Base):
     run_state: Mapped[str] = mapped_column(String(32))
     backend_run_id: Mapped[str | None] = mapped_column(String(128), default=None)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None
-    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     error_code: Mapped[str | None] = mapped_column(String(64), default=None)
 
-    __table_args__ = (
-        Index("ix_agent_runs_conversation_state", "conversation_id", "run_state"),
-    )
+    __table_args__ = (Index("ix_agent_runs_conversation_state", "conversation_id", "run_state"),)
 
 
 #: Bounded message body limit for ``AgentMessage.body`` (M6b spec §6.6;
@@ -939,9 +911,7 @@ class Watch(Base):
     state: Mapped[str] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
-    __table_args__ = (
-        Index("ix_watches_binding_state", "binding_id", "state"),
-    )
+    __table_args__ = (Index("ix_watches_binding_state", "binding_id", "state"),)
 
 
 class PaneObservationCursor(Base):
@@ -1029,17 +999,11 @@ class AgentCleanupJob(Base):
     # A manifest version makes the receipt set auditable and lets a future
     # cleanup policy evolve without silently interpreting an old job with a
     # new artifact vocabulary.
-    manifest_version: Mapped[int] = mapped_column(
-        Integer, default=1, server_default=text("1")
-    )
+    manifest_version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[str | None] = mapped_column(Text, default=None)
-    next_attempt_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None
-    )
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
@@ -1076,16 +1040,12 @@ class AgentCleanupReceipt(Base):
     state: Mapped[str] = mapped_column(String(32))
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[str | None] = mapped_column(Text, default=None)
-    next_attempt_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None
-    )
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     evidence_digest: Mapped[str | None] = mapped_column(String(64), default=None)
     confirmation_key: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), default=None)
     policy_reason: Mapped[str | None] = mapped_column(String(128), default=None)
     policy_version: Mapped[str | None] = mapped_column(String(64), default=None)
-    confirmed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None
-    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now

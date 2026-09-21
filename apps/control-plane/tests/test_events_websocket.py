@@ -71,9 +71,7 @@ def test_matching_pane_output_is_forwarded(client, admin_headers, provision_term
                 WireMessage(
                     type=MessageType.TOPOLOGY_SNAPSHOT,
                     instance_id=instance_id,
-                    payload=TopologySnapshotPayload(topology=topology).model_dump(
-                        mode="json"
-                    ),
+                    payload=TopologySnapshotPayload(topology=topology).model_dump(mode="json"),
                 ).model_dump_json()
             )
             registry = client.app.state.registry

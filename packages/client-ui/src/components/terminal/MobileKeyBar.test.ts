@@ -17,7 +17,7 @@ describe('MobileKeyBar', () => {
     const scroller = shell.get('.mobile-keybar')
     expect(shell.attributes('aria-hidden')).toBeUndefined()
     expect(scroller.attributes('aria-label')).toBe('移动端修饰键')
-    expect(scroller.findAll('button')).toHaveLength(6)
+    expect(scroller.findAll('button')).toHaveLength(18)
   })
 
   it('keeps the platform-neutral modifier state reactive in Vue', async () => {
@@ -32,10 +32,33 @@ describe('MobileKeyBar', () => {
 
   it('disables every terminal-input control while the stream is not ready', async () => {
     const wrapper = mountKeyBar({ prefix: 'C-a', controller: new MobileModifierController(), disabled: true })
-    expect(wrapper.findAll('button')).toHaveLength(6)
+    expect(wrapper.findAll('button')).toHaveLength(18)
     expect(wrapper.findAll('button').every((button) => button.attributes('disabled') !== undefined)).toBe(true)
     await wrapper.findAll('button')[3]!.trigger('click')
     expect(wrapper.emitted('input')).toBeUndefined()
+  })
+
+  it('emits proper ANSI escape codes for arrows, interrupt (^C), and enter', async () => {
+    const wrapper = mountKeyBar({ prefix: 'C-a', controller: new MobileModifierController() })
+    const buttons = wrapper.findAll('button')
+
+    // Up arrow button (index 6)
+    const upBtn = buttons.find((b) => b.text() === '↑')
+    expect(upBtn).toBeDefined()
+    await upBtn!.trigger('click')
+    expect(wrapper.emitted('input')?.[0]?.[0]).toEqual(new TextEncoder().encode('\u001b[A'))
+
+    // Interrupt ^C button
+    const intBtn = buttons.find((b) => b.text() === '^C')
+    expect(intBtn).toBeDefined()
+    await intBtn!.trigger('click')
+    expect(wrapper.emitted('input')?.[1]?.[0]).toEqual(Uint8Array.of(3))
+
+    // Enter button
+    const enterBtn = buttons.find((b) => b.text() === '↵')
+    expect(enterBtn).toBeDefined()
+    await enterBtn!.trigger('click')
+    expect(wrapper.emitted('input')?.[2]?.[0]).toEqual(new TextEncoder().encode('\r'))
   })
 
   it('contains a vertical pointer drag without forwarding terminal input or a document gesture', async () => {

@@ -299,6 +299,17 @@ export interface TerminalActionResultFrame {
   error_code: string | null
 }
 
+export interface TerminalPingFrame {
+  type: "terminal.ping"
+  timestamp: number | null
+}
+
+export interface TerminalPongFrame {
+  type: "terminal.pong"
+  terminal_id: string
+  timestamp: number | null
+}
+
 export interface AgentCapabilitiesResponse {
   agent_broker_enabled: boolean
   state: "starting" | "ready" | "degraded" | "disabled"

@@ -103,9 +103,7 @@ async def subscribe_events(
     await websocket.accept()
     if authentication.close_code is not None:
         reason = (
-            "Origin not allowed"
-            if authentication.close_code == 4403
-            else "Authentication required"
+            "Origin not allowed" if authentication.close_code == 4403 else "Authentication required"
         )
         await websocket.close(code=authentication.close_code, reason=reason)
         return

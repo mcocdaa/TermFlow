@@ -31,9 +31,7 @@ def test_python_dependencies_come_from_portable_public_pypi_only() -> None:
     lock = tomllib.loads((ROOT / "uv.lock").read_text())
     packages = lock["package"]
     registries = {
-        package["source"]["registry"]
-        for package in packages
-        if "registry" in package["source"]
+        package["source"]["registry"] for package in packages if "registry" in package["source"]
     }
     artifact_urls = [
         artifact["url"]

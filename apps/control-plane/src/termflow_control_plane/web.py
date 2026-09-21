@@ -30,9 +30,7 @@ def _security_headers(response: Response, *, strict_transport: bool) -> None:
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     if strict_transport:
-        response.headers["Strict-Transport-Security"] = (
-            "max-age=63072000; includeSubDomains"
-        )
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
 
 
 def _asset(root: Path, requested_path: str) -> Path | None:

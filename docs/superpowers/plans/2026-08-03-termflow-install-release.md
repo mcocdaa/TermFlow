@@ -210,7 +210,9 @@ render_node_installer.py validates a tag and substitutes only @TAG@. The shell t
 
 ~~~python
 configured = os.environ.get("TERMFLOW_NODE_EXECUTABLE")
-self.node_executable = Path(configured).resolve() if configured else self.repo / ".venv/bin/termflow"
+self.node_executable = (
+    Path(configured).resolve() if configured else self.repo / ".venv/bin/termflow"
+)
 if not self.node_executable.is_file() or not os.access(self.node_executable, os.X_OK):
     raise RuntimeError(f"Invalid TERMFLOW_NODE_EXECUTABLE: {self.node_executable}")
 ~~~
@@ -253,7 +255,9 @@ def test_production_compose_uses_image_without_build() -> None:
 
 
 def test_development_override_owns_local_build() -> None:
-    service = yaml.safe_load(Path("deploy/compose.dev.yaml").read_text())["services"]["control-plane"]
+    service = yaml.safe_load(Path("deploy/compose.dev.yaml").read_text())["services"][
+        "control-plane"
+    ]
     assert service["build"] == {"context": "..", "dockerfile": "deploy/Dockerfile.control-plane"}
 ~~~
 
@@ -397,8 +401,14 @@ git commit -m "ci: publish versioned TermFlow releases"
 ~~~python
 def test_docs_distinguish_test_artifacts_from_permanent_release_assets() -> None:
     operations = Path("docs/operations.md").read_text()
-    for phrase in ("GitHub Release", "GHCR", "Actions artifact", "iOS Simulator",
-                   "install-termflow-node.sh", "docker compose pull"):
+    for phrase in (
+        "GitHub Release",
+        "GHCR",
+        "Actions artifact",
+        "iOS Simulator",
+        "install-termflow-node.sh",
+        "docker compose pull",
+    ):
         assert phrase in operations
 ~~~
 

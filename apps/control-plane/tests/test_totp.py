@@ -159,9 +159,7 @@ async def test_web_login_challenge_is_destroyed_after_five_bad_codes(tmp_path) -
             secret_box=box,
             clock=lambda: observed_at,
         )
-        challenge = await service.begin_web_login(
-            "admin-token-that-is-long-enough-for-tests"
-        )
+        challenge = await service.begin_web_login("admin-token-that-is-long-enough-for-tests")
         assert challenge is not None
 
         for _ in range(5):

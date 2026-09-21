@@ -80,8 +80,7 @@ def main() -> None:
         registration = httpx.post(
             f"{base_url}/api/v1/instances/register",
             headers={
-                "Authorization": "Bearer "
-                + installation.installation_token.get_secret_value()
+                "Authorization": "Bearer " + installation.installation_token.get_secret_value()
             },
             json={"instance_id": str(offline_id), "name": f"offline-{project}"},
             timeout=3,

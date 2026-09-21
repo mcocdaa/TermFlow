@@ -249,9 +249,7 @@ class InboxDeliveryStateMachine:
                 return None
             cursor = (rows[-1].conversation_id, rows[-1].admission_seq)
             candidates = [
-                row
-                for row in rows
-                if self._claim_filter is None or self._claim_filter(row)
+                row for row in rows if self._claim_filter is None or self._claim_filter(row)
             ]
             if not candidates:
                 # The page is fully blocked by the parked/claim filters:
@@ -413,9 +411,7 @@ class InboxDeliveryStateMachine:
         observed = self._now()
         self._guard(envelope, _ALLOWED_FOR_DISPATCH, "dispatch")
         if envelope.claim_owner is None:
-            raise InboxStateError(
-                f"cannot dispatch inbox item {envelope.id}: no claim owner"
-            )
+            raise InboxStateError(f"cannot dispatch inbox item {envelope.id}: no claim owner")
         dispatched = await self._agent_inbox.mark_dispatched(
             envelope.id,
             envelope.claim_owner,
@@ -706,8 +702,6 @@ class InboxDeliveryStateMachine:
             claim_expires_at=self._aware(row.claim_expires_at),
             next_attempt_at=self._aware(row.next_attempt_at),
             attempt_id=submission.attempt_id if submission is not None else None,
-            stable_message_id=(
-                submission.stable_message_id if submission is not None else None
-            ),
+            stable_message_id=(submission.stable_message_id if submission is not None else None),
             fencing_token=submission.fencing_token if submission is not None else None,
         )

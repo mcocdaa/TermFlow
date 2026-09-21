@@ -396,9 +396,19 @@ WORKFLOW = Path(".github/workflows/ci.yml")
 def test_unsigned_android_configures_system_bars_after_init_before_build() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
     steps = workflow["jobs"]["tauri-android-unsigned"]["steps"]
-    init = next(index for index, step in enumerate(steps) if "android init --ci" in str(step.get("run", "")))
-    system_bars = next(index for index, step in enumerate(steps) if "configure_android_system_bars.py" in str(step.get("run", "")))
-    build = next(index for index, step in enumerate(steps) if "android build --debug --ci" in str(step.get("run", "")))
+    init = next(
+        index for index, step in enumerate(steps) if "android init --ci" in str(step.get("run", ""))
+    )
+    system_bars = next(
+        index
+        for index, step in enumerate(steps)
+        if "configure_android_system_bars.py" in str(step.get("run", ""))
+    )
+    build = next(
+        index
+        for index, step in enumerate(steps)
+        if "android build --debug --ci" in str(step.get("run", ""))
+    )
 
     assert init < system_bars < build
 ~~~

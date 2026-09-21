@@ -34,12 +34,7 @@ def android_version_code(version: str) -> int:
     release = version.split("+", 1)[0]
     core, separator, prerelease = release.partition("-")
     major, minor, patch = (int(component) for component in core.split("."))
-    if (
-        (major, minor, patch) == (0, 0, 0)
-        or major > 2099
-        or minor > 99
-        or patch > 99
-    ):
+    if (major, minor, patch) == (0, 0, 0) or major > 2099 or minor > 99 or patch > 99:
         raise ValueError("build version is outside the supported mobile bundle range")
     rank = 99
     if separator:

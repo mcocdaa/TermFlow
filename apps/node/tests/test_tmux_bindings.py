@@ -6,12 +6,16 @@ from termflow_node.tmux.bindings import TmuxBindingReader
 
 class BindingRunner:
     def __init__(self, bindings_output: str | None = None) -> None:
-        self.bindings_output = bindings_output if bindings_output is not None else (
-            "bind-key -T prefix | split-window -h\n"
-            "bind-key -T prefix - split-window -v\n"
-            "bind-key -T prefix c new-window\n"
-            "bind-key -T prefix h select-pane -L\n"
-            "bind-key -T prefix z resize-pane -Z\n"
+        self.bindings_output = (
+            bindings_output
+            if bindings_output is not None
+            else (
+                "bind-key -T prefix | split-window -h\n"
+                "bind-key -T prefix - split-window -v\n"
+                "bind-key -T prefix c new-window\n"
+                "bind-key -T prefix h select-pane -L\n"
+                "bind-key -T prefix z resize-pane -Z\n"
+            )
         )
 
     def run_command(self, *arguments: str):
@@ -46,8 +50,7 @@ def test_binding_snapshot_uses_live_prefix_and_detected_keys() -> None:
 
 def test_binding_snapshot_detects_tmux_default_flagless_vertical_split() -> None:
     runner = BindingRunner(
-        'bind-key -T prefix \\" split-window\n'
-        "bind-key -T prefix \\% split-window -h\n"
+        'bind-key -T prefix \\" split-window\nbind-key -T prefix \\% split-window -h\n'
     )
 
     snapshot = TmuxBindingReader(runner, "$0").read(uuid4())

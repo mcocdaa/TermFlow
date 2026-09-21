@@ -14,9 +14,13 @@
         <div class="agent-approval-item__meta">
           <span class="agent-approval-item__pane" data-agent-approval-pane>{{ approval.pane_id !== null ? stripAnsiOsc(approval.pane_id) : '详情不可用' }}</span>
           <span class="agent-approval-item__operation" data-agent-approval-operation>{{ approval.operation !== null ? stripAnsiOsc(approval.operation) : '详情不可用' }}</span>
+          <span class="agent-risk-badge" :class="getRisk(approval).badgeClass" :data-agent-risk-level="getRisk(approval).level">{{ getRisk(approval).label }}</span>
           <span class="agent-approval-item__countdown" data-agent-approval-countdown>{{ countdown(approval.expires_at) }}</span>
         </div>
-        <p class="agent-approval-item__summary" data-agent-approval-summary>{{ approval.intent_summary !== null ? stripAnsiOsc(approval.intent_summary) : '详情不可用' }}</p>
+        <div class="agent-approval-item__summary" data-agent-approval-summary>
+          <AgentCollapsibleOutput v-if="isDiff(approval.intent_summary ?? '')" :content="approval.intent_summary ?? ''" />
+          <p v-else>{{ approval.intent_summary !== null ? stripAnsiOsc(approval.intent_summary) : '详情不可用' }}</p>
+        </div>
         <div class="agent-approval-item__footer">
           <span class="agent-approval-item__hash" :data-agent-approval-hash="approval.canonical_hash">摘要 #{{ approval.canonical_hash.slice(0, 8) }}</span>
           <span class="agent-approval-item__actions">
@@ -26,7 +30,7 @@
               data-action="approve-approval"
               :ref="(element) => setApprovalControl(approval.approval_id, element)"
               :disabled="isBusy(approval.approval_id)"
-              @click="decide(approval.approval_id, 'approve')"
+              @click="openConfirm(approval.approval_id)"
             >批准</button>
             <button
               type="button"
@@ -58,20 +62,39 @@
         data-agent-approval-dialog
         @keydown="trapFocus"
       >
-        <h2 id="agent-approval-confirm-title">批准该审批请求？</h2>
+        <h2 id="agent-approval-confirm-title">
+          <span v-if="isConfirmTargetCritical" class="agent-risk-badge agent-risk-badge--level-4" style="margin-inline-end: 0.5rem">极高危</span>
+          批准该审批请求？
+        </h2>
         <p id="agent-approval-confirm-description">
           批准后 Agent 将立即执行
           <strong>{{ confirmTarget === undefined ? '未知操作' : confirmTarget.operation !== null ? stripAnsiOsc(confirmTarget.operation) : '未知操作' }}</strong>。
           此操作不可撤销，请确认内容无误。
         </p>
-        <p v-if="confirmTarget !== undefined && confirmTarget.intent_summary !== null" class="agent-approval-dialog__summary">{{ stripAnsiOsc(confirmTarget.intent_summary) }}</p>
+        <div v-if="confirmTarget !== undefined && confirmTarget.intent_summary !== null" class="agent-approval-dialog__summary">
+          <AgentCollapsibleOutput v-if="isDiff(confirmTarget.intent_summary)" :content="confirmTarget.intent_summary" />
+          <span v-else>{{ stripAnsiOsc(confirmTarget.intent_summary) }}</span>
+        </div>
+
+        <div v-if="isConfirmTargetCritical" class="agent-critical-box" data-agent-critical-box>
+          <p class="agent-critical-warning">⚠️ 极高风险警示：此操作具有高危破坏性，请二次确认！</p>
+          <label class="agent-critical-confirm">
+            <input
+              type="checkbox"
+              v-model="criticalAcknowledged"
+              data-action="critical-confirm-checkbox"
+            />
+            <span>我已知晓该操作具有高危破坏性，确认执行</span>
+          </label>
+        </div>
+
         <div class="dialog-actions">
           <button ref="cancelButton" class="text-button" type="button" data-action="approve-cancel" @click="closeConfirm">取消</button>
           <button
             class="primary-button"
             type="button"
             data-action="approve-confirm"
-            :disabled="pendingApproveId !== null && isBusy(pendingApproveId)"
+            :disabled="(pendingApproveId !== null && isBusy(pendingApproveId)) || (isConfirmTargetCritical && !criticalAcknowledged)"
             @click="confirmApprove"
           >确认批准</button>
         </div>
@@ -96,8 +119,12 @@
 //: v-html) with ANSI/OSC stripped before rendering.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { stripAnsiOsc, type AgentHistoryState } from '@termflow/client-core'
+import type { ApprovalResponse } from '@termflow/client-contracts'
 import { useAgentApprovals } from '../../composables/useAgentApprovals'
 import { useClientRuntime } from '../../runtime'
+import { assessRisk, type RiskAssessment } from '../../utils/risk'
+import { isUnifiedDiff } from '../../utils/diff'
+import AgentCollapsibleOutput from './AgentCollapsibleOutput.vue'
 
 const props = defineProps<{
   /** Conversation scope for the approvals list (B REST filter). */
@@ -209,14 +236,30 @@ const dialogPanel = ref<HTMLElement | null>(null)
 const cancelButton = ref<HTMLButtonElement | null>(null)
 let restoreFocus: HTMLElement | null = null
 
+const criticalAcknowledged = ref(false)
+const isDiff = (text: string | null) => text !== null && isUnifiedDiff(text)
+
+function getRisk(approval: ApprovalResponse): RiskAssessment {
+  return assessRisk({
+    operation: approval.operation,
+    summary: approval.intent_summary,
+  })
+}
+
 const confirmTarget = computed(() =>
   pendingApproveId.value === null
     ? undefined
     : approvals.value.find((approval) => approval.approval_id === pendingApproveId.value),
 )
 
+const isConfirmTargetCritical = computed(() => {
+  if (confirmTarget.value === undefined) return false
+  return getRisk(confirmTarget.value).isCritical
+})
+
 function openConfirm(approvalId: string) {
   restoreFocus = document.activeElement as HTMLElement | null
+  criticalAcknowledged.value = false
   pendingApproveId.value = approvalId
   void nextTick(() => cancelButton.value?.focus())
 }

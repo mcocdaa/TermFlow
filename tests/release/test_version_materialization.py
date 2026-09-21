@@ -96,35 +96,30 @@ def test_materializer_updates_registered_surfaces_and_internal_dependencies(
     materialize_version(tmp_path, "1.4.0-rc.2")
 
     assert verify_materialized_version(tmp_path, "1.4.0-rc.2") == []
-    assert json.loads((tmp_path / "package.json").read_text())["version"] == (
-        "1.4.0-rc.2"
-    )
+    assert json.loads((tmp_path / "package.json").read_text())["version"] == ("1.4.0-rc.2")
     web = json.loads((tmp_path / "apps/clients/web/package.json").read_text())
     assert web["dependencies"]["@termflow/client-core"] == "1.4.0-rc.2"
     assert web["dependencies"]["@termflow/client-ui"] == "1.4.0-rc.2"
-    assert 'name = "termflow-node"\nversion = "1.4.0-rc.2"' in (
-        tmp_path / "uv.lock"
-    ).read_text()
-    assert 'name = "termflow-client"\nversion = "1.4.0-rc.2"' in (
-        tmp_path / "apps/clients/tauri/src-tauri/Cargo.lock"
-    ).read_text()
+    assert 'name = "termflow-node"\nversion = "1.4.0-rc.2"' in (tmp_path / "uv.lock").read_text()
+    assert (
+        'name = "termflow-client"\nversion = "1.4.0-rc.2"'
+        in (tmp_path / "apps/clients/tauri/src-tauri/Cargo.lock").read_text()
+    )
     android = json.loads(
         (tmp_path / "apps/clients/tauri/src-tauri/tauri.android.conf.json").read_text()
     )
     assert android["bundle"]["android"]["versionCode"] == 1_040_062
     for platform in ("macos", "ios"):
         config = json.loads(
-            (
-                tmp_path
-                / f"apps/clients/tauri/src-tauri/tauri.{platform}.conf.json"
-            ).read_text()
+            (tmp_path / f"apps/clients/tauri/src-tauri/tauri.{platform}.conf.json").read_text()
         )
         assert config["version"] == "1.4.0"
         platform_key = "iOS" if platform == "ios" else "macOS"
         assert config["bundle"][platform_key]["bundleVersion"] == "1.4.0"
-    assert '__version__ = "1.4.0-rc.2"' in (
-        tmp_path / "apps/node/src/termflow_node/__init__.py"
-    ).read_text()
+    assert (
+        '__version__ = "1.4.0-rc.2"'
+        in (tmp_path / "apps/node/src/termflow_node/__init__.py").read_text()
+    )
 
 
 def test_materializer_is_idempotent(tmp_path: Path) -> None:
@@ -145,17 +140,16 @@ def test_materializer_preserves_third_party_locks_and_unregistered_files(
     fixture.write_text('client_version = "0.1.0"\n')
     npm_before = _third_party_npm_packages(tmp_path / "package-lock.json")
     uv_before = _third_party_toml_blocks(tmp_path / "uv.lock")
-    cargo_before = _third_party_toml_blocks(
-        tmp_path / "apps/clients/tauri/src-tauri/Cargo.lock"
-    )
+    cargo_before = _third_party_toml_blocks(tmp_path / "apps/clients/tauri/src-tauri/Cargo.lock")
 
     materialize_version(tmp_path, "3.1.4+build.7")
 
     assert _third_party_npm_packages(tmp_path / "package-lock.json") == npm_before
     assert _third_party_toml_blocks(tmp_path / "uv.lock") == uv_before
-    assert _third_party_toml_blocks(
-        tmp_path / "apps/clients/tauri/src-tauri/Cargo.lock"
-    ) == cargo_before
+    assert (
+        _third_party_toml_blocks(tmp_path / "apps/clients/tauri/src-tauri/Cargo.lock")
+        == cargo_before
+    )
     assert fixture.read_text() == 'client_version = "0.1.0"\n'
 
 

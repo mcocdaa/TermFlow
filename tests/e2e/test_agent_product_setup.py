@@ -292,9 +292,7 @@ def test_runtime_health_drift_unmaps_then_recovers(agent_product_system: Any) ->
                 "profile_id": setup_body["profile"]["profile_id"],
                 "pane_ids": [pane_id],
                 "topology_revision": unavailable["topology_revision"],
-                "disclosure_fingerprint": unavailable["disclosure"][
-                    "disclosure_fingerprint"
-                ],
+                "disclosure_fingerprint": unavailable["disclosure"]["disclosure_fingerprint"],
                 "accepted": True,
                 "idempotency_key": str(uuid4()),
             },
@@ -346,9 +344,7 @@ def test_sse_disconnect_reconciles_replays_and_deduplicates(
         timeout=10,
     )
     assert admitted.status_code == 202, admitted.text
-    assert _wait_for_assistant_message(system, conversation_id)["body"] == (
-        "fixture-result-1"
-    )
+    assert _wait_for_assistant_message(system, conversation_id)["body"] == ("fixture-result-1")
     _wait_until(
         lambda: runtime.sse_connections >= 2 and runtime.reconcile_calls >= 1,
         description="pipeline did not reconcile and reconnect",
@@ -412,8 +408,10 @@ def test_action_disconnect_parks_delivery_unknown_without_resubmit(
     assert admitted.status_code == 202, admitted.text
 
     _wait_until(
-        lambda: _database_run_delivery_states(system, conversation_id)
-        == (["delivery_unknown"], ["unknown"]),
+        lambda: (
+            _database_run_delivery_states(system, conversation_id)
+            == (["delivery_unknown"], ["unknown"])
+        ),
         description="ambiguous action did not reach durable delivery_unknown",
         timeout=15,
     )
@@ -499,9 +497,7 @@ def test_stale_epoch_wrong_host_and_revoked_token_fail_closed(
     )
     assert wrong_host.status_code == 421
 
-    bootstrap_digest = hashlib.sha256(
-        agent_product_system.mcp_token.encode()
-    ).hexdigest()
+    bootstrap_digest = hashlib.sha256(agent_product_system.mcp_token.encode()).hexdigest()
     with sqlite3.connect(system.database_path) as connection:
         changed = connection.execute(
             "UPDATE agent_tokens SET binding_epoch = ? WHERE token_hash = ?",
@@ -594,8 +590,9 @@ def test_revoke_during_turn_fences_active_run_without_side_effect(
     )
     assert admitted.status_code == 202, admitted.text
     _wait_until(
-        lambda: _database_run_delivery_states(system, conversation_id)
-        == (["dispatched"], ["running"]),
+        lambda: (
+            _database_run_delivery_states(system, conversation_id) == (["dispatched"], ["running"])
+        ),
         description="fixture turn did not reach the active running boundary",
         timeout=15,
     )
@@ -662,9 +659,7 @@ def test_cleanup_outage_returns_202_then_receipts_complete(
         timeout=10,
     )
     assert admitted.status_code == 202, admitted.text
-    assert _wait_for_assistant_message(system, conversation_id)["body"] == (
-        "fixture-result-1"
-    )
+    assert _wait_for_assistant_message(system, conversation_id)["body"] == ("fixture-result-1")
 
     runtime.delete_available = False
     first_delete = httpx.delete(
@@ -716,14 +711,11 @@ def test_cleanup_outage_returns_202_then_receipts_complete(
     receipts = after_runtime_cleanup.json()["receipts"]
     assert after_runtime_cleanup.json()["state"] == "pending"
     assert any(
-        receipt["artifact_kind"] == "backend_session"
-        and receipt["state"] == "confirmed"
+        receipt["artifact_kind"] == "backend_session" and receipt["state"] == "confirmed"
         for receipt in receipts
     )
     provider_receipt = next(
-        receipt
-        for receipt in receipts
-        if receipt["artifact_kind"] == "provider_retention"
+        receipt for receipt in receipts if receipt["artifact_kind"] == "provider_retention"
     )
     assert provider_receipt["state"] == "pending"
 
@@ -747,9 +739,7 @@ def test_cleanup_outage_returns_202_then_receipts_complete(
             f"{system.base_url}/api/v1/agent/admin/cleanup-jobs/{cleanup_job_id}"
             f"/receipts/{provider_receipt['receipt_id']}/confirm"
         ),
-        headers={
-            "Authorization": f"Bearer {agent_product_system.cleanup_helper_token}"
-        },
+        headers={"Authorization": f"Bearer {agent_product_system.cleanup_helper_token}"},
         json={
             "artifact_ref": provider_artifact_ref,
             "result": "confirmed",
@@ -802,9 +792,7 @@ def test_cleanup_dead_letter_receipt_stays_visible(
         timeout=10,
     )
     assert admitted.status_code == 202, admitted.text
-    assert _wait_for_assistant_message(system, conversation_id)["body"] == (
-        "fixture-result-1"
-    )
+    assert _wait_for_assistant_message(system, conversation_id)["body"] == ("fixture-result-1")
 
     deleted = httpx.delete(
         f"{system.base_url}/api/v1/agent/conversations/{conversation_id}",
@@ -864,8 +852,7 @@ def test_cleanup_dead_letter_receipt_stays_visible(
         assert visible.status_code == 200, visible.text
         assert visible.json()["state"] == "dead_letter"
         assert any(
-            receipt["state"] == "dead_letter"
-            and receipt["reason_code"] == "cleanup_dead_letter"
+            receipt["state"] == "dead_letter" and receipt["reason_code"] == "cleanup_dead_letter"
             for receipt in visible.json()["receipts"]
         )
 

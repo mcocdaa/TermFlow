@@ -145,4 +145,21 @@ describe('AgentApprovalCard', () => {
     cardWrapper.unmount()
     panelWrapper.unmount()
   })
+
+  it('renders risk assessment badge and structured diff preview', async () => {
+    cacheApprovalDetail(approvalEntry('a1', {
+      state: 'pending',
+      operation: 'rm',
+      intent_summary: 'rm -rf /var/data',
+    }))
+    const request = vi.fn()
+    const clientUi = createClientUi(runtimeWith(request))
+    const wrapper = mountCard(request, clientUi)
+    await flushPromises()
+
+    const badge = wrapper.get('.agent-risk-badge')
+    expect(badge.text()).toBe('极高危')
+    expect(badge.attributes('data-agent-risk-level')).toBe('4')
+    wrapper.unmount()
+  })
 })

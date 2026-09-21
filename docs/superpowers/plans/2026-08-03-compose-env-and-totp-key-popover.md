@@ -194,8 +194,14 @@ assert "TERMFLOW_TRUSTED_WEB_ORIGINS" not in env_example
 assert "TERMFLOW_PUBLIC_BASE_URL" in env_example
 assert "# TERMFLOW_TOTP_MASTER_KEY=replace-with-generated-base64url-key" in env_example
 for explanation in (
-    "8 小时", "浏览器会话", "一次性注册码", "64 KiB",
-    "256 KiB/s", "256 条", "1 MiB", "30 秒",
+    "8 小时",
+    "浏览器会话",
+    "一次性注册码",
+    "64 KiB",
+    "256 KiB/s",
+    "256 条",
+    "1 MiB",
+    "30 秒",
 ):
     assert explanation in env_example
 assert "docker compose --env-file .env -f deploy/compose.yaml up -d --build" in operations

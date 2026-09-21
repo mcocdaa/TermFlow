@@ -100,9 +100,11 @@ def test_enrollment_create_prints_token_once_and_stores_only_hash(tmp_path: Path
         created_at, expires_at = connection.execute(
             "SELECT created_at, expires_at FROM enrollment_tokens"
         ).fetchone()
-    assert 16 <= (
-        datetime.fromisoformat(expires_at) - datetime.fromisoformat(created_at)
-    ).total_seconds() <= 18
+    assert (
+        16
+        <= (datetime.fromisoformat(expires_at) - datetime.fromisoformat(created_at)).total_seconds()
+        <= 18
+    )
 
 
 def test_serve_rejects_multiple_workers() -> None:
@@ -195,22 +197,30 @@ def test_auth_totp_reset_atomically_revokes_credentials_and_preserves_native_key
             "FROM authentication_state WHERE id = 1"
         ).fetchone()
         assert connection.execute("SELECT COUNT(*) FROM totp_setups").fetchone()[0] == 0
-        assert connection.execute(
-            "SELECT COUNT(*) FROM auth_challenges WHERE completed_at IS NULL"
-        ).fetchone()[0] == 0
-        assert connection.execute(
-            "SELECT COUNT(*) FROM auth_tokens WHERE revoked_at IS NULL"
-        ).fetchone()[0] == 0
-        assert connection.execute(
-            "SELECT COUNT(*) FROM oauth_authorizations WHERE consumed_at IS NULL"
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM auth_challenges WHERE completed_at IS NULL"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM auth_tokens WHERE revoked_at IS NULL"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM oauth_authorizations WHERE consumed_at IS NULL"
+            ).fetchone()[0]
+            == 0
+        )
         stored_jwk, revoked_at = connection.execute(
             "SELECT public_jwk, revoked_at FROM native_clients WHERE id = ?",
             (native_client_id.hex,),
         ).fetchone()
         audit = connection.execute(
-            "SELECT operation, result, source_digest, client_id, error_code "
-            "FROM auth_audit_events"
+            "SELECT operation, result, source_digest, client_id, error_code FROM auth_audit_events"
         ).fetchall()
 
     assert (epoch, ciphertext, last_counter, generation) == (2, None, None, 2)
@@ -246,18 +256,26 @@ def test_auth_rotate_revokes_credentials_but_preserves_totp(tmp_path: Path) -> N
 
     with sqlite3.connect(database_path) as connection:
         epoch, ciphertext, generation = connection.execute(
-            "SELECT epoch, totp_ciphertext, totp_generation "
-            "FROM authentication_state WHERE id = 1"
+            "SELECT epoch, totp_ciphertext, totp_generation FROM authentication_state WHERE id = 1"
         ).fetchone()
-        assert connection.execute(
-            "SELECT COUNT(*) FROM auth_challenges WHERE completed_at IS NULL"
-        ).fetchone()[0] == 0
-        assert connection.execute(
-            "SELECT COUNT(*) FROM auth_tokens WHERE revoked_at IS NULL"
-        ).fetchone()[0] == 0
-        assert connection.execute(
-            "SELECT COUNT(*) FROM oauth_authorizations WHERE consumed_at IS NULL"
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM auth_challenges WHERE completed_at IS NULL"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM auth_tokens WHERE revoked_at IS NULL"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM oauth_authorizations WHERE consumed_at IS NULL"
+            ).fetchone()[0]
+            == 0
+        )
         stored_jwk, revoked_at = connection.execute(
             "SELECT public_jwk, revoked_at FROM native_clients WHERE id = ?",
             (native_client_id.hex,),

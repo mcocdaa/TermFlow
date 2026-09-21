@@ -41,9 +41,7 @@ class FakeAdapter:
         self._message = message
         self.deleted_refs: list[BackendConversationRef] = []
 
-    async def delete_conversation(
-        self, ref: BackendConversationRef
-    ) -> BackendOperationResult:
+    async def delete_conversation(self, ref: BackendConversationRef) -> BackendOperationResult:
         self.deleted_refs.append(ref)
         return BackendOperationResult(outcome=self._outcome, message=self._message)
 
@@ -87,9 +85,7 @@ def _seed_binding(
         json={"profile_id": profile.json()["profile_id"], "term_id": str(term.instance_id)},
     )
     assert binding.status_code == 201, binding.text
-    return UUID(str(profile.json()["profile_id"])), UUID(
-        str(binding.json()["binding_id"])
-    )
+    return UUID(str(profile.json()["profile_id"])), UUID(str(binding.json()["binding_id"]))
 
 
 def _create_conversation(
@@ -104,9 +100,7 @@ def _create_conversation(
     return UUID(str(response.json()["conversation_id"]))
 
 
-async def _seed_backend_ref(
-    client: TestClient, conversation_id: UUID, provider_ref: str
-) -> None:
+async def _seed_backend_ref(client: TestClient, conversation_id: UUID, provider_ref: str) -> None:
     repositories: RepositoryBundle = client.app.state.repositories
     await repositories.agent_backend_conversations.create(
         conversation_id=conversation_id,
@@ -153,9 +147,7 @@ def test_delete_conversation_cancels_runs_and_waits_for_provider_retention_recei
     _, binding_id = _seed_binding(client, admin_headers, provision_term)
     conversation_id = _create_conversation(client, admin_headers, binding_id)
     adapter = FakeAdapter()
-    client.app.state.agent_runtime_registry = FakeRegistry(
-        {binding_id: FakePipeline(adapter)}
-    )
+    client.app.state.agent_runtime_registry = FakeRegistry({binding_id: FakePipeline(adapter)})
 
     async def seed() -> None:
         await _seed_backend_ref(client, conversation_id, "sess_abc123")
@@ -163,9 +155,7 @@ def test_delete_conversation_cancels_runs_and_waits_for_provider_retention_recei
 
     client.portal.call(seed)
 
-    deleted = client.delete(
-        f"/api/v1/agent/conversations/{conversation_id}", headers=admin_headers
-    )
+    deleted = client.delete(f"/api/v1/agent/conversations/{conversation_id}", headers=admin_headers)
     assert deleted.status_code == 202, deleted.text
     assert deleted.json()["state"] == "deletion_pending"
 
@@ -173,19 +163,15 @@ def test_delete_conversation_cancels_runs_and_waits_for_provider_retention_recei
         repositories: RepositoryBundle = client.app.state.repositories
         # Rows are gone; the backend adapter was asked to delete the session.
         assert await repositories.agent_conversations.get_by_id(conversation_id) is None
-        assert [
-            ref.provider_ref for ref in adapter.deleted_refs
-        ] == ["sess_abc123"]
+        assert [ref.provider_ref for ref in adapter.deleted_refs] == ["sess_abc123"]
         # The provider-owned retention receipt still requires independent
         # confirmation even though B proved the backend session deletion.
         pending = await repositories.cleanup_jobs.list_pending()
         assert len(pending) == 1
         receipts = await repositories.cleanup_jobs.list_receipts(pending[0].id)
-        assert [
-            row.artifact_kind
-            for row in receipts
-            if row.state == "pending"
-        ] == ["provider_retention"]
+        assert [row.artifact_kind for row in receipts if row.state == "pending"] == [
+            "provider_retention"
+        ]
 
     client.portal.call(verify)
 
@@ -196,13 +182,9 @@ def test_delete_conversation_without_backend_session_is_plain_success(
     _, binding_id = _seed_binding(client, admin_headers, provision_term)
     conversation_id = _create_conversation(client, admin_headers, binding_id)
     adapter = FakeAdapter()
-    client.app.state.agent_runtime_registry = FakeRegistry(
-        {binding_id: FakePipeline(adapter)}
-    )
+    client.app.state.agent_runtime_registry = FakeRegistry({binding_id: FakePipeline(adapter)})
 
-    deleted = client.delete(
-        f"/api/v1/agent/conversations/{conversation_id}", headers=admin_headers
-    )
+    deleted = client.delete(f"/api/v1/agent/conversations/{conversation_id}", headers=admin_headers)
     assert deleted.status_code == 204, deleted.text
 
     async def verify() -> None:
@@ -220,9 +202,7 @@ def test_delete_conversation_backend_unconfirmed_keeps_rows_and_marks_pending(
     _, binding_id = _seed_binding(client, admin_headers, provision_term)
     conversation_id = _create_conversation(client, admin_headers, binding_id)
     adapter = FakeAdapter(outcome=BackendOutcome.UNKNOWN, message="backend down")
-    client.app.state.agent_runtime_registry = FakeRegistry(
-        {binding_id: FakePipeline(adapter)}
-    )
+    client.app.state.agent_runtime_registry = FakeRegistry({binding_id: FakePipeline(adapter)})
 
     async def seed() -> None:
         run_id = await _seed_active_run(client, conversation_id)
@@ -232,9 +212,7 @@ def test_delete_conversation_backend_unconfirmed_keeps_rows_and_marks_pending(
 
     client.portal.call(seed)
 
-    deleted = client.delete(
-        f"/api/v1/agent/conversations/{conversation_id}", headers=admin_headers
-    )
+    deleted = client.delete(f"/api/v1/agent/conversations/{conversation_id}", headers=admin_headers)
     assert deleted.status_code == 202, deleted.text
     assert deleted.json()["state"] == "deletion_pending"
 
@@ -269,9 +247,7 @@ def test_delete_conversation_without_pipeline_fails_closed(
 
     client.portal.call(seed)
 
-    deleted = client.delete(
-        f"/api/v1/agent/conversations/{conversation_id}", headers=admin_headers
-    )
+    deleted = client.delete(f"/api/v1/agent/conversations/{conversation_id}", headers=admin_headers)
     assert deleted.status_code == 202, deleted.text
     assert deleted.json()["state"] == "deletion_pending"
 
@@ -292,9 +268,7 @@ def test_delete_missing_conversation_is_404(
 ) -> None:
     from uuid import uuid4
 
-    deleted = client.delete(
-        f"/api/v1/agent/conversations/{uuid4()}", headers=admin_headers
-    )
+    deleted = client.delete(f"/api/v1/agent/conversations/{uuid4()}", headers=admin_headers)
     assert deleted.status_code == 404
     assert deleted.json()["error"]["code"] == "conversation_not_found"
 
@@ -311,9 +285,7 @@ def test_delete_binding_cancels_runs_and_waits_for_provider_retention_receipts(
     first = _create_conversation(client, admin_headers, binding_id)
     second = _create_conversation(client, admin_headers, binding_id)
     adapter = FakeAdapter()
-    client.app.state.agent_runtime_registry = FakeRegistry(
-        {binding_id: FakePipeline(adapter)}
-    )
+    client.app.state.agent_runtime_registry = FakeRegistry({binding_id: FakePipeline(adapter)})
 
     async def seed() -> None:
         await _seed_backend_ref(client, first, "sess_1")
@@ -322,9 +294,7 @@ def test_delete_binding_cancels_runs_and_waits_for_provider_retention_receipts(
 
     client.portal.call(seed)
 
-    deleted = client.delete(
-        f"/api/v1/agent/admin/bindings/{binding_id}", headers=admin_headers
-    )
+    deleted = client.delete(f"/api/v1/agent/admin/bindings/{binding_id}", headers=admin_headers)
     assert deleted.status_code == 202, deleted.text
     assert deleted.json()["state"] == "deletion_pending"
 
@@ -353,40 +323,30 @@ def test_delete_binding_backend_unconfirmed_keeps_rows_and_marks_pending(
     _, binding_id = _seed_binding(client, admin_headers, provision_term)
     conversation_id = _create_conversation(client, admin_headers, binding_id)
     adapter = FakeAdapter(outcome=BackendOutcome.UNKNOWN, message="backend down")
-    client.app.state.agent_runtime_registry = FakeRegistry(
-        {binding_id: FakePipeline(adapter)}
-    )
+    client.app.state.agent_runtime_registry = FakeRegistry({binding_id: FakePipeline(adapter)})
 
     async def seed() -> None:
         await _seed_backend_ref(client, conversation_id, "sess_b")
 
     client.portal.call(seed)
 
-    deleted = client.delete(
-        f"/api/v1/agent/admin/bindings/{binding_id}", headers=admin_headers
-    )
+    deleted = client.delete(f"/api/v1/agent/admin/bindings/{binding_id}", headers=admin_headers)
     assert deleted.status_code == 202, deleted.text
     assert deleted.json()["state"] == "deletion_pending"
 
     async def verify() -> None:
         repositories: RepositoryBundle = client.app.state.repositories
         assert await repositories.agent_bindings.get_by_id(binding_id) is not None
-        job = await _cleanup_job(
-            client, target_kind="binding", target_ref=str(binding_id)
-        )
+        job = await _cleanup_job(client, target_kind="binding", target_ref=str(binding_id))
         assert job is not None and job.state == "pending"
 
     client.portal.call(verify)
 
 
-def test_delete_missing_binding_is_404(
-    client: TestClient, admin_headers: dict[str, str]
-) -> None:
+def test_delete_missing_binding_is_404(client: TestClient, admin_headers: dict[str, str]) -> None:
     from uuid import uuid4
 
-    deleted = client.delete(
-        f"/api/v1/agent/admin/bindings/{uuid4()}", headers=admin_headers
-    )
+    deleted = client.delete(f"/api/v1/agent/admin/bindings/{uuid4()}", headers=admin_headers)
     assert deleted.status_code == 404
     assert deleted.json()["error"]["code"] == "binding_not_found"
 
@@ -402,9 +362,7 @@ def test_delete_profile_sweeps_sessions_and_waits_for_provider_retention_receipt
     profile_id, binding_id = _seed_binding(client, admin_headers, provision_term)
     conversation_id = _create_conversation(client, admin_headers, binding_id)
     adapter = FakeAdapter()
-    client.app.state.agent_runtime_registry = FakeRegistry(
-        {binding_id: FakePipeline(adapter)}
-    )
+    client.app.state.agent_runtime_registry = FakeRegistry({binding_id: FakePipeline(adapter)})
 
     async def seed() -> None:
         await _seed_backend_ref(client, conversation_id, "sess_p")
@@ -412,9 +370,7 @@ def test_delete_profile_sweeps_sessions_and_waits_for_provider_retention_receipt
 
     client.portal.call(seed)
 
-    deleted = client.delete(
-        f"/api/v1/agent/admin/profiles/{profile_id}", headers=admin_headers
-    )
+    deleted = client.delete(f"/api/v1/agent/admin/profiles/{profile_id}", headers=admin_headers)
     assert deleted.status_code == 202, deleted.text
     assert deleted.json()["state"] == "deletion_pending"
 
@@ -428,9 +384,7 @@ def test_delete_profile_sweeps_sessions_and_waits_for_provider_retention_receipt
         assert len(pending) == 1
         receipts = await repositories.cleanup_jobs.list_receipts(pending[0].id)
         assert [
-            row.artifact_ref
-            for row in receipts
-            if row.artifact_kind == "provider_retention"
+            row.artifact_ref for row in receipts if row.artifact_kind == "provider_retention"
         ] == ["provider:sess_p"]
 
     client.portal.call(verify)
@@ -442,18 +396,14 @@ def test_delete_profile_backend_unconfirmed_keeps_rows_and_marks_pending(
     profile_id, binding_id = _seed_binding(client, admin_headers, provision_term)
     conversation_id = _create_conversation(client, admin_headers, binding_id)
     adapter = FakeAdapter(outcome=BackendOutcome.UNKNOWN, message="backend down")
-    client.app.state.agent_runtime_registry = FakeRegistry(
-        {binding_id: FakePipeline(adapter)}
-    )
+    client.app.state.agent_runtime_registry = FakeRegistry({binding_id: FakePipeline(adapter)})
 
     async def seed() -> None:
         await _seed_backend_ref(client, conversation_id, "sess_p2")
 
     client.portal.call(seed)
 
-    deleted = client.delete(
-        f"/api/v1/agent/admin/profiles/{profile_id}", headers=admin_headers
-    )
+    deleted = client.delete(f"/api/v1/agent/admin/profiles/{profile_id}", headers=admin_headers)
     assert deleted.status_code == 202, deleted.text
     assert deleted.json()["state"] == "deletion_pending"
 
@@ -461,22 +411,16 @@ def test_delete_profile_backend_unconfirmed_keeps_rows_and_marks_pending(
         repositories: RepositoryBundle = client.app.state.repositories
         assert await repositories.agent_profiles.get_by_id(profile_id) is not None
         assert await repositories.agent_bindings.get_by_id(binding_id) is not None
-        job = await _cleanup_job(
-            client, target_kind="profile", target_ref=str(profile_id)
-        )
+        job = await _cleanup_job(client, target_kind="profile", target_ref=str(profile_id))
         assert job is not None and job.state == "pending"
 
     client.portal.call(verify)
 
 
-def test_delete_missing_profile_is_404(
-    client: TestClient, admin_headers: dict[str, str]
-) -> None:
+def test_delete_missing_profile_is_404(client: TestClient, admin_headers: dict[str, str]) -> None:
     from uuid import uuid4
 
-    deleted = client.delete(
-        f"/api/v1/agent/admin/profiles/{uuid4()}", headers=admin_headers
-    )
+    deleted = client.delete(f"/api/v1/agent/admin/profiles/{uuid4()}", headers=admin_headers)
     assert deleted.status_code == 404
     assert deleted.json()["error"]["code"] == "profile_not_found"
 

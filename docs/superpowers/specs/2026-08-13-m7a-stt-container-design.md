@@ -153,7 +153,8 @@ SpeachesTranscriptionProvider(
 ```python
 if settings.stt_enabled:
     app.state.transcription_provider = SpeachesTranscriptionProvider(
-        settings.stt_url, model=settings.stt_model,
+        settings.stt_url,
+        model=settings.stt_model,
         token=settings.stt_token.get_secret_value() if settings.stt_token else None,
         timeout_seconds=settings.stt_timeout_seconds,
     )

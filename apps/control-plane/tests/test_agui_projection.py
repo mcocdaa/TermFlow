@@ -158,17 +158,13 @@ def test_permission_requested_prefers_approval_request_id() -> None:
     }
     projected, drops = project_agent_event(_event("permission_requested"), payload)
     assert drops == ProjectionDropCounts()
-    assert projected[0]["value"] == {
-        "approval_request_id": str(APPROVAL_REQUEST_ID)
-    }
+    assert projected[0]["value"] == {"approval_request_id": str(APPROVAL_REQUEST_ID)}
 
 
 def test_permission_requested_without_any_id_is_malformed() -> None:
     payload = {"summary": "write pane"}
     projector = AgentEventProjector()
-    event = _event(
-        "permission_requested", payload=_payload_json(payload)
-    )
+    event = _event("permission_requested", payload=_payload_json(payload))
     assert projector.project(event) == []
     assert projector.drops == ProjectionDropCounts(malformed_payload=1)
 
@@ -230,9 +226,7 @@ def test_message_completed_projection_unchanged() -> None:
 
 
 def test_run_boundaries_still_require_run_id() -> None:
-    projected, drops = project_agent_event(
-        _event("run_completed", run_id=None), {"input_id": None}
-    )
+    projected, drops = project_agent_event(_event("run_completed", run_id=None), {"input_id": None})
     assert projected == []
     assert drops == ProjectionDropCounts(run_without_run_id=1)
 

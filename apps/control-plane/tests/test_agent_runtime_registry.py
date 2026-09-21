@@ -61,16 +61,12 @@ from termflow_control_plane.plugins.protocol import (
 
 RUNTIME_REF = "runtime-1"
 CAPABILITY_REF = "capability-1"
-CANONICAL_PROFILE_CONFIG = (
-    '{"model_id":"deepseek-v4-flash","provider_id":"deepseek"}'
-)
+CANONICAL_PROFILE_CONFIG = '{"model_id":"deepseek-v4-flash","provider_id":"deepseek"}'
 TEST_PROVIDER_CATALOG = ProviderCatalog(
     (
         ProviderCatalogEntry(
             provider_id="deepseek",
-            model_ids=frozenset(
-                {"deepseek-v4-flash", "deepseek-reasoner"}
-            ),
+            model_ids=frozenset({"deepseek-v4-flash", "deepseek-reasoner"}),
             endpoint_origin="https://api.deepseek.com",
             region="global",
             retention_terms="no more than 30 days",
@@ -436,9 +432,7 @@ async def test_legacy_profile_config_fails_before_adapter_or_publish(
 
     with pytest.raises(
         RuntimeNotReadyError,
-        match=(
-            r"^agent profile configuration is invalid; activation fails closed$"
-        ),
+        match=(r"^agent profile configuration is invalid; activation fails closed$"),
     ) as captured:
         await registry.build_pipeline(binding)
 

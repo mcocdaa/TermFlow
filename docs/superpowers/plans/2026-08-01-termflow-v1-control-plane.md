@@ -260,7 +260,9 @@ class PaneOutputPayload(BaseModel):
     captured_at: datetime
 
     @classmethod
-    def from_bytes(cls, pane_id: str, stream_id: UUID, seq: int, data: bytes) -> "PaneOutputPayload":
+    def from_bytes(
+        cls, pane_id: str, stream_id: UUID, seq: int, data: bytes
+    ) -> "PaneOutputPayload":
         return cls(
             pane_id=pane_id,
             stream_id=stream_id,

@@ -44,13 +44,17 @@ async def test_installation_probe_reports_revoked_only_for_auth_failures() -> No
         assert request.url.path == "/api/v1/instances/mine"
         return httpx.Response(401)
 
-    assert await ControlPlaneClient(transport=httpx.MockTransport(revoked)).installation_revoked(installation)
+    assert await ControlPlaneClient(transport=httpx.MockTransport(revoked)).installation_revoked(
+        installation
+    )
 
     def unavailable(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503)
 
     with pytest.raises(httpx.HTTPStatusError):
-        await ControlPlaneClient(transport=httpx.MockTransport(unavailable)).installation_revoked(installation)
+        await ControlPlaneClient(transport=httpx.MockTransport(unavailable)).installation_revoked(
+            installation
+        )
 ```
 
 Add a CLI regression test with an existing config and a new enrollment code. Mock `installation_revoked` to return `True` and `enroll` to return a replacement installation; assert the command succeeds without `--force` and the config contains only the replacement installation. Add a second test where the probe returns `False`; assert the command still fails with the `--force` hint.
@@ -75,7 +79,9 @@ async def installation_revoked(self, installation: InstallationConfig) -> bool:
     async with httpx.AsyncClient(transport=self._transport, timeout=3.0) as client:
         response = await client.get(
             f"{base_url}/api/v1/instances/mine",
-            headers={"Authorization": "Bearer " + installation.installation_token.get_secret_value()},
+            headers={
+                "Authorization": "Bearer " + installation.installation_token.get_secret_value()
+            },
         )
     if response.status_code in {401, 403, 404}:
         return True

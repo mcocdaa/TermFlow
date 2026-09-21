@@ -22,9 +22,7 @@ def _make_release_directory(root: Path, *, checksum: str | None = None) -> Path:
         version_info.size = len(version)
         bundle.addfile(version_info, io.BytesIO(version))
         executable = b"#!/usr/bin/env bash\necho 0.1.0\n"
-        executable_info = tarfile.TarInfo(
-            "termflow-node-linux-x86_64/termflow/termflow"
-        )
+        executable_info = tarfile.TarInfo("termflow-node-linux-x86_64/termflow/termflow")
         executable_info.mode = 0o755
         executable_info.size = len(executable)
         bundle.addfile(executable_info, io.BytesIO(executable))
@@ -61,8 +59,7 @@ def test_installer_defaults_to_the_rendered_repository(tmp_path: Path) -> None:
     installer = _render_installer(tmp_path, repository="fork-owner/TermFlow")
 
     assert (
-        "https://github.com/fork-owner/TermFlow/releases/download/${TAG}"
-        in installer.read_text()
+        "https://github.com/fork-owner/TermFlow/releases/download/${TAG}" in installer.read_text()
     )
     assert "github.com/mcocdaa/TermFlow" not in installer.read_text()
 

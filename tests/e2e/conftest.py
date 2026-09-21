@@ -61,16 +61,10 @@ class TermFlowSystem:
         self.repo = Path.cwd()
         configured_node = os.environ.get("TERMFLOW_NODE_EXECUTABLE")
         self.node_executable = (
-            Path(configured_node).resolve()
-            if configured_node
-            else self.repo / ".venv/bin/termflow"
+            Path(configured_node).resolve() if configured_node else self.repo / ".venv/bin/termflow"
         )
-        if not self.node_executable.is_file() or not os.access(
-            self.node_executable, os.X_OK
-        ):
-            raise RuntimeError(
-                f"Invalid TERMFLOW_NODE_EXECUTABLE: {self.node_executable}"
-            )
+        if not self.node_executable.is_file() or not os.access(self.node_executable, os.X_OK):
+            raise RuntimeError(f"Invalid TERMFLOW_NODE_EXECUTABLE: {self.node_executable}")
         self.port = _free_port()
         self.base_url = f"http://127.0.0.1:{self.port}"
         self.admin_token = "e2e-admin-token-that-is-long-enough"
@@ -430,9 +424,7 @@ class FakeAgentRuntime:
     def _emit_completed_turn(self, session_id: str) -> None:
         message_id = f"msg_fixture_{self.prompt_calls}"
         text = "fixture-result-1"
-        self._sessions.setdefault(session_id, []).append(
-            {"id": message_id, "role": "assistant"}
-        )
+        self._sessions.setdefault(session_id, []).append({"id": message_id, "role": "assistant"})
         events = (
             self._next_event(
                 "session.status",
@@ -465,9 +457,7 @@ class FakeAgentRuntime:
             self._next_event("session.idle", {"sessionID": session_id}),
         )
         with self._condition:
-            self._events.extend(
-                json.dumps(event, separators=(",", ":")) for event in events
-            )
+            self._events.extend(json.dumps(event, separators=(",", ":")) for event in events)
             self._condition.notify_all()
 
     def _emit_tool_start_only(self, session_id: str) -> None:
@@ -494,9 +484,7 @@ class FakeAgentRuntime:
             ),
         )
         with self._condition:
-            self._events.extend(
-                json.dumps(event, separators=(",", ":")) for event in events
-            )
+            self._events.extend(json.dumps(event, separators=(",", ":")) for event in events)
             self._condition.notify_all()
 
     def _handler_type(self) -> type[BaseHTTPRequestHandler]:
@@ -563,10 +551,7 @@ class FakeAgentRuntime:
                 try:
                     while True:
                         with runtime._condition:
-                            while (
-                                index >= len(runtime._events)
-                                and not runtime._stopping
-                            ):
+                            while index >= len(runtime._events) and not runtime._stopping:
                                 runtime._condition.wait(timeout=0.2)
                             if runtime._stopping:
                                 return
@@ -580,8 +565,7 @@ class FakeAgentRuntime:
                                 force_disconnect = (
                                     runtime._forced_disconnects_remaining > 0
                                     and runtime._disconnect_after_events is not None
-                                    and sent_on_connection
-                                    >= runtime._disconnect_after_events
+                                    and sent_on_connection >= runtime._disconnect_after_events
                                 )
                                 if force_disconnect:
                                     runtime._forced_disconnects_remaining -= 1
@@ -717,9 +701,7 @@ def agent_product_system(tmp_path: Path) -> Iterator[AgentProductSystem]:
             "TERMFLOW_AGENT_OPENCODE_DIRECTORY": "/workspace",
             "TERMFLOW_AGENT_OPENCODE_MCP_TOKEN": mcp_token,
             "TERMFLOW_AGENT_CLEANUP_HELPER_TOKEN": cleanup_helper_token,
-            "TERMFLOW_AGENT_PROVIDER_DEEPSEEK_ENDPOINT_ORIGIN": (
-                "https://api.deepseek.com"
-            ),
+            "TERMFLOW_AGENT_PROVIDER_DEEPSEEK_ENDPOINT_ORIGIN": ("https://api.deepseek.com"),
             "TERMFLOW_AGENT_PROVIDER_DEEPSEEK_MODEL_IDS": "deepseek-v4-flash",
             "TERMFLOW_AGENT_PROVIDER_DEEPSEEK_REGION": "fixture-only",
             "TERMFLOW_AGENT_PROVIDER_DEEPSEEK_RETENTION_TERMS": "fixture-only",

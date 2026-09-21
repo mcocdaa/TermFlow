@@ -65,9 +65,7 @@ class TopologyReader:
 
     def read(self) -> TopologySnapshot:
         target = ("-t", self._session_id) if self._session_id is not None else ()
-        window_result = self._runner.run_command(
-            "list-windows", *target, "-F", _WINDOW_FORMAT
-        )
+        window_result = self._runner.run_command("list-windows", *target, "-F", _WINDOW_FORMAT)
         pane_arguments = ("list-panes", "-s", *target, "-F", _PANE_FORMAT)
         if self._session_id is None:
             pane_arguments = ("list-panes", "-a", "-F", _PANE_FORMAT)

@@ -53,9 +53,7 @@ async def repositories(tmp_path) -> RepositoryBundle:
 
 async def _seed_term(repositories: RepositoryBundle) -> tuple[object, object]:
     display_name = f"term-{uuid4().hex[:8]}"
-    installation = await repositories.installations.create(
-        digest_secret(f"computer-{uuid4().hex}")
-    )
+    installation = await repositories.installations.create(digest_secret(f"computer-{uuid4().hex}"))
     term = await repositories.instances.register_or_rotate(
         uuid4(),
         installation.id,
@@ -166,9 +164,7 @@ async def test_invalid_token_variants_fail_closed(repositories) -> None:
 
     # Expired token.
     expired_binding = await _seed_binding(repositories)
-    expired = await _seed_token(
-        repositories, expired_binding, expires_in=timedelta(seconds=-60)
-    )
+    expired = await _seed_token(repositories, expired_binding, expires_in=timedelta(seconds=-60))
     await expect_rejected(expired)
 
     # Token minted at an earlier binding epoch is stale after rotation.
@@ -177,12 +173,8 @@ async def test_invalid_token_variants_fail_closed(repositories) -> None:
     await expect_rejected(stale)
 
     # Binding with an unprovisioned runtime.
-    unprovisioned_binding = await _seed_binding(
-        repositories, runtime_epoch=None, status="pending"
-    )
-    unprovisioned = await _seed_token(
-        repositories, unprovisioned_binding, binding_epoch=1
-    )
+    unprovisioned_binding = await _seed_binding(repositories, runtime_epoch=None, status="pending")
+    unprovisioned = await _seed_token(repositories, unprovisioned_binding, binding_epoch=1)
     await expect_rejected(unprovisioned)
 
     # Non-ready binding.
@@ -203,9 +195,7 @@ async def test_invalid_token_variants_fail_closed(repositories) -> None:
     assert token is not None
     async with repositories.session_factory() as session:  # type: ignore[attr-defined]
         await session.execute(
-            update(AgentToken)
-            .where(AgentToken.id == token.id)
-            .values(scopes='"not-a-list"')
+            update(AgentToken).where(AgentToken.id == token.id).values(scopes='"not-a-list"')
         )
         await session.commit()
     await expect_rejected(malformed)

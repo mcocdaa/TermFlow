@@ -1,2 +1,1 @@
 """Independent local Instance records."""
-

@@ -221,11 +221,9 @@ def test_parent_manifest_preserves_external_receipts_until_helper_confirmation(
         "sqlite_wal_backup",
     }
     assert all(row.state == "pending" for row in external)
-    assert {
-        row.artifact_ref
-        for row in external
-        if row.artifact_kind != "sqlite_wal_backup"
-    } == {"runtime-external"}
+    assert {row.artifact_ref for row in external if row.artifact_kind != "sqlite_wal_backup"} == {
+        "runtime-external"
+    }
     for receipt in external:
         response = client.post(
             f"/api/v1/agent/admin/cleanup-jobs/{job_id}/receipts/{receipt.id}/confirm",

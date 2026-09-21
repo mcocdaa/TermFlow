@@ -21,10 +21,12 @@
 Replace the first existing input without adding a test or parameter row:
 
 ```python
+(
     [
         ("version check: tmux 3.2a (Linux)\n", ""),
         ("", "tmux 3.4\n"),
     ],
+)
 ```
 
 - [ ] **Step 2: Run the existing test and verify the reused case fails**

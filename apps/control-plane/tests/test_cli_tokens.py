@@ -195,9 +195,7 @@ def test_cli_token_is_short_lived_digest_only_and_scope_enforced(
     assert denied.json()["error"]["code"] == "insufficient_scope"
 
     database_path = Path(
-        cli_token_client.app.state.settings.database_url.removeprefix(
-            "sqlite+aiosqlite:///"
-        )
+        cli_token_client.app.state.settings.database_url.removeprefix("sqlite+aiosqlite:///")
     )
     with sqlite3.connect(database_path) as connection:
         digest, kind, scopes, epoch = connection.execute(
@@ -341,9 +339,7 @@ def test_external_cli_reset_is_observed_and_closes_all_authenticated_websockets(
             }
         )
         events = [
-            stack.enter_context(
-                cli_token_client.websocket_connect(event_path, headers=headers)
-            )
+            stack.enter_context(cli_token_client.websocket_connect(event_path, headers=headers))
             for headers in event_credentials
         ]
 
@@ -359,8 +355,7 @@ def test_external_cli_reset_is_observed_and_closes_all_authenticated_websockets(
         assert result.exit_code == 0, result.output
         deadline = time.monotonic() + 3
         while (
-            cli_token_client.app.state.browser_sessions.epoch == 1
-            and time.monotonic() < deadline
+            cli_token_client.app.state.browser_sessions.epoch == 1 and time.monotonic() < deadline
         ):
             time.sleep(0.02)
         assert cli_token_client.app.state.browser_sessions.epoch == 2
@@ -372,11 +367,17 @@ def test_external_cli_reset_is_observed_and_closes_all_authenticated_websockets(
             assert closed.value.code == 4401
 
     assert cli_token_client.get("/api/v1/admin/session").status_code == 401
-    assert cli_token_client.get(
-        "/api/v1/dashboard",
-        headers={"Authorization": f"Bearer {cli_credential}"},
-    ).status_code == 401
-    assert cli_token_client.get(
-        "/api/v1/dashboard",
-        headers={"Authorization": f"Bearer {native_access}"},
-    ).status_code == 401
+    assert (
+        cli_token_client.get(
+            "/api/v1/dashboard",
+            headers={"Authorization": f"Bearer {cli_credential}"},
+        ).status_code
+        == 401
+    )
+    assert (
+        cli_token_client.get(
+            "/api/v1/dashboard",
+            headers={"Authorization": f"Bearer {native_access}"},
+        ).status_code
+        == 401
+    )

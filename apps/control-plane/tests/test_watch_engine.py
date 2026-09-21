@@ -81,9 +81,7 @@ async def _seed_binding_and_conversation(repositories: RepositoryBundle):
         backend_kind="opencode",
         config='{"model": "default"}',
     )
-    installation = await repositories.installations.create(
-        digest_secret(f"computer-{uuid4().hex}")
-    )
+    installation = await repositories.installations.create(digest_secret(f"computer-{uuid4().hex}"))
     term_id = uuid4()
     display_name = f"term-{uuid4().hex[:8]}"
     await repositories.instances.register_or_rotate(
@@ -213,9 +211,7 @@ def _engine(
 async def _inbox_items(repositories: RepositoryBundle, conversation_id: UUID) -> list:
     async with repositories.session_factory() as session:
         rows = await session.scalars(
-            select(AgentInboxItem).where(
-                AgentInboxItem.conversation_id == conversation_id
-            )
+            select(AgentInboxItem).where(AgentInboxItem.conversation_id == conversation_id)
         )
         return list(rows)
 
@@ -352,14 +348,17 @@ async def test_gap_reconciliation_calls_the_capture_port_and_wakes_to_inspect(
     clock = Clock()
     engine = _engine(repositories, clock=clock, capture=capture)
     await engine.rebuild()
-    assert await engine.evaluate_live_event(
-        instance_id=binding.term_id,
-        pane_id="%0",
-        stream_id=stream,
-        seq=2,
-        data=b"ordinary output",
-        observed_at=clock(),
-    ) == []
+    assert (
+        await engine.evaluate_live_event(
+            instance_id=binding.term_id,
+            pane_id="%0",
+            stream_id=stream,
+            seq=2,
+            data=b"ordinary output",
+            observed_at=clock(),
+        )
+        == []
+    )
 
     triggers = await engine.evaluate_live_event(
         instance_id=binding.term_id,
@@ -392,9 +391,7 @@ async def test_pane_exit_trigger_builds_typed_input_without_an_output_cursor(
     clock = Clock()
     engine = _engine(repositories, clock=clock)
     await engine.rebuild()
-    assert await engine.evaluate_topology_change(
-        binding.term_id, _topology(), clock()
-    ) == []
+    assert await engine.evaluate_topology_change(binding.term_id, _topology(), clock()) == []
 
     triggers = await engine.evaluate_topology_change(
         binding.term_id,
@@ -436,9 +433,7 @@ async def test_engine_subscribes_to_event_hub_and_consumes_live_events(
         message = WireMessage(
             type=MessageType.PANE_OUTPUT,
             instance_id=binding.term_id,
-            payload=PaneOutputPayload.from_bytes(
-                "%0", stream, 6, b"go!"
-            ).model_dump(mode="json"),
+            payload=PaneOutputPayload.from_bytes("%0", stream, 6, b"go!").model_dump(mode="json"),
         )
         await hub.publish(message)
         item = await _wait_for_item(repositories, conversation_id)
@@ -486,9 +481,9 @@ async def test_engine_consume_survives_invalid_wire_payload(
             WireMessage(
                 type=MessageType.PANE_OUTPUT,
                 instance_id=binding.term_id,
-                payload=PaneOutputPayload.from_bytes(
-                    "%0", stream, 6, b"go!"
-                ).model_dump(mode="json"),
+                payload=PaneOutputPayload.from_bytes("%0", stream, 6, b"go!").model_dump(
+                    mode="json"
+                ),
             )
         )
         item = await _wait_for_item(repositories, conversation_id)
@@ -541,9 +536,9 @@ async def test_engine_consume_survives_raising_handler(
             WireMessage(
                 type=MessageType.PANE_OUTPUT,
                 instance_id=binding.term_id,
-                payload=PaneOutputPayload.from_bytes(
-                    "%0", stream, 6, b"go!"
-                ).model_dump(mode="json"),
+                payload=PaneOutputPayload.from_bytes("%0", stream, 6, b"go!").model_dump(
+                    mode="json"
+                ),
             )
         )
         item = await _wait_for_item(repositories, conversation_id)

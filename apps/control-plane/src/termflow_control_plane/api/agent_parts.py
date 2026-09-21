@@ -94,9 +94,7 @@ async def get_agent_conversation_parts(
     """Return bounded OpenCode session parts for the conversation (display only)."""
     del request
     if await repositories.agent_conversations.get_by_id(conversation_id) is None:
-        raise TermFlowError(
-            "conversation_not_found", 404, "The Agent Conversation does not exist."
-        )
+        raise TermFlowError("conversation_not_found", 404, "The Agent Conversation does not exist.")
     ref = await repositories.agent_backend_conversations.get_by_conversation(conversation_id)
     if ref is None:
         return JSONResponse({"parts": []})

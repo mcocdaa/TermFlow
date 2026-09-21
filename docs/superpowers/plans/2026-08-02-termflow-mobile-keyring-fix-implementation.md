@@ -50,9 +50,7 @@ def test_mobile_targets_use_explicit_native_stores() -> None:
     assert "keyring" not in dependencies
 
     targets = manifest["target"]
-    desktop = targets['cfg(not(any(target_os = "ios", target_os = "android")))'][
-        "dependencies"
-    ]
+    desktop = targets['cfg(not(any(target_os = "ios", target_os = "android")))']["dependencies"]
     ios = targets['cfg(target_os = "ios")']["dependencies"]
     android = targets['cfg(target_os = "android")']["dependencies"]
 

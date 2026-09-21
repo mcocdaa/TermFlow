@@ -110,9 +110,7 @@ async def _require_writable_pane(
     pane_id: str,
 ) -> None:
     """A pane that cannot be observed can never be written (spec §1)."""
-    if not await pane_observe_allowed(
-        repositories.pane_policies, principal.binding_id, pane_id
-    ):
+    if not await pane_observe_allowed(repositories.pane_policies, principal.binding_id, pane_id):
         raise TermFlowToolError(
             TermFlowErrorCode.POLICY_DENIED,
             f"the binding is not allowed to write pane {pane_id}",
@@ -256,9 +254,7 @@ async def handle_watch_create(
             TermFlowErrorCode.POLICY_DENIED,
             f"the binding is not allowed to watch pane {params.pane_id}",
         )
-    conversation = await repositories.agent_conversations.get_by_id(
-        params.conversation_id
-    )
+    conversation = await repositories.agent_conversations.get_by_id(params.conversation_id)
     if conversation is None or conversation.binding_id != principal.binding_id:
         raise TermFlowToolError(
             TermFlowErrorCode.POLICY_DENIED,

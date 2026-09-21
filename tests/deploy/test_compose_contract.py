@@ -241,9 +241,7 @@ def test_release_compose_uses_published_images_without_building() -> None:
     init = services["opencode-init"]
     assert init["volumes"] == ["termflow-opencode-data:/data"]
     assert {key: value for key, value in init.items() if key != "volumes"} == {
-        key: value
-        for key, value in base_services["opencode-init"].items()
-        if key != "volumes"
+        key: value for key, value in base_services["opencode-init"].items() if key != "volumes"
     }
     assert {spec["name"] for spec in release["volumes"].values()} == {
         "termflow-data",

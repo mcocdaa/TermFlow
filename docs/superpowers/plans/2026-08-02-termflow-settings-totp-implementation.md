@@ -46,10 +46,7 @@ response = EnrollmentCreateResponse(
     token="join-" + "x" * 40,
     expires_at=datetime.now(UTC),
     server_url="https://relay.example.com",
-    login_command=(
-        "termflow login --server https://relay.example.com "
-        "--code join-" + "x" * 40
-    ),
+    login_command=("termflow login --server https://relay.example.com --code join-" + "x" * 40),
 )
 assert response.server_url == "https://relay.example.com"
 assert response.login_command.startswith("termflow login --server")

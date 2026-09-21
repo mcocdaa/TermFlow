@@ -118,10 +118,14 @@ def test_retries_failed_appimage_build_then_succeeds(tmp_path: Path) -> None:
     assert (state / "count").read_text(encoding="utf-8") == "2"
     assert (state / "sleeps").read_text(encoding="utf-8").splitlines() == ["10"]
     npm_args = (state / "npm-args").read_text(encoding="utf-8").splitlines()
-    assert npm_args == [
-        "run tauri:build --workspace @termflow/tauri-client -- "
-        "--bundles appimage --ci --verbose",
-    ] * 2
+    assert (
+        npm_args
+        == [
+            "run tauri:build --workspace @termflow/tauri-client -- "
+            "--bundles appimage --ci --verbose",
+        ]
+        * 2
+    )
     assert "attempt 1/3 failed with exit status 7" in result.stderr
     assert "linuxdeploy-x86_64.AppImage" in result.stderr
     expected_hash = hashlib.sha256(b"cached-linuxdeploy-test-fixture").hexdigest()

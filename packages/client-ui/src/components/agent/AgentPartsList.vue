@@ -32,18 +32,18 @@
         <div v-if="part.input || part.output || part.error || part.input_omitted?.length" class="agent-tool-activity__detail" data-agent-tool-detail>
           <template v-if="part.input && part.input !== '{}'">
             <p class="agent-tool-activity__label">输入</p>
-            <pre class="agent-tool-activity__code">{{ pretty(part.input) }}</pre>
+            <AgentCollapsibleOutput :content="pretty(part.input)" />
           </template>
           <p v-if="part.input_omitted?.length" class="agent-tool-activity__label" data-agent-tool-defaults>
             默认参数已省略：{{ part.input_omitted.join('、') }}
           </p>
           <template v-if="part.output">
             <p class="agent-tool-activity__label">结果</p>
-            <pre class="agent-tool-activity__code">{{ pretty(part.output) }}</pre>
+            <AgentCollapsibleOutput :content="pretty(part.output)" :status="part.status" />
           </template>
           <template v-if="part.error">
             <p class="agent-tool-activity__label">错误</p>
-            <pre class="agent-tool-activity__code agent-tool-activity__code--error">{{ part.error }}</pre>
+            <AgentCollapsibleOutput :content="part.error" status="error" code-class="agent-tool-activity__code--error" />
           </template>
         </div>
       </details>
@@ -60,6 +60,7 @@
 //: returned by `/api/v1/agent/conversations/{id}/parts` and renders text,
 //: reasoning, structured tool input/output, and step markers.
 import { Sparkles, Wrench } from '@lucide/vue'
+import AgentCollapsibleOutput from './AgentCollapsibleOutput.vue'
 
 export interface AgentConversationPart {
   type: string

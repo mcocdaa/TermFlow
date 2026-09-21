@@ -394,10 +394,7 @@ async def test_submit_user_message_admits_enqueues_and_dispatches(
         messages = await _messages(repositories, conversation_id)
         assert [message.role for message in messages] == ["user"]
         assert messages[0].body == "please fix the build"
-        assert (
-            messages[0].body_digest
-            == hashlib.sha256(b"please fix the build").hexdigest()
-        )
+        assert messages[0].body_digest == hashlib.sha256(b"please fix the build").hexdigest()
 
         await wait_until(lambda: len(backend.submit_calls) == 1)
 
@@ -453,9 +450,7 @@ async def test_submit_user_message_admits_enqueues_and_dispatches(
         # `delivered` for the dispatched inbox item, freeing the gate.
         async def delivered() -> bool:
             rows = await repositories.agent_inbox.list_for_conversation(conversation_id)
-            return bool(rows) and all(
-                row.delivery_state == "delivered" for row in rows
-            )
+            return bool(rows) and all(row.delivery_state == "delivered" for row in rows)
 
         await wait_until(delivered)
     finally:
@@ -543,10 +538,7 @@ async def test_sse_events_advance_run_and_persist_canonical_events(
         user_messages = [message for message in messages if message.role == "user"]
         assert len(user_messages) == 1
         assert user_messages[0].body == "hello"
-        assert (
-            user_messages[0].body_digest
-            == hashlib.sha256(b"hello").hexdigest()
-        )
+        assert user_messages[0].body_digest == hashlib.sha256(b"hello").hexdigest()
 
         # Digest invariant (M6a): every persisted payload hashes to its digest.
         events = await _events(repositories, conversation_id)
@@ -864,9 +856,7 @@ async def test_restart_recovers_pending_user_payload_from_persisted_row(
     first = make_pipeline(repositories, hub, backend, binding_id=binding_id)
     # The first pipeline admits the message but is never started: its
     # in-process payload table dies with the simulated restart.
-    admission = await first.submit_user_message(
-        conversation_id, "survive restart", actor="admin"
-    )
+    admission = await first.submit_user_message(conversation_id, "survive restart", actor="admin")
     assert admission.delivery_state == "pending"
     await first.stop()
 

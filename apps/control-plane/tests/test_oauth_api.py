@@ -157,7 +157,8 @@ def test_device_approval_requires_browser_session_when_admin_token_is_omitted(cl
     assert created.status_code == 200, created.text
     authorization = asyncio.run(
         client.app.state.repositories.oauth_authorizations.find_by_user_code(
-            created.json()["user_code"], epoch=1,
+            created.json()["user_code"],
+            epoch=1,
         )
     )
     assert authorization is not None

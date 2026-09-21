@@ -124,9 +124,7 @@ def _safe_project_state(project: str, env: dict[str, str]) -> str:
     return ", ".join(sorted(states)) or "no project containers"
 
 
-def _safe_service_log(
-    compose: list[str], service: str, env: dict[str, str]
-) -> str:
+def _safe_service_log(compose: list[str], service: str, env: dict[str, str]) -> str:
     """Return a bounded startup tail after removing fixture values."""
 
     result = subprocess.run(

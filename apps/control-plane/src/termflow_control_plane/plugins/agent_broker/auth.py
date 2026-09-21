@@ -73,9 +73,7 @@ class AgentTokenAuthenticator:
     def __init__(self, repositories: RepositoryBundle) -> None:
         self._repositories = repositories
 
-    async def authenticate(
-        self, token: str, *, now: datetime | None = None
-    ) -> AgentTokenPrincipal:
+    async def authenticate(self, token: str, *, now: datetime | None = None) -> AgentTokenPrincipal:
         observed = now or datetime.now(UTC)
         if not token:
             raise AgentTokenAuthError("agent token required")
@@ -94,9 +92,7 @@ class AgentTokenAuthenticator:
             # Fail closed until the supervisor provisions the runtime.
             raise AgentTokenAuthError("binding runtime is not provisioned")
         if token_row.binding_epoch != binding.runtime_epoch:
-            raise AgentTokenAuthError(
-                "agent token epoch does not match the binding runtime epoch"
-            )
+            raise AgentTokenAuthError("agent token epoch does not match the binding runtime epoch")
         try:
             scopes = frozenset(decode_scopes(token_row.scopes))
         except ValueError as exc:
