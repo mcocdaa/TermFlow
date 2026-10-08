@@ -113,7 +113,7 @@ services:
   # container grants only the pinned guest UID access to the dedicated data
   # volume before the long-running non-root service starts.
   opencode-init:
-    image: ghcr.io/anomalyco/opencode:1.18.31@sha256:0d3c9551ea2522fcfd23fbc2e302fc87218d6c198bff277e8ab44d93a3bd6d3d
+    image: ghcr.io/anomalyco/opencode:1.18.35@sha256:ae90ec960c871b0ea6df9abc1c2ec1e6b36464e8eca9b0e71e1ed3b553f47aa2
     entrypoint:
       - /bin/sh
       - -ec
@@ -138,7 +138,7 @@ services:
   opencode-agent:
     # The pinned image, non-root UID 405, and OPENCODE_SERVER_* basic auth are
     # exercised by the opt-in M4 container test when Docker is available.
-    image: ghcr.io/anomalyco/opencode:1.18.31@sha256:0d3c9551ea2522fcfd23fbc2e302fc87218d6c198bff277e8ab44d93a3bd6d3d
+    image: ghcr.io/anomalyco/opencode:1.18.35@sha256:ae90ec960c871b0ea6df9abc1c2ec1e6b36464e8eca9b0e71e1ed3b553f47aa2
     command:
       - serve
       - --hostname
