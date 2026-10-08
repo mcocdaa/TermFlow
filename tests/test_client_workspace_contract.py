@@ -17,14 +17,14 @@ def _client_production_files() -> list[Path]:
         ROOT / "packages/client-core/src",
         ROOT / "packages/client-ui/src",
     )
-    return [
+    return sorted(
         path
         for root in roots
         for path in root.rglob("*")
         if path.suffix in {".ts", ".vue"}
         and not path.name.endswith(".test.ts")
         and "test" not in path.relative_to(root).parts
-    ]
+    )
 
 
 def test_python_dependencies_come_from_portable_public_pypi_only() -> None:
@@ -135,14 +135,14 @@ def test_client_workspace_boundaries_and_platform_abstraction() -> None:
     ):
         assert forbidden not in core_source
 
-    storage_references = [
+    storage_references = sorted(
         path.relative_to(ROOT).as_posix()
         for path in _client_production_files()
         if any(
             token in path.read_text().lower()
             for token in ("localstorage", "sessionstorage", "indexeddb")
         )
-    ]
+    )
     assert storage_references == [
         "apps/clients/web/src/adapters/browserAgentCursorStore.ts",
         "apps/clients/web/src/adapters/browserThemePreferences.ts",
