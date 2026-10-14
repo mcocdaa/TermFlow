@@ -7,8 +7,14 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from .capture import RenderedCapture, capture_pane_bounded
-from .control_parser import ControlNotification, parse_control_line
+from .control_parser import (
+    ControlNotification,
+    MalformedControlNotification,
+    parse_control_line,
+)
 from .runner import tmux_subprocess_environment
+
+CONTROL_STREAM_LIMIT = 4 * 1024 * 1024
 
 
 class ControlClientNotStarted(RuntimeError):
@@ -16,9 +22,16 @@ class ControlClientNotStarted(RuntimeError):
 
 
 class TmuxControlClient:
-    def __init__(self, socket_path: Path, session_name: str) -> None:
+    def __init__(
+        self,
+        socket_path: Path,
+        session_name: str,
+        *,
+        stream_limit: int = CONTROL_STREAM_LIMIT,
+    ) -> None:
         self._socket_path = socket_path
         self._session_name = session_name
+        self._stream_limit = stream_limit
         self._process: asyncio.subprocess.Process | None = None
         self._write_lock = asyncio.Lock()
 
@@ -37,6 +50,7 @@ class TmuxControlClient:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
             env=tmux_subprocess_environment(),
+            limit=self._stream_limit,
         )
         await self.write_command("refresh-client -f pause-after=5")
 
@@ -57,8 +71,28 @@ class TmuxControlClient:
         process = self._running_process()
         if process.stdout is None:
             raise ControlClientNotStarted("tmux control stdout is unavailable")
-        while line := await process.stdout.readline():
-            yield parse_control_line(line)
+        discard_until_newline = False
+        while True:
+            try:
+                line = await process.stdout.readline()
+            except asyncio.LimitOverrunError as exc:
+                if exc.consumed > 0:
+                    await process.stdout.read(exc.consumed)
+                discard_until_newline = True
+                continue
+            except ValueError as exc:
+                discard_until_newline = "Separator is not found" in str(exc)
+                continue
+            if not line:
+                break
+            if discard_until_newline:
+                if line.endswith(b"\n"):
+                    discard_until_newline = False
+                continue
+            try:
+                yield parse_control_line(line)
+            except MalformedControlNotification:
+                continue
 
     async def capture_pane(self, pane_id: str) -> bytes:
         process = await asyncio.create_subprocess_exec(

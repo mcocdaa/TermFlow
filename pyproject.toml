@@ -6,6 +6,7 @@ index-url = "https://pypi.org/simple"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+pythonpath = ["."]
 addopts = ["--import-mode=importlib"]
 testpaths = ["packages/protocol/tests", "apps/control-plane/tests", "apps/node/tests", "tests"]
 markers = [
@@ -23,3 +24,6 @@ select = ["E", "F", "I", "UP", "B", "ASYNC"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
+explicit_package_bases = true
+mypy_path = ["packages/protocol/src", "apps/control-plane/src", "apps/node/src"]
+exclude = ["(^|/)tests/"]

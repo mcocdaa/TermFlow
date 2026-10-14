@@ -50,6 +50,7 @@ class BrowserTerminal:
         self._local_close: LocalTerminalClose | None = None
         self._stream_id: UUID | None = None
         self._last_seq = 0
+        self._resuming = False
         self.close_requested = False
         self.remote_closed = False
         self.input_bytes = 0
@@ -110,10 +111,15 @@ class BrowserTerminal:
         if self._stream_id != opened.stream_id:
             self._stream_id = opened.stream_id
             self._last_seq = 0
+            self._resuming = False
 
     def output_state(self, output: TerminalOutputPayload) -> str:
         if self._stream_id != output.stream_id:
             return "gap"
+        if self._resuming:
+            if output.seq > self._last_seq + 1:
+                return "duplicate"
+            self._resuming = False
         if output.seq <= self._last_seq:
             return "duplicate"
         return "next" if output.seq == self._last_seq + 1 else "gap"
@@ -134,6 +140,7 @@ class BrowserTerminal:
         self._queued_bytes = 0
         self._available.clear()
         self._last_seq = after_seq
+        self._resuming = True
         return True
 
 
@@ -146,6 +153,10 @@ class TerminalHub:
         self._current: dict[UUID, BrowserTerminal] = {}
         self._lock = asyncio.Lock()
         self._auth_epoch = 1
+
+    @property
+    def authentication_epoch(self) -> int:
+        return self._auth_epoch
 
     async def register(
         self,

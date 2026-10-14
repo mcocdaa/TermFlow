@@ -42,6 +42,7 @@ export interface TerminalSessionOptions {
    * Optional authentication probe used before a reconnect attempt.
    */
   probeSession?: () => Promise<boolean>
+  onError?: (code: string) => void
 }
 
 export interface TerminalSessionLike {
@@ -52,6 +53,13 @@ export interface TerminalSessionLike {
 }
 
 const MAX_BINARY_FRAME = 65_536
+const ZERO_TERMINAL_ID = '00000000-0000-0000-0000-000000000000'
+const NON_RECONNECTABLE_ERROR_CODES = new Set([
+  'instance_offline',
+  'capability_unavailable',
+  'pane_not_found',
+  'resume_expired',
+])
 
 export class TerminalSession implements TerminalSessionLike {
   private connection: TerminalConnection | null = null
@@ -131,7 +139,9 @@ export class TerminalSession implements TerminalSessionLike {
   private handleText(data: string): void {
     const control = parseTerminalControl(data)
     if (control === null) return
-    if (control.type !== 'terminal.ready' && (!this.ready || control.terminal_id !== this.terminalId)) return
+    const isTerminalLifecycle = control.type === 'terminal.error' || control.type === 'terminal.closed'
+    const matchesTerminal = control.terminal_id === this.terminalId || control.terminal_id === ZERO_TERMINAL_ID
+    if (control.type !== 'terminal.ready' && !(isTerminalLifecycle ? matchesTerminal : (this.ready && control.terminal_id === this.terminalId))) return
 
     switch (control.type) {
       case 'terminal.ready':
@@ -159,7 +169,14 @@ export class TerminalSession implements TerminalSessionLike {
         this.callbacks.onBindings(control)
         break
       case 'terminal.error':
+        if (NON_RECONNECTABLE_ERROR_CODES.has(control.code)) {
+          this.stopHeartbeat()
+          this.ready = false
+          this.suppressReconnect = true
+          this.callbacks.onStatus('closed')
+        }
         this.callbacks.onError({ code: control.code, message: control.message })
+        this.options.onError?.(control.code)
         break
       case 'terminal.action_result':
         this.callbacks.onActionResult(control)
@@ -167,7 +184,9 @@ export class TerminalSession implements TerminalSessionLike {
       case 'terminal.closed':
         this.stopHeartbeat()
         this.ready = false
-        this.suppressReconnect = control.reason === 'replaced' || control.reason === 'instance_offline' || control.reason === 'client_closed'
+        if (control.reason === 'replaced' || control.reason === 'instance_offline' || control.reason === 'client_closed') {
+          this.suppressReconnect = true
+        }
         this.callbacks.onClosed(control.reason)
         this.callbacks.onStatus('closed')
         if (this.connection !== null) void this.connection.close(1000, control.reason)

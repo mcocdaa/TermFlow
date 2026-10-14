@@ -231,4 +231,53 @@ describe('TerminalSession', () => {
       await session.dispose()
     }
   })
+
+  it.each(['instance_offline', 'capability_unavailable', 'pane_not_found', 'resume_expired'])(
+    'handles pre-ready terminal.error (%s) on zero terminal_id and suppresses auto-reconnect',
+    async (errorCode) => {
+      const optionError = vi.fn()
+      const { session, transport, scheduler, callbacks } = await setup({ onError: optionError })
+      transport.emit({ type: 'open' })
+      transport.emit({
+        type: 'text',
+        data: JSON.stringify({
+          type: 'terminal.error',
+          terminal_id: '00000000-0000-0000-0000-000000000000',
+          code: errorCode,
+          message: 'Open rejected.',
+        }),
+      })
+      transport.emit({ type: 'close', code: 4409 })
+
+      expect(callbacks.onError).toHaveBeenCalledWith({ code: errorCode, message: 'Open rejected.' })
+      expect(optionError).toHaveBeenCalledWith(errorCode)
+      expect(callbacks.onStatus).toHaveBeenLastCalledWith('closed')
+      expect(scheduler.pending).toHaveLength(0)
+      await session.dispose()
+    },
+  )
+
+  it('handles pre-ready terminal.closed frames during reconnect when terminal_id matches', async () => {
+    const { session, transport, scheduler, callbacks } = await setup()
+    ready(transport)
+    transport.emit({ type: 'close', code: 1006 })
+    scheduler.runNext()
+    await Promise.resolve()
+
+    // While reconnecting (!ready), server sends terminal.closed for the known terminalId
+    transport.emit({
+      type: 'text',
+      data: JSON.stringify({
+        type: 'terminal.closed',
+        terminal_id: TERMINAL_1,
+        reason: 'replaced',
+      }),
+    })
+    transport.emit({ type: 'close', code: 1000 })
+
+    expect(callbacks.onClosed).toHaveBeenCalledWith('replaced')
+    expect(callbacks.onStatus).toHaveBeenLastCalledWith('closed')
+    expect(scheduler.pending.filter((h) => !h.cancelled)).toHaveLength(0)
+    await session.dispose()
+  })
 })

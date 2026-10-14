@@ -547,3 +547,34 @@ async def test_engine_consume_survives_raising_handler(
         assert engine.diagnostics.wire_messages_failed == 1
     finally:
         await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_evaluate_live_event_skips_sqlite_session_when_no_active_watches(
+    repositories: RepositoryBundle,
+) -> None:
+    session_calls = 0
+
+    def forbidden_sessions():
+        nonlocal session_calls
+        session_calls += 1
+        raise AssertionError("SQLite session must not be opened when no watches exist")
+
+    clock = Clock()
+    engine = WatchEngine(
+        sessions=forbidden_sessions,  # type: ignore[arg-type]
+        watches=repositories.watches,
+        deliveries=repositories.agent_watch_deliveries,
+        inbox=repositories.agent_inbox,
+        clock=clock,
+    )
+    triggers = await engine.evaluate_live_event(
+        instance_id=uuid4(),
+        pane_id="%0",
+        stream_id=uuid4(),
+        seq=1,
+        data=b"unwatched output",
+        observed_at=clock(),
+    )
+    assert triggers == []
+    assert session_calls == 0

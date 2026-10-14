@@ -75,6 +75,10 @@ class TerminalRouter:
         self._resume_grace_seconds = resume_grace_seconds
         self._suspended: dict[UUID, asyncio.Task[None]] = {}
 
+    @property
+    def authentication_epoch(self) -> int:
+        return self._hub.authentication_epoch
+
     def _cancel_suspension(self, terminal_id: UUID) -> None:
         task = self._suspended.pop(terminal_id, None)
         if task is not None and task is not asyncio.current_task():

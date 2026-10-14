@@ -41,6 +41,7 @@ class ConnectWebSocket(Protocol):
         *,
         additional_headers: Mapping[str, str],
         ping_interval: float | None,
+        ping_timeout: float | None = ...,
     ) -> AbstractAsyncContextManager[WebSocketLike]: ...
 
 
@@ -54,12 +55,14 @@ def _connect_websocket(
     uri: str,
     *,
     additional_headers: Mapping[str, str],
-    ping_interval: float | None,
+    ping_interval: float | None = 20,
+    ping_timeout: float | None = 20,
 ) -> AbstractAsyncContextManager[ClientConnection]:
     return websocket_connect(
         uri,
         additional_headers=additional_headers,
         ping_interval=ping_interval,
+        ping_timeout=ping_timeout,
     )
 
 
@@ -230,7 +233,8 @@ class BridgeTransport:
             additional_headers={
                 "Authorization": f"Bearer {token.get_secret_value()}",
             },
-            ping_interval=None,
+            ping_interval=20,
+            ping_timeout=20,
         ) as websocket:
             if self._connection_listener is not None:
                 self._connection_listener.bridge_connected()

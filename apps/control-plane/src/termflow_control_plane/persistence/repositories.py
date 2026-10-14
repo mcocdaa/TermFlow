@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import secrets
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -556,12 +557,24 @@ class AuditRepository:
 class AuthStateRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
+        self._cached_epoch: int | None = None
+        self._cached_epoch_at: float = 0.0
+
+    def cached_epoch(self, *, ttl_seconds: float = 1.0) -> int | None:
+        if (
+            self._cached_epoch is not None
+            and (time.monotonic() - self._cached_epoch_at) < ttl_seconds
+        ):
+            return self._cached_epoch
+        return None
 
     async def get(self) -> AuthenticationState:
         async with self._sessions() as session:
             state = await session.get(AuthenticationState, 1)
             if state is None:
                 raise RuntimeError("authentication state singleton is missing")
+            self._cached_epoch = int(state.epoch)
+            self._cached_epoch_at = time.monotonic()
             return state
 
     async def configure_totp(
@@ -742,6 +755,8 @@ class AuthStateRepository:
                 )
             )
             await session.commit()
+            self._cached_epoch = int(epoch)
+            self._cached_epoch_at = time.monotonic()
             return int(epoch)
 
     async def reset_and_increment_epoch(
@@ -795,6 +810,8 @@ class AuthStateRepository:
                 )
             )
             await session.commit()
+            self._cached_epoch = int(epoch)
+            self._cached_epoch_at = time.monotonic()
             return int(epoch)
 
 

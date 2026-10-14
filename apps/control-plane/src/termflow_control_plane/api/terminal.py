@@ -109,7 +109,10 @@ async def _send_terminal_events(
 ) -> None:
     while True:
         event = await terminal.next_event()
-        if await persisted_authentication_epoch(repositories) != auth_epoch:
+        router_epoch = getattr(terminal_router, "authentication_epoch", None)
+        if (
+            isinstance(router_epoch, int) and router_epoch != auth_epoch
+        ) or await persisted_authentication_epoch(repositories) != auth_epoch:
             await terminal_router.request_close(terminal, "client_closed")
             with suppress(RuntimeError):
                 await websocket.close(code=4401, reason="Authentication epoch changed")
@@ -219,7 +222,10 @@ async def _receive_terminal_input(
         incoming = await websocket.receive()
         if incoming["type"] == "websocket.disconnect":
             return
-        if await persisted_authentication_epoch(repositories) != auth_epoch:
+        router_epoch = getattr(terminal_router, "authentication_epoch", None)
+        if (
+            isinstance(router_epoch, int) and router_epoch != auth_epoch
+        ) or await persisted_authentication_epoch(repositories) != auth_epoch:
             terminal.terminate("client_closed")
             with suppress(RuntimeError):
                 await websocket.close(code=4401, reason="Authentication epoch changed")

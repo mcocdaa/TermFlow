@@ -1,28 +1,16 @@
 import type { RouteRecordRaw } from 'vue-router'
-import AgentPreviewView from '../views/AgentPreviewView.vue'
-import AgentChatView from '../views/AgentChatView.vue'
-import AgentView from '../views/AgentView.vue'
-import ComputersView from '../views/ComputersView.vue'
-import DashboardView from '../views/DashboardView.vue'
-import LoginView from '../views/LoginView.vue'
-import NativeAuthorizeView from '../views/NativeAuthorizeView.vue'
-import DeviceAuthorizeView from '../views/DeviceAuthorizeView.vue'
-import NotFoundView from '../views/NotFoundView.vue'
-import TerminalView from '../views/TerminalView.vue'
-import SettingsView from '../views/SettingsView.vue'
-import TotpActivationView from '../views/TotpActivationView.vue'
 
 export const clientRoutes: RouteRecordRaw[] = [
-  { path: '/agent-preview', component: AgentPreviewView, meta: { bare: true } },
-  { path: '/login', component: LoginView, meta: { bare: true } },
-  { path: '/authorize', component: NativeAuthorizeView, meta: { bare: true } },
-  { path: '/device', component: DeviceAuthorizeView, meta: { bare: true, requiresAuth: true } },
-  { path: '/', component: DashboardView, meta: { requiresAuth: true } },
-  { path: '/computers', component: ComputersView, meta: { requiresAuth: true } },
-  { path: '/settings', component: SettingsView, meta: { requiresAuth: true } },
-  { path: '/settings/two-factor-auth', component: TotpActivationView, meta: { requiresAuth: true, webOnly: true } },
-  { path: '/agent', component: AgentView, meta: { requiresAuth: true } },
-  { path: '/agent/:conversationId', component: AgentChatView, meta: { requiresAuth: true } },
-  { path: '/terms/:termId', component: TerminalView, meta: { requiresAuth: true, terminal: true } },
-  { path: '/:pathMatch(.*)*', component: NotFoundView },
+  { path: '/agent-preview', component: () => import('../views/AgentPreviewView.vue'), meta: { bare: true } },
+  { path: '/login', component: () => import('../views/LoginView.vue'), meta: { bare: true } },
+  { path: '/authorize', component: () => import('../views/NativeAuthorizeView.vue'), meta: { bare: true } },
+  { path: '/device', component: () => import('../views/DeviceAuthorizeView.vue'), meta: { bare: true, requiresAuth: true } },
+  { path: '/', component: () => import('../views/DashboardView.vue'), meta: { requiresAuth: true } },
+  { path: '/computers', component: () => import('../views/ComputersView.vue'), meta: { requiresAuth: true } },
+  { path: '/settings', component: () => import('../views/SettingsView.vue'), meta: { requiresAuth: true } },
+  { path: '/settings/two-factor-auth', component: () => import('../views/TotpActivationView.vue'), meta: { requiresAuth: true, webOnly: true } },
+  { path: '/agent', component: () => import('../views/AgentView.vue'), meta: { requiresAuth: true } },
+  { path: '/agent/:conversationId', component: () => import('../views/AgentChatView.vue'), meta: { requiresAuth: true } },
+  { path: '/terms/:termId', component: () => import('../views/TerminalView.vue'), meta: { requiresAuth: true, terminal: true } },
+  { path: '/:pathMatch(.*)*', component: () => import('../views/NotFoundView.vue') },
 ]
