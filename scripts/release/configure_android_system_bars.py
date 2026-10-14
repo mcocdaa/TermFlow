@@ -79,6 +79,49 @@ def configure_activity(source: str) -> str:
     )
 
 
+_MANIFEST_ICON = 'android:icon="@mipmap/ic_launcher"'
+_MANIFEST_ROUND_ICON = 'android:roundIcon="@mipmap/ic_launcher_round"'
+_KEEP_XML = (
+    '<?xml version="1.0" encoding="utf-8"?>\n'
+    '<resources xmlns:tools="http://schemas.android.com/tools"\n'
+    '    tools:keep="@mipmap/ic_launcher,@mipmap/ic_launcher_round,'
+    '@mipmap/ic_launcher_foreground,@color/ic_launcher_background" />\n'
+)
+
+
+def configure_manifest_round_icon(manifest_source: str) -> str:
+    """Ensure AndroidManifest.xml references @mipmap/ic_launcher_round so AGP 9 R8 keeps it."""
+
+    if _MANIFEST_ROUND_ICON in manifest_source:
+        return manifest_source
+    if _MANIFEST_ICON not in manifest_source:
+        raise ValueError("unsupported Tauri AndroidManifest template")
+    return manifest_source.replace(
+        _MANIFEST_ICON,
+        f"{_MANIFEST_ICON}\n        {_MANIFEST_ROUND_ICON}",
+        1,
+    )
+
+
+def preserve_launcher_resources(activity_path: Path) -> None:
+    """Wire android:roundIcon in AndroidManifest.xml and write res/raw/keep.xml."""
+
+    main_dir = next((p for p in activity_path.parents if p.name == "main"), None)
+    if main_dir is None:
+        return
+    manifest_path = main_dir / "AndroidManifest.xml"
+    if manifest_path.is_file():
+        original_manifest = manifest_path.read_text()
+        updated_manifest = configure_manifest_round_icon(original_manifest)
+        if updated_manifest != original_manifest:
+            manifest_path.write_text(updated_manifest)
+    res_dir = main_dir / "res"
+    if res_dir.is_dir() or manifest_path.is_file():
+        keep_path = res_dir / "raw" / "keep.xml"
+        keep_path.parent.mkdir(parents=True, exist_ok=True)
+        keep_path.write_text(_KEEP_XML)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--activity", type=Path, required=True)
@@ -87,6 +130,7 @@ def main() -> int:
     configured = configure_activity(original)
     if configured != original:
         args.activity.write_text(configured)
+    preserve_launcher_resources(args.activity)
     print(f"configured Android system bars: {args.activity}")
     return 0
 
