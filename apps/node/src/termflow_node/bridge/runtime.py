@@ -556,8 +556,13 @@ class BridgeRuntime:
         return True
 
     async def _control_loop(self, shutdown: asyncio.Event) -> None:
-        async for notification in self.control.notifications():
-            await self.process_notification(notification)
+        while not shutdown.is_set():
+            try:
+                async for notification in self.control.notifications():
+                    await self.process_notification(notification)
+                break
+            except (ValueError, asyncio.LimitOverrunError):
+                continue
         shutdown.set()
 
     async def run(self, shutdown: asyncio.Event) -> None:

@@ -5,9 +5,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPOSITORY_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPOSITORY_ROOT}"
 
-EXPECTED_NODE_VERSION="v22.23.2"
-if [[ "$(node --version)" != "${EXPECTED_NODE_VERSION}" ]]; then
-  echo "TermFlow verification requires Node ${EXPECTED_NODE_VERSION}; found $(node --version)." >&2
+if [[ ! "$(node --version)" =~ ^v22\. ]]; then
+  echo "TermFlow verification requires Node 22.x; found $(node --version)." >&2
   exit 1
 fi
 

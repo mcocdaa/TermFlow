@@ -156,3 +156,94 @@ async def test_epoch_synchronization_closes_current_and_rejects_stale_registrati
         await hub.register(uuid4(), session_key=None, auth_epoch=1)
     replacement = await hub.register(uuid4(), session_key=None, auth_epoch=2)
     assert replacement.auth_epoch == 2
+
+
+@pytest.mark.asyncio
+async def test_resume_ignores_stale_inflight_output_before_replay_handshake() -> None:
+    hub = TerminalHub(queue_max_messages=8, queue_max_bytes=1024)
+    instance_id = uuid4()
+    terminal = await hub.register(instance_id, session_key="browser-session")
+    stream_id = uuid4()
+    assert await hub.forward(
+        _message(
+            instance_id,
+            MessageType.TERMINAL_OPENED,
+            TerminalOpenedPayload(
+                terminal_id=terminal.terminal_id,
+                stream_id=stream_id,
+                rows=24,
+                cols=80,
+            ),
+        )
+    )
+    assert await terminal.next_event() is not None
+
+    for seq in (1, 2, 3):
+        assert await hub.forward(
+            _message(
+                instance_id,
+                MessageType.TERMINAL_OUTPUT,
+                TerminalOutputPayload.from_bytes(
+                    terminal.terminal_id,
+                    stream_id,
+                    seq,
+                    f"chunk-{seq}".encode(),
+                ),
+            )
+        )
+
+    resumed = await hub.resume(
+        instance_id,
+        session_key="browser-session",
+        terminal_id=terminal.terminal_id,
+        stream_id=stream_id,
+        after_seq=1,
+    )
+    assert resumed is terminal
+
+    # In-flight pre-resume frame seq=4 arrives before Computer A processes TERMINAL_OPEN(resume)
+    stale_inflight = _message(
+        instance_id,
+        MessageType.TERMINAL_OUTPUT,
+        TerminalOutputPayload.from_bytes(
+            terminal.terminal_id,
+            stream_id,
+            4,
+            b"stale-inflight",
+        ),
+    )
+    assert await hub.forward(stale_inflight)
+    assert not terminal.terminated
+
+    # Computer A replays from after_seq=1 -> seq=2, 3, 4
+    for seq in (2, 3, 4):
+        replayed = _message(
+            instance_id,
+            MessageType.TERMINAL_OUTPUT,
+            TerminalOutputPayload.from_bytes(
+                terminal.terminal_id,
+                stream_id,
+                seq,
+                f"replayed-{seq}".encode(),
+            ),
+        )
+        assert await hub.forward(replayed)
+
+    assert not terminal.terminated
+    assert terminal.resume_cursor == (stream_id, 4)
+
+    # Once resumed stream is synced, a real gap (seq=6 skipping 5) still terminates with stream_gap
+    real_gap = _message(
+        instance_id,
+        MessageType.TERMINAL_OUTPUT,
+        TerminalOutputPayload.from_bytes(
+            terminal.terminal_id,
+            stream_id,
+            6,
+            b"real-gap",
+        ),
+    )
+    assert not await hub.forward(real_gap)
+    closed = await terminal.next_event()
+    assert isinstance(closed, LocalTerminalClose)
+    assert closed.reason == "stream_gap"

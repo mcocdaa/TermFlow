@@ -310,10 +310,65 @@ class ObservationCursorStore:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
         self._ledger: dict[tuple[UUID, str], _CursorState] = {}
+        self._dirty: set[tuple[UUID, str]] = set()
+
+    @property
+    def has_dirty(self) -> bool:
+        return bool(self._dirty)
 
     @staticmethod
     def _aware(value: datetime) -> datetime:
         return _aware(value)  # type: ignore[return-value]
+
+    def accept_in_memory(
+        self,
+        *,
+        instance_id: UUID,
+        pane_id: str,
+        stream_id: UUID,
+        seq: int,
+        observed_at: datetime,
+    ) -> CursorAcceptance:
+        """Accept or reject one live observation cursor in memory without opening a DB session."""
+        key = (instance_id, pane_id)
+        state = self._ledger.get(key)
+        if state is None:
+            self._ledger[key] = _CursorState(1, str(stream_id), seq, observed_at)
+            self._dirty.add(key)
+            return CursorAcceptance.ACCEPTED
+        verdict, accepted = self._evaluate(state, stream_id, seq)
+        if accepted or verdict is CursorAcceptance.STREAM_CHANGED:
+            self._ledger[key] = _CursorState(state.incarnation, str(stream_id), seq, observed_at)
+            self._dirty.add(key)
+        return verdict
+
+    async def flush(self, session: AsyncSession) -> bool:
+        """Persist any dirty in-memory cursors into ``session`` (no commit)."""
+        if not self._dirty:
+            return False
+        dirty_keys = list(self._dirty)
+        self._dirty.clear()
+        for instance_id, pane_id in dirty_keys:
+            state = self._ledger.get((instance_id, pane_id))
+            if state is None:
+                continue
+            row = await session.get(PaneObservationCursor, (instance_id, pane_id))
+            if row is not None:
+                row.pane_incarnation = str(state.incarnation)
+                row.stream_id = state.stream_id
+                row.seq = state.seq
+                row.observed_at = state.observed_at
+            else:
+                await self._create_anchor(
+                    session,
+                    instance_id=instance_id,
+                    pane_id=pane_id,
+                    stream_id=UUID(state.stream_id),
+                    seq=state.seq,
+                    incarnation=state.incarnation,
+                    observed_at=state.observed_at,
+                )
+        return True
 
     async def accept(
         self,
@@ -326,10 +381,11 @@ class ObservationCursorStore:
         observed_at: datetime,
     ) -> tuple[CursorAcceptance, PaneCursor]:
         """Accept or reject one live observation cursor (no commit)."""
-        row = await session.get(PaneObservationCursor, (instance_id, pane_id))
+        key = (instance_id, pane_id)
+        row = await session.get(PaneObservationCursor, key)
+        entry = self._ledger.get(key)
         if row is None:
-            state = self._ledger.get((instance_id, pane_id))
-            if state is None:
+            if entry is None:
                 # First observation of this pane.
                 await self._create_anchor(
                     session,
@@ -350,21 +406,33 @@ class ObservationCursorStore:
                         seq=seq,
                     ),
                 )
+            state = entry
         else:
-            state = _CursorState(
+            row_state = _CursorState(
                 int(row.pane_incarnation),
                 row.stream_id,
                 row.seq,
                 self._aware(row.observed_at),
             )
+            state = entry if (entry is not None and key in self._dirty) else row_state
         verdict, accepted = self._evaluate(state, stream_id, seq)
         if accepted:
+            self._ledger[key] = _CursorState(state.incarnation, str(stream_id), seq, observed_at)
+            self._dirty.discard(key)
             if row is not None:
+                row.pane_incarnation = str(state.incarnation)
+                row.stream_id = str(stream_id)
                 row.seq = seq
                 row.observed_at = observed_at
             else:
-                self._ledger[(instance_id, pane_id)] = _CursorState(
-                    state.incarnation, str(stream_id), seq, observed_at
+                await self._create_anchor(
+                    session,
+                    instance_id=instance_id,
+                    pane_id=pane_id,
+                    stream_id=stream_id,
+                    seq=seq,
+                    incarnation=state.incarnation,
+                    observed_at=observed_at,
                 )
             # The accepted cursor reflects the new position.
             return (
@@ -450,10 +518,11 @@ class ObservationCursorStore:
     ) -> None:
         """Persist a fresh anchor: the DB row for known instances, otherwise
         the in-memory fallback ledger."""
+        self._ledger[(instance_id, pane_id)] = _CursorState(
+            incarnation, str(stream_id), seq, observed_at
+        )
+        self._dirty.discard((instance_id, pane_id))
         if await session.get(Instance, instance_id) is None:
-            self._ledger[(instance_id, pane_id)] = _CursorState(
-                incarnation, str(stream_id), seq, observed_at
-            )
             return
         session.add(
             PaneObservationCursor(
@@ -478,16 +547,15 @@ class ObservationCursorStore:
         pane_incarnation: int,
         observed_at: datetime,
     ) -> None:
+        self._ledger[(instance_id, pane_id)] = _CursorState(
+            pane_incarnation, str(stream_id), seq, observed_at
+        )
+        self._dirty.discard((instance_id, pane_id))
         if row is not None:
             row.pane_incarnation = str(pane_incarnation)
             row.stream_id = str(stream_id)
             row.seq = seq
             row.observed_at = observed_at
-            return
-        if (instance_id, pane_id) in self._ledger:
-            self._ledger[(instance_id, pane_id)] = _CursorState(
-                pane_incarnation, str(stream_id), seq, observed_at
-            )
             return
         await self._create_anchor(
             session,
@@ -525,10 +593,13 @@ class ObservationCursorStore:
         instance_id: UUID,
         pane_id: str,
     ) -> PaneCursor | None:
-        row = await session.get(PaneObservationCursor, (instance_id, pane_id))
+        key = (instance_id, pane_id)
+        entry = self._ledger.get(key)
+        if entry is not None and key in self._dirty:
+            return self._cursor_from_state(instance_id, pane_id, entry)
+        row = await session.get(PaneObservationCursor, key)
         if row is not None:
             return self._to_cursor(row)
-        entry = self._ledger.get((instance_id, pane_id))
         if entry is None:
             return None
         return self._cursor_from_state(instance_id, pane_id, entry)
@@ -539,10 +610,13 @@ class ObservationCursorStore:
         instance_id: UUID,
         pane_id: str,
     ) -> tuple[PaneCursor, datetime] | None:
-        row = await session.get(PaneObservationCursor, (instance_id, pane_id))
+        key = (instance_id, pane_id)
+        entry = self._ledger.get(key)
+        if entry is not None and key in self._dirty:
+            return self._cursor_from_state(instance_id, pane_id, entry), entry.observed_at
+        row = await session.get(PaneObservationCursor, key)
         if row is not None:
             return self._to_cursor(row), self._aware(row.observed_at)
-        entry = self._ledger.get((instance_id, pane_id))
         if entry is None:
             return None
         return self._cursor_from_state(instance_id, pane_id, entry), entry.observed_at
@@ -947,6 +1021,7 @@ class WatchEngine:
         self._topologies: dict[UUID, TopologySnapshot] = {}
         self._subscriber: EventSubscriber | None = None
         self._task: asyncio.Task[None] | None = None
+        self._flush_task: asyncio.Task[None] | None = None
         #: Bounded counters for failed wire messages etc. (plan §17): visible
         #: to tests and audits like the pipeline's PipelineDiagnostics.
         self.diagnostics = WatchEngineDiagnostics()
@@ -960,6 +1035,7 @@ class WatchEngine:
         rows = await self._watch_repo.list_active(now=self._clock())
         runtimes: dict[UUID, WatcherRuntime] = {}
         async with self._sessions() as session:
+            flushed = await self._cursor_store.flush(session)
             for row in rows:
                 binding = await session.get(AgentBinding, row.binding_id)
                 if binding is None:
@@ -976,6 +1052,8 @@ class WatchEngine:
                         # cursor's observed_at restarts the timer (plan §11.2).
                         runtime.deadline.on_output(observed_at)
                 runtimes[row.id] = runtime
+            if flushed:
+                await session.commit()
         self._watches = runtimes
 
     async def start(self) -> None:
@@ -1022,9 +1100,42 @@ class WatchEngine:
             except asyncio.CancelledError:
                 pass
             self._task = None
+        if self._flush_task is not None:
+            self._flush_task.cancel()
+            try:
+                await self._flush_task
+            except asyncio.CancelledError:
+                pass
+            self._flush_task = None
+        if self._cursor_store.has_dirty:
+            try:
+                await self._flush_cursors()
+            except Exception:
+                logger.exception("Watch engine: cursor flush on stop failed")
         if self._subscriber is not None and self._hub is not None:
             await self._hub.unsubscribe(self._subscriber)
             self._subscriber = None
+
+    def _schedule_cursor_flush(self) -> None:
+        if self._flush_task is not None and not self._flush_task.done():
+            return
+        self._flush_task = asyncio.create_task(self._delayed_cursor_flush())
+
+    async def _delayed_cursor_flush(self) -> None:
+        try:
+            await asyncio.sleep(0.05)
+            await self._flush_cursors()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("Watch engine: background cursor flush failed")
+
+    async def _flush_cursors(self) -> None:
+        if not self._cursor_store.has_dirty:
+            return
+        async with self._sessions() as session:
+            if await self._cursor_store.flush(session):
+                await session.commit()
 
     # ------------------------------------------------------------------
     # Event intake
@@ -1046,6 +1157,17 @@ class WatchEngine:
         transaction share one session so a crash between inserts cannot
         orphan an inbox item.
         """
+        if not self._runtimes_for(instance_id, pane_id):
+            self._cursor_store.accept_in_memory(
+                instance_id=instance_id,
+                pane_id=pane_id,
+                stream_id=stream_id,
+                seq=seq,
+                observed_at=observed_at,
+            )
+            if self._task is not None:
+                self._schedule_cursor_flush()
+            return []
         async with self._sessions() as session:
             acceptance, cursor = await self._cursor_store.accept(
                 session,

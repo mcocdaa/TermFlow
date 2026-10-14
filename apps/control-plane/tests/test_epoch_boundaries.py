@@ -221,3 +221,54 @@ async def test_epoch_watcher_retries_after_transient_database_error(monkeypatch)
     finally:
         stop.set()
         await watcher
+
+
+@pytest.mark.asyncio
+async def test_terminal_hot_path_caches_epoch_without_per_frame_sqlite_queries(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'terminal-cache.db'}"
+    database = Database(database_url)
+    await database.initialize()
+    repositories = RepositoryBundle(database.session_factory)
+    terminal_hub = TerminalHub(queue_max_messages=64, queue_max_bytes=65536)
+    instance_id = uuid4()
+    terminal = await terminal_hub.register(instance_id, session_key=None, auth_epoch=1)
+    websocket = _FakeWebSocket(
+        *[{"type": "websocket.receive", "bytes": b"k"} for _ in range(20)],
+        {"type": "websocket.disconnect"},
+    )
+    terminal_router = SimpleNamespace(
+        authentication_epoch=1,
+        input=AsyncMock(),
+        action=AsyncMock(),
+        request_close=AsyncMock(),
+    )
+    settings = Settings(
+        admin_token="admin-token-that-is-long-enough-for-tests",
+        database_url=database_url,
+        allow_insecure_loopback=True,
+    )
+    db_reads = 0
+    original_get = repositories.auth_state.get
+
+    async def counting_get():
+        nonlocal db_reads
+        db_reads += 1
+        return await original_get()
+
+    monkeypatch.setattr(repositories.auth_state, "get", counting_get)
+    try:
+        await _receive_terminal_input(
+            websocket,
+            terminal,
+            terminal_router,
+            settings,
+            repositories,
+            1,
+        )
+        assert terminal_router.input.await_count == 20
+        assert db_reads == 1
+    finally:
+        await database.dispose()

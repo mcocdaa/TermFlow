@@ -176,7 +176,8 @@ async def test_transport_sends_hello_then_full_topology_and_stops(tmp_path) -> N
         MessageType.BRIDGE_HELLO,
         MessageType.TOPOLOGY_SNAPSHOT,
     ]
-    assert connection_arguments["ping_interval"] is None
+    assert connection_arguments["ping_interval"] == 20
+    assert connection_arguments["ping_timeout"] == 20
     assert connection_arguments["additional_headers"] == {
         "Authorization": "Bearer instance-secret-token"
     }

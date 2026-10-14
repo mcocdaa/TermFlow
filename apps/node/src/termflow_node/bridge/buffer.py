@@ -73,7 +73,7 @@ class PaneOutputBuffer:
     def replay(self, stream_id: UUID, after_seq: int) -> list[OutputChunk] | ReplayGap:
         if stream_id != self.stream_id:
             return ReplayGap(reason="stream_changed")
-        if after_seq < self._overwritten_through:
+        if after_seq < self._overwritten_through or after_seq > self.last_seq:
             return ReplayGap(reason="overwritten")
         return [chunk for chunk in self._chunks if chunk.seq > after_seq]
 

@@ -16,9 +16,10 @@ def test_buffer_replays_by_stream_and_sequence() -> None:
 def test_overwrite_reports_gap() -> None:
     buffer = PaneOutputBuffer(max_bytes=4)
     old = buffer.append(b"abc")
-    buffer.append(b"def")
+    latest = buffer.append(b"def")
     gap = buffer.replay(old.stream_id, 0)
     assert gap == ReplayGap(reason="overwritten")
+    assert buffer.replay(latest.stream_id, latest.seq + 1) == ReplayGap(reason="overwritten")
 
 
 def test_oversized_chunk_keeps_only_tail_and_marks_chunk_unreplayable() -> None:
