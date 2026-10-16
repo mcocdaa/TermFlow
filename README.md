@@ -10,6 +10,10 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](deploy/compose.yaml)
 
+<p align="center">
+  <img src="docs/assets/demo_termflow.gif" alt="TermFlow Live Terminal, Geek Themes & Agent Approval Demo" width="820">
+</p>
+
 TermFlow 让你通过浏览器、手机或原生客户端远程使用另一台电脑上的 tmux 终端。
 
 ```text
