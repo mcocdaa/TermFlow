@@ -204,7 +204,7 @@ function countdown(expiresAt: string): string {
   const parsed = parseTimestamp(expiresAt)
   const remaining = parsed - nowMs.value
   if (!Number.isFinite(remaining)) return '—'
-  if (remaining <= 0) return '已过期'
+  if (remaining <= 0) return t('agent.approval.state.expired')
   const total = Math.floor(remaining / 1_000)
   const minutes = Math.floor(total / 60)
   const seconds = total % 60

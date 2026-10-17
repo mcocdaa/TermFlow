@@ -1,7 +1,7 @@
 <template>
   <div class="mobile-keybar-shell">
     <div class="mobile-keybar" :aria-label="t('terminal.mobileKeybar.aria')" @pointermove.stop>
-      <!-- 修饰键组 -->
+      <!-- Modifier keys -->
       <button
         v-for="key in modifierKeys"
         :key="key.id"
@@ -26,20 +26,20 @@
         Prefix
       </button>
 
-      <!-- 方向导航组 -->
+      <!-- Navigation keys -->
       <span class="mobile-keybar-divider" aria-hidden="true" />
       <button type="button" class="mobile-key-btn mobile-key-btn--nav" :disabled="disabled" :aria-label="t('terminal.mobileKeybar.up')" @click="sendArrow('\u001b[A')">↑</button>
       <button type="button" class="mobile-key-btn mobile-key-btn--nav" :disabled="disabled" :aria-label="t('terminal.mobileKeybar.down')" @click="sendArrow('\u001b[B')">↓</button>
       <button type="button" class="mobile-key-btn mobile-key-btn--nav" :disabled="disabled" :aria-label="t('terminal.mobileKeybar.left')" @click="sendArrow('\u001b[D')">←</button>
       <button type="button" class="mobile-key-btn mobile-key-btn--nav" :disabled="disabled" :aria-label="t('terminal.mobileKeybar.right')" @click="sendArrow('\u001b[C')">→</button>
 
-      <!-- 高频控制与中断组 -->
+      <!-- Control & interrupt keys -->
       <span class="mobile-keybar-divider" aria-hidden="true" />
       <button type="button" class="mobile-key-btn mobile-key-btn--danger" :disabled="disabled" :aria-label="t('terminal.mobileKeybar.interrupt')" @click="sendInterrupt">^C</button>
       <button type="button" class="mobile-key-btn" :disabled="disabled" aria-label="EOF (Ctrl+D)" @click="sendEof">^D</button>
       <button type="button" class="mobile-key-btn mobile-key-btn--primary" :disabled="disabled" :aria-label="t('terminal.mobileKeybar.enter')" @click="sendEnter">↵</button>
 
-      <!-- 高频 Shell 符号组 -->
+      <!-- Shell symbol keys -->
       <button type="button" class="mobile-key-btn mobile-key-btn--sym" :disabled="disabled" @click="sendChar('/')">/</button>
       <button type="button" class="mobile-key-btn mobile-key-btn--sym" :disabled="disabled" @click="sendChar('-')">-</button>
       <button type="button" class="mobile-key-btn mobile-key-btn--sym" :disabled="disabled" @click="sendChar('|')">|</button>
@@ -72,7 +72,7 @@ const modifierKeys: Array<{ id: ModifierKey; label: string }> = [
   { id: 'shift', label: 'Shift' },
 ]
 
-const usablePrefix = computed(() => !!props.prefix && !/未报告|未绑定|Unreported|Unbound/i.test(props.prefix))
+const usablePrefix = computed(() => !!props.prefix && props.prefix !== t('terminal.unreportedPrefix') && props.prefix !== t('terminal.tmux.unbound') && !/\u672a\u62a5\u544a|\u672a\u7ed1\u5b9a|Unreported|Unbound/i.test(props.prefix))
 let blurTimer: unknown | null = null
 
 function vibrate(ms = 12) {

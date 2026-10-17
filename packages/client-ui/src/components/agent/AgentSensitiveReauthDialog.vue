@@ -1,37 +1,37 @@
 <template>
   <div v-if="authorization.open.value" class="dialog-backdrop">
-    <section ref="panel" role="dialog" aria-modal="true" aria-label="重新验证身份" class="dialog-panel agent-reauth-dialog" @keydown="onKeydown">
+    <section ref="panel" role="dialog" aria-modal="true" :aria-label="t('agent.reauth.title')" class="dialog-panel agent-reauth-dialog" @keydown="onKeydown">
       <header>
         <div>
           <p class="eyebrow">Security Check</p>
-          <h2>重新验证身份</h2>
+          <h2>{{ t('agent.reauth.title') }}</h2>
         </div>
-        <button type="button" class="icon-button icon-only" aria-label="关闭" data-action="close-reauth-dialog" @click="cancel">
+        <button type="button" class="icon-button icon-only" :aria-label="t('common.close')" data-action="close-reauth-dialog" @click="cancel">
           <X :size="18" aria-hidden="true" />
         </button>
       </header>
       <p class="agent-reauth-dialog__hint">
         <ShieldCheck :size="16" aria-hidden="true" />
-        <span v-if="native">请在系统浏览器中完成身份验证。</span>
-        <span v-else>为保护终端安全，执行敏感操作前需要重新验证管理员身份。验证通过后本次操作会自动继续。</span>
+        <span v-if="native">{{ t('agent.reauth.nativeHint') }}</span>
+        <span v-else>{{ t('agent.reauth.webHint') }}</span>
       </p>
       <form v-if="!native" class="security-form" @submit.prevent="submit">
         <template v-if="!challenge">
-          <label for="reauth-root-credential">Root 凭据</label>
+          <label for="reauth-root-credential">{{ t('agent.reauth.rootCredential') }}</label>
           <input id="reauth-root-credential" ref="credentialInput" v-model="credential" name="root_credential" type="password" autocomplete="off" required />
         </template>
         <template v-else>
-          <label for="reauth-totp">动态验证码</label>
+          <label for="reauth-totp">{{ t('agent.reauth.totp') }}</label>
           <input id="reauth-totp" v-model="totp" name="totp" inputmode="numeric" autocomplete="one-time-code" required />
         </template>
         <p v-if="error" class="form-error" role="alert">{{ error }}</p>
         <div class="dialog-actions">
-          <button ref="cancelButton" type="button" class="secondary-button" :disabled="busy" @click="cancel">取消</button>
-          <button type="submit" class="primary-button" :disabled="busy">{{ busy ? '正在验证…' : '验证' }}</button>
+          <button ref="cancelButton" type="button" class="secondary-button" :disabled="busy" @click="cancel">{{ t('common.cancel') }}</button>
+          <button type="submit" class="primary-button" :disabled="busy">{{ busy ? t('settings.totp.verifying') : t('agent.reauth.verify') }}</button>
         </div>
       </form>
       <div v-else class="dialog-actions">
-        <button ref="cancelButton" type="button" class="secondary-button" @click="cancel">取消</button>
+        <button ref="cancelButton" type="button" class="secondary-button" @click="cancel">{{ t('common.cancel') }}</button>
       </div>
     </section>
   </div>
@@ -39,8 +39,10 @@
 <script setup lang="ts">
 import { ShieldCheck, X } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from '../../i18n'
 import { useClientRuntime } from '../../runtime'
 import { useSensitiveAuthorization } from '../../composables/useSensitiveAuthorization'
+const { t } = useI18n()
 const runtime = useClientRuntime()
 const authorization = useSensitiveAuthorization()
 const native = computed(() => runtime.sensitiveAuthorization.mode === 'native-oauth')
@@ -66,7 +68,7 @@ async function submit() {
     if (signal.aborted) return
     if ('status' in result) { challenge.value = result.challenge_id; await nextTick(); panel.value?.querySelector<HTMLInputElement>('input')?.focus() }
     else if (result.authenticated) { challenge.value = null; authorization.finish(true) }
-  } catch { if (!signal.aborted) error.value = '验证失败，请重试。' }
+  } catch { if (!signal.aborted) error.value = t('agent.reauth.failed') }
   finally { credential.value = ''; totp.value = ''; busy.value = false }
 }
 function onKeydown(event: KeyboardEvent) {

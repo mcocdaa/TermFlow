@@ -1,30 +1,33 @@
 import { ApiError } from '@termflow/client-core'
 import type { AgentConversationResponse, AgentSetupRequest, AgentSetupResponse } from '@termflow/client-contracts'
 import { computed, onBeforeUnmount, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
+import { t } from '../i18n'
 import { useClientRuntime } from '../runtime'
 import type { PaneTopology } from '../types'
 import type { AgentSetupSelection } from '../components/agent/AgentSetupForm.vue'
 import { useSensitiveAuthorization } from './useSensitiveAuthorization'
 
+const REASON_KEYS: Record<string, string> = {
+  stale_topology: 'agent.reason.stale_topology',
+  stale_binding_revision: 'agent.reason.stale_binding_revision',
+  topology_unavailable: 'agent.reason.topology_unavailable',
+  disclosure_mismatch: 'agent.reason.disclosure_mismatch',
+  disclosure_required: 'agent.reason.disclosure_required',
+  binding_disclosure_stale: 'agent.reason.binding_disclosure_stale',
+  binding_disclosure_required: 'agent.reason.binding_disclosure_required',
+  provider_unavailable: 'agent.reason.provider_unavailable',
+  deployment_required: 'agent.reason.deployment_required',
+  sensitive_action_reauthentication_required: 'agent.reason.sensitive_action_reauthentication_required',
+  runtime_unreachable: 'agent.reason.runtime_unreachable',
+  mcp_not_connected: 'agent.reason.mcp_not_connected',
+  runtime_assignment_conflict: 'agent.reason.runtime_assignment_conflict',
+  pipeline_start_failed: 'agent.reason.pipeline_start_failed',
+  insufficient_scope: 'agent.reason.insufficient_scope',
+}
+
 export function agentReasonMessage(code: string | null | undefined): string {
-  const messages: Record<string, string> = {
-    stale_topology: '窗格布局已变化，请刷新后重新选择。',
-    stale_binding_revision: 'Agent 配置已变化，请刷新后重试。',
-    topology_unavailable: '窗格布局暂不可用，请连接终端后刷新。',
-    disclosure_mismatch: '提供方披露已变化，请重新确认。',
-    disclosure_required: '请确认当前提供方的数据发送说明。',
-    binding_disclosure_stale: '提供方披露已变化，请重新确认。',
-    binding_disclosure_required: '请确认当前提供方的数据发送说明。',
-    provider_unavailable: '模型提供方暂不可用。',
-    deployment_required: '请管理员完成 Agent 服务部署。',
-    sensitive_action_reauthentication_required: '身份验证已失效，请重新操作。',
-    runtime_unreachable: '运行时暂时不可达，稍候会自动重试。',
-    mcp_not_connected: '运行时尚未连上控制面，稍候会自动重试。',
-    runtime_assignment_conflict: '运行时身份冲突，请点击“重新激活”修复。',
-    pipeline_start_failed: '运行时启动失败，请稍候重试或联系管理员。',
-    insufficient_scope: '当前客户端缺少 Agent 权限，请重新登录授权。',
-  }
-  return messages[code ?? ''] ?? 'Agent 暂不可用，请稍后重试。'
+  const key = code ? REASON_KEYS[code] : undefined
+  return key ? t(key) : t('agent.reason.default')
 }
 
 export function useTermAgent(options: { termId: MaybeRefOrGetter<string>; requestedConversationId: MaybeRefOrGetter<string | null> }) {

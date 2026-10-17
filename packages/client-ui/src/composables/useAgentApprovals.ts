@@ -7,6 +7,7 @@ import { createApprovalsApi, ApiError } from '@termflow/client-core'
 import type { ApprovalResponse } from '@termflow/client-contracts'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { t } from '../i18n'
 import { useClientRuntime } from '../runtime'
 import { useBottomToast } from './useBottomToast'
 import { useSession } from './useSession'
@@ -118,7 +119,7 @@ export function useAgentApprovals(options: UseAgentApprovalsOptions = {}) {
           // error toast.
           if (!disposed && generation === loadGeneration) approvals.value = []
         } else {
-          toast.show({ text: '无法加载审批列表。', tone: 'error' })
+          toast.show({ text: t('agent.approval.loadError'), tone: 'error' })
         }
       }
     } finally {
@@ -142,13 +143,13 @@ export function useAgentApprovals(options: UseAgentApprovalsOptions = {}) {
   async function handleError(error: unknown, approvalId: string) {
     if (error instanceof Error && error.message === 'sensitive_authorization_cancelled') return
     if (!(error instanceof ApiError)) {
-      toast.show({ text: '操作失败，请稍后重试。', tone: 'error' })
+      toast.show({ text: t('common.actionFailed'), tone: 'error' })
       return
     }
     if (error.kind === 'aborted') return
     if (error.status === 404 || error.code === 'approval_not_found') {
       approvals.value = approvals.value.filter((approval) => approval.approval_id !== approvalId)
-      toast.show({ text: '该审批请求已不存在。', tone: 'error' })
+      toast.show({ text: t('agent.approval.notFoundError'), tone: 'error' })
       return
     }
     if (error.status === 409 && error.code === 'approval_auth_epoch_stale') {
@@ -160,13 +161,13 @@ export function useAgentApprovals(options: UseAgentApprovalsOptions = {}) {
     }
     if (error.status === 409 || error.status === 410) {
       toast.show({
-        text: error.status === 410 ? '该审批请求已过期。' : '审批状态已变化，列表已刷新。',
+        text: error.status === 410 ? t('agent.approval.expiredError') : t('agent.approval.stateChangedError'),
         tone: 'error',
       })
       await load()
       return
     }
-    toast.show({ text: error.status === 428 ? '身份验证已失效，请重新操作。' : '操作失败，请稍后重试。', tone: 'error' })
+    toast.show({ text: error.status === 428 ? t('agent.reason.sensitive_action_reauthentication_required') : t('common.actionFailed'), tone: 'error' })
   }
 
   async function decide(approvalId: string, decision: 'approve' | 'deny') {
@@ -177,7 +178,7 @@ export function useAgentApprovals(options: UseAgentApprovalsOptions = {}) {
       const operation = () => approvalsApi.decide(approvalId, decision, signal)
       if (decision === 'approve') await authorization.run(operation, 'approval_reauthentication_required', signal)
       else await operation()
-      toast.show({ text: decision === 'approve' ? '已批准。' : '已拒绝。', tone: 'success' })
+      toast.show({ text: decision === 'approve' ? t('agent.approval.approvedToast') : t('agent.approval.deniedToast'), tone: 'success' })
       await load()
     } catch (error) {
       await handleError(error, approvalId)
@@ -191,7 +192,7 @@ export function useAgentApprovals(options: UseAgentApprovalsOptions = {}) {
     setBusy(approvalId, true)
     try {
       await approvalsApi.revoke(approvalId, controller?.signal)
-      toast.show({ text: '已撤销审批。', tone: 'success' })
+      toast.show({ text: t('agent.approval.revokedToast'), tone: 'success' })
       await load()
     } catch (error) {
       await handleError(error, approvalId)

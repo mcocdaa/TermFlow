@@ -22,6 +22,7 @@ import {
 } from '@termflow/client-core'
 import { onBeforeUnmount, onMounted, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { t } from '../i18n'
 import { useClientRuntime } from '../runtime'
 import { useSession } from './useSession'
 import { useBottomToast } from './useBottomToast'
@@ -117,16 +118,16 @@ export function useAgentConversation(options: UseAgentConversationOptions) {
         }
         if (info.code === AGENT_STREAM_CLOSE_NOT_FOUND) {
           runtime.agentCursorStore.clear(options.conversationId)
-          toast.show({ text: '该会话不存在或已被删除。', tone: 'error' })
+          toast.show({ text: t('agent.chat.notFoundToast'), tone: 'error' })
           return
         }
         if (info.code === AGENT_STREAM_CLOSE_FORBIDDEN) {
-          toast.show({ text: '当前客户端没有访问该会话的权限，请重新登录授权。', tone: 'error' })
+          toast.show({ text: t('agent.chat.forbiddenToast'), tone: 'error' })
         }
       },
       onError: (error) => {
         if (error.code === 'stream_too_slow') {
-          toast.show({ text: '连接恢复中，正在补齐消息…', tone: 'error' })
+          toast.show({ text: t('agent.chat.recoveringToast'), tone: 'error' })
         }
       },
       onAuthenticationRequired: handleAuthenticationRequired,

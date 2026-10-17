@@ -109,7 +109,7 @@ async function pollForEnrollment() {
     open.value = false
     emit('added')
     void nextTick(() => { if (returnFocus?.isConnected) returnFocus.focus() })
-  } catch (error) { if (open.value) message.value = error instanceof ApiError ? error.message : '无法检查电脑是否已添加。' }
+  } catch (error) { if (open.value) message.value = error instanceof ApiError ? error.message : t('computers.enrollment.pollError') }
   finally { pollingEnrollment = false }
 }
 function startEnrollmentPolling() {
@@ -122,7 +122,7 @@ function validName(value: string) {
 async function create(automatic = false) {
   if (busy.value || !open.value) return
   if (!validName(displayName.value)) {
-    message.value = '电脑名称须为 1 至 128 个无控制字符的字符。'
+    message.value = t('computers.enrollment.nameInvalid')
     return
   }
   busy.value = true
@@ -141,7 +141,7 @@ async function create(automatic = false) {
     startTimer()
     startEnrollmentPolling()
     if (!automatic) void nextTick(() => copyButton.value?.focus())
-  } catch (error) { message.value = error instanceof ApiError ? error.message : automatic ? '注册码刷新失败，请手动重试。' : '无法创建注册码。' }
+  } catch (error) { message.value = error instanceof ApiError ? error.message : automatic ? t('computers.enrollment.refreshError') : t('computers.enrollment.createError') }
   finally { busy.value = false }
 }
 async function copy() { if (!command.value) return; await runtime.clipboard.writeText(command.value); copied.value = true }

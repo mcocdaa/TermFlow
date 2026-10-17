@@ -25,8 +25,8 @@ const emit = defineEmits<{ action: [actionId: TerminalActionId, paneId: string |
 const desktopTrigger = ref<HTMLButtonElement | null>(null)
 const query = ref('')
 const tooltipScope = useId()
-const actionLabel = (action: TmuxActionDefinition) => t(`terminal.tmux.action.${action.id}`)
-const filteredActions = computed(() => tmuxActions.filter((action) => actionLabel(action).toLocaleLowerCase().includes(query.value.trim().toLocaleLowerCase()) || action.label.toLocaleLowerCase().includes(query.value.trim().toLocaleLowerCase())))
+const actionLabel = (action: TmuxActionDefinition) => t(action.labelKey)
+const filteredActions = computed(() => tmuxActions.filter((action) => actionLabel(action).toLocaleLowerCase().includes(query.value.trim().toLocaleLowerCase())))
 const binding = (id: TerminalActionId) => props.bindings.bindings.find((item) => item.action === id)
 const bindingKey = (id: TerminalActionId) => binding(id)?.key ?? null
 const bindingTooltipId = (id: TerminalActionId) => `tmux-binding-${tooltipScope}-${id}`

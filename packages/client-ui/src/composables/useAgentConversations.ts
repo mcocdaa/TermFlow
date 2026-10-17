@@ -7,6 +7,7 @@
 import type { AgentConversationResponse } from '@termflow/client-contracts'
 import { ApiError, createApprovalsApi } from '@termflow/client-core'
 import { onBeforeUnmount, onMounted, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
+import { t } from '../i18n'
 import { useClientRuntime } from '../runtime'
 import { useBottomToast } from './useBottomToast'
 
@@ -77,7 +78,7 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<BindingScope>
     } catch (error) {
       // Aborted = superseded by a newer load or unmount; not a failure.
       if (!disposed && !(error instanceof ApiError && error.kind === 'aborted')) {
-        errorMessage.value = '无法加载 Agent 会话数据。'
+        errorMessage.value = t('agent.conversations.loadErrorShort')
         toast.show({ text: errorMessage.value, tone: 'error' })
       }
     } finally {
@@ -93,14 +94,14 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<BindingScope>
       )
       conversations.value = [created, ...conversations.value]
       errorMessage.value = null
-      toast.show({ text: '会话已创建。', tone: 'success' })
+      toast.show({ text: t('agent.conversations.createdToast'), tone: 'success' })
       return created
     } catch (error) {
       // An unmount abort is not a user-visible failure (mirrors the list
       // load's aborted filter); the caller still sees null and keeps the
       // typed title for a retry.
       if (error instanceof ApiError && error.kind === 'aborted') return null
-      errorMessage.value = '创建会话失败，请稍后重试。'
+      errorMessage.value = t('agent.conversations.createError')
       toast.show({ text: errorMessage.value, tone: 'error' })
       return null
     }
@@ -109,7 +110,7 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<BindingScope>
   async function rename(conversationId: string, title: string) {
     const normalized = title.trim()
     if (normalized.length < 1 || normalized.length > 255) {
-      errorMessage.value = '会话名称须为 1 至 255 个字符。'
+      errorMessage.value = t('agent.conversations.nameInvalid')
       return null
     }
     try {
@@ -122,11 +123,11 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<BindingScope>
         conversation.conversation_id === conversationId ? updated : conversation,
       )
       errorMessage.value = null
-      toast.show({ text: '会话名称已更新。', tone: 'success' })
+      toast.show({ text: t('agent.conversations.renamedToast'), tone: 'success' })
       return updated
     } catch (requestError) {
       if (requestError instanceof ApiError && requestError.kind === 'aborted') return null
-      errorMessage.value = '保存会话名称失败，请稍后重试。'
+      errorMessage.value = t('agent.conversations.renameError')
       toast.show({ text: errorMessage.value, tone: 'error' })
       return null
     }
@@ -139,12 +140,12 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<BindingScope>
       // Deleted conversations can never resume (M6b spec §4.4).
       runtime.agentCursorStore.clear(conversationId)
       errorMessage.value = null
-      toast.show({ text: '会话已删除。', tone: 'success' })
+      toast.show({ text: t('agent.conversations.deletedToast'), tone: 'success' })
     } catch (error) {
       // An unmount abort is not a user-visible failure (mirrors the list
       // load's aborted filter).
       if (error instanceof ApiError && error.kind === 'aborted') return
-      errorMessage.value = '删除会话失败，请稍后重试。'
+      errorMessage.value = t('agent.conversations.deleteError')
       toast.show({ text: errorMessage.value, tone: 'error' })
     }
   }

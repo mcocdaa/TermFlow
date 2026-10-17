@@ -13,7 +13,7 @@
             <span v-if="validationError" class="form-error" role="alert">{{ validationError }}</span>
           </form>
           <button v-else data-term-name data-action="edit-term-name" class="terminal-name-trigger" type="button" :aria-label="t('terminal.editNameAria', { title })" :title="t('terminal.editNameTitle')" @click="startEditing"><strong>{{ title }}</strong></button>
-          <small data-computer-name :title="computerName">{{ computerName }}</small>
+          <small data-computer-name :title="resolvedComputerName">{{ resolvedComputerName }}</small>
         </div>
       </div>
       <span data-connection-status class="terminal-status">{{ statusLabel }}</span>
@@ -57,12 +57,13 @@ import { useI18n } from '../../i18n'
 import type { DisplayMode } from '../../terminal/viewport'
 import DisplayMenu from './DisplayMenu.vue'
 const { t, toggleLocale } = useI18n()
-const props = withDefaults(defineProps<{ title: string; computerName?: string; status?: TerminalConnectionStatus; displayMode: DisplayMode; displayMenuOpen?: boolean; viewportLocked?: boolean }>(), { computerName: 'Computer 未报告', status: 'connecting', displayMenuOpen: false, viewportLocked: false })
+const props = withDefaults(defineProps<{ title: string; computerName?: string | undefined; status?: TerminalConnectionStatus; displayMode: DisplayMode; displayMenuOpen?: boolean; viewportLocked?: boolean }>(), { status: 'connecting', displayMenuOpen: false, viewportLocked: false })
 const emit = defineEmits<{ 'update:displayMode': [mode: DisplayMode]; 'update:displayMenuOpen': [open: boolean]; 'update:viewportLocked': [locked: boolean]; rename: [name: string] }>()
 const editing = ref(false)
 const draft = ref('')
 const validationError = ref('')
 const nameInput = ref<HTMLInputElement | null>(null)
+const resolvedComputerName = computed(() => props.computerName ?? t('terminal.unreportedComputer'))
 const statusLabel = computed(() => t(`terminal.status.${props.status}`))
 function startEditing() { draft.value = props.title; validationError.value = ''; editing.value = true; void nextTick(() => nameInput.value?.focus()) }
 function cancel() { editing.value = false; validationError.value = '' }

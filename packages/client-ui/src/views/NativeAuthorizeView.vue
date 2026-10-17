@@ -2,29 +2,29 @@
   <section class="authorize-view">
     <div class="auth-card consent-card">
       <header class="authorize-card-heading">
-        <div><p class="eyebrow">Native client authorization</p><h1>授权 TermFlow 客户端</h1></div>
+        <div><p class="eyebrow">Native client authorization</p><h1>{{ t('nativeAuth.title') }}</h1></div>
       </header>
-      <p v-if="loading">正在读取授权请求…</p>
+      <p v-if="loading">{{ t('nativeAuth.loading') }}</p>
       <template v-else-if="preview">
         <dl class="consent-details">
-          <div><dt>服务器</dt><dd>{{ preview.issuer }}</dd></div>
-          <div><dt>客户端</dt><dd>{{ preview.client_name }}</dd></div>
-          <div><dt>平台</dt><dd>{{ preview.platform }}{{ preview.client_version ? ` · ${preview.client_version}` : '' }}</dd></div>
-          <div><dt>公钥指纹</dt><dd><code>{{ preview.key_fingerprint }}</code></dd></div>
-          <div><dt>权限</dt><dd>{{ preview.scopes.join(' · ') }}</dd></div>
+          <div><dt>{{ t('nativeAuth.server') }}</dt><dd>{{ preview.issuer }}</dd></div>
+          <div><dt>{{ t('settings.deviceApproval.client') }}</dt><dd>{{ preview.client_name }}</dd></div>
+          <div><dt>{{ t('settings.deviceApproval.platform') }}</dt><dd>{{ preview.platform }}{{ preview.client_version ? ` · ${preview.client_version}` : '' }}</dd></div>
+          <div><dt>{{ t('nativeAuth.keyFingerprint') }}</dt><dd><code>{{ preview.key_fingerprint }}</code></dd></div>
+          <div><dt>{{ t('settings.deviceApproval.scopes') }}</dt><dd>{{ preview.scopes.join(' · ') }}</dd></div>
         </dl>
         <form class="security-form native-authorize-form" @submit.prevent="decide('allow')">
-          <label for="authorize-admin-token">管理员令牌</label>
+          <label for="authorize-admin-token">{{ t('settings.totp.adminToken') }}</label>
           <input id="authorize-admin-token" v-model="adminToken" type="password" autocomplete="off" required />
           <template v-if="preview.totp_required">
-            <label for="authorize-totp">双重验证码<span class="totp-hint">（请输入验证器应用当前显示的 6 位双重验证码。）</span></label>
+            <label for="authorize-totp">{{ t('settings.totp.code') }}<span class="totp-hint">{{ t('deviceAuth.totpHint') }}</span></label>
             <input id="authorize-totp" v-model="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required />
           </template>
           <p v-if="message" role="alert" class="form-error">{{ message }}</p>
-          <div class="dialog-actions"><button class="secondary-button" type="button" @click="decide('deny')">拒绝</button><button class="primary-button" type="submit">允许此客户端</button></div>
+          <div class="dialog-actions"><button class="secondary-button" type="button" @click="decide('deny')">{{ t('settings.deviceApproval.deny') }}</button><button class="primary-button" type="submit">{{ t('nativeAuth.allow') }}</button></div>
         </form>
       </template>
-      <p v-else role="alert" class="form-error">{{ message || '授权请求无效或已过期。' }}</p>
+      <p v-else role="alert" class="form-error">{{ message || t('nativeAuth.invalidOrExpired') }}</p>
     </div>
   </section>
 </template>
@@ -34,8 +34,10 @@ import type { OAuthAuthorizationPreviewResponse } from '@termflow/client-contrac
 import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ApiError } from '@termflow/client-core'
+import { useI18n } from '../i18n'
 import { useClientRuntime } from '../runtime'
 
+const { t } = useI18n()
 const runtime = useClientRuntime()
 const route = useRoute()
 const preview = ref<OAuthAuthorizationPreviewResponse | null>(null)
@@ -47,7 +49,7 @@ const message = ref('')
 onMounted(async () => {
   const transactionId = typeof route.query.transaction_id === 'string' ? route.query.transaction_id : ''
   try { preview.value = await runtime.api.oauth.authorizationPreview(transactionId) }
-  catch (error) { message.value = error instanceof ApiError ? error.message : '授权请求无效或已过期。' }
+  catch (error) { message.value = error instanceof ApiError ? error.message : t('nativeAuth.invalidOrExpired') }
   finally { loading.value = false }
 })
 
@@ -64,7 +66,7 @@ async function decide(decision: 'allow' | 'deny') {
     runtime.authorizationCompletion.navigate(result.callback_uri)
   } catch (error) {
     adminToken.value = ''; totpCode.value = ''
-    message.value = error instanceof ApiError ? error.message : '无法完成授权。'
+    message.value = error instanceof ApiError ? error.message : t('nativeAuth.failed')
   }
 }
 </script>
