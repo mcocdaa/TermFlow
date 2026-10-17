@@ -11,7 +11,7 @@
     >
       <h2 id="delete-computer-title">{{ t('computers.deleteDialog.title') }}</h2>
       <div id="delete-computer-description">
-        <p>{{ t('computers.deleteDialog.desc1') }}<strong>{{ computer.display_name }}</strong>。</p>
+        <p>{{ t('computers.deleteDialog.desc1') }}<strong>{{ computer.display_name }}</strong>{{ locale === 'en' ? '.' : '。' }}</p>
         <p>{{ t('computers.deleteDialog.desc2') }}</p>
       </div>
       <p v-if="error" class="form-error" role="alert">{{ error }}</p>
@@ -41,7 +41,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from '../../i18n'
 import type { ComputerSummary } from '../../types'
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const props = defineProps<{ computer: ComputerSummary; pending: boolean; error: string; cleanupJobId?: string }>()
 const emit = defineEmits<{ confirm: [installationId: string]; cancel: [] }>()

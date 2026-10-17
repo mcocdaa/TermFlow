@@ -1,6 +1,6 @@
 export type ApiErrorKind = 'offline' | 'authentication' | 'validation' | 'rate_limit' | 'server' | 'aborted' | 'http_capability_denied'
 
-const safeMessages: Record<ApiErrorKind, string> = {
+const safeMessagesZh: Record<ApiErrorKind, string> = {
   offline: '无法连接服务，请检查网络后重试。',
   authentication: '会话已过期，请重新登录。',
   validation: '提交的内容不符合要求。',
@@ -8,6 +8,28 @@ const safeMessages: Record<ApiErrorKind, string> = {
   server: '服务暂时不可用，请稍后重试。',
   aborted: '请求已取消。',
   http_capability_denied: '客户端网络权限配置无效，请升级或重新安装 TermFlow。',
+}
+
+const safeMessagesEn: Record<ApiErrorKind, string> = {
+  offline: 'Unable to connect to the server. Please check your network and try again.',
+  authentication: 'Session expired. Please sign in again.',
+  validation: 'The submitted content is invalid.',
+  rate_limit: 'Too many requests. Please try again later.',
+  server: 'Service is temporarily unavailable. Please try again later.',
+  aborted: 'Request canceled.',
+  http_capability_denied: 'Client network capability configuration is invalid. Please update or reinstall TermFlow.',
+}
+
+function isEnglishLocale(): boolean {
+  try {
+    return typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function' && localStorage.getItem('termflow_lang') === 'en'
+  } catch {
+    return false
+  }
+}
+
+export function safeMessageFor(kind: ApiErrorKind): string {
+  return isEnglishLocale() ? safeMessagesEn[kind] : safeMessagesZh[kind]
 }
 
 export interface ApiErrorDetails {
@@ -26,7 +48,7 @@ export class ApiError extends Error {
   readonly dpopNonce?: string
 
   constructor(public readonly kind: ApiErrorKind, details: ApiErrorDetails = {}) {
-    super(safeMessages[kind])
+    super(safeMessageFor(kind))
     this.name = 'ApiError'
     if (details.status !== undefined) this.status = details.status
     if (details.code !== undefined) this.code = details.code

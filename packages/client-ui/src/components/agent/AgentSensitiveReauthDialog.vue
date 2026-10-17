@@ -3,7 +3,7 @@
     <section ref="panel" role="dialog" aria-modal="true" :aria-label="t('agent.reauth.title')" class="dialog-panel agent-reauth-dialog" @keydown="onKeydown">
       <header>
         <div>
-          <p class="eyebrow">Security Check</p>
+          <p class="eyebrow">{{ t('settings.totp.securityCheckEyebrow') }}</p>
           <h2>{{ t('agent.reauth.title') }}</h2>
         </div>
         <button type="button" class="icon-button icon-only" :aria-label="t('common.close')" data-action="close-reauth-dialog" @click="cancel">

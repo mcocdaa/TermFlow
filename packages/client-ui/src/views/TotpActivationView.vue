@@ -1,7 +1,7 @@
 <template>
   <div class="page settings-page totp-activation-view">
     <header class="page-heading totp-guide-heading">
-      <div class="totp-guide-heading-copy"><p class="eyebrow">Two Factor Authentication</p><h1>{{ t('settings.totp.heading') }}</h1></div>
+      <div class="totp-guide-heading-copy"><p class="eyebrow">{{ t('settings.totp.eyebrow') }}</p><h1>{{ t('settings.totp.heading') }}</h1></div>
       <RouterLink class="secondary-button" to="/settings">{{ t('settings.totp.backToSettings') }}</RouterLink>
     </header>
     <ol v-if="!loading && status.available" class="totp-guide-steps" :aria-label="t('settings.totp.stepsAria')">

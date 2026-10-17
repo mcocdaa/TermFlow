@@ -35,7 +35,7 @@
             <AgentCollapsibleOutput :content="pretty(part.input)" />
           </template>
           <p v-if="part.input_omitted?.length" class="agent-tool-activity__label" data-agent-tool-defaults>
-            {{ t('agent.chat.toolDefaultsOmitted', { items: part.input_omitted.join('、') }) }}
+            {{ t('agent.chat.toolDefaultsOmitted', { items: part.input_omitted.join(locale === 'en' ? ', ' : '、') }) }}
           </p>
           <template v-if="part.output">
             <p class="agent-tool-activity__label">{{ t('agent.chat.toolOutput') }}</p>
@@ -63,7 +63,7 @@ import { Sparkles, Wrench } from '@lucide/vue'
 import { useI18n } from '../../i18n'
 import AgentCollapsibleOutput from './AgentCollapsibleOutput.vue'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 export interface AgentConversationPart {
   type: string

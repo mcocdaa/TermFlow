@@ -37,7 +37,7 @@ import TerminalAgentPanel from '../components/agent/TerminalAgentPanel.vue'
 import TerminalAgentToggle from '../components/agent/TerminalAgentToggle.vue'
 import { isAgentConversationId } from '../router/terminalQuery'
 import { useAgentBroker } from '../composables/useAgentBroker'
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const runtime = useClientRuntime()
@@ -82,6 +82,11 @@ const renameError = ref('')
 const panes = ref<PaneTopology[]>([])
 const terminalCanvas = ref<InstanceType<typeof TerminalCanvas> | null>(null)
 const bindings = ref<BindingSnapshot>({ prefix: t('terminal.unreportedPrefix'), bindings: [] })
+watch(locale, () => {
+  if (bindings.value.prefix === '未报告' || bindings.value.prefix === 'Unreported') {
+    bindings.value = { ...bindings.value, prefix: t('terminal.unreportedPrefix') }
+  }
+})
 const modifiers = reactive(new MobileModifierController())
 const modifierResetKey = ref(0)
 const closePaneId = ref<string | null>(null)

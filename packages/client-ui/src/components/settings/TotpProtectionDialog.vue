@@ -3,7 +3,7 @@
     <section class="dialog-panel protection-dialog" role="dialog" aria-modal="true" aria-labelledby="protection-dialog-title" @keydown="onKeydown">
       <header>
         <div>
-          <p class="eyebrow">Security Check</p>
+          <p class="eyebrow">{{ t('settings.totp.securityCheckEyebrow') }}</p>
           <h2 id="protection-dialog-title">{{ targetEnabled ? t('settings.totp.protectionLabel') : t('settings.totp.disableTitle') }}</h2>
         </div>
         <button data-action="close-protection-dialog" class="icon-button icon-only" type="button" :aria-label="t('common.close')" @click="close"><X :size="18" aria-hidden="true" /></button>

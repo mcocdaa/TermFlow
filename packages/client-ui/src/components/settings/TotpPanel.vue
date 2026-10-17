@@ -2,7 +2,7 @@
   <section class="settings-panel" aria-labelledby="totp-heading">
     <div class="settings-panel-heading">
       <div>
-        <p class="eyebrow">Two Factor Authentication</p>
+        <p class="eyebrow">{{ t('settings.totp.eyebrow') }}</p>
         <div class="settings-heading-label">
           <h2 id="totp-heading">{{ t('settings.totp.heading') }}</h2>
           <ContextHelp

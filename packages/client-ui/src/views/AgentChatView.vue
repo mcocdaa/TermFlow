@@ -2,7 +2,7 @@
   <div class="page agent-chat-view">
     <template v-if="!agentBrokerEnabled">
       <header class="page-heading">
-        <div><p class="eyebrow">Agent</p><h1>{{ t('agent.title') }}</h1></div>
+        <div><p class="eyebrow">{{ t('agent.eyebrow') }}</p><h1>{{ t('agent.title') }}</h1></div>
       </header>
       <section class="agent-placeholder" data-agent-disabled>
         <h2>{{ t('agent.disabledTitle') }}</h2>

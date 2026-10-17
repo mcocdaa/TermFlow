@@ -1,7 +1,7 @@
 <template>
   <article class="computer-card" :data-computer-id="computer.installation_id">
     <header>
-      <div><p class="eyebrow">Computer</p><h2>{{ computer.display_name }}</h2><p v-if="metadata" class="muted">{{ metadata }}</p></div>
+      <div><p class="eyebrow">{{ t('dashboard.computerEyebrow') }}</p><h2>{{ computer.display_name }}</h2><p v-if="metadata" class="muted">{{ metadata }}</p></div>
       <StatusPill :online="computer.online" />
     </header>
     <div v-if="computer.terms.length" class="term-list"><TermRow v-for="term in computer.terms" :key="term.instance_id" :term="term" @request-delete="$emit('request-delete', $event)" /></div>

@@ -1,7 +1,7 @@
 <template>
   <div class="dialog-backdrop" role="presentation">
     <section data-action="device-approval-dialog" class="dialog-panel device-approval-dialog" role="dialog" aria-modal="true" aria-labelledby="device-approval-title">
-      <header><div><p class="eyebrow">Client authorization</p><h2 id="device-approval-title">{{ t('settings.clients.authorizeNew') }}</h2></div><button class="icon-button icon-only" type="button" :aria-label="t('common.close')" :title="t('common.close')" @click="emit('closed')">×</button></header>
+      <header><div><p class="eyebrow">{{ t('settings.deviceApproval.eyebrow') }}</p><h2 id="device-approval-title">{{ t('settings.clients.authorizeNew') }}</h2></div><button class="icon-button icon-only" type="button" :aria-label="t('common.close')" :title="t('common.close')" @click="emit('closed')">×</button></header>
       <form v-if="preview === null" data-action="lookup-device-approval" class="security-form" @submit.prevent="lookup()">
         <label for="device-approval-code">{{ t('settings.deviceApproval.codeLabel') }}</label>
         <input id="device-approval-code" v-model="userCode" inputmode="text" autocomplete="off" placeholder="ABCD-EFGH" required />

@@ -60,7 +60,7 @@ curl -fsS http://127.0.0.1:8765/healthz
 
 ```bash
 curl -fsSL \
-  https://github.com/mcocdaa/TermFlow/releases/download/v0.1.0/install-termflow-node.sh \
+  https://github.com/mcocdaa/TermFlow/releases/download/v0.2.0/install-termflow-node.sh \
   | bash
 
 termflow login \

@@ -7,7 +7,7 @@
         <span>{{ t('agent.chat.backOverview') }}</span>
       </RouterLink>
       <div>
-        <p class="eyebrow">Agent Chat</p>
+        <p class="eyebrow">{{ t('agent.chat.eyebrow') }}</p>
         <h1 data-agent-chat-title>{{ title }}</h1>
         <p class="agent-chat-header__binding" data-agent-chat-binding>{{ bindingLabel }}</p>
       </div>

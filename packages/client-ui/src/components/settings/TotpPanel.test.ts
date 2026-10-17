@@ -28,7 +28,7 @@ describe('TotpPanel', () => {
     })
     const { wrapper, router } = await mountPanel(runtime)
 
-    expect(wrapper.get('.eyebrow').text()).toBe('Two Factor Authentication')
+    expect(wrapper.get('.eyebrow').text()).toBe('安全验证')
     expect(wrapper.get('#totp-heading').text()).toBe('双重因素认证')
     expect(wrapper.text()).not.toMatch(/主密钥|环境变量|文件路径/)
     expect(wrapper.find('.settings-copy').exists()).toBe(false)

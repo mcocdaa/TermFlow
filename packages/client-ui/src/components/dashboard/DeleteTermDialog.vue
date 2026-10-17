@@ -11,7 +11,7 @@
     >
       <h2 id="delete-term-title">{{ t('dashboard.deleteDialog.title') }}</h2>
       <div id="delete-term-description">
-        <p>{{ t('dashboard.deleteDialog.desc1') }}<strong>{{ term.name }}</strong>（{{ term.instance_id }}）。</p>
+        <p>{{ t('dashboard.deleteDialog.desc1') }}<strong>{{ term.name }}</strong>{{ locale === 'en' ? ` (${term.instance_id}).` : `（${term.instance_id}）。` }}</p>
         <p>{{ t('dashboard.deleteDialog.desc2') }}</p>
         <p>{{ t('dashboard.deleteDialog.desc3') }}</p>
         <code class="delete-term-activation">termflow activate {{ term.instance_id }}</code>
@@ -43,7 +43,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from '../../i18n'
 import type { TermSummary } from '../../types'
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const props = defineProps<{ term: TermSummary; pending: boolean; error: string; cleanupJobId?: string }>()
 const emit = defineEmits<{ confirm: [instanceId: string]; cancel: [] }>()
