@@ -76,7 +76,15 @@ async function submit() {
     const requested = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
     await router.replace(requested.startsWith('/') && !requested.startsWith('//') ? requested : '/')
   } catch (error) {
-    errorState.value = error instanceof ApiError ? { type: 'api', kind: error.kind } : { type: 'key', key: 'login.failed' }
+    if (error instanceof ApiError) {
+      if (challengeId.value === null && error.kind === 'authentication' && (error.status === 401 || error.code === 'unauthorized')) {
+        errorState.value = { type: 'key', key: 'login.invalidToken' }
+      } else {
+        errorState.value = { type: 'api', kind: error.kind }
+      }
+    } else {
+      errorState.value = { type: 'key', key: 'login.failed' }
+    }
   } finally {
     adminToken.value = ''
     totpCode.value = ''

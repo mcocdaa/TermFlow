@@ -162,7 +162,7 @@ import { useBottomToast } from '../composables/useBottomToast'
 import { useI18n } from '../i18n'
 import { useClientRuntime } from '../runtime'
 
-const { t } = useI18n()
+const { t, locale, translateDynamicText } = useI18n()
 const runtime = useClientRuntime()
 const toast = useBottomToast()
 const { agentBrokerEnabled } = useAgentBroker()
@@ -171,6 +171,11 @@ const bindings = ref<AgentBindingResponse[]>([])
 const termNames = ref(new Map<string, string>())
 const directoryLoading = ref(true)
 const directoryError = ref<string | null>(null)
+watch(locale, () => {
+  if (directoryError.value !== null) {
+    directoryError.value = translateDynamicText(directoryError.value)
+  }
+})
 const controller = ref<AbortController | null>(null)
 
 const conversations = useAgentConversations(() => bindings.value.map((binding) => binding.binding_id))

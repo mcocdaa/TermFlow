@@ -118,16 +118,16 @@ export function useAgentConversation(options: UseAgentConversationOptions) {
         }
         if (info.code === AGENT_STREAM_CLOSE_NOT_FOUND) {
           runtime.agentCursorStore.clear(options.conversationId)
-          toast.show({ text: t('agent.chat.notFoundToast'), tone: 'error' })
+          toast.show({ text: () => t('agent.chat.notFoundToast'), tone: 'error' })
           return
         }
         if (info.code === AGENT_STREAM_CLOSE_FORBIDDEN) {
-          toast.show({ text: t('agent.chat.forbiddenToast'), tone: 'error' })
+          toast.show({ text: () => t('agent.chat.forbiddenToast'), tone: 'error' })
         }
       },
       onError: (error) => {
         if (error.code === 'stream_too_slow') {
-          toast.show({ text: t('agent.chat.recoveringToast'), tone: 'error' })
+          toast.show({ text: () => t('agent.chat.recoveringToast'), tone: 'error' })
         }
       },
       onAuthenticationRequired: handleAuthenticationRequired,

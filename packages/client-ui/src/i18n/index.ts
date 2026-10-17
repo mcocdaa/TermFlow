@@ -297,6 +297,7 @@ const messages: Record<Locale, Record<string, string>> = {
     'login.totpHint': '（请输入验证器应用当前显示的 6 位验证码。）',
     'login.submit': '登录',
     'login.verifyAndLogin': '验证并登录',
+    'login.invalidToken': '管理员令牌无效，请核对后重试。',
     'login.failed': '登录失败，请重试。',
     'deviceAuth.eyebrow': '跨设备授权',
     'deviceAuth.title': '授权新设备',
@@ -825,6 +826,7 @@ const messages: Record<Locale, Record<string, string>> = {
     'login.totpHint': ' (Enter the 6-digit code from your authenticator app.)',
     'login.submit': 'Sign In',
     'login.verifyAndLogin': 'Verify & Sign In',
+    'login.invalidToken': 'Invalid admin token. Please check and try again.',
     'login.failed': 'Sign-in failed. Please try again.',
     'deviceAuth.eyebrow': 'Cross-device authorization',
     'deviceAuth.title': 'Authorize New Device',
@@ -1122,6 +1124,25 @@ export function t(key: string, params?: Record<string, string | number>): string
   })
 }
 
+const reverseKeyMap = new Map<string, string>()
+for (const [key, val] of Object.entries(messages.zh)) {
+  if (!val.includes('{')) reverseKeyMap.set(val, key)
+}
+for (const [key, val] of Object.entries(messages.en)) {
+  if (!val.includes('{')) reverseKeyMap.set(val, key)
+}
+
+export function translateDynamicText(text: string): string {
+  if (!text) return text
+  const dict = messages[currentLocale.value] ?? messages.zh
+  if (dict[text] !== undefined) return dict[text]
+  const matchedKey = reverseKeyMap.get(text)
+  if (matchedKey !== undefined && dict[matchedKey] !== undefined) {
+    return dict[matchedKey]
+  }
+  return text
+}
+
 export function useI18n() {
   const stored = readStoredLocale()
   if (stored !== null && currentLocale.value !== stored) {
@@ -1133,5 +1154,6 @@ export function useI18n() {
     setLocale,
     toggleLocale,
     t,
+    translateDynamicText,
   }
 }
