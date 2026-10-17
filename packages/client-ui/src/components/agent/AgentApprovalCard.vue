@@ -17,17 +17,17 @@
     </div>
     <div v-if="detail !== null" class="agent-approval-card__detail">
       <p class="agent-approval-card__field"><span class="agent-approval-card__label">Pane</span><span data-agent-approval-pane>{{ pane }}</span></p>
-      <p class="agent-approval-card__field"><span class="agent-approval-card__label">操作</span><span data-agent-approval-operation>{{ operation }}</span></p>
+      <p class="agent-approval-card__field"><span class="agent-approval-card__label">{{ t('agent.approval.operation') }}</span><span data-agent-approval-operation>{{ operation }}</span></p>
       <div class="agent-approval-card__summary" data-agent-approval-summary>
         <AgentCollapsibleOutput v-if="isDiff(summary)" :content="summary" />
         <span v-else>{{ summary }}</span>
       </div>
-      <p class="agent-approval-card__hash" :data-agent-approval-hash="detail.canonical_hash">摘要 #{{ detail.canonical_hash.slice(0, 8) }}</p>
+      <p class="agent-approval-card__hash" :data-agent-approval-hash="detail.canonical_hash">{{ t('agent.approval.hashPrefix', { hash: detail.canonical_hash.slice(0, 8) }) }}</p>
     </div>
-    <p v-else-if="detailFailed" class="agent-approval-card__fallback" data-agent-approval-detail-failed-text>详情不可用</p>
+    <p v-else-if="detailFailed" class="agent-approval-card__fallback" data-agent-approval-detail-failed-text>{{ t('common.detailUnavailable') }}</p>
     <footer class="agent-approval-card__footer">
-      <span v-if="expiry !== null" class="agent-approval-card__expires" data-agent-approval-expires>有效期至 {{ expiry }}</span>
-      <button type="button" class="agent-approval-card__action" data-action="focus-approval" @click="emit('focus', permission.approvalId)">在审批面板处理</button>
+      <span v-if="expiry !== null" class="agent-approval-card__expires" data-agent-approval-expires>{{ t('agent.approval.expiresPrefix', { expiry }) }}</span>
+      <button type="button" class="agent-approval-card__action" data-action="focus-approval" @click="emit('focus', permission.approvalId)">{{ t('agent.approval.focusAction') }}</button>
     </footer>
   </article>
 </template>
@@ -56,11 +56,13 @@ import {
   hasPendingApprovalListLoads,
   whenApprovalListLoadsSettled,
 } from '../../composables/useAgentApprovals'
+import { useI18n } from '../../i18n'
 import { useClientRuntime } from '../../runtime'
 import { assessRisk, type RiskAssessment } from '../../utils/risk'
 import { isUnifiedDiff } from '../../utils/diff'
 import AgentCollapsibleOutput from './AgentCollapsibleOutput.vue'
 
+const { t } = useI18n()
 const props = defineProps<{
   /** CUSTOM-event-derived record, exactly as tracked by the history reducer. */
   permission: AgentPermissionState
@@ -105,25 +107,28 @@ async function resolveDetail(approvalId: string): Promise<ApprovalResponse> {
   return fetched
 }
 
-const STATE_LABELS: Record<string, string> = {
-  pending: '待处理',
-  approved: '已批准',
-  denied: '已拒绝',
-  expired: '已过期',
-  revoked: '已撤销',
-  consumed: '已消费',
+const STATE_LABEL_KEYS: Record<string, string> = {
+  pending: 'agent.approval.state.pending',
+  approved: 'agent.approval.state.approved',
+  denied: 'agent.approval.state.denied',
+  expired: 'agent.approval.state.expired',
+  revoked: 'agent.approval.state.revoked',
+  consumed: 'agent.approval.state.consumed',
 }
 
 /** REST detail is authoritative once loaded; the CUSTOM record fills in before/on failure. */
 const rawState = computed(() => detail.value?.state ?? props.permission.state)
-const stateLabel = computed(() => STATE_LABELS[rawState.value] ?? '未知')
-const tool = computed(() => (props.permission.toolName !== null ? stripAnsiOsc(props.permission.toolName) : '工具调用'))
+const stateLabel = computed(() => {
+  const key = STATE_LABEL_KEYS[rawState.value]
+  return key ? t(key) : t('common.unknown')
+})
+const tool = computed(() => (props.permission.toolName !== null ? stripAnsiOsc(props.permission.toolName) : t('agent.chat.toolCall')))
 const evidence = computed(() => (props.permission.evidence !== null ? stripAnsiOsc(props.permission.evidence) : null))
-const pane = computed(() => (detail.value?.pane_id !== null && detail.value?.pane_id !== undefined ? stripAnsiOsc(detail.value.pane_id) : '详情不可用'))
-const operation = computed(() => (detail.value?.operation !== null && detail.value?.operation !== undefined ? stripAnsiOsc(detail.value.operation) : '详情不可用'))
+const pane = computed(() => (detail.value?.pane_id !== null && detail.value?.pane_id !== undefined ? stripAnsiOsc(detail.value.pane_id) : t('common.detailUnavailable')))
+const operation = computed(() => (detail.value?.operation !== null && detail.value?.operation !== undefined ? stripAnsiOsc(detail.value.operation) : t('common.detailUnavailable')))
 const summary = computed(() => {
   const value = detail.value?.intent_summary
-  return value !== null && value !== undefined ? stripAnsiOsc(value) : '详情不可用'
+  return value !== null && value !== undefined ? stripAnsiOsc(value) : t('common.detailUnavailable')
 })
 const expiry = computed(() => {
   const iso = detail.value?.expires_at ?? props.permission.expiresAt
@@ -140,9 +145,9 @@ function formatExpiry(iso: string): string {
 
 const isDiff = (text: string | null) => text !== null && isUnifiedDiff(text)
 const risk = computed<RiskAssessment>(() => assessRisk({
-  operation: operation.value !== '详情不可用' ? operation.value : null,
-  summary: summary.value !== '详情不可用' ? summary.value : null,
-  toolName: tool.value !== '工具调用' ? tool.value : null,
+  operation: detail.value?.operation !== null && detail.value?.operation !== undefined ? stripAnsiOsc(detail.value.operation) : null,
+  summary: detail.value?.intent_summary !== null && detail.value?.intent_summary !== undefined ? stripAnsiOsc(detail.value.intent_summary) : null,
+  toolName: props.permission.toolName !== null ? stripAnsiOsc(props.permission.toolName) : null,
   evidence: evidence.value,
 }))
 </script>

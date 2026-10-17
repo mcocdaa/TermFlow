@@ -1,9 +1,9 @@
 <template>
   <div ref="frameElement" class="terminal-frame" :data-status="status" :data-display-mode="displayMode" :data-viewport-lock="viewportLocked ? 'locked' : 'unlocked'" :data-cell-width="renderedCellMetrics?.width" :data-cell-height="renderedCellMetrics?.height" :data-visual-scale="appliedVisualScale" @wheel.capture="onWheel" @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerCancel">
     <div class="terminal-viewport-content" :style="contentStyle">
-      <div class="terminal-grid" :style="gridStyle"><div ref="host" class="terminal-host" role="application" :aria-label="`Term ${termId} 终端`" /></div>
+      <div class="terminal-grid" :style="gridStyle"><div ref="host" class="terminal-host" role="application" :aria-label="t('terminal.canvas.aria', { id: termId })" /></div>
     </div>
-    <div v-if="status === 'connecting' || status === 'reconnecting'" class="terminal-overlay" role="status">{{ status === 'reconnecting' ? '连接中断，正在恢复…' : '正在连接终端…' }}</div>
+    <div v-if="status === 'connecting' || status === 'reconnecting'" class="terminal-overlay" role="status">{{ status === 'reconnecting' ? t('terminal.canvas.reconnecting') : t('terminal.canvas.connecting') }}</div>
     <p v-if="terminalError" class="terminal-error" role="alert">{{ terminalError }}</p>
   </div>
 </template>
@@ -19,7 +19,10 @@ import { useTerminalSession } from '../../composables/useTerminalSession'
 import { displayPresentation, type DisplayMode } from '../../terminal/viewport'
 import { createPointerViewport, type PointerViewportSnapshot } from '../../composables/usePointerViewport'
 import { createTerminalTouchGestures } from '../../composables/useTerminalTouchGestures'
+import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/theme'
+
+const { t } = useI18n()
 
 const props = withDefaults(defineProps<{ termId: string; displayMode?: DisplayMode; selectionActive?: boolean; mouseReportingActive?: boolean; viewportLocked?: boolean; transformInput?: (value: string | Uint8Array) => string | Uint8Array; createTerminal?: TerminalFactory; createAdapter?: TerminalAdapterFactory }>(), { displayMode: 'font-100', selectionActive: false, mouseReportingActive: false, viewportLocked: false })
 const emit = defineEmits<{ bindings: [value: { prefix: string; prefix2?: string | null; bindings: Array<{ action: TerminalActionId; key: string | null; tooltip: string }> }]; 'reset-input': [key: number]; status: [value: TerminalConnectionStatus]; 'authentication-required': []; 'action-result': [value: TerminalActionResultFrame] }>()

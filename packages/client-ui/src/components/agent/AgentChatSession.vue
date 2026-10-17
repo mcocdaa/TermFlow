@@ -4,7 +4,7 @@
     <div class="agent-chat-header__left">
       <RouterLink v-if="variant === 'page'" to="/agent" class="text-button agent-chat-header__back" data-testid="agent-overview-link" data-action="back-to-overview">
         <ArrowLeft :size="16" aria-hidden="true" />
-        <span>Agent 总览</span>
+        <span>{{ t('agent.chat.backOverview') }}</span>
       </RouterLink>
       <div>
         <p class="eyebrow">Agent Chat</p>
@@ -13,9 +13,9 @@
       </div>
     </div>
     <div class="agent-chat-header__actions">
-      <div class="agent-policy-toggle" role="group" aria-label="本对话写入审批" data-agent-conversation-policy>
-        <button type="button" :class="{ 'is-active': conversationPolicy === 'manual' }" :aria-pressed="conversationPolicy === 'manual'" :disabled="policyPending" data-action="conversation-policy-manual" @click="changePolicy('manual')">手动审批</button>
-        <button type="button" :class="{ 'is-active': conversationPolicy === 'auto' }" :aria-pressed="conversationPolicy === 'auto'" :disabled="policyPending" data-action="conversation-policy-auto" @click="policyConfirm = true">完全放行</button>
+      <div class="agent-policy-toggle" role="group" :aria-label="t('agent.chat.policyGroupAria')" data-agent-conversation-policy>
+        <button type="button" :class="{ 'is-active': conversationPolicy === 'manual' }" :aria-pressed="conversationPolicy === 'manual'" :disabled="policyPending" data-action="conversation-policy-manual" @click="changePolicy('manual')">{{ t('agent.chat.policyManual') }}</button>
+        <button type="button" :class="{ 'is-active': conversationPolicy === 'auto' }" :aria-pressed="conversationPolicy === 'auto'" :disabled="policyPending" data-action="conversation-policy-auto" @click="policyConfirm = true">{{ t('agent.chat.policyAuto') }}</button>
       </div>
       
       <button
@@ -27,15 +27,15 @@
         data-action="cancel-run"
         @click="cancelRun"
       >
-        {{ canceling ? '正在取消…' : '取消运行' }}
+        {{ canceling ? t('agent.chat.canceling') : t('agent.chat.cancelRun') }}
       </button>
       <button
         v-if="variant === 'page'"
         type="button"
         class="icon-button icon-only"
         :disabled="deletePending"
-        aria-label="删除会话"
-        title="删除会话"
+        :aria-label="t('agent.conversations.deleteTitle')"
+        :title="t('agent.conversations.deleteTitle')"
         data-action="delete-conversation"
         @click="deleteConfirm = true"
       >
@@ -55,7 +55,7 @@
       data-action="cancel-run"
       @click="cancelRun"
     >
-      {{ canceling ? '正在取消…' : '取消运行' }}
+      {{ canceling ? t('agent.chat.canceling') : t('agent.chat.cancelRun') }}
     </button>
   </div>
 
@@ -63,19 +63,19 @@
     {{ revokedBannerText }}
   </div>
 
-  <div v-if="deleteConfirm" class="agent-policy-confirm" role="alertdialog" aria-label="确认删除会话" data-agent-delete-confirm>
-    <p>删除后该会话及其事件会被清理，无法恢复。</p>
+  <div v-if="deleteConfirm" class="agent-policy-confirm" role="alertdialog" :aria-label="t('agent.chat.deleteConfirmAria')" data-agent-delete-confirm>
+    <p>{{ t('agent.chat.deleteConfirmDesc') }}</p>
     <div class="agent-policy-confirm__actions">
-      <button type="button" class="danger-button" :disabled="deletePending" data-action="confirm-delete-conversation" @click="removeConversation">确认删除</button>
-      <button type="button" class="text-button" :disabled="deletePending" @click="deleteConfirm = false">取消</button>
+      <button type="button" class="danger-button" :disabled="deletePending" data-action="confirm-delete-conversation" @click="removeConversation">{{ t('agent.conversations.deleteConfirm') }}</button>
+      <button type="button" class="text-button" :disabled="deletePending" @click="deleteConfirm = false">{{ t('common.cancel') }}</button>
     </div>
   </div>
 
-  <div v-if="policyConfirm" class="agent-policy-confirm" role="alertdialog" aria-label="确认完全放行本对话" data-agent-policy-confirm>
-    <p>本对话内，Agent 对已授权 Pane 的每次写入都会立即执行，不再弹审批。</p>
+  <div v-if="policyConfirm" class="agent-policy-confirm" role="alertdialog" :aria-label="t('agent.chat.policyConfirmAria')" data-agent-policy-confirm>
+    <p>{{ t('agent.chat.policyConfirmDesc') }}</p>
     <div class="agent-policy-confirm__actions">
-      <button type="button" class="primary-button" :disabled="policyPending" data-action="confirm-conversation-policy" @click="changePolicy('auto')">确认放行</button>
-      <button type="button" class="text-button" :disabled="policyPending" @click="policyConfirm = false">取消</button>
+      <button type="button" class="primary-button" :disabled="policyPending" data-action="confirm-conversation-policy" @click="changePolicy('auto')">{{ t('agent.panel.confirmAutoBtn') }}</button>
+      <button type="button" class="text-button" :disabled="policyPending" @click="policyConfirm = false">{{ t('common.cancel') }}</button>
     </div>
   </div>
 
@@ -86,7 +86,7 @@
 
   <!-- Approval prompt sits directly above the composer (Codex-style). The
        panel stays mounted so it can report the pending count. -->
-  <section v-show="pendingCount > 0" class="agent-approval-prompt" role="region" aria-label="待批准操作" data-agent-approval-prompt>
+  <section v-show="pendingCount > 0" class="agent-approval-prompt" role="region" :aria-label="t('agent.chat.approvalPromptAria')" data-agent-approval-prompt>
     <AgentApprovalPanel ref="approvalPanel" :conversation-id="conversationId" :history="conversation.history.value" @pending-count="updatePendingCount" />
   </section>
 
@@ -123,7 +123,10 @@ import AgentPartsList, { type AgentConversationPart } from './AgentPartsList.vue
 import AgentMessageList from './AgentMessageList.vue'
 import { useAgentConversation } from '../../composables/useAgentConversation'
 import { useBottomToast } from '../../composables/useBottomToast'
+import { useI18n } from '../../i18n'
 import { useClientRuntime } from '../../runtime'
+
+const { t } = useI18n()
 
 const props = withDefaults(defineProps<{
   /** Conversation scope; the parent keys this component on it (remount = re-scope). */
@@ -215,14 +218,14 @@ async function changePolicy(policy: 'manual' | 'auto') {
 }
 const revokedBannerText = computed(() =>
   conversation.closeReason.value === 'conversation_not_found'
-    ? '该会话不存在或已被删除，无法继续连接。'
-    : 'Agent Binding 已撤销，无法继续连接。',
+    ? t('agent.chat.notFoundBanner')
+    : t('agent.chat.revokedBanner'),
 )
-const title = computed(() => detail.value?.title ?? `会话 ${props.conversationId.slice(0, 8)}`)
+const title = computed(() => detail.value?.title ?? t('agent.conversations.defaultTitle', { id: props.conversationId.slice(0, 8) }))
 const bindingLabel = computed(() => {
   const binding = detail.value?.binding
   return binding === undefined
-    ? `会话 ${props.conversationId.slice(0, 8)}`
+    ? t('agent.conversations.defaultTitle', { id: props.conversationId.slice(0, 8) })
     : `Binding ${binding.binding_id} · Term ${binding.term_id}`
 })
 
@@ -237,7 +240,7 @@ const displayHistory = computed<AgentHistoryState>(() => {
   for (const [id, message] of base.userMessages) {
     if (message.text === '' && message.deliveryState === 'accepted') {
       if (mapped === null) mapped = new Map(base.userMessages)
-      mapped.set(id, { ...message, text: '历史消息内容不可用' })
+      mapped.set(id, { ...message, text: t('agent.chat.historyUnavailable') })
     }
   }
   return mapped === null ? base : { ...base, userMessages: mapped }

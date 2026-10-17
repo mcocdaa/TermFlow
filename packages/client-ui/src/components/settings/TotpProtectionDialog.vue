@@ -4,19 +4,19 @@
       <header>
         <div>
           <p class="eyebrow">Security Check</p>
-          <h2 id="protection-dialog-title">{{ targetEnabled ? '启用双重认证登录' : '停用双重认证登录' }}</h2>
+          <h2 id="protection-dialog-title">{{ targetEnabled ? t('settings.totp.protectionLabel') : t('settings.totp.disableTitle') }}</h2>
         </div>
-        <button data-action="close-protection-dialog" class="icon-button icon-only" type="button" aria-label="关闭" @click="close"><X :size="18" aria-hidden="true" /></button>
+        <button data-action="close-protection-dialog" class="icon-button icon-only" type="button" :aria-label="t('common.close')" @click="close"><X :size="18" aria-hidden="true" /></button>
       </header>
       <form class="security-form" @submit.prevent="submit">
-        <label for="protection-admin-token">管理员令牌</label>
+        <label for="protection-admin-token">{{ t('settings.totp.adminToken') }}</label>
         <input id="protection-admin-token" ref="adminInput" v-model="adminToken" name="admin-token" type="password" autocomplete="off" required />
-        <label for="protection-totp-code">双重验证码</label>
+        <label for="protection-totp-code">{{ t('settings.totp.code') }}</label>
         <input id="protection-totp-code" v-model="code" name="totp-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required />
         <p v-if="message" class="form-error" role="alert">{{ message }}</p>
         <div class="dialog-actions">
-          <button class="secondary-button" type="button" :disabled="busy" @click="close">取消</button>
-          <button class="primary-button" type="submit" :disabled="busy">{{ busy ? '正在验证…' : '确认' }}</button>
+          <button class="secondary-button" type="button" :disabled="busy" @click="close">{{ t('common.cancel') }}</button>
+          <button class="primary-button" type="submit" :disabled="busy">{{ busy ? t('settings.totp.verifying') : t('common.confirm') }}</button>
         </div>
       </form>
     </section>
@@ -27,8 +27,10 @@
 import type { TotpStatusResponse } from '@termflow/client-contracts'
 import { X } from '@lucide/vue'
 import { nextTick, ref, watch } from 'vue'
+import { useI18n } from '../../i18n'
 import { useClientRuntime } from '../../runtime'
 
+const { t } = useI18n()
 const props = defineProps<{
   open: boolean
   targetEnabled: boolean
@@ -80,7 +82,7 @@ async function submit() {
     emit('close')
     restoreFocus()
   } catch {
-    message.value = '验证失败，请检查凭据后重试。'
+    message.value = t('settings.totp.verifyFailed')
   } finally {
     busy.value = false
   }

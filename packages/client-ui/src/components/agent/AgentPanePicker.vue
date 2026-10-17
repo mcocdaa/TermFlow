@@ -1,13 +1,13 @@
 <template>
   <fieldset class="agent-panes" :disabled="disabled">
     <legend>
-      {{ legend }}
-      <ContextHelp label="窗格授权说明" text="窗格是终端里的一块分屏（% 编号）。Agent 只能读取勾选窗格的内容；写入仍会逐一弹审批。" />
+      {{ legend ?? t('agent.panes.defaultLegend') }}
+      <ContextHelp :label="t('agent.panes.helpLabel')" :text="t('agent.panes.helpText')" />
     </legend>
     <div class="agent-panes__actions">
-      <button type="button" :disabled="disabled || !panes.length" data-action="select-all-panes" @click="selectAll">全选</button>
-      <button type="button" :disabled="disabled || !modelValue.length" data-action="clear-panes" @click="clear">清空</button>
-      <span class="agent-panes__count">已选 {{ modelValue.length }}/{{ panes.length }}</span>
+      <button type="button" :disabled="disabled || !panes.length" data-action="select-all-panes" @click="selectAll">{{ t('agent.panes.selectAll') }}</button>
+      <button type="button" :disabled="disabled || !modelValue.length" data-action="clear-panes" @click="clear">{{ t('agent.panes.clear') }}</button>
+      <span class="agent-panes__count">{{ t('agent.panes.selectedCount', { selected: modelValue.length, total: panes.length }) }}</span>
     </div>
     <div class="agent-panes__list">
       <label v-for="pane in panes" :key="pane.pane_id" class="agent-pane">
@@ -17,14 +17,16 @@
           <span class="agent-pane__title">{{ pane.current_command || pane.title || pane.window_id }}</span>
         </span>
       </label>
-      <p v-if="!panes.length" class="agent-panes__empty">暂无可用窗格，请连接终端后刷新。</p>
+      <p v-if="!panes.length" class="agent-panes__empty">{{ t('agent.panes.empty') }}</p>
     </div>
   </fieldset>
 </template>
 <script setup lang="ts">
+import { useI18n } from '../../i18n'
 import type { PaneTopology } from '../../types'
 import ContextHelp from '../common/ContextHelp.vue'
-const props = withDefaults(defineProps<{ modelValue: string[]; panes: PaneTopology[]; legend?: string; disabled?: boolean }>(), { legend: '允许 Agent 访问的窗格', disabled: false })
+const { t } = useI18n()
+const props = withDefaults(defineProps<{ modelValue: string[]; panes: PaneTopology[]; legend?: string; disabled?: boolean }>(), { disabled: false })
 const emit = defineEmits<{ 'update:modelValue': [value: string[]] }>()
 function toggle(paneId: string, event: Event) {
   const checked = (event.target as HTMLInputElement).checked

@@ -7,11 +7,11 @@
     <summary class="agent-message__summary">
       <span class="agent-message__role" data-agent-message-role-label>
         <Settings2 :size="14" aria-hidden="true" />
-        系统
+        {{ `${t('agent.chat.roleSystem')} ` }}
       </span>
-      <span class="agent-message__summary-title">系统上下文</span>
+      <span class="agent-message__summary-title">{{ t('agent.chat.systemContext') }}</span>
     </summary>
-    <p class="agent-message__text">{{ text || '系统上下文内容不可用' }}</p>
+    <p class="agent-message__text">{{ text || t('agent.chat.systemUnavailable') }}</p>
   </details>
   <div
     v-else
@@ -22,7 +22,7 @@
     <div class="agent-message__role" data-agent-message-role-label>
       <UserRound v-if="isUser" :size="14" aria-hidden="true" />
       <Bot v-else :size="14" aria-hidden="true" />
-      {{ isUser ? '你' : 'Agent' }}
+      {{ isUser ? t('agent.chat.roleUser') : 'Agent' }}
     </div>
     <p class="agent-message__text">{{ text }}<span v-if="streaming" class="agent-message__cursor" aria-hidden="true"></span></p>
   </div>
@@ -37,7 +37,9 @@
 import { computed } from 'vue'
 import { Bot, Settings2, UserRound } from '@lucide/vue'
 import { stripAnsiOsc, type AgentMessageState, type AgentUserMessageState } from '@termflow/client-core'
+import { useI18n } from '../../i18n'
 
+const { t } = useI18n()
 const props = defineProps<{
   /** Assistant message (streaming/complete) or user echo, exactly as stored by the M6b history reducer. */
   message: AgentMessageState | AgentUserMessageState

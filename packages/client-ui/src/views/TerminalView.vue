@@ -1,6 +1,6 @@
 <template>
   <section class="terminal-view" aria-labelledby="terminal-title">
-    <h1 id="terminal-title" class="sr-only">远程终端</h1>
+    <h1 id="terminal-title" class="sr-only">{{ t('terminal.srTitle') }}</h1>
     <TerminalTitlebar :title="termName" :computer-name="computerName" :status="connectionStatus" :display-menu-open="openMenu === 'display'" v-model:display-mode="displayMode" v-model:viewport-locked="viewportLocked" @update:display-menu-open="setMenuOpen('display', $event)" @rename="updateTermName">
       <TmuxActionMenu :bindings="bindings" :active-pane-id="activePane?.pane_id ?? null" :disabled="connectionStatus !== 'connected'" :open="openMenu === 'tmux'" @update:open="setMenuOpen('tmux', $event)" @action="runAction" @request-close="requestClose" />
       <TerminalAgentToggle v-if="agentBrokerEnabled" ref="agentToggle" :open="agentOpen" :pending-count="agentPendingCount" :readiness="agentReadiness" @toggle="toggleAgent" />
@@ -30,12 +30,14 @@ import MobileKeyBar from '../components/terminal/MobileKeyBar.vue'
 import ClosePaneDialog from '../components/terminal/ClosePaneDialog.vue'
 import { createOrientationViewState, orientationFor } from '../terminal/orientation'
 import { useSession } from '../composables/useSession'
+import { useI18n } from '../i18n'
 import { useClientRuntime } from '../runtime'
 import type { BindingSnapshot, PaneTopology, TerminalActionId } from '../types'
 import TerminalAgentPanel from '../components/agent/TerminalAgentPanel.vue'
 import TerminalAgentToggle from '../components/agent/TerminalAgentToggle.vue'
 import { isAgentConversationId } from '../router/terminalQuery'
 import { useAgentBroker } from '../composables/useAgentBroker'
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const runtime = useClientRuntime()
@@ -71,7 +73,7 @@ const displayMode = computed<DisplayMode>({
   },
 })
 const termName = ref(`Term · ${termId.value}`)
-const computerName = ref('Computer 未报告')
+const computerName = ref(t('terminal.unreportedComputer'))
 const connectionStatus = ref<TerminalConnectionStatus>('connecting')
 type DesktopMenu = 'display' | 'tmux'
 const openMenu = ref<DesktopMenu | null>(null)
@@ -79,7 +81,7 @@ const viewportLocked = ref(false)
 const renameError = ref('')
 const panes = ref<PaneTopology[]>([])
 const terminalCanvas = ref<InstanceType<typeof TerminalCanvas> | null>(null)
-const bindings = ref<BindingSnapshot>({ prefix: '未报告', bindings: [] })
+const bindings = ref<BindingSnapshot>({ prefix: t('terminal.unreportedPrefix'), bindings: [] })
 const modifiers = reactive(new MobileModifierController())
 const modifierResetKey = ref(0)
 const closePaneId = ref<string | null>(null)
@@ -97,7 +99,7 @@ async function updateTermName(name: string) {
   termName.value = name
   renameError.value = ''
   try { termName.value = (await runtime.api.terms.rename(termId.value, name, controller.signal)).name }
-  catch (error) { termName.value = previous; renameError.value = error instanceof ApiError ? error.message : '无法更新 Term 名称。' }
+  catch (error) { termName.value = previous; renameError.value = error instanceof ApiError ? error.message : t('terminal.renameError') }
 }
 function restoreOrientationView() {
   const saved = orientationViews[orientation.value].viewport

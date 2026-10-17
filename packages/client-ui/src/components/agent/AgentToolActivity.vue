@@ -37,17 +37,19 @@
 import { computed, ref, useId } from 'vue'
 import { ChevronDown, ChevronRight } from '@lucide/vue'
 import { stripAnsiOsc, type AgentToolCallState } from '@termflow/client-core'
+import { useI18n } from '../../i18n'
 import AgentCollapsibleOutput from './AgentCollapsibleOutput.vue'
 
+const { t } = useI18n()
 const props = defineProps<{
   /** Tool call record, exactly as tracked by the M6b history reducer. */
   call: AgentToolCallState
 }>()
 
-const STATUS_LABELS: Record<AgentToolCallState['status'], string> = {
-  running: '运行中',
-  completed: '已完成',
-  failed: '执行失败',
+const STATUS_LABEL_KEYS: Record<AgentToolCallState['status'], string> = {
+  running: 'agent.chat.toolStatus.running',
+  completed: 'agent.chat.toolStatus.completed',
+  failed: 'agent.chat.toolStatus.failedExec',
 }
 
 const expanded = ref(false)
@@ -58,8 +60,8 @@ const hasSummary = computed(() => props.call.summary !== null)
 // name carries a doubled ``termflow_`` prefix; show the bare tool name.
 const displayName = computed(() => {
   const bare = props.call.toolName.replace(/^termflow_termflow_/, '').replace(/^termflow_/, '')
-  return bare === '' ? '工具调用' : bare
+  return bare === '' ? t('agent.chat.toolCall') : bare
 })
-const statusLabel = computed(() => STATUS_LABELS[props.call.status])
+const statusLabel = computed(() => t(STATUS_LABEL_KEYS[props.call.status]))
 const summaryText = computed(() => stripAnsiOsc(props.call.summary ?? ''))
 </script>

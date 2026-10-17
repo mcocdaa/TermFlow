@@ -9,7 +9,7 @@
       :aria-expanded="open"
       aria-controls="totp-setup-key-popover"
       @click="toggle"
-    >无法扫描？使用设置密钥</button>
+    >{{ t('settings.totp.setupKeyToggle') }}</button>
     <section
       v-if="open"
       id="totp-setup-key-popover"
@@ -17,20 +17,23 @@
       role="dialog"
       aria-labelledby="totp-setup-key-title"
     >
-      <h3 id="totp-setup-key-title">设置密钥</h3>
+      <h3 id="totp-setup-key-title">{{ t('settings.totp.setupKeyTitle') }}</h3>
       <code data-setup-key>{{ setupKey }}</code>
       <button
         data-action="copy-setup-key"
         class="compact-secondary-button"
         type="button"
         @click="$emit('copy')"
-      >{{ copied ? '已复制' : '复制密钥' }}</button>
+      >{{ copied ? t('common.copied') : t('settings.totp.copyKey') }}</button>
     </section>
   </div>
 </template>
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useI18n } from '../../i18n'
+
+const { t } = useI18n()
 
 defineProps<{
   setupKey: string

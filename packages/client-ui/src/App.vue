@@ -1,34 +1,45 @@
 <template>
-  <a class="skip-link" href="#main-content">跳到主要内容</a>
+  <a class="skip-link" href="#main-content">{{ t('app.skipToMain') }}</a>
   <div class="app-shell" :class="{ 'is-terminal': terminalLayout, 'is-bare': bareLayout }">
     <header v-if="!terminalLayout && !bareLayout" class="app-header">
-      <RouterLink class="brand" to="/" aria-label="TermFlow 控制中心">TermFlow</RouterLink>
-      <span class="header-context">远程终端控制</span>
+      <RouterLink class="brand" to="/" :aria-label="t('app.brandAria')">TermFlow</RouterLink>
+      <span class="header-context">{{ t('app.headerContext') }}</span>
       <ThemePicker />
+      <button
+        data-action="toggle-locale"
+        class="text-button locale-toggle-button"
+        type="button"
+        :aria-label="t('app.switchLangAria')"
+        :title="t('app.switchLangAria')"
+        @click="toggleLocale"
+      >
+        <Globe :size="15" aria-hidden="true" />
+        <span class="locale-badge">{{ t('app.switchLangBadge') }}</span>
+      </button>
       <button
         v-if="sessionState.authenticated"
         data-action="logout"
         class="text-button logout-button"
         type="button"
-        aria-label="退出登录"
-        title="退出登录"
+        :aria-label="t('app.logout')"
+        :title="t('app.logout')"
         @click="logout"
       >
         <LogOut :size="18" aria-hidden="true" />
       </button>
     </header>
-    <aside v-if="!terminalLayout && !bareLayout" class="side-nav" aria-label="主导航">
-      <RouterLink to="/" aria-label="控制中心"><LayoutDashboard :size="18" aria-hidden="true" /><span class="nav-label">控制中心</span></RouterLink>
-      <RouterLink to="/computers" aria-label="电脑管理"><MonitorCog :size="18" aria-hidden="true" /><span class="nav-label">电脑管理</span></RouterLink>
-      <RouterLink to="/settings" aria-label="设置"><Settings :size="18" aria-hidden="true" /><span class="nav-label">设置</span></RouterLink>
-      <RouterLink v-if="agentBrokerEnabled" to="/agent" aria-label="Agent 控制台"><Bot :size="18" aria-hidden="true" /><span class="nav-label">Agent 控制台</span></RouterLink>
+    <aside v-if="!terminalLayout && !bareLayout" class="side-nav" :aria-label="t('nav.mainAria')">
+      <RouterLink to="/" :aria-label="t('nav.dashboard')"><LayoutDashboard :size="18" aria-hidden="true" /><span class="nav-label">{{ t('nav.dashboard') }}</span></RouterLink>
+      <RouterLink to="/computers" :aria-label="t('nav.computers')"><MonitorCog :size="18" aria-hidden="true" /><span class="nav-label">{{ t('nav.computers') }}</span></RouterLink>
+      <RouterLink to="/settings" :aria-label="t('nav.settings')"><Settings :size="18" aria-hidden="true" /><span class="nav-label">{{ t('nav.settings') }}</span></RouterLink>
+      <RouterLink v-if="agentBrokerEnabled" to="/agent" :aria-label="t('nav.agent')"><Bot :size="18" aria-hidden="true" /><span class="nav-label">{{ t('nav.agent') }}</span></RouterLink>
     </aside>
     <main id="main-content" tabindex="-1"><RouterView :key="routeViewKey" /></main>
-    <nav v-if="!terminalLayout && !bareLayout" class="mobile-nav" :class="{ 'mobile-nav--agent': agentBrokerEnabled }" aria-label="移动端导航">
-      <RouterLink to="/" aria-label="控制中心"><LayoutDashboard :size="18" aria-hidden="true" /><span class="nav-label">控制中心</span></RouterLink>
-      <RouterLink to="/computers" aria-label="电脑管理"><MonitorCog :size="18" aria-hidden="true" /><span class="nav-label">电脑管理</span></RouterLink>
-      <RouterLink to="/settings" aria-label="设置"><Settings :size="18" aria-hidden="true" /><span class="nav-label">设置</span></RouterLink>
-      <RouterLink v-if="agentBrokerEnabled" to="/agent" aria-label="Agent 控制台"><Bot :size="18" aria-hidden="true" /><span class="nav-label">Agent 控制台</span></RouterLink>
+    <nav v-if="!terminalLayout && !bareLayout" class="mobile-nav" :class="{ 'mobile-nav--agent': agentBrokerEnabled }" :aria-label="t('nav.mobileAria')">
+      <RouterLink to="/" :aria-label="t('nav.dashboard')"><LayoutDashboard :size="18" aria-hidden="true" /><span class="nav-label">{{ t('nav.dashboard') }}</span></RouterLink>
+      <RouterLink to="/computers" :aria-label="t('nav.computers')"><MonitorCog :size="18" aria-hidden="true" /><span class="nav-label">{{ t('nav.computers') }}</span></RouterLink>
+      <RouterLink to="/settings" :aria-label="t('nav.settings')"><Settings :size="18" aria-hidden="true" /><span class="nav-label">{{ t('nav.settings') }}</span></RouterLink>
+      <RouterLink v-if="agentBrokerEnabled" to="/agent" :aria-label="t('nav.agent')"><Bot :size="18" aria-hidden="true" /><span class="nav-label">{{ t('nav.agent') }}</span></RouterLink>
     </nav>
     <BottomToast />
     <AgentSensitiveReauthDialog />
@@ -36,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { Bot, LayoutDashboard, LogOut, MonitorCog, Settings } from '@lucide/vue'
+import { Bot, Globe, LayoutDashboard, LogOut, MonitorCog, Settings } from '@lucide/vue'
 import { computed, onMounted, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import ThemePicker from './components/settings/ThemePicker.vue'
@@ -45,7 +56,9 @@ import AgentSensitiveReauthDialog from './components/agent/AgentSensitiveReauthD
 import { useAgentBroker } from './composables/useAgentBroker'
 import { useSession } from './composables/useSession'
 import { useTerminalPageLock } from './composables/useTerminalPageLock'
+import { useI18n } from './i18n'
 
+const { t, toggleLocale } = useI18n()
 const router = useRouter()
 const route = useRoute()
 const { logoutSession, refreshSession, sessionState } = useSession()

@@ -4,27 +4,27 @@
       <div>
         <p class="eyebrow">Two Factor Authentication</p>
         <div class="settings-heading-label">
-          <h2 id="totp-heading">双重因素认证</h2>
+          <h2 id="totp-heading">{{ t('settings.totp.heading') }}</h2>
           <ContextHelp
             v-if="!loading && status.available && !status.configured"
             data-action="explain-totp"
-            label="说明双重因素认证"
-            text="绑定验证器 App 后，可为新的登录和客户端授权增加一次性验证码。"
+            :label="t('settings.totp.helpLabel')"
+            :text="t('settings.totp.helpText')"
           />
         </div>
       </div>
       <div v-if="!loading && status.configured" data-authenticator-actions class="settings-panel-heading-actions">
-        <span class="status-chip">验证器已绑定</span>
-        <button data-action="reconfigure-totp" class="compact-secondary-button" type="button" @click="activate">重新配置</button>
+        <span class="status-chip">{{ t('settings.totp.bound') }}</span>
+        <button data-action="reconfigure-totp" class="compact-secondary-button" type="button" @click="activate">{{ t('settings.totp.reconfigure') }}</button>
       </div>
-      <span v-else-if="!loading" class="status-chip" data-status="disabled">未激活</span>
+      <span v-else-if="!loading" class="status-chip" data-status="disabled">{{ t('settings.totp.inactive') }}</span>
     </div>
-    <p v-if="loading" role="status">正在读取安全状态…</p>
+    <p v-if="loading" role="status">{{ t('settings.totp.loading') }}</p>
     <template v-else-if="!status.available">
-      <p class="settings-warning" role="status">双重因素认证暂时不可用，请联系服务器管理员。</p>
+      <p class="settings-warning" role="status">{{ t('settings.totp.unavailable') }}</p>
     </template>
     <template v-else-if="!status.configured">
-      <button data-action="activate-totp" class="primary-button settings-action-button" type="button" @click="activate">激活双重因素认证</button>
+      <button data-action="activate-totp" class="primary-button settings-action-button" type="button" @click="activate">{{ t('settings.totp.activate') }}</button>
     </template>
     <template v-else>
       <div class="security-setting-row">
@@ -35,7 +35,7 @@
           type="button"
           role="switch"
           :aria-checked="status.enabled"
-          aria-label="启用双重认证登录"
+          :aria-label="t('settings.totp.protectionLabel')"
           @click="openProtectionDialog"
         ><span aria-hidden="true" /></button>
       </div>
@@ -55,10 +55,12 @@ import type { TotpStatusResponse } from '@termflow/client-contracts'
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import ContextHelp from '../common/ContextHelp.vue'
+import { useI18n } from '../../i18n'
 import { useClientRuntime } from '../../runtime'
 import TotpProtectionLabel from './TotpProtectionLabel.vue'
 import TotpProtectionDialog from './TotpProtectionDialog.vue'
 
+const { t } = useI18n()
 const emit = defineEmits<{ changed: [TotpStatusResponse] }>()
 const runtime = useClientRuntime()
 const router = useRouter()

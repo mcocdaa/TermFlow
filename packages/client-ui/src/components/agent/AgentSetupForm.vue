@@ -1,8 +1,8 @@
 <template>
   <form class="agent-setup-form" @submit.prevent="submit">
     <h3 class="agent-setup-form__title">
-      设置 Term Agent
-      <ContextHelp label="Term Agent 说明" :text="introHelp" />
+      {{ t('agent.setup.title') }}
+      <ContextHelp :label="t('agent.setup.helpLabel')" :text="introHelp" />
     </h3>
 
     <AgentPanePicker
@@ -14,17 +14,19 @@
 
     <p v-if="localError || error" class="form-error" role="alert">{{ localError || error }}</p>
     <div class="agent-setup-form__actions">
-      <button type="button" class="text-button" :disabled="busy" data-action="refresh-setup" @click="emit('refresh')">刷新状态</button>
-      <button type="submit" class="primary-button" :disabled="busy">{{ busy ? '正在设置…' : '启用 Agent' }}</button>
+      <button type="button" class="text-button" :disabled="busy" data-action="refresh-setup" @click="emit('refresh')">{{ t('agent.panel.refreshStatus') }}</button>
+      <button type="submit" class="primary-button" :disabled="busy">{{ busy ? t('agent.setup.settingUp') : t('agent.setup.enable') }}</button>
     </div>
   </form>
 </template>
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { AgentSetupProfileSummary, AgentSetupResponse } from '@termflow/client-contracts'
+import { useI18n } from '../../i18n'
 import type { PaneTopology } from '../../types'
 import AgentPanePicker from './AgentPanePicker.vue'
 import ContextHelp from '../common/ContextHelp.vue'
+const { t } = useI18n()
 export type AgentSetupSelection = { paneIds: string[]; topologyRevision: number; disclosureFingerprint: string; accepted: true } & ({ kind: 'existing'; profileId: string } | { kind: 'new'; profileDisplayName: string })
 const props = defineProps<{ setup: AgentSetupResponse; profiles: AgentSetupProfileSummary[]; panes: PaneTopology[]; busy: boolean; error: string }>()
 const emit = defineEmits<{ submit: [selection: AgentSetupSelection]; refresh: [] }>()

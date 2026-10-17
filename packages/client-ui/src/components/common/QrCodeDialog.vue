@@ -11,7 +11,7 @@
     >
       <header class="qr-dialog-heading">
         <h2 :id="titleId">{{ title }}</h2>
-        <button ref="closeButton" data-action="close-qr" class="icon-button icon-only" type="button" aria-label="关闭二维码" @click="requestClose">
+        <button ref="closeButton" data-action="close-qr" class="icon-button icon-only" type="button" :aria-label="t('settings.qr.closeAria')" @click="requestClose">
           <X :size="18" aria-hidden="true" />
         </button>
       </header>
@@ -24,7 +24,10 @@
 <script setup lang="ts">
 import { X } from '@lucide/vue'
 import { nextTick, ref, watch } from 'vue'
+import { useI18n } from '../../i18n'
 import ThemedQrCode from './ThemedQrCode.vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   open: boolean

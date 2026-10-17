@@ -18,7 +18,7 @@
           data-action="toggle-fold"
           @click="expanded = false"
         >
-          收起代码 ▴
+          {{ t('agent.chat.collapseCode') }}
         </button>
       </template>
       <template v-else>
@@ -37,7 +37,7 @@
           data-action="toggle-fold"
           @click="expanded = true"
         >
-          展开其余 {{ foldedCount }} 行 (共 {{ totalLines }} 行) ▾
+          {{ t('agent.chat.expandLines', { folded: foldedCount, total: totalLines }) }}
         </button>
         <div
           v-for="(line, idx) in diffLines.slice(diffLines.length - tailCount)"
@@ -61,7 +61,7 @@
           data-action="toggle-fold"
           @click="expanded = false"
         >
-          收起输出 ▴
+          {{ t('agent.chat.collapseOutput') }}
         </button>
       </template>
       <template v-else>
@@ -72,7 +72,7 @@
           data-action="toggle-fold"
           @click="expanded = true"
         >
-          展开其余 {{ foldedCount }} 行 (共 {{ totalLines }} 行) ▾
+          {{ t('agent.chat.expandLines', { folded: foldedCount, total: totalLines }) }}
         </button>
         <pre class="agent-output-pre">{{ tailContent }}</pre>
       </template>
@@ -83,7 +83,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { stripAnsiOsc } from '@termflow/client-core'
+import { useI18n } from '../../i18n'
 import { isUnifiedDiff, parseUnifiedDiff, type DiffLine } from '../../utils/diff'
+
+const { t } = useI18n()
 
 const props = withDefaults(
   defineProps<{

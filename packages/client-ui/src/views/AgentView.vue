@@ -3,13 +3,13 @@
     <header class="page-heading">
       <div>
         <p class="eyebrow">Agent</p>
-        <h1 id="agent-title">Agent 控制台</h1>
+        <h1 id="agent-title">{{ t('agent.title') }}</h1>
       </div>
     </header>
 
     <section v-if="!agentBrokerEnabled" class="agent-placeholder" data-agent-disabled>
-      <h2>Agent Broker 未启用</h2>
-      <p>服务器未开启 Agent Broker 能力，无法使用 Agent 会话。</p>
+      <h2>{{ t('agent.disabledTitle') }}</h2>
+      <p>{{ t('agent.disabledDesc') }}</p>
     </section>
 
     <template v-else>
@@ -21,24 +21,24 @@
         <div class="settings-panel-heading">
           <div>
             <p class="eyebrow">Conversations</p>
-            <h2 id="agent-conversations-heading">会话记录</h2>
+            <h2 id="agent-conversations-heading">{{ t('agent.conversations.heading') }}</h2>
           </div>
           <span class="status-chip" data-agent-conversation-count>{{ conversationRows.length }}</span>
         </div>
 
-        <p v-if="directoryLoading || conversations.loading.value" class="agent-conversation-panel__state" data-agent-conversations-loading>加载中…</p>
+        <p v-if="directoryLoading || conversations.loading.value" class="agent-conversation-panel__state" data-agent-conversations-loading>{{ t('common.loading') }}</p>
         <p v-else-if="bindings.length === 0" class="agent-conversation-panel__state" data-agent-bindings-empty>
-          暂无可用 Term，请先在电脑管理中连接一个 Term。
+          {{ t('agent.conversations.emptyBindings') }}
         </p>
         <p v-else-if="conversationRows.length === 0" class="agent-conversation-panel__state" data-agent-conversations-empty>
-          暂无会话记录。
+          {{ t('agent.conversations.empty') }}
         </p>
-        <div v-else class="agent-conversation-table" role="table" aria-label="Agent 会话记录" data-agent-conversation-table>
+        <div v-else class="agent-conversation-table" role="table" :aria-label="t('agent.conversations.tableAria')" data-agent-conversation-table>
           <div class="agent-conversation-table__head" role="row">
-            <span role="columnheader">会话名称</span>
-            <span role="columnheader">Term</span>
-            <span role="columnheader">工作状态</span>
-            <span role="columnheader">操作</span>
+            <span role="columnheader">{{ t('agent.conversations.col.name') }}</span>
+            <span role="columnheader">{{ t('agent.conversations.col.term') }}</span>
+            <span role="columnheader">{{ t('agent.conversations.col.status') }}</span>
+            <span role="columnheader">{{ t('agent.conversations.col.actions') }}</span>
           </div>
           <article
             v-for="conversation in conversationRows"
@@ -47,9 +47,9 @@
             role="row"
             :data-agent-conversation-id="conversation.conversation_id"
           >
-            <div role="cell" data-label="会话名称" class="agent-conversation-table__name">
+            <div role="cell" :data-label="t('agent.conversations.col.name')" class="agent-conversation-table__name">
               <form v-if="editingConversationId === conversation.conversation_id" class="agent-rename-form" @submit.prevent="saveRename(conversation.conversation_id)">
-                <label class="sr-only" :for="`agent-rename-${conversation.conversation_id}`">会话名称</label>
+                <label class="sr-only" :for="`agent-rename-${conversation.conversation_id}`">{{ t('agent.conversations.col.name') }}</label>
                 <input
                   :id="`agent-rename-${conversation.conversation_id}`"
                   v-model="renameDraft"
@@ -57,10 +57,10 @@
                   data-agent-rename-input
                   @keydown.esc.prevent="cancelRename"
                 />
-                <button class="icon-button icon-only" type="submit" data-action="save-conversation-name" aria-label="保存会话名称" title="保存会话名称">
+                <button class="icon-button icon-only" type="submit" data-action="save-conversation-name" :aria-label="t('agent.conversations.saveNameAria')" :title="t('agent.conversations.saveNameAria')">
                   <Check :size="17" aria-hidden="true" />
                 </button>
-                <button class="icon-button icon-only" type="button" data-action="cancel-conversation-name" aria-label="取消重命名" title="取消重命名" @click="cancelRename">
+                <button class="icon-button icon-only" type="button" data-action="cancel-conversation-name" :aria-label="t('agent.conversations.cancelNameAria')" :title="t('agent.conversations.cancelNameAria')" @click="cancelRename">
                   <X :size="17" aria-hidden="true" />
                 </button>
               </form>
@@ -73,27 +73,27 @@
                 <span>{{ conversationTitle(conversation) }}</span>
               </RouterLink>
             </div>
-            <div role="cell" data-label="Term" class="agent-conversation-table__term">
+            <div role="cell" :data-label="t('agent.conversations.col.term')" class="agent-conversation-table__term">
               {{ termName(bindingTermId(conversation.binding_id)) }}
             </div>
-            <div role="cell" data-label="工作状态" class="agent-conversation-table__status">
+            <div role="cell" :data-label="t('agent.conversations.col.status')" class="agent-conversation-table__status">
               <span class="agent-status-tag" :data-status="conversationStatus(conversation.status).tone">
                 {{ conversationStatus(conversation.status).label }}
               </span>
               <span
                 v-if="conversations.pendingCount(conversation.conversation_id) > 0"
                 class="agent-pending-badge"
-                :aria-label="`${conversations.pendingCount(conversation.conversation_id)} 个待处理审批`"
+                :aria-label="t('agent.conversations.pendingBadgeAria', { count: conversations.pendingCount(conversation.conversation_id) })"
                 data-agent-pending-badge
               >{{ conversations.pendingCount(conversation.conversation_id) }}</span>
             </div>
-            <div role="cell" data-label="操作" class="agent-conversation-table__actions">
+            <div role="cell" :data-label="t('agent.conversations.col.actions')" class="agent-conversation-table__actions">
               <RouterLink
                 class="icon-button icon-only"
                 :to="`/terms/${bindingTermId(conversation.binding_id)}?agent=${conversation.conversation_id}`"
                 data-action="open-conversation"
-                :aria-label="`在终端中打开：${conversationTitle(conversation)}`"
-                title="在终端中打开"
+                :aria-label="t('agent.conversations.openInTermAria', { title: conversationTitle(conversation) })"
+                :title="t('agent.conversations.openInTermTitle')"
               >
                 <Terminal :size="17" aria-hidden="true" />
               </RouterLink>
@@ -101,8 +101,8 @@
                 class="icon-button icon-only"
                 type="button"
                 data-action="rename-conversation"
-                :aria-label="`重命名会话：${conversationTitle(conversation)}`"
-                title="重命名会话"
+                :aria-label="t('agent.conversations.renameAria', { title: conversationTitle(conversation) })"
+                :title="t('agent.conversations.renameTitle')"
                 @click="startRename(conversation)"
               >
                 <Pencil :size="17" aria-hidden="true" />
@@ -111,8 +111,8 @@
                 class="icon-button icon-only destructive"
                 type="button"
                 data-action="delete-conversation"
-                :aria-label="`删除会话：${conversationTitle(conversation)}`"
-                title="删除会话"
+                :aria-label="t('agent.conversations.deleteAria', { title: conversationTitle(conversation) })"
+                :title="t('agent.conversations.deleteTitle')"
                 @click="requestDelete(conversation.conversation_id)"
               >
                 <Trash2 :size="17" aria-hidden="true" />
@@ -134,13 +134,13 @@
         data-agent-delete-dialog
         @keydown="trapFocus"
       >
-        <h2 id="agent-delete-confirm-title">删除该会话？</h2>
+        <h2 id="agent-delete-confirm-title">{{ t('agent.conversations.deleteDialogTitle') }}</h2>
         <p id="agent-delete-confirm-description">
-          将删除会话 <strong>{{ deleteTargetTitle }}</strong> 及其全部消息历史，此操作不可撤销。
+          {{ t('agent.conversations.deleteDialogDesc', { title: deleteTargetTitle }) }}
         </p>
         <div class="dialog-actions">
-          <button ref="cancelButton" class="text-button" type="button" data-action="delete-cancel" @click="closeDeleteDialog">取消</button>
-          <button class="danger-button" type="button" data-action="delete-confirm" @click="confirmDelete">确认删除</button>
+          <button ref="cancelButton" class="text-button" type="button" data-action="delete-cancel" @click="closeDeleteDialog">{{ t('common.cancel') }}</button>
+          <button class="danger-button" type="button" data-action="delete-confirm" @click="confirmDelete">{{ t('agent.conversations.deleteConfirm') }}</button>
         </div>
       </section>
     </div>
@@ -159,8 +159,10 @@ import { RouterLink } from 'vue-router'
 import { useAgentBroker } from '../composables/useAgentBroker'
 import { useAgentConversations } from '../composables/useAgentConversations'
 import { useBottomToast } from '../composables/useBottomToast'
+import { useI18n } from '../i18n'
 import { useClientRuntime } from '../runtime'
 
+const { t } = useI18n()
 const runtime = useClientRuntime()
 const toast = useBottomToast()
 const { agentBrokerEnabled } = useAgentBroker()
@@ -194,7 +196,7 @@ async function loadDirectory() {
   if (bindingResult.status === 'fulfilled') {
     bindings.value = bindingResult.value.bindings
   } else if (!isAborted(bindingResult.reason)) {
-    directoryError.value = '无法加载 Agent 会话数据，请稍后重试。'
+    directoryError.value = t('agent.conversations.loadError')
     toast.show({ text: directoryError.value, tone: 'error' })
   }
   if (computerResult.status === 'fulfilled') {
@@ -204,7 +206,7 @@ async function loadDirectory() {
     }
     termNames.value = names
   } else if (!isAborted(computerResult.reason) && directoryError.value === null) {
-    directoryError.value = '无法加载 Term 名称，部分会话信息可能不完整。'
+    directoryError.value = t('agent.conversations.termNameError')
   }
   directoryLoading.value = false
 }
@@ -214,22 +216,22 @@ function bindingTermId(bindingId: string): string {
 }
 
 function termName(termId: string): string {
-  return termNames.value.get(termId) ?? (termId === '' ? 'Term 未知' : `Term · ${termId.slice(0, 8)}`)
+  return termNames.value.get(termId) ?? (termId === '' ? t('agent.conversations.termUnknown') : `Term · ${termId.slice(0, 8)}`)
 }
 
 function conversationTitle(conversation: AgentConversationResponse): string {
-  return conversation.title?.trim() || `会话 ${conversation.conversation_id.slice(0, 8)}`
+  return conversation.title?.trim() || t('agent.conversations.defaultTitle', { id: conversation.conversation_id.slice(0, 8) })
 }
 
 function conversationStatus(status: string): { label: string, tone: 'running' | 'stopped' | 'attention' } {
   const normalized = status.toLowerCase()
   if (['active', 'open', 'running', 'processing', 'queued'].includes(normalized)) {
-    return { label: '运行中', tone: 'running' }
+    return { label: t('agent.status.running'), tone: 'running' }
   }
   if (['failed', 'error', 'degraded'].includes(normalized)) {
-    return { label: '需要注意', tone: 'attention' }
+    return { label: t('agent.status.attention'), tone: 'attention' }
   }
-  return { label: '已停止', tone: 'stopped' }
+  return { label: t('agent.status.stopped'), tone: 'stopped' }
 }
 
 const editingConversationId = ref<string | null>(null)

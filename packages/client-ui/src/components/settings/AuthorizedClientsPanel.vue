@@ -1,22 +1,22 @@
 <template>
   <section class="settings-panel" aria-labelledby="clients-heading">
-    <div class="settings-panel-heading"><div><p class="eyebrow">Access</p><h2 id="clients-heading">已授权客户端</h2></div><div class="page-heading-actions"><span class="status-chip">{{ clients.length }}</span><button data-action="authorize-new-client" class="text-button" type="button" title="输入设备码以批准另一台已发起连接的客户端。" @click="approvalOpen = true">授权新客户端</button></div></div>
-    <p v-if="clients.length === 0" class="empty-state">尚未授权手机或桌面客户端。</p>
+    <div class="settings-panel-heading"><div><p class="eyebrow">Access</p><h2 id="clients-heading">{{ t('settings.clients.heading') }}</h2></div><div class="page-heading-actions"><span class="status-chip">{{ clients.length }}</span><button data-action="authorize-new-client" class="text-button" type="button" :title="t('settings.clients.authorizeNewTitle')" @click="approvalOpen = true">{{ t('settings.clients.authorizeNew') }}</button></div></div>
+    <p v-if="clients.length === 0" class="empty-state">{{ t('settings.clients.empty') }}</p>
     <ul v-else class="authorized-client-list">
       <li v-for="client in clients" :key="client.client_id">
         <div><strong>{{ client.display_name }}</strong><span>{{ client.platform }} · {{ client.key_thumbprint.slice(0, 12) }}…</span><small>{{ client.scopes.join(' · ') }}</small></div>
-        <button class="danger-button" type="button" @click="openRevoke(client)">撤销</button>
+        <button class="danger-button" type="button" @click="openRevoke(client)">{{ t('settings.clients.revoke') }}</button>
       </li>
     </ul>
     <div v-if="selected" class="dialog-backdrop" @click.self="cancel">
       <section ref="revokePanel" class="dialog-panel revoke-client-dialog" role="alertdialog" aria-modal="true" aria-labelledby="revoke-client-title" @keydown="trapFocus">
-        <header><div><p class="eyebrow">Access</p><h2 id="revoke-client-title">撤销客户端</h2></div><button class="icon-button icon-only" type="button" aria-label="关闭" @click="cancel">×</button></header>
-        <p>将注销 <strong>{{ selected.display_name }}</strong>，不会影响其他设备，也不会中断正在运行的会话。</p>
+        <header><div><p class="eyebrow">Access</p><h2 id="revoke-client-title">{{ t('settings.clients.revokeTitle') }}</h2></div><button class="icon-button icon-only" type="button" :aria-label="t('common.close')" @click="cancel">×</button></header>
+        <p>{{ t('settings.clients.revokeDesc', { name: selected.display_name }) }}</p>
         <form class="security-form" @submit.prevent="removeSelected">
-          <label for="revoke-admin-token">管理员令牌</label><input id="revoke-admin-token" ref="revokeInput" v-model="adminToken" type="password" autocomplete="off" required />
-          <label v-if="totpEnabled" for="revoke-totp">双重验证码</label><input v-if="totpEnabled" id="revoke-totp" v-model="totpCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required />
+          <label for="revoke-admin-token">{{ t('settings.totp.adminToken') }}</label><input id="revoke-admin-token" ref="revokeInput" v-model="adminToken" type="password" autocomplete="off" required />
+          <label v-if="totpEnabled" for="revoke-totp">{{ t('settings.totp.code') }}</label><input v-if="totpEnabled" id="revoke-totp" v-model="totpCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required />
           <p v-if="error" class="form-error" role="alert">{{ error }}</p>
-          <div class="dialog-actions"><button type="button" class="secondary-button" @click="cancel">取消</button><button type="submit" class="danger-button">确认撤销</button></div>
+          <div class="dialog-actions"><button type="button" class="secondary-button" @click="cancel">{{ t('common.cancel') }}</button><button type="submit" class="danger-button">{{ t('settings.clients.confirmRevoke') }}</button></div>
         </form>
       </section>
     </div>
@@ -28,9 +28,11 @@
 import type { NativeClientResponse } from '@termflow/client-contracts'
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useBottomToast } from '../../composables/useBottomToast'
+import { useI18n } from '../../i18n'
 import { useClientRuntime } from '../../runtime'
 import DeviceAuthorizationApprovalDialog from './DeviceAuthorizationApprovalDialog.vue'
 
+const { t } = useI18n()
 defineProps<{ totpEnabled: boolean }>()
 const runtime = useClientRuntime()
 const toast = useBottomToast()
