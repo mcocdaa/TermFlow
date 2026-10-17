@@ -20,7 +20,7 @@ describe('ServerConnectionPanel', () => {
       global: { plugins: [createClientUi(runtime)] },
     })
 
-    expect(wrapper.get('.eyebrow').text()).toBe('Server')
+    expect(wrapper.get('.eyebrow').text()).toBe('服务连接')
     expect(wrapper.get('#server-heading').text()).toBe('中继服务器')
     expect(wrapper.get('[data-server-label]').text()).toContain('服务网址')
     const field = wrapper.get('[data-server-field]')

@@ -1,7 +1,7 @@
 <template>
   <section class="settings-panel" aria-labelledby="server-heading">
     <div class="settings-panel-heading">
-      <div><p class="eyebrow">Server</p><h2 id="server-heading">{{ t('settings.server.heading') }}</h2></div>
+      <div><p class="eyebrow">{{ t('settings.server.eyebrow') }}</p><h2 id="server-heading">{{ t('settings.server.heading') }}</h2></div>
     </div>
     <div data-server-field class="server-field">
       <div class="server-field-heading">

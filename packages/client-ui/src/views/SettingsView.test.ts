@@ -26,7 +26,7 @@ describe('SettingsView', () => {
     })
     const wrapper = await mountSettings(runtime)
 
-    expect(wrapper.get('.page-heading .eyebrow').text()).toBe('Settings')
+    expect(wrapper.get('.page-heading .eyebrow').text()).toBe('偏好与安全')
     expect(wrapper.get('.page-heading h1').text()).toBe('设置')
     expect(wrapper.text()).not.toContain('主题在客户端本地保存')
     expect(wrapper.text()).not.toContain('Preferences & Security')

@@ -4,8 +4,8 @@ import type {
   TerminalSessionLike,
 } from '@termflow/client-core'
 import type { TerminalActionResultFrame } from '@termflow/client-contracts'
-import { onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
-import { t } from '../i18n'
+import { onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
+import { locale, t } from '../i18n'
 import { useClientRuntime } from '../runtime'
 import type { BindingSnapshot, TerminalActionId } from '../types'
 import { createXtermAdapter, type TerminalAdapter, type TerminalAdapterFactory, type TerminalMouseDispatch } from '../terminal/xtermAdapter'
@@ -37,6 +37,11 @@ export function useTerminalSession(
   const status = ref<TerminalConnectionStatus>('connecting')
   const dimensions = ref<{ rows: number; cols: number } | null>(null)
   const bindings = ref<BindingSnapshot>({ prefix: t('terminal.unreportedPrefix'), bindings: [] })
+  watch(locale, () => {
+    if (bindings.value.prefix === '未报告' || bindings.value.prefix === 'Unreported') {
+      bindings.value = { ...bindings.value, prefix: t('terminal.unreportedPrefix') }
+    }
+  })
   const terminalError = ref('')
   const lastActionResult = ref<TerminalActionResultFrame | null>(null)
   const resetKey = ref(0)

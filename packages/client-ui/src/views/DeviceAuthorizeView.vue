@@ -2,8 +2,21 @@
   <section class="authorize-view" aria-labelledby="device-authorize-title">
     <div class="auth-card consent-card device-consent-card">
       <header class="authorize-card-heading">
-        <div><p class="eyebrow">Cross-device authorization</p><h1 id="device-authorize-title">{{ t('deviceAuth.title') }}</h1></div>
-        <RouterLink data-action="back-to-login" class="secondary-button" to="/login">{{ t('deviceAuth.backToLogin') }}</RouterLink>
+        <div><p class="eyebrow">{{ t('deviceAuth.eyebrow') }}</p><h1 id="device-authorize-title">{{ t('deviceAuth.title') }}</h1></div>
+        <div class="authorize-card-actions">
+          <button
+            data-action="toggle-locale"
+            class="text-button locale-toggle-button"
+            type="button"
+            :aria-label="t('app.switchLangAria')"
+            :title="t('app.switchLangAria')"
+            @click="toggleLocale"
+          >
+            <Globe :size="15" aria-hidden="true" />
+            <span class="locale-badge">{{ t('app.switchLangBadge') }}</span>
+          </button>
+          <RouterLink data-action="back-to-login" class="secondary-button" to="/login">{{ t('deviceAuth.backToLogin') }}</RouterLink>
+        </div>
       </header>
       <template v-if="preview === null && !loading">
         <form data-action="lookup-device" class="security-form device-code-lookup" @submit.prevent="lookup()">
@@ -44,6 +57,7 @@
 </template>
 
 <script setup lang="ts">
+import { Globe } from '@lucide/vue'
 import { computed, onMounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import ThemedQrCode from '../components/common/ThemedQrCode.vue'
@@ -51,7 +65,7 @@ import { useDeviceAuthorizationApproval } from '../composables/useDeviceAuthoriz
 import { useI18n } from '../i18n'
 import { useClientRuntime } from '../runtime'
 
-const { t } = useI18n()
+const { t, toggleLocale } = useI18n()
 const runtime = useClientRuntime()
 const route = useRoute()
 const router = useRouter()
@@ -87,5 +101,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.authorize-card-actions { display: flex; align-items: center; gap: var(--space-2); }
 .totp-hint { color: var(--color-text-muted); font-weight: 400; font-size: 0.85em; }
 </style>

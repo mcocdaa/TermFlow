@@ -1,7 +1,20 @@
 <template>
   <section class="login-view">
     <div class="auth-card">
-      <h1>{{ t('login.title') }}</h1>
+      <div class="login-card-heading">
+        <h1>{{ t('login.title') }}</h1>
+        <button
+          data-action="toggle-locale"
+          class="text-button locale-toggle-button"
+          type="button"
+          :aria-label="t('app.switchLangAria')"
+          :title="t('app.switchLangAria')"
+          @click="toggleLocale"
+        >
+          <Globe :size="15" aria-hidden="true" />
+          <span class="locale-badge">{{ t('app.switchLangBadge') }}</span>
+        </button>
+      </div>
       <form @submit.prevent="submit">
         <template v-if="challengeId === null">
           <label for="admin-token">{{ t('login.adminToken') }}</label>
@@ -19,13 +32,14 @@
 </template>
 
 <script setup lang="ts">
+import { Globe } from '@lucide/vue'
 import { nextTick, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ApiError } from '@termflow/client-core'
 import { useSession } from '../composables/useSession'
 import { useI18n } from '../i18n'
 
-const { t } = useI18n()
+const { t, toggleLocale } = useI18n()
 const adminToken = ref('')
 const totpCode = ref('')
 const challengeId = ref<string | null>(null)
@@ -67,5 +81,6 @@ async function submit() {
 </script>
 
 <style scoped>
+.login-card-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
 .totp-hint { color: var(--color-text-muted); font-weight: 400; font-size: 0.85em; }
 </style>

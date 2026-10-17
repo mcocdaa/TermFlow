@@ -2,7 +2,18 @@
   <section class="authorize-view">
     <div class="auth-card consent-card">
       <header class="authorize-card-heading">
-        <div><p class="eyebrow">Native client authorization</p><h1>{{ t('nativeAuth.title') }}</h1></div>
+        <div><p class="eyebrow">{{ t('nativeAuth.eyebrow') }}</p><h1>{{ t('nativeAuth.title') }}</h1></div>
+        <button
+          data-action="toggle-locale"
+          class="text-button locale-toggle-button"
+          type="button"
+          :aria-label="t('app.switchLangAria')"
+          :title="t('app.switchLangAria')"
+          @click="toggleLocale"
+        >
+          <Globe :size="15" aria-hidden="true" />
+          <span class="locale-badge">{{ t('app.switchLangBadge') }}</span>
+        </button>
       </header>
       <p v-if="loading">{{ t('nativeAuth.loading') }}</p>
       <template v-else-if="preview">
@@ -30,6 +41,7 @@
 </template>
 
 <script setup lang="ts">
+import { Globe } from '@lucide/vue'
 import type { OAuthAuthorizationPreviewResponse } from '@termflow/client-contracts'
 import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
@@ -37,7 +49,7 @@ import { ApiError } from '@termflow/client-core'
 import { useI18n } from '../i18n'
 import { useClientRuntime } from '../runtime'
 
-const { t } = useI18n()
+const { t, toggleLocale } = useI18n()
 const runtime = useClientRuntime()
 const route = useRoute()
 const preview = ref<OAuthAuthorizationPreviewResponse | null>(null)

@@ -3,7 +3,7 @@
     <header class="agent-chat-header">
       <div class="agent-chat-header__left">
         <div>
-          <p class="eyebrow">Agent Chat</p>
+          <p class="eyebrow">{{ t('agent.chat.eyebrow') }}</p>
           <h1>{{ t('agent.preview.title') }}</h1>
           <p class="agent-chat-header__binding">Binding 2e2b1253 · Term ca70e9a5</p>
         </div>

@@ -2,7 +2,7 @@
   <div class="page agent-view">
     <header class="page-heading">
       <div>
-        <p class="eyebrow">Agent</p>
+        <p class="eyebrow">{{ t('agent.eyebrow') }}</p>
         <h1 id="agent-title">{{ t('agent.title') }}</h1>
       </div>
     </header>
@@ -20,7 +20,7 @@
       <section class="settings-panel agent-conversation-panel" aria-labelledby="agent-conversations-heading">
         <div class="settings-panel-heading">
           <div>
-            <p class="eyebrow">Conversations</p>
+            <p class="eyebrow">{{ t('agent.conversations.eyebrow') }}</p>
             <h2 id="agent-conversations-heading">{{ t('agent.conversations.heading') }}</h2>
           </div>
           <span class="status-chip" data-agent-conversation-count>{{ conversationRows.length }}</span>

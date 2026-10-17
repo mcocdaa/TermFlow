@@ -1,6 +1,6 @@
 <template>
   <section class="settings-panel" aria-labelledby="clients-heading">
-    <div class="settings-panel-heading"><div><p class="eyebrow">Access</p><h2 id="clients-heading">{{ t('settings.clients.heading') }}</h2></div><div class="page-heading-actions"><span class="status-chip">{{ clients.length }}</span><button data-action="authorize-new-client" class="text-button" type="button" :title="t('settings.clients.authorizeNewTitle')" @click="approvalOpen = true">{{ t('settings.clients.authorizeNew') }}</button></div></div>
+    <div class="settings-panel-heading"><div><p class="eyebrow">{{ t('settings.clients.eyebrow') }}</p><h2 id="clients-heading">{{ t('settings.clients.heading') }}</h2></div><div class="page-heading-actions"><span class="status-chip">{{ clients.length }}</span><button data-action="authorize-new-client" class="text-button" type="button" :title="t('settings.clients.authorizeNewTitle')" @click="approvalOpen = true">{{ t('settings.clients.authorizeNew') }}</button></div></div>
     <p v-if="clients.length === 0" class="empty-state">{{ t('settings.clients.empty') }}</p>
     <ul v-else class="authorized-client-list">
       <li v-for="client in clients" :key="client.client_id">
@@ -10,7 +10,7 @@
     </ul>
     <div v-if="selected" class="dialog-backdrop" @click.self="cancel">
       <section ref="revokePanel" class="dialog-panel revoke-client-dialog" role="alertdialog" aria-modal="true" aria-labelledby="revoke-client-title" @keydown="trapFocus">
-        <header><div><p class="eyebrow">Access</p><h2 id="revoke-client-title">{{ t('settings.clients.revokeTitle') }}</h2></div><button class="icon-button icon-only" type="button" :aria-label="t('common.close')" @click="cancel">×</button></header>
+        <header><div><p class="eyebrow">{{ t('settings.clients.eyebrow') }}</p><h2 id="revoke-client-title">{{ t('settings.clients.revokeTitle') }}</h2></div><button class="icon-button icon-only" type="button" :aria-label="t('common.close')" @click="cancel">×</button></header>
         <p>{{ t('settings.clients.revokeDesc', { name: selected.display_name }) }}</p>
         <form class="security-form" @submit.prevent="removeSelected">
           <label for="revoke-admin-token">{{ t('settings.totp.adminToken') }}</label><input id="revoke-admin-token" ref="revokeInput" v-model="adminToken" type="password" autocomplete="off" required />

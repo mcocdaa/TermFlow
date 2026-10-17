@@ -10,7 +10,7 @@ import { computed, ref } from 'vue'
 import { Bot } from '@lucide/vue'
 import type { AgentSetupResponse } from '@termflow/client-contracts'
 import { useI18n } from '../../i18n'
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const props = defineProps<{ open: boolean; pendingCount: number; readiness: AgentSetupResponse['state'] | null }>()
 const emit = defineEmits<{ toggle: [] }>()
 const button = ref<HTMLButtonElement | null>(null)
@@ -19,6 +19,6 @@ const accessibleLabel = computed(() => [
   'Agent',
   readinessLabel.value,
   props.pendingCount ? t('agent.conversations.pendingBadgeAria', { count: props.pendingCount }) : null,
-].filter(Boolean).join('，'))
+].filter(Boolean).join(locale.value === 'en' ? ', ' : '，'))
 defineExpose({ focus: () => button.value?.focus() })
 </script>
