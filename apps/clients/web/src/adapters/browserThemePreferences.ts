@@ -1,6 +1,9 @@
 import {
+  configureLocalePreferences,
   isThemeId,
+  LOCALE_STORAGE_KEY,
   THEME_STORAGE_KEY,
+  type Locale,
   type ThemeId,
   type ThemePreferences,
   type ThemeTarget,
@@ -10,6 +13,15 @@ type ThemeStorage = Pick<Storage, 'getItem' | 'setItem'>
 type ThemeRoot = Pick<HTMLElement, 'dataset'>
 
 export function createBrowserThemePreferences(storage: ThemeStorage = globalThis.localStorage): ThemePreferences {
+  configureLocalePreferences({
+    load() {
+      const v = storage.getItem(LOCALE_STORAGE_KEY)
+      return v === 'en' || v === 'zh' ? v : null
+    },
+    save(loc: Locale) {
+      storage.setItem(LOCALE_STORAGE_KEY, loc)
+    },
+  })
   return {
     load() {
       const stored = storage.getItem(THEME_STORAGE_KEY)

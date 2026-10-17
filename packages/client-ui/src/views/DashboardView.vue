@@ -17,7 +17,7 @@
 </template>
 
 <script setup lang="ts">
-import { ApiError } from '@termflow/client-core'
+import { ApiError, safeMessageFor, type ApiErrorKind } from '@termflow/client-core'
 import { computed, ref } from 'vue'
 import ComputerCard from '../components/dashboard/ComputerCard.vue'
 import DeleteTermDialog from '../components/dashboard/DeleteTermDialog.vue'
@@ -26,37 +26,42 @@ import { useDashboard } from '../composables/useDashboard'
 import { useI18n } from '../i18n'
 import { useClientRuntime } from '../runtime'
 import type { TermSummary } from '../types'
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { snapshot, loading, message, refresh } = useDashboard()
 const runtime = useClientRuntime()
 const onlineComputerCount = computed(() => snapshot.value?.computers.filter((computer) => computer.online).length ?? 0)
 const selectedForDeletion = ref<TermSummary | null>(null)
 const deletePending = ref(false)
-const deleteError = ref('')
+const deleteErrorState = ref<{ type: 'api'; kind: ApiErrorKind } | { type: 'key'; key: string } | null>(null)
+const deleteError = computed(() => {
+  void locale.value
+  if (deleteErrorState.value === null) return ''
+  return deleteErrorState.value.type === 'api' ? safeMessageFor(deleteErrorState.value.kind) : t(deleteErrorState.value.key)
+})
 const cleanupJobId = ref('')
 
 function requestDelete(term: TermSummary) {
   cleanupJobId.value = ''
   selectedForDeletion.value = term
-  deleteError.value = ''
+  deleteErrorState.value = null
 }
 
 function cancelDelete() {
   if (deletePending.value) return
   selectedForDeletion.value = null
-  deleteError.value = ''
+  deleteErrorState.value = null
 }
 
-function deleteMessage(error: unknown) {
-  if (error instanceof ApiError && error.code === 'instance_online') return t('dashboard.deleteError.online')
-  if (error instanceof ApiError && error.code === 'instance_not_found') return t('dashboard.deleteError.notFound')
-  return error instanceof ApiError ? error.message : t('dashboard.deleteError.generic')
+function deleteErrorFrom(error: unknown): { type: 'api'; kind: ApiErrorKind } | { type: 'key'; key: string } {
+  if (error instanceof ApiError && error.code === 'instance_online') return { type: 'key', key: 'dashboard.deleteError.online' }
+  if (error instanceof ApiError && error.code === 'instance_not_found') return { type: 'key', key: 'dashboard.deleteError.notFound' }
+  return error instanceof ApiError ? { type: 'api', kind: error.kind } : { type: 'key', key: 'dashboard.deleteError.generic' }
 }
 
 async function confirmDelete(instanceId: string) {
   if (deletePending.value) return
   deletePending.value = true
-  deleteError.value = ''
+  deleteErrorState.value = null
   try {
     const result = await runtime.api.terms.remove(instanceId)
     await refresh()
@@ -66,7 +71,7 @@ async function confirmDelete(instanceId: string) {
     }
     selectedForDeletion.value = null
   } catch (error) {
-    deleteError.value = deleteMessage(error)
+    deleteErrorState.value = deleteErrorFrom(error)
     if (error instanceof ApiError && error.code === 'instance_not_found') await refresh()
   } finally {
     deletePending.value = false

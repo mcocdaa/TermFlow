@@ -1,5 +1,5 @@
 import { afterEach, vi } from 'vitest'
-import { setLocale } from '../i18n'
+import { configureLocalePreferences, LOCALE_STORAGE_KEY, setLocale, type Locale } from '../i18n'
 
 if (typeof window !== 'undefined' && typeof window.localStorage?.getItem !== 'function') {
   const store = new Map<string, string>()
@@ -26,6 +26,16 @@ if (typeof window !== 'undefined' && typeof window.localStorage?.getItem !== 'fu
   Object.defineProperty(window, 'localStorage', { value: memoryStorage, configurable: true, writable: true })
   Object.defineProperty(globalThis, 'localStorage', { value: memoryStorage, configurable: true, writable: true })
 }
+
+configureLocalePreferences({
+  load() {
+    const v = window.localStorage?.getItem(LOCALE_STORAGE_KEY)
+    return v === 'en' || v === 'zh' ? v : null
+  },
+  save(loc: Locale) {
+    window.localStorage?.setItem(LOCALE_STORAGE_KEY, loc)
+  },
+})
 
 class ResizeObserverStub {
   observe() {}

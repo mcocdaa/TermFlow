@@ -5,7 +5,7 @@
         <div>
           <p class="eyebrow">{{ t('agent.chat.eyebrow') }}</p>
           <h1>{{ t('agent.preview.title') }}</h1>
-          <p class="agent-chat-header__binding">Binding 2e2b1253 · Term ca70e9a5</p>
+          <p class="agent-chat-header__binding">{{ t('agent.chat.bindingLabel', { bindingId: '2e2b1253', termId: 'ca70e9a5' }) }}</p>
         </div>
       </div>
       <div class="agent-chat-header__actions">

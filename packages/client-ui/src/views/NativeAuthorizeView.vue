@@ -43,30 +43,36 @@
 <script setup lang="ts">
 import { Globe } from '@lucide/vue'
 import type { OAuthAuthorizationPreviewResponse } from '@termflow/client-contracts'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { ApiError } from '@termflow/client-core'
+import { ApiError, safeMessageFor, type ApiErrorKind } from '@termflow/client-core'
 import { useI18n } from '../i18n'
 import { useClientRuntime } from '../runtime'
 
-const { t, toggleLocale } = useI18n()
+const { t, toggleLocale, locale } = useI18n()
 const runtime = useClientRuntime()
 const route = useRoute()
 const preview = ref<OAuthAuthorizationPreviewResponse | null>(null)
 const loading = ref(true)
 const adminToken = ref('')
 const totpCode = ref('')
-const message = ref('')
+const errorState = ref<{ type: 'api'; kind: ApiErrorKind } | { type: 'key'; key: string } | null>(null)
+const message = computed(() => {
+  void locale.value
+  if (errorState.value === null) return ''
+  return errorState.value.type === 'api' ? safeMessageFor(errorState.value.kind) : t(errorState.value.key)
+})
 
 onMounted(async () => {
   const transactionId = typeof route.query.transaction_id === 'string' ? route.query.transaction_id : ''
   try { preview.value = await runtime.api.oauth.authorizationPreview(transactionId) }
-  catch (error) { message.value = error instanceof ApiError ? error.message : t('nativeAuth.invalidOrExpired') }
+  catch (error) { errorState.value = error instanceof ApiError ? { type: 'api', kind: error.kind } : { type: 'key', key: 'nativeAuth.invalidOrExpired' } }
   finally { loading.value = false }
 })
 
 async function decide(decision: 'allow' | 'deny') {
   if (preview.value === null) return
+  errorState.value = null
   try {
     const result = await runtime.api.oauth.decideAuthorization({
       transactionId: preview.value.transaction_id,
@@ -78,7 +84,7 @@ async function decide(decision: 'allow' | 'deny') {
     runtime.authorizationCompletion.navigate(result.callback_uri)
   } catch (error) {
     adminToken.value = ''; totpCode.value = ''
-    message.value = error instanceof ApiError ? error.message : t('nativeAuth.failed')
+    errorState.value = error instanceof ApiError ? { type: 'api', kind: error.kind } : { type: 'key', key: 'nativeAuth.failed' }
   }
 }
 </script>

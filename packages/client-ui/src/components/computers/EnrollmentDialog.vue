@@ -38,11 +38,11 @@
 <script setup lang="ts">
 import { CircleHelp, Copy, X } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ApiError } from '@termflow/client-core'
+import { ApiError, safeMessageFor, type ApiErrorKind } from '@termflow/client-core'
 import { useI18n } from '../../i18n'
 import { useClientRuntime } from '../../runtime'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const emit = defineEmits<{ closed: []; added: [] }>()
 const runtime = useClientRuntime()
 const open = ref(true)
@@ -53,7 +53,12 @@ const code = ref<string | null>(null)
 const command = ref('')
 const expiresAt = ref<number | null>(null)
 const now = ref(runtime.clock.now())
-const message = ref('')
+const errorState = ref<{ type: 'api'; kind: ApiErrorKind } | { type: 'key'; key: string } | null>(null)
+const message = computed(() => {
+  void locale.value
+  if (errorState.value === null) return ''
+  return errorState.value.type === 'api' ? safeMessageFor(errorState.value.kind) : t(errorState.value.key)
+})
 const panel = ref<HTMLElement | null>(null)
 const nameInput = ref<HTMLInputElement | null>(null)
 const copyButton = ref<HTMLButtonElement | null>(null)
@@ -109,7 +114,7 @@ async function pollForEnrollment() {
     open.value = false
     emit('added')
     void nextTick(() => { if (returnFocus?.isConnected) returnFocus.focus() })
-  } catch (error) { if (open.value) message.value = error instanceof ApiError ? error.message : t('computers.enrollment.pollError') }
+  } catch (error) { if (open.value) errorState.value = error instanceof ApiError ? { type: 'api', kind: error.kind } : { type: 'key', key: 'computers.enrollment.pollError' } }
   finally { pollingEnrollment = false }
 }
 function startEnrollmentPolling() {
@@ -122,11 +127,11 @@ function validName(value: string) {
 async function create(automatic = false) {
   if (busy.value || !open.value) return
   if (!validName(displayName.value)) {
-    message.value = t('computers.enrollment.nameInvalid')
+    errorState.value = { type: 'key', key: 'computers.enrollment.nameInvalid' }
     return
   }
   busy.value = true
-  message.value = ''
+  errorState.value = null
   try {
     const baseline = await runtime.api.computers.list()
     if (!open.value) return
@@ -141,7 +146,7 @@ async function create(automatic = false) {
     startTimer()
     startEnrollmentPolling()
     if (!automatic) void nextTick(() => copyButton.value?.focus())
-  } catch (error) { message.value = error instanceof ApiError ? error.message : automatic ? t('computers.enrollment.refreshError') : t('computers.enrollment.createError') }
+  } catch (error) { errorState.value = error instanceof ApiError ? { type: 'api', kind: error.kind } : { type: 'key', key: automatic ? 'computers.enrollment.refreshError' : 'computers.enrollment.createError' } }
   finally { busy.value = false }
 }
 async function copy() { if (!command.value) return; await runtime.clipboard.writeText(command.value); copied.value = true }

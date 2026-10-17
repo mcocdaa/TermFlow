@@ -26,11 +26,11 @@
 <script setup lang="ts">
 import type { TotpStatusResponse } from '@termflow/client-contracts'
 import { X } from '@lucide/vue'
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from '../../i18n'
 import { useClientRuntime } from '../../runtime'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const props = defineProps<{
   open: boolean
   targetEnabled: boolean
@@ -40,14 +40,18 @@ const emit = defineEmits<{ close: []; confirmed: [TotpStatusResponse] }>()
 const runtime = useClientRuntime()
 const adminToken = ref('')
 const code = ref('')
-const message = ref('')
+const errorKey = ref('')
+const message = computed(() => {
+  void locale.value
+  return errorKey.value ? t(errorKey.value) : ''
+})
 const busy = ref(false)
 const adminInput = ref<HTMLInputElement | null>(null)
 
 function clearSecrets() {
   adminToken.value = ''
   code.value = ''
-  message.value = ''
+  errorKey.value = ''
 }
 
 function restoreFocus() {
@@ -71,7 +75,7 @@ function onKeydown(event: KeyboardEvent) {
 async function submit() {
   if (busy.value) return
   busy.value = true
-  message.value = ''
+  errorKey.value = ''
   try {
     const credentials = { adminToken: adminToken.value, totpCode: code.value }
     const status = props.targetEnabled
@@ -82,7 +86,7 @@ async function submit() {
     emit('close')
     restoreFocus()
   } catch {
-    message.value = t('settings.totp.verifyFailed')
+    errorKey.value = 'settings.totp.verifyFailed'
   } finally {
     busy.value = false
   }
