@@ -7,7 +7,7 @@
 import type { AgentConversationResponse } from '@termflow/client-contracts'
 import { ApiError, createApprovalsApi } from '@termflow/client-core'
 import { onBeforeUnmount, onMounted, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
-import { t } from '../i18n'
+import { locale, t, translateDynamicText } from '../i18n'
 import { useClientRuntime } from '../runtime'
 import { useBottomToast } from './useBottomToast'
 
@@ -26,6 +26,11 @@ export function useAgentConversations(bindingId?: MaybeRefOrGetter<BindingScope>
   const pendingCounts = ref<ReadonlyMap<string, number>>(new Map())
   const loading = ref(true)
   const errorMessage = ref<string | null>(null)
+  watch(locale, () => {
+    if (errorMessage.value !== null) {
+      errorMessage.value = translateDynamicText(errorMessage.value)
+    }
+  })
   const approvalsApi = createApprovalsApi(runtime.api.request)
   // List loads and mutations keep separate controllers: load() aborts its
   // own in-flight list request on a binding switch, which must not cancel

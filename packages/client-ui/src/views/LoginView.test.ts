@@ -118,4 +118,25 @@ describe('LoginView', () => {
     }
     expect(wrapper.get('[role="alert"]').text()).toBe('会话已过期，请重新登录。')
   })
+
+  it('displays invalid admin token error on HTTP 401 unauthorized login failure across zh and en', async () => {
+    const login = vi.fn().mockRejectedValue(new ApiError('authentication', { status: 401, code: 'unauthorized' }))
+    const runtime = createFakeRuntime({ api: { sessions: { login } } as unknown as ClientRuntime['api'] })
+    const { wrapper } = await mountLogin(runtime)
+
+    await wrapper.get('input[type="password"]').setValue('wrong-token')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toBe('管理员令牌无效，请核对后重试。')
+
+    const toggleBtn = wrapper.get('[data-action="toggle-locale"]')
+    await toggleBtn.trigger('click')
+    await flushPromises()
+    try {
+      expect(wrapper.get('[role="alert"]').text()).toBe('Invalid admin token. Please check and try again.')
+    } finally {
+      await toggleBtn.trigger('click')
+      await flushPromises()
+    }
+  })
 })

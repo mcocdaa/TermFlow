@@ -10,6 +10,17 @@
       </div>
       <div class="agent-chat-header__actions">
         <span class="agent-backend-status agent-backend-status--busy">{{ t('agent.backend.busy') }}</span>
+        <button
+          data-action="toggle-locale"
+          class="text-button locale-toggle-button"
+          type="button"
+          :aria-label="t('app.switchLangAria')"
+          :title="t('app.switchLangAria')"
+          @click="toggleLocale"
+        >
+          <Globe :size="15" aria-hidden="true" />
+          <span class="locale-badge">{{ t('app.switchLangBadge') }}</span>
+        </button>
       </div>
     </header>
     <div class="agent-chat-body">
@@ -50,7 +61,7 @@ import AgentApprovalCard from '../components/agent/AgentApprovalCard.vue'
 import AgentPartsList, { type AgentConversationPart } from '../components/agent/AgentPartsList.vue'
 import MobileKeyBar from '../components/terminal/MobileKeyBar.vue'
 import ThemePicker from '../components/settings/ThemePicker.vue'
-import { Send } from '@lucide/vue'
+import { Globe, Send } from '@lucide/vue'
 import { useSensitiveAuthorization } from '../composables/useSensitiveAuthorization'
 import { useI18n } from '../i18n'
 import {
@@ -62,7 +73,7 @@ import {
   type AguiEvent,
 } from '@termflow/client-core'
 
-const { t } = useI18n()
+const { t, locale, toggleLocale } = useI18n()
 const authorization = useSensitiveAuthorization()
 const modifierController = new MobileModifierController()
 const lastKeyInput = ref('')
@@ -70,56 +81,61 @@ function handleKeyInput(bytes: Uint8Array) {
   lastKeyInput.value = new TextDecoder().decode(bytes)
 }
 const now = Date.now()
-let state = createAgentHistoryState()
-state = seedUserMessages(
-  state,
-  [
+const history = computed<AgentHistoryState>(() => {
+  void locale.value
+  let state = createAgentHistoryState()
+  state = seedUserMessages(
+    state,
+    [
+      {
+        message_id: 'u1',
+        conversation_id: 'c1',
+        run_id: null,
+        role: 'user',
+        kind: 'text',
+        assembly_revision: 1,
+        is_final: false,
+        body_digest: 'd',
+        body: t('agent.preview.sampleUserPrompt'),
+        created_at: new Date(now).toISOString(),
+      },
+    ] as never,
+    () => now,
+  )
+
+  const frames: AguiEvent[] = [
+    { type: 'RUN_STARTED', threadId: 'c1', runId: 'r1' },
+    { type: 'STATE_DELTA', delta: [{ op: 'replace', path: '/backend', value: { state: 'busy', epoch: 1 } }] },
+    { type: 'CUSTOM', name: 'termflow.thinking_delta', value: { id: 'th1', delta: t('agent.preview.sampleThinking1') } },
+    { type: 'CUSTOM', name: 'termflow.thinking_completed', value: { id: 'th1' } },
+    { type: 'TEXT_MESSAGE_CHUNK', messageId: 'a1', delta: t('agent.preview.sampleAssistant1') },
+    { type: 'TOOL_CALL_START', toolCallId: 't1', toolCallName: 'termflow_termflow_list_panes' },
     {
-      message_id: 'u1',
-      conversation_id: 'c1',
-      run_id: null,
-      role: 'user',
-      kind: 'text',
-      assembly_revision: 1,
-      is_final: false,
-      body_digest: 'd',
-      body: t('agent.preview.sampleUserPrompt'),
-      created_at: new Date(now).toISOString(),
+      type: 'TOOL_CALL_RESULT',
+      messageId: 't1',
+      toolCallId: 't1',
+      content: '{"status":"success","truncated":false}',
     },
-  ] as never,
-  () => now,
-)
+    { type: 'TEXT_MESSAGE_END', messageId: 'a1' },
+    { type: 'TEXT_MESSAGE_CHUNK', messageId: 'a2', delta: t('agent.preview.sampleAssistant2') },
+    {
+      type: 'CUSTOM',
+      name: 'termflow.permission_requested',
+      value: { approval_request_id: 'a0000000-0000-4000-8000-000000000001' },
+    },
+  ] as AguiEvent[]
 
-const frames: AguiEvent[] = [
-  { type: 'RUN_STARTED', threadId: 'c1', runId: 'r1' },
-  { type: 'STATE_DELTA', delta: [{ op: 'replace', path: '/backend', value: { state: 'busy', epoch: 1 } }] },
-  { type: 'CUSTOM', name: 'termflow.thinking_delta', value: { id: 'th1', delta: t('agent.preview.sampleThinking1') } },
-  { type: 'CUSTOM', name: 'termflow.thinking_completed', value: { id: 'th1' } },
-  { type: 'TEXT_MESSAGE_CHUNK', messageId: 'a1', delta: t('agent.preview.sampleAssistant1') },
-  { type: 'TOOL_CALL_START', toolCallId: 't1', toolCallName: 'termflow_termflow_list_panes' },
-  {
-    type: 'TOOL_CALL_RESULT',
-    messageId: 't1',
-    toolCallId: 't1',
-    content: '{"status":"success","truncated":false}',
-  },
-  { type: 'TEXT_MESSAGE_END', messageId: 'a1' },
-  { type: 'TEXT_MESSAGE_CHUNK', messageId: 'a2', delta: t('agent.preview.sampleAssistant2') },
-  {
-    type: 'CUSTOM',
-    name: 'termflow.permission_requested',
-    value: { approval_request_id: 'a0000000-0000-4000-8000-000000000001' },
-  },
-] as AguiEvent[]
-
-for (const frame of frames) state = applyAguiEvent(state, frame, () => now)
-
-const history: AgentHistoryState = state
-const parts = computed<AgentConversationPart[]>(() => [
-  { type: 'step-start' },
-  { type: 'reasoning', text: t('agent.preview.sampleThinking1') },
-  { type: 'tool', tool: 'termflow_termflow_list_panes', status: 'completed', input: '{}', output: '{\n  "instance_id": "a38adddd-f204-4bd8-9587-0b57aa21524c",\n  "panes": [{"pane_id": "%0", "active": true, "dead": false}]\n}' },
-  { type: 'reasoning', text: t('agent.preview.sampleThinking2') },
+  for (const frame of frames) state = applyAguiEvent(state, frame, () => now)
+  return state
+})
+void history.value
+const parts = computed<AgentConversationPart[]>(() => {
+  void locale.value
+  return [
+    { type: 'step-start' },
+    { type: 'reasoning', text: t('agent.preview.sampleThinking1') },
+    { type: 'tool', tool: 'termflow_termflow_list_panes', status: 'completed', input: '{}', output: '{\n  "instance_id": "a38adddd-f204-4bd8-9587-0b57aa21524c",\n  "panes": [{"pane_id": "%0", "active": true, "dead": false}]\n}' },
+    { type: 'reasoning', text: t('agent.preview.sampleThinking2') },
   {
     type: 'tool',
     tool: 'termflow_termflow_git_diff',
@@ -149,7 +165,8 @@ const parts = computed<AgentConversationPart[]>(() => [
   { type: 'tool', tool: 'termflow_termflow_pane_read', status: 'completed', input: '{"params": {"pane_id": "%0"}}', output: '"$ echo 1\\n1\\n$ "' },
   { type: 'text', text: t('agent.preview.sampleFinalText') },
   { type: 'step-finish' },
-])
+  ]
+})
 const permission = {
   approvalId: 'a0000000-0000-4000-8000-000000000001',
   toolName: 'rm',
