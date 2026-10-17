@@ -84,4 +84,22 @@ describe('DeviceAuthorizeView', () => {
     await flushPromises()
     expect(deviceAuthorizationPreview).toHaveBeenCalledWith('ABCD-EFGH')
   })
+
+  it('renders localized English labels and status messages when locale is en', async () => {
+    const { setLocale } = await import('../i18n')
+    setLocale('en')
+    try {
+      const runtime = createFakeRuntime({ api: { oauth: {
+        deviceAuthorizationPreview: vi.fn().mockResolvedValue(preview),
+        decideAuthorization: vi.fn().mockResolvedValue({ status: 'approved', callback_uri: 'termflow://auth/callback' }),
+      } } as unknown as ClientRuntime['api'] })
+      const { wrapper } = await mountDevice(runtime)
+      expect(wrapper.get('#device-authorize-title').text()).toBe('Authorize New Device')
+      expect(wrapper.get('[data-action="back-to-login"]').text()).toBe('Back to Sign In')
+      expect(wrapper.text()).toContain('Allow Device')
+      expect(wrapper.text()).toContain('Deny')
+    } finally {
+      setLocale('zh')
+    }
+  })
 })

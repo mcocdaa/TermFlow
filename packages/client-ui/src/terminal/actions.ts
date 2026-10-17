@@ -1,15 +1,35 @@
 import type { TerminalAction as TerminalActionId } from '@termflow/client-contracts'
-export interface TmuxActionDefinition { id: TerminalActionId; label: string; destructive?: boolean }
+import { t } from '../i18n'
+
+export interface TmuxActionDefinition {
+  id: TerminalActionId
+  labelKey: string
+  readonly label: string
+  destructive?: boolean
+}
+
+function defineTmuxAction(id: TerminalActionId, destructive?: boolean): TmuxActionDefinition {
+  const labelKey = `terminal.tmux.action.${id}`
+  return {
+    id,
+    labelKey,
+    ...(destructive ? { destructive: true } : {}),
+    get label() {
+      return t(labelKey)
+    },
+  }
+}
 
 export const tmuxActions: readonly TmuxActionDefinition[] = [
-  { id: 'split_left_right', label: '左右切分 Pane' },
-  { id: 'split_top_bottom', label: '上下切分 Pane' },
-  { id: 'new_window', label: '新建 Window' },
-  { id: 'select_left', label: '选择左侧 Pane' },
-  { id: 'select_right', label: '选择右侧 Pane' },
-  { id: 'select_up', label: '选择上方 Pane' },
-  { id: 'select_down', label: '选择下方 Pane' },
-  { id: 'toggle_zoom', label: '切换 tmux Zoom' },
-  { id: 'copy_mode', label: '进入 Copy Mode' },
-  { id: 'close_pane', label: '关闭 Pane', destructive: true },
+  defineTmuxAction('split_left_right'),
+  defineTmuxAction('split_top_bottom'),
+  defineTmuxAction('new_window'),
+  defineTmuxAction('select_left'),
+  defineTmuxAction('select_right'),
+  defineTmuxAction('select_up'),
+  defineTmuxAction('select_down'),
+  defineTmuxAction('toggle_zoom'),
+  defineTmuxAction('copy_mode'),
+  defineTmuxAction('close_pane', true),
 ]
+

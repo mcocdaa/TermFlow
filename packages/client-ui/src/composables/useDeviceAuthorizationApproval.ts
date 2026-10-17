@@ -3,6 +3,7 @@ import type {
   OAuthAuthorizationPreviewResponse,
 } from '@termflow/client-contracts'
 import { ref } from 'vue'
+import { t } from '../i18n'
 
 type AuthorizationDecision = 'allow' | 'deny'
 
@@ -61,7 +62,7 @@ export function useDeviceAuthorizationApproval(
   async function lookup(value = userCode.value): Promise<void> {
     const code = normalizeDeviceAuthorizationCode(value)
     if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
-      error.value = '请输入格式为 ABCD-EFGH 的设备码。'
+      error.value = t('deviceAuth.invalidCodeFormat')
       return
     }
 
@@ -74,8 +75,8 @@ export function useDeviceAuthorizationApproval(
     } catch (cause) {
       if (apiErrorKind(cause) === 'authentication' && await authenticationRequired()) return
       error.value = apiErrorCode(cause) === 'authorization_expired'
-        ? '设备码无效或已过期。'
-        : '无法查找设备码。'
+        ? t('deviceAuth.codeInvalidOrExpired')
+        : t('deviceAuth.lookupError')
     } finally {
       loading.value = false
     }
@@ -97,8 +98,8 @@ export function useDeviceAuthorizationApproval(
       totpCode.value = ''
       if (apiErrorKind(cause) === 'authentication' && await authenticationRequired()) return
       error.value = apiErrorCode(cause) === 'authorization_expired'
-        ? '设备码无效或已过期。'
-        : '无法完成授权。'
+        ? t('deviceAuth.codeInvalidOrExpired')
+        : t('nativeAuth.failed')
     } finally {
       busy.value = false
     }

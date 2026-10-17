@@ -35,8 +35,8 @@ const panesTouched = ref(false)
 const introHelp = computed(() => {
   const disclosure = props.setup.disclosure
   return disclosure === null
-    ? '部署尚未配置模型提供方，请联系管理员完成部署。'
-    : `Agent 使用部署配置的模型 ${disclosure.provider_id} · ${disclosure.model_id} 读取授权窗格的内容；写入命令时仍会逐一弹审批。`
+    ? t('agent.setup.noProviderHelp')
+    : t('agent.setup.providerHelp', { provider: disclosure.provider_id, model: disclosure.model_id })
 })
 watch(() => props.panes.map((pane) => pane.pane_id).join(','), () => {
   if (panesTouched.value) return
@@ -50,8 +50,8 @@ function submit() {
   localError.value = ''
   const disclosure = props.setup.disclosure
   if (props.busy) return
-  if (!paneIds.value.length || paneIds.value.some((id) => !props.panes.some((pane) => pane.pane_id === id))) { localError.value = '请至少选择一个当前窗格。'; return }
-  if (disclosure === null || props.setup.topology_revision === null) { localError.value = '提供方配置暂不可用，请管理员完成部署。'; return }
+  if (!paneIds.value.length || paneIds.value.some((id) => !props.panes.some((pane) => pane.pane_id === id))) { localError.value = t('agent.setup.selectPaneError'); return }
+  if (disclosure === null || props.setup.topology_revision === null) { localError.value = t('agent.setup.providerUnavailableError'); return }
   const common = { paneIds: [...paneIds.value], topologyRevision: props.setup.topology_revision, disclosureFingerprint: disclosure.disclosure_fingerprint, accepted: true as const }
   const matching = props.profiles.find((profile) => profile.provider_id === disclosure.provider_id && profile.model_id === disclosure.model_id)
   emit('submit', matching

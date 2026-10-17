@@ -80,4 +80,19 @@ describe('tmux controls', () => {
     expect(wrapper.emitted('confirm')).toEqual([[{ paneId: '%3', confirmed: true }]])
     wrapper.unmount()
   })
+
+  it('localizes tmux action labels when locale is en', async () => {
+    const { setLocale } = await import('../../i18n')
+    const { tmuxActions } = await import('../../terminal/actions')
+    setLocale('en')
+    try {
+      expect(tmuxActions[0]?.label).toBe('Split Left / Right')
+      const wrapper = mount(TmuxActionMenu, { props: { bindings, activePaneId: '%3', open: true } })
+      expect(wrapper.get('[data-action="toggle-tmux-menu"] .control-label').text()).toBe('tmux Actions')
+      expect(wrapper.get('[data-action-id="split_left_right"] .action-label').text()).toBe('Split Left / Right')
+      expect(wrapper.get('[data-action-id="close_pane"] .action-label').text()).toBe('Close Pane')
+    } finally {
+      setLocale('zh')
+    }
+  })
 })

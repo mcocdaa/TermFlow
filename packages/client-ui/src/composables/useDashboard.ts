@@ -1,5 +1,6 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { ApiError } from '@termflow/client-core'
+import { t } from '../i18n'
 import { useClientRuntime } from '../runtime'
 import type { DashboardSnapshot } from '../types'
 
@@ -28,7 +29,7 @@ export function useDashboard() {
       snapshot.value = await runtime.api.dashboard.get(controller.signal)
       message.value = ''
     } catch (error) {
-      if (!(error instanceof ApiError) || error.kind !== 'aborted') message.value = error instanceof ApiError ? error.message : '无法加载控制中心。'
+      if (!(error instanceof ApiError) || error.kind !== 'aborted') message.value = error instanceof ApiError ? error.message : t('dashboard.loadError')
     } finally {
       loading.value = false
       clearTimer()

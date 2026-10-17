@@ -137,7 +137,7 @@ function isRuntimeUnavailableError(error: unknown): boolean {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : '操作失败，请稍后重试。'
+  return error instanceof Error ? error.message : t('common.actionFailed')
 }
 
 const normalizedText = computed(() => normalizePlainText(text.value))

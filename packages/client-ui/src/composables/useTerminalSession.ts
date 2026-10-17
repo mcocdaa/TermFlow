@@ -5,23 +5,25 @@ import type {
 } from '@termflow/client-core'
 import type { TerminalActionResultFrame } from '@termflow/client-contracts'
 import { onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
+import { t } from '../i18n'
 import { useClientRuntime } from '../runtime'
 import type { BindingSnapshot, TerminalActionId } from '../types'
 import { createXtermAdapter, type TerminalAdapter, type TerminalAdapterFactory, type TerminalMouseDispatch } from '../terminal/xtermAdapter'
 
 export type TerminalFactory = (termId: string, callbacks: TerminalSessionCallbacks) => TerminalSessionLike
 
-const terminalErrorMessages: Record<string, string> = {
-  instance_offline: 'Term 当前离线，无法打开终端。',
-  unauthorized: '会话已过期，请重新登录。',
-  backpressure: '终端繁忙，请稍后重试。',
-  target_not_found: '目标 Pane 已不存在，请刷新状态。',
-  rate_limited: '操作过于频繁，请稍后重试。',
-  stream_gap: '连接已重建，正在等待终端重绘。',
+const terminalErrorKeys: Record<string, string> = {
+  instance_offline: 'terminal.error.instance_offline',
+  unauthorized: 'terminal.error.unauthorized',
+  backpressure: 'terminal.error.backpressure',
+  target_not_found: 'terminal.error.target_not_found',
+  rate_limited: 'terminal.error.rate_limited',
+  stream_gap: 'terminal.error.stream_gap',
 }
 
 function userFacingTerminalError(code?: string | null) {
-  return code ? terminalErrorMessages[code] ?? '终端发生错误，请稍后重试。' : '终端发生错误，请稍后重试。'
+  const key = code ? terminalErrorKeys[code] : undefined
+  return key ? t(key) : t('terminal.error.default')
 }
 
 export function useTerminalSession(
@@ -34,7 +36,7 @@ export function useTerminalSession(
   const runtime = useClientRuntime()
   const status = ref<TerminalConnectionStatus>('connecting')
   const dimensions = ref<{ rows: number; cols: number } | null>(null)
-  const bindings = ref<BindingSnapshot>({ prefix: '未报告', bindings: [] })
+  const bindings = ref<BindingSnapshot>({ prefix: t('terminal.unreportedPrefix'), bindings: [] })
   const terminalError = ref('')
   const lastActionResult = ref<TerminalActionResultFrame | null>(null)
   const resetKey = ref(0)
@@ -61,7 +63,7 @@ export function useTerminalSession(
     onSize: (size) => { dimensions.value = size; adapter?.resize(size.cols, size.rows) },
     onBindings: (control) => { bindings.value = { prefix: control.prefix, prefix2: control.prefix2, bindings: control.bindings } },
     onError: (error) => { terminalError.value = userFacingTerminalError(error.code) },
-    onClosed: (reason) => { terminalError.value = reason === 'replaced' ? '此终端已被另一个已认证连接接管。' : '终端连接已关闭。'; resetKey.value += 1 },
+    onClosed: (reason) => { terminalError.value = reason === 'replaced' ? t('terminal.closed.replaced') : t('terminal.closed.default'); resetKey.value += 1 },
     onReset: () => { adapter?.reset(); resetKey.value += 1 },
     onActionResult: (result) => { lastActionResult.value = result; if (!result.ok) terminalError.value = userFacingTerminalError(result.error_code) },
     onAuthenticationRequired: () => { authenticationRequired.value += 1 },

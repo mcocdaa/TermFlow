@@ -125,7 +125,7 @@ onMounted(scrollToBottom)
 watch(
   () => props.history,
   (next) => {
-    statusText.value = deriveAnnouncements(previousHistory, next).join('；')
+    statusText.value = deriveAnnouncements(previousHistory, next).join(t('agent.chat.announce.separator'))
     previousHistory = next
     if (stickToBottom) void nextTick(scrollToBottom)
   },
@@ -144,20 +144,20 @@ function deriveAnnouncements(previous: AgentHistoryState | null, next: AgentHist
   const out: string[] = []
   for (const [id, call] of next.toolCalls) {
     const before = previous.toolCalls.get(id)
-    const label = call.toolName === '' ? '调用' : call.toolName
-    if (call.status === 'completed' && (before === undefined || before.status === 'running')) out.push(`工具 ${label} 已完成`)
-    else if (call.status === 'failed' && (before === undefined || before.status === 'running')) out.push(`工具 ${label} 执行失败`)
+    const label = call.toolName === '' ? t('agent.chat.defaultToolLabel') : call.toolName
+    if (call.status === 'completed' && (before === undefined || before.status === 'running')) out.push(t('agent.chat.announce.toolCompleted', { label }))
+    else if (call.status === 'failed' && (before === undefined || before.status === 'running')) out.push(t('agent.chat.announce.toolFailed', { label }))
   }
   for (const [id, run] of next.runs) {
     const before = previous.runs.get(id)
-    if (run.status === 'finished' && (before === undefined || before.status === 'active')) out.push('运行已完成')
-    else if (run.status === 'error' && (before === undefined || before.status === 'active')) out.push('运行出错')
+    if (run.status === 'finished' && (before === undefined || before.status === 'active')) out.push(t('agent.chat.announce.runFinished'))
+    else if (run.status === 'error' && (before === undefined || before.status === 'active')) out.push(t('agent.chat.announce.runError'))
   }
   for (const [id, permission] of next.permissions) {
-    if (permission.state === 'pending' && !previous.permissions.has(id)) out.push('收到新的审批请求')
+    if (permission.state === 'pending' && !previous.permissions.has(id)) out.push(t('agent.chat.announce.newApproval'))
   }
   const state = next.backend.state
-  if (state !== null && state !== previous.backend.state) out.push(`后端状态：${state}`)
+  if (state !== null && state !== previous.backend.state) out.push(t('agent.chat.announce.backendState', { state }))
   return out
 }
 </script>

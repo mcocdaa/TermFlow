@@ -237,7 +237,7 @@
         class="terminal-agent-resize-handle"
         :class="`terminal-agent-resize-handle--${edge}`"
         :data-agent-resize-handle="edge"
-        :aria-label="`调整 Agent 面板大小（${resizeLabels[edge]}）`"
+        :aria-label="t('agent.panel.resizeAria', { edge: t(`agent.panel.edge.${edge}`) })"
         @pointerdown.stop.prevent="(event) => beginResize(edge, event)"
       />
     </template>
@@ -306,7 +306,7 @@ async function savePaneSettings() {
     settingsOpen.value = false
     await refresh()
   } catch (cause) {
-    settingsError.value = cause instanceof ApiError ? agentReasonMessage(cause.code) : '无法保存窗格授权。'
+    settingsError.value = cause instanceof ApiError ? agentReasonMessage(cause.code) : t('agent.panel.savePanesError')
   } finally {
     mutating.value = false
   }
@@ -337,7 +337,7 @@ async function changeWritePolicy(policy: 'manual' | 'auto') {
     pendingAutoPolicy.value = false
     await refresh()
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : '无法更新写入审批方式。'
+    error.value = cause instanceof Error ? cause.message : t('agent.panel.writePolicyError')
   } finally {
     mutating.value = false
   }
@@ -400,9 +400,6 @@ const mergedStatusLabel = computed(() => {
   return key ? t(key) : backendState.value
 })
 const resizeEdges: FloatingPanelResizeEdge[] = ['n', 'e', 's', 'w', 'ne', 'se', 'sw', 'nw']
-const resizeLabels: Record<FloatingPanelResizeEdge, string> = {
-  n: '上边缘', e: '右边缘', s: '下边缘', w: '左边缘', ne: '右上角', se: '右下角', sw: '左下角', nw: '左上角',
-}
 
 watch(() => setup.value?.state, (state) => {
   if (state && state !== 'ready') settingsOpen.value = false

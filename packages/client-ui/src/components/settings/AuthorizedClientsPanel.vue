@@ -87,9 +87,9 @@ async function removeSelected() {
     selected.value = null
     clearSecrets()
     clients.value = clients.value.filter((client) => client.client_id !== removed)
-    toast.show({ text: '已撤销', tone: 'success' })
+    toast.show({ text: t('settings.clients.revokedToast'), tone: 'success' })
   } catch {
-    error.value = '撤销失败，请检查凭据后重试。'
+    error.value = t('settings.clients.revokeError')
   }
 }
 async function onApproved() { approvalOpen.value = false; await load() }

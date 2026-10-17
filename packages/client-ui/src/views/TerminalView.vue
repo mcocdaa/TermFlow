@@ -73,7 +73,7 @@ const displayMode = computed<DisplayMode>({
   },
 })
 const termName = ref(`Term · ${termId.value}`)
-const computerName = ref(t('terminal.unreportedComputer'))
+const computerName = ref<string | undefined>(undefined)
 const connectionStatus = ref<TerminalConnectionStatus>('connecting')
 type DesktopMenu = 'display' | 'tmux'
 const openMenu = ref<DesktopMenu | null>(null)

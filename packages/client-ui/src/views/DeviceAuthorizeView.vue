@@ -2,38 +2,38 @@
   <section class="authorize-view" aria-labelledby="device-authorize-title">
     <div class="auth-card consent-card device-consent-card">
       <header class="authorize-card-heading">
-        <div><p class="eyebrow">Cross-device authorization</p><h1 id="device-authorize-title">授权新设备</h1></div>
-        <RouterLink data-action="back-to-login" class="secondary-button" to="/login">返回登录</RouterLink>
+        <div><p class="eyebrow">Cross-device authorization</p><h1 id="device-authorize-title">{{ t('deviceAuth.title') }}</h1></div>
+        <RouterLink data-action="back-to-login" class="secondary-button" to="/login">{{ t('deviceAuth.backToLogin') }}</RouterLink>
       </header>
       <template v-if="preview === null && !loading">
         <form data-action="lookup-device" class="security-form device-code-lookup" @submit.prevent="lookup()">
-          <label for="device-user-code">设备码</label>
+          <label for="device-user-code">{{ t('deviceAuth.codeLabel') }}</label>
           <input id="device-user-code" v-model="userCode" inputmode="text" autocomplete="off" placeholder="ABCD-EFGH" required />
           <p v-if="message" role="alert" class="form-error">{{ message }}</p>
-          <button class="primary-button" type="submit" :disabled="busy">查找设备</button>
+          <button class="primary-button" type="submit" :disabled="busy">{{ t('deviceAuth.lookupBtn') }}</button>
         </form>
       </template>
-      <p v-else-if="loading">正在读取设备授权…</p>
+      <p v-else-if="loading">{{ t('deviceAuth.loading') }}</p>
       <template v-else-if="preview">
         <div class="device-authorize-layout">
           <div class="device-authorize-qr">
-            <ThemedQrCode :value="verificationUrl" alt="设备授权二维码" />
-            <span class="form-hint">设备码 <code>{{ userCode }}</code></span>
+            <ThemedQrCode :value="verificationUrl" :alt="t('deviceAuth.qrAlt')" />
+            <span class="form-hint">{{ t('deviceAuth.codeHint') }} <code>{{ userCode }}</code></span>
           </div>
           <div class="device-authorize-status">
             <dl class="consent-details">
-              <div><dt>客户端</dt><dd>{{ preview.client_name }}</dd></div>
-              <div><dt>平台</dt><dd>{{ preview.platform }}{{ preview.client_version ? ` · ${preview.client_version}` : '' }}</dd></div>
-              <div><dt>权限</dt><dd>{{ preview.scopes.join(' · ') }}</dd></div>
-              <div><dt>有效期至</dt><dd>{{ formatExpiry(preview.expires_at) }}<span class="status-pill">{{ statusLabel }}</span></dd></div>
+              <div><dt>{{ t('settings.deviceApproval.client') }}</dt><dd>{{ preview.client_name }}</dd></div>
+              <div><dt>{{ t('settings.deviceApproval.platform') }}</dt><dd>{{ preview.platform }}{{ preview.client_version ? ` · ${preview.client_version}` : '' }}</dd></div>
+              <div><dt>{{ t('settings.deviceApproval.scopes') }}</dt><dd>{{ preview.scopes.join(' · ') }}</dd></div>
+              <div><dt>{{ t('settings.deviceApproval.expiresAt') }}</dt><dd>{{ formatExpiry(preview.expires_at) }}<span class="status-pill">{{ statusLabel }}</span></dd></div>
             </dl>
             <form class="security-form" @submit.prevent="decide('allow')">
               <template v-if="preview.totp_required">
-                <label for="device-authorize-totp">双重验证码<span class="totp-hint">（请输入验证器应用当前显示的 6 位双重验证码。）</span></label>
+                <label for="device-authorize-totp">{{ t('settings.totp.code') }}<span class="totp-hint">{{ t('deviceAuth.totpHint') }}</span></label>
                 <input id="device-authorize-totp" v-model="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required />
               </template>
               <p v-if="message" role="alert" class="form-error">{{ message }}</p>
-          <div class="dialog-actions"><button class="secondary-button" type="button" :disabled="busy" @click="decide('deny')">拒绝</button><button class="primary-button" type="submit" :disabled="busy">允许此设备</button></div>
+          <div class="dialog-actions"><button class="secondary-button" type="button" :disabled="busy" @click="decide('deny')">{{ t('settings.deviceApproval.deny') }}</button><button class="primary-button" type="submit" :disabled="busy">{{ t('settings.deviceApproval.allow') }}</button></div>
             </form>
           </div>
         </div>
@@ -48,8 +48,10 @@ import { computed, onMounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import ThemedQrCode from '../components/common/ThemedQrCode.vue'
 import { useDeviceAuthorizationApproval } from '../composables/useDeviceAuthorizationApproval'
+import { useI18n } from '../i18n'
 import { useClientRuntime } from '../runtime'
 
+const { t } = useI18n()
 const runtime = useClientRuntime()
 const route = useRoute()
 const router = useRouter()
@@ -58,8 +60,8 @@ const { preview, loading, busy, userCode, totpCode, error: message, success, loo
   { onAuthenticationRequired: async () => { await router.replace({ path: '/login', query: { redirect: route.fullPath } }) } },
 )
 
-const statusLabel = computed(() => new Date(preview.value?.expires_at ?? 0).getTime() > Date.now() ? '待确认' : '已过期')
-const successLabel = computed(() => success.value === 'approved' ? '授权成功，设备可以继续连接。' : success.value === 'denied' ? '已拒绝该设备授权。' : '')
+const statusLabel = computed(() => new Date(preview.value?.expires_at ?? 0).getTime() > Date.now() ? t('deviceAuth.statusPending') : t('deviceAuth.statusExpired'))
+const successLabel = computed(() => success.value === 'approved' ? t('deviceAuth.approvedMsg') : success.value === 'denied' ? t('deviceAuth.deniedMsg') : '')
 const verificationUrl = computed(() => {
   if (preview.value === null || !userCode.value) return ''
   try {

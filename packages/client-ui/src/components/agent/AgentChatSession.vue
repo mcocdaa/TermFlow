@@ -197,7 +197,7 @@ async function removeConversation() {
     await runtime.api.agents.deleteConversation(props.conversationId)
     await router.push('/agent')
   } catch (error) {
-    toast.show({ text: error instanceof Error ? error.message : '删除失败，请稍后重试。', tone: 'error' })
+    toast.show({ text: error instanceof Error ? error.message : t('agent.chat.deleteError'), tone: 'error' })
   } finally {
     deletePending.value = false
     deleteConfirm.value = false
@@ -211,7 +211,7 @@ async function changePolicy(policy: 'manual' | 'auto') {
     policyConfirm.value = false
     await loadDetail()
   } catch (error) {
-    toast.show({ text: error instanceof Error ? error.message : '无法更新审批方式。', tone: 'error' })
+    toast.show({ text: error instanceof Error ? error.message : t('agent.chat.policyUpdateError'), tone: 'error' })
   } finally {
     policyPending.value = false
   }
@@ -284,7 +284,7 @@ async function cancelRun() {
       }
       conversation.history.value = { ...base, runs }
     } else {
-      toast.show({ text: error instanceof Error ? error.message : '取消失败，请稍后重试。', tone: 'error' })
+      toast.show({ text: error instanceof Error ? error.message : t('agent.chat.cancelError'), tone: 'error' })
     }
   } finally {
     canceling.value = false
