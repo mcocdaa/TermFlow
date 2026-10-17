@@ -149,3 +149,13 @@ it('makes the Agent panel fill the workspace in the mobile media block', () => {
   expect(mobileBlock).toContain('width: 100%')
   expect(mobileBlock).toContain('height: 100%')
 })
+
+it('closes open titlebar menus when opening the Agent panel', async () => {
+  const { w } = await harness(true, '/term/t1', false)
+  await w.get('[data-action="toggle-display-menu"]').trigger('click')
+  expect(w.find('.display-menu').exists()).toBe(true)
+  await w.get('[data-action="toggle-agent"]').trigger('click')
+  await flushPromises()
+  expect(w.find('.display-menu').exists()).toBe(false)
+  w.unmount()
+})

@@ -50,6 +50,7 @@ const agentOverlayMedia = window.matchMedia('(max-width: 47.99rem), (pointer: co
 const mobileOverlay = ref(agentOverlayMedia.matches)
 function onAgentOverlayMediaChange(event: MediaQueryListEvent) { mobileOverlay.value = event.matches }
 watch(agentConversationId, (id) => { if (id) agentOpen.value = true })
+watch(agentOpen, (open) => { if (open) openMenu.value = null })
 async function selectAgentConversation(id: string | null) {
   const query = id && isAgentConversationId(id) ? { agent: id } : {}
   await router.replace({ path: route.path, query, hash: route.hash })
@@ -59,7 +60,7 @@ async function closeAgent() {
   await selectAgentConversation(null)
   await nextTick(); agentToggle.value?.focus()
 }
-function toggleAgent() { if (agentOpen.value) void closeAgent(); else agentOpen.value = true }
+function toggleAgent() { if (agentOpen.value) void closeAgent(); else { openMenu.value = null; agentOpen.value = true } }
 const orientation = ref(orientationFor(window.innerWidth, window.innerHeight))
 const orientationViews = reactive(createOrientationViewState())
 const displayMode = computed<DisplayMode>({

@@ -124,7 +124,8 @@ describe('shared application routes', () => {
     expect(logout.attributes('aria-label')).toBe('退出登录')
     expect(logout.attributes('title')).toBe('退出登录')
     expect(logout.find('svg').exists()).toBe(true)
-    expect(logout.get('.logout-label').text()).toBe('退出')
+    expect(logout.find('.logout-label').exists()).toBe(false)
+    expect(logout.text()).toBe('')
     dashboard.unmount()
   })
 

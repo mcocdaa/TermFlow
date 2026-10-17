@@ -15,7 +15,6 @@
         @click="logout"
       >
         <LogOut :size="18" aria-hidden="true" />
-        <span class="logout-label">退出</span>
       </button>
     </header>
     <aside v-if="!terminalLayout && !bareLayout" class="side-nav" aria-label="主导航">

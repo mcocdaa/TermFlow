@@ -17,6 +17,7 @@
       type="button"
       role="radio"
       :aria-label="theme.label"
+      :title="theme.label"
       :aria-checked="activeTheme === theme.id"
       :tabindex="activeTheme === theme.id ? 0 : -1"
       @click="choose(theme.id)"
