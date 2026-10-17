@@ -91,10 +91,15 @@ describe('LoginView', () => {
     expect(wrapper.html()).not.toContain('123456')
   })
 
-  it('toggles language on login view and shows English ApiError when locale is en', async () => {
+  it('toggles language on login view and reactively updates visible error banner across zh and en', async () => {
     const login = vi.fn().mockRejectedValue(new ApiError('authentication'))
     const runtime = createFakeRuntime({ api: { sessions: { login } } as unknown as ClientRuntime['api'] })
     const { wrapper } = await mountLogin(runtime)
+
+    await wrapper.get('input[type="password"]').setValue('wrong-token')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toBe('会话已过期，请重新登录。')
 
     const toggleBtn = wrapper.get('[data-action="toggle-locale"]')
     expect(toggleBtn.text()).toContain('EN')
@@ -104,14 +109,13 @@ describe('LoginView', () => {
     try {
       expect(wrapper.get('h1').text()).toBe('Sign In')
       expect(wrapper.get('label[for="admin-token"]').text()).toBe('Admin Token')
-      await wrapper.get('input[type="password"]').setValue('wrong-token')
-      await wrapper.get('form').trigger('submit')
-      await flushPromises()
+      expect(wrapper.get('[role="alert"]').text()).toBe('Session expired. Please sign in again.')
       const err = new ApiError('authentication')
       expect(err.message).toBe('Session expired. Please sign in again.')
     } finally {
       await toggleBtn.trigger('click')
       await flushPromises()
     }
+    expect(wrapper.get('[role="alert"]').text()).toBe('会话已过期，请重新登录。')
   })
 })

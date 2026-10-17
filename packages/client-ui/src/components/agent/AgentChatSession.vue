@@ -226,7 +226,7 @@ const bindingLabel = computed(() => {
   const binding = detail.value?.binding
   return binding === undefined
     ? t('agent.conversations.defaultTitle', { id: props.conversationId.slice(0, 8) })
-    : `Binding ${binding.binding_id} · Term ${binding.term_id}`
+    : t('agent.chat.bindingLabel', { bindingId: binding.binding_id, termId: binding.term_id })
 })
 
 /**

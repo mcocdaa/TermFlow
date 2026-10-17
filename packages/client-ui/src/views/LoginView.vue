@@ -33,19 +33,24 @@
 
 <script setup lang="ts">
 import { Globe } from '@lucide/vue'
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ApiError } from '@termflow/client-core'
+import { ApiError, safeMessageFor, type ApiErrorKind } from '@termflow/client-core'
 import { useSession } from '../composables/useSession'
 import { useI18n } from '../i18n'
 
-const { t, toggleLocale } = useI18n()
+const { t, toggleLocale, locale } = useI18n()
 const adminToken = ref('')
 const totpCode = ref('')
 const challengeId = ref<string | null>(null)
 const totpInput = ref<HTMLInputElement | null>(null)
 const busy = ref(false)
-const message = ref('')
+const errorState = ref<{ type: 'api'; kind: ApiErrorKind } | { type: 'key'; key: string } | null>(null)
+const message = computed(() => {
+  void locale.value
+  if (errorState.value === null) return ''
+  return errorState.value.type === 'api' ? safeMessageFor(errorState.value.kind) : t(errorState.value.key)
+})
 const route = useRoute()
 const router = useRouter()
 const { loginWithToken, completeTotp } = useSession()
@@ -53,7 +58,7 @@ const { loginWithToken, completeTotp } = useSession()
 async function submit() {
   if (busy.value || (challengeId.value === null ? !adminToken.value : !/^[0-9]{6}$/.test(totpCode.value))) return
   busy.value = true
-  message.value = ''
+  errorState.value = null
   try {
     if (challengeId.value === null) {
       const result = await loginWithToken(adminToken.value)
@@ -71,7 +76,7 @@ async function submit() {
     const requested = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
     await router.replace(requested.startsWith('/') && !requested.startsWith('//') ? requested : '/')
   } catch (error) {
-    message.value = error instanceof ApiError ? error.message : t('login.failed')
+    errorState.value = error instanceof ApiError ? { type: 'api', kind: error.kind } : { type: 'key', key: 'login.failed' }
   } finally {
     adminToken.value = ''
     totpCode.value = ''

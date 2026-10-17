@@ -26,13 +26,13 @@
 
 <script setup lang="ts">
 import type { NativeClientResponse } from '@termflow/client-contracts'
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useBottomToast } from '../../composables/useBottomToast'
 import { useI18n } from '../../i18n'
 import { useClientRuntime } from '../../runtime'
 import DeviceAuthorizationApprovalDialog from './DeviceAuthorizationApprovalDialog.vue'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 defineProps<{ totpEnabled: boolean }>()
 const runtime = useClientRuntime()
 const toast = useBottomToast()
@@ -40,14 +40,18 @@ const clients = ref<NativeClientResponse[]>([])
 const selected = ref<NativeClientResponse | null>(null)
 const adminToken = ref('')
 const totpCode = ref('')
-const error = ref('')
+const errorKey = ref('')
+const error = computed(() => {
+  void locale.value
+  return errorKey.value ? t(errorKey.value) : ''
+})
 const approvalOpen = ref(false)
 const revokePanel = ref<HTMLElement | null>(null)
 const revokeInput = ref<HTMLInputElement | null>(null)
 let restoreFocus: HTMLElement | null = null
 
 async function load() { clients.value = (await runtime.api.clients.list()).clients.filter((client) => client.revoked_at === null) }
-function clearSecrets() { adminToken.value = ''; totpCode.value = ''; error.value = '' }
+function clearSecrets() { adminToken.value = ''; totpCode.value = ''; errorKey.value = '' }
 function cancel() {
   selected.value = null
   clearSecrets()
@@ -72,7 +76,7 @@ function trapFocus(event: KeyboardEvent) {
   }
 }
 async function openRevoke(client: NativeClientResponse) {
-  error.value = ''
+  errorKey.value = ''
   selected.value = client
   restoreFocus = document.activeElement as HTMLElement | null
   await nextTick()
@@ -80,7 +84,7 @@ async function openRevoke(client: NativeClientResponse) {
 }
 async function removeSelected() {
   if (selected.value === null) return
-  error.value = ''
+  errorKey.value = ''
   try {
     await runtime.api.clients.remove(selected.value.client_id, { adminToken: adminToken.value, ...(totpCode.value ? { totpCode: totpCode.value } : {}) })
     const removed = selected.value.client_id
@@ -89,7 +93,7 @@ async function removeSelected() {
     clients.value = clients.value.filter((client) => client.client_id !== removed)
     toast.show({ text: t('settings.clients.revokedToast'), tone: 'success' })
   } catch {
-    error.value = t('settings.clients.revokeError')
+    errorKey.value = 'settings.clients.revokeError'
   }
 }
 async function onApproved() { approvalOpen.value = false; await load() }

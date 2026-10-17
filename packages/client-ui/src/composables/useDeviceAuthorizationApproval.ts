@@ -2,8 +2,8 @@ import type {
   OAuthAuthorizationDecisionResponse,
   OAuthAuthorizationPreviewResponse,
 } from '@termflow/client-contracts'
-import { ref } from 'vue'
-import { t } from '../i18n'
+import { computed, ref } from 'vue'
+import { locale, t } from '../i18n'
 
 type AuthorizationDecision = 'allow' | 'deny'
 
@@ -50,7 +50,11 @@ export function useDeviceAuthorizationApproval(
   const totpCode = ref('')
   const loading = ref(false)
   const busy = ref(false)
-  const error = ref('')
+  const errorKey = ref('')
+  const error = computed(() => {
+    void locale.value
+    return errorKey.value ? t(errorKey.value) : ''
+  })
   const success = ref<DeviceAuthorizationApprovalTerminalState>(null)
 
   async function authenticationRequired(): Promise<boolean> {
@@ -62,21 +66,21 @@ export function useDeviceAuthorizationApproval(
   async function lookup(value = userCode.value): Promise<void> {
     const code = normalizeDeviceAuthorizationCode(value)
     if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
-      error.value = t('deviceAuth.invalidCodeFormat')
+      errorKey.value = 'deviceAuth.invalidCodeFormat'
       return
     }
 
     userCode.value = code
     loading.value = true
-    error.value = ''
+    errorKey.value = ''
     success.value = null
     try {
       preview.value = await api.deviceAuthorizationPreview(code)
     } catch (cause) {
       if (apiErrorKind(cause) === 'authentication' && await authenticationRequired()) return
-      error.value = apiErrorCode(cause) === 'authorization_expired'
-        ? t('deviceAuth.codeInvalidOrExpired')
-        : t('deviceAuth.lookupError')
+      errorKey.value = apiErrorCode(cause) === 'authorization_expired'
+        ? 'deviceAuth.codeInvalidOrExpired'
+        : 'deviceAuth.lookupError'
     } finally {
       loading.value = false
     }
@@ -85,7 +89,7 @@ export function useDeviceAuthorizationApproval(
   async function decide(decision: AuthorizationDecision): Promise<void> {
     if (preview.value === null || busy.value) return
     busy.value = true
-    error.value = ''
+    errorKey.value = ''
     try {
       const result = await api.decideAuthorization({
         transactionId: preview.value.transaction_id,
@@ -97,9 +101,9 @@ export function useDeviceAuthorizationApproval(
     } catch (cause) {
       totpCode.value = ''
       if (apiErrorKind(cause) === 'authentication' && await authenticationRequired()) return
-      error.value = apiErrorCode(cause) === 'authorization_expired'
-        ? t('deviceAuth.codeInvalidOrExpired')
-        : t('nativeAuth.failed')
+      errorKey.value = apiErrorCode(cause) === 'authorization_expired'
+        ? 'deviceAuth.codeInvalidOrExpired'
+        : 'nativeAuth.failed'
     } finally {
       busy.value = false
     }

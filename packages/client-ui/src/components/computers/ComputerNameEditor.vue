@@ -12,12 +12,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import { ApiError } from '@termflow/client-core'
+import { computed, ref, watch } from 'vue'
+import { ApiError, safeMessageFor, type ApiErrorKind } from '@termflow/client-core'
 import { useI18n } from '../../i18n'
 import { useClientRuntime } from '../../runtime'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const props = defineProps<{ computerId: string; displayName: string }>()
 const emit = defineEmits<{ updated: [name: string] }>()
 const runtime = useClientRuntime()
@@ -25,16 +25,21 @@ const editing = ref(false)
 const busy = ref(false)
 const draft = ref(props.displayName)
 const currentName = ref(props.displayName)
-const message = ref('')
+const errorState = ref<{ type: 'api'; kind: ApiErrorKind } | { type: 'key'; key: string } | null>(null)
+const message = computed(() => {
+  void locale.value
+  if (errorState.value === null) return ''
+  return errorState.value.type === 'api' ? safeMessageFor(errorState.value.kind) : t(errorState.value.key)
+})
 watch(() => props.displayName, (value) => { currentName.value = value; if (!editing.value) draft.value = value })
 
 function validName(value: string) {
   return value.length >= 1 && value.length <= 128 && !/[\u0000-\u001f\u007f]/.test(value)
 }
-function begin() { draft.value = currentName.value; message.value = ''; editing.value = true }
-function cancel() { draft.value = currentName.value; message.value = ''; editing.value = false }
+function begin() { draft.value = currentName.value; errorState.value = null; editing.value = true }
+function cancel() { draft.value = currentName.value; errorState.value = null; editing.value = false }
 async function save() {
-  if (!validName(draft.value)) { message.value = t('computers.nameEditor.invalid'); return }
+  if (!validName(draft.value)) { errorState.value = { type: 'key', key: 'computers.nameEditor.invalid' }; return }
   const previous = currentName.value
   currentName.value = draft.value
   editing.value = false
@@ -46,7 +51,7 @@ async function save() {
   } catch (error) {
     currentName.value = previous
     editing.value = true
-    message.value = error instanceof ApiError ? error.message : t('computers.nameEditor.saveError')
+    errorState.value = error instanceof ApiError ? { type: 'api', kind: error.kind } : { type: 'key', key: 'computers.nameEditor.saveError' }
   } finally { busy.value = false }
 }
 </script>

@@ -245,6 +245,7 @@ describe('AgentChatView', () => {
 
     // The first conversation's data is displayed and its stream connected.
     expect(harness.wrapper.get('[data-agent-chat-title]').text()).toBe('会话一')
+    expect(harness.wrapper.get('[data-agent-chat-binding]').text()).toBe('绑定 b1 · 终端 term-1')
     expect(harness.wrapper.text()).toContain('来自一会话的消息')
     expect(harness.transport.requests.map((request) => request.conversationId)).toEqual([CONVERSATION])
 

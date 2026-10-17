@@ -20,16 +20,20 @@ const safeMessagesEn: Record<ApiErrorKind, string> = {
   http_capability_denied: 'Client network capability configuration is invalid. Please update or reinstall TermFlow.',
 }
 
-function isEnglishLocale(): boolean {
-  try {
-    return typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function' && localStorage.getItem('termflow_lang') === 'en'
-  } catch {
-    return false
-  }
+export type ApiErrorLocale = 'zh' | 'en'
+
+let currentApiErrorLocale: ApiErrorLocale = 'zh'
+
+export function setApiErrorLocale(locale: ApiErrorLocale): void {
+  currentApiErrorLocale = locale
+}
+
+export function getApiErrorLocale(): ApiErrorLocale {
+  return currentApiErrorLocale
 }
 
 export function safeMessageFor(kind: ApiErrorKind): string {
-  return isEnglishLocale() ? safeMessagesEn[kind] : safeMessagesZh[kind]
+  return currentApiErrorLocale === 'en' ? safeMessagesEn[kind] : safeMessagesZh[kind]
 }
 
 export interface ApiErrorDetails {

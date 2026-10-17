@@ -4,7 +4,7 @@ import type {
   TerminalSessionLike,
 } from '@termflow/client-core'
 import type { TerminalActionResultFrame } from '@termflow/client-contracts'
-import { onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { locale, t } from '../i18n'
 import { useClientRuntime } from '../runtime'
 import type { BindingSnapshot, TerminalActionId } from '../types'
@@ -21,9 +21,9 @@ const terminalErrorKeys: Record<string, string> = {
   stream_gap: 'terminal.error.stream_gap',
 }
 
-function userFacingTerminalError(code?: string | null) {
+function terminalErrorKeyFor(code?: string | null): string {
   const key = code ? terminalErrorKeys[code] : undefined
-  return key ? t(key) : t('terminal.error.default')
+  return key ?? 'terminal.error.default'
 }
 
 export function useTerminalSession(
@@ -42,7 +42,11 @@ export function useTerminalSession(
       bindings.value = { ...bindings.value, prefix: t('terminal.unreportedPrefix') }
     }
   })
-  const terminalError = ref('')
+  const terminalErrorKey = ref('')
+  const terminalError = computed(() => {
+    void locale.value
+    return terminalErrorKey.value ? t(terminalErrorKey.value) : ''
+  })
   const lastActionResult = ref<TerminalActionResultFrame | null>(null)
   const resetKey = ref(0)
   const authenticationRequired = ref(0)
@@ -52,7 +56,7 @@ export function useTerminalSession(
   const callbacks: TerminalSessionCallbacks = {
     onStatus: (value) => {
       status.value = value
-      if (value === 'connected') terminalError.value = ''
+      if (value === 'connected') terminalErrorKey.value = ''
       adapter?.setInputEnabled(value === 'connected')
     },
     onReady: (control) => {
@@ -67,10 +71,10 @@ export function useTerminalSession(
     onOutput: (bytes) => { if (adapter) adapter.write(bytes); else pendingOutput.push(bytes) },
     onSize: (size) => { dimensions.value = size; adapter?.resize(size.cols, size.rows) },
     onBindings: (control) => { bindings.value = { prefix: control.prefix, prefix2: control.prefix2, bindings: control.bindings } },
-    onError: (error) => { terminalError.value = userFacingTerminalError(error.code) },
-    onClosed: (reason) => { terminalError.value = reason === 'replaced' ? t('terminal.closed.replaced') : t('terminal.closed.default'); resetKey.value += 1 },
+    onError: (error) => { terminalErrorKey.value = terminalErrorKeyFor(error.code) },
+    onClosed: (reason) => { terminalErrorKey.value = reason === 'replaced' ? 'terminal.closed.replaced' : 'terminal.closed.default'; resetKey.value += 1 },
     onReset: () => { adapter?.reset(); resetKey.value += 1 },
-    onActionResult: (result) => { lastActionResult.value = result; if (!result.ok) terminalError.value = userFacingTerminalError(result.error_code) },
+    onActionResult: (result) => { lastActionResult.value = result; if (!result.ok) terminalErrorKey.value = terminalErrorKeyFor(result.error_code) },
     onAuthenticationRequired: () => { authenticationRequired.value += 1 },
   }
   const terminal = (terminalFactory ?? runtime.createTerminal)(termId, callbacks)

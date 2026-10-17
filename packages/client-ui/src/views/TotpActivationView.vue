@@ -86,7 +86,7 @@ import TotpProtectionDialog from '../components/settings/TotpProtectionDialog.vu
 import { useI18n } from '../i18n'
 import { useClientRuntime } from '../runtime'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const runtime = useClientRuntime()
 const guideSteps = computed(() => [t('settings.totp.step1'), t('settings.totp.step2'), t('settings.totp.step3')] as const)
 const status = reactive<TotpStatusResponse>({ configured: false, enabled: false, available: false })
@@ -97,7 +97,11 @@ const setup = ref<TotpSetupResponse | null>(null)
 const adminToken = ref('')
 const currentCode = ref('')
 const confirmCode = ref('')
-const message = ref('')
+const errorKey = ref('')
+const message = computed(() => {
+  void locale.value
+  return errorKey.value ? t(errorKey.value) : ''
+})
 const setupKeyCopied = ref(false)
 const dialogOpen = ref(false)
 const switchButton = ref<HTMLButtonElement | null>(null)
@@ -133,7 +137,7 @@ async function copySetupKey() {
 async function beginSetup() {
   if (busy.value) return
   busy.value = true
-  message.value = ''
+  errorKey.value = ''
   try {
     setup.value = await runtime.api.security.createTotpSetup({
       adminToken: adminToken.value,
@@ -141,7 +145,7 @@ async function beginSetup() {
     })
     setupKeyCopied.value = false
   } catch {
-    message.value = t('settings.totp.verifyFailed')
+    errorKey.value = 'settings.totp.verifyFailed'
   } finally {
     adminToken.value = ''
     currentCode.value = ''
@@ -152,14 +156,14 @@ async function beginSetup() {
 async function confirmSetup() {
   if (busy.value || setup.value === null) return
   busy.value = true
-  message.value = ''
+  errorKey.value = ''
   try {
     const next = await runtime.api.security.confirmTotpSetup(setup.value.setup_id, confirmCode.value)
     applyStatus(next)
     setup.value = null
     setupKeyCopied.value = false
   } catch {
-    message.value = t('settings.totp.codeInvalidOrExpired')
+    errorKey.value = 'settings.totp.codeInvalidOrExpired'
   } finally {
     confirmCode.value = ''
     busy.value = false

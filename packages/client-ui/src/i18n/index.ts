@@ -1,21 +1,39 @@
+import { setApiErrorLocale } from '@termflow/client-core'
 import { readonly, ref, type DeepReadonly, type Ref } from 'vue'
 
 export type Locale = 'zh' | 'en'
 export const LOCALE_STORAGE_KEY = 'termflow_lang'
 
+export interface LocalePreferences {
+  load(): Locale | null
+  save(locale: Locale): void
+}
+
+let localePreferences: LocalePreferences = {
+  load: () => null,
+  save: () => undefined,
+}
+
 function readStoredLocale(): Locale | null {
   try {
-    if (typeof window !== 'undefined' && typeof window.localStorage?.getItem === 'function') {
-      const stored = window.localStorage.getItem(LOCALE_STORAGE_KEY)
-      if (stored === 'en' || stored === 'zh') return stored
-    }
+    const stored = localePreferences.load()
+    if (stored === 'en' || stored === 'zh') return stored
   } catch {
-    // Ignore storage access errors in restricted environments.
+    // Ignore preference access errors in restricted environments.
   }
   return null
 }
 
 const currentLocale = ref<Locale>(readStoredLocale() ?? 'zh')
+setApiErrorLocale(currentLocale.value)
+
+export function configureLocalePreferences(prefs: LocalePreferences): void {
+  localePreferences = prefs
+  const stored = readStoredLocale()
+  if (stored !== null) {
+    setLocale(stored)
+  }
+}
 
 const messages: Record<Locale, Record<string, string>> = {
   zh: {
@@ -315,6 +333,7 @@ const messages: Record<Locale, Record<string, string>> = {
     'agent.conversations.eyebrow': '会话列表',
     'agent.conversations.heading': '会话记录',
     'agent.chat.eyebrow': '会话详情',
+    'agent.chat.bindingLabel': '绑定 {bindingId} · 终端 {termId}',
     'agent.conversations.emptyBindings': '暂无可用 Term，请先在电脑管理中连接一个 Term。',
     'agent.conversations.empty': '暂无会话记录。',
     'agent.conversations.tableAria': 'Agent 会话记录',
@@ -536,7 +555,7 @@ const messages: Record<Locale, Record<string, string>> = {
     'agent.preview.title': '部署检查',
     'agent.preview.inputPlaceholder': '输入消息…',
     'agent.preview.reauthBtn': '重新验证身份（预览）',
-    'agent.preview.mobileKeybarHeading': '移动端按键栏 (MobileKeyBar Preview)',
+    'agent.preview.mobileKeybarHeading': '移动端快捷键栏预览',
     'agent.preview.themePickerHeading': '极客主题切换器 (10 款经典配色预览)',
     'agent.preview.sampleUserPrompt': '请在当前允许的终端中执行 echo 1，并告诉我结果。',
     'agent.preview.sampleThinking1': '用户想让我在终端执行 echo 1。我先列出 pane，确认可写后再发送命令并等待审批。',
@@ -842,6 +861,7 @@ const messages: Record<Locale, Record<string, string>> = {
     'agent.conversations.eyebrow': 'Conversations',
     'agent.conversations.heading': 'Conversations',
     'agent.chat.eyebrow': 'Agent Chat',
+    'agent.chat.bindingLabel': 'Binding {bindingId} · Term {termId}',
     'agent.conversations.emptyBindings': 'No available Terms. Connect a Term in Computers first.',
     'agent.conversations.empty': 'No conversations yet.',
     'agent.conversations.tableAria': 'Agent conversations',
@@ -1078,12 +1098,11 @@ export const locale: DeepReadonly<Ref<Locale>> = readonly(currentLocale)
 
 export function setLocale(next: Locale): void {
   currentLocale.value = next
+  setApiErrorLocale(next)
   try {
-    if (typeof window !== 'undefined' && typeof window.localStorage?.setItem === 'function') {
-      window.localStorage.setItem(LOCALE_STORAGE_KEY, next)
-    }
+    localePreferences.save(next)
   } catch {
-    // Ignore storage access errors.
+    // Ignore preference persistence errors.
   }
 }
 
@@ -1107,6 +1126,7 @@ export function useI18n() {
   const stored = readStoredLocale()
   if (stored !== null && currentLocale.value !== stored) {
     currentLocale.value = stored
+    setApiErrorLocale(stored)
   }
   return {
     locale,

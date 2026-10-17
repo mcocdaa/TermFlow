@@ -18,8 +18,8 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { ApiError } from '@termflow/client-core'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { ApiError, safeMessageFor, type ApiErrorKind } from '@termflow/client-core'
 import ComputerTable from '../components/computers/ComputerTable.vue'
 import EnrollmentDialog from '../components/computers/EnrollmentDialog.vue'
 import DeleteComputerDialog from '../components/computers/DeleteComputerDialog.vue'
@@ -28,39 +28,53 @@ import { useClientRuntime } from '../runtime'
 import { useBottomToast } from '../composables/useBottomToast'
 import type { ComputerSummary } from '../types'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const runtime = useClientRuntime()
 const toast = useBottomToast()
 const computers = ref<ComputerSummary[]>([])
 const loading = ref(true)
-const message = ref('')
+const errorState = ref<{ type: 'api'; kind: ApiErrorKind } | { type: 'key'; key: string } | null>(null)
+const message = computed(() => {
+  void locale.value
+  if (errorState.value === null) return ''
+  return errorState.value.type === 'api' ? safeMessageFor(errorState.value.kind) : t(errorState.value.key)
+})
 const showEnrollment = ref(false)
 const deletingId = ref<string | null>(null)
 const selectedForDeletion = ref<ComputerSummary | null>(null)
-const deleteError = ref('')
+const deleteErrorState = ref<{ type: 'api'; kind: ApiErrorKind } | { type: 'key'; key: string } | null>(null)
+const deleteError = computed(() => {
+  void locale.value
+  if (deleteErrorState.value === null) return ''
+  return deleteErrorState.value.type === 'api' ? safeMessageFor(deleteErrorState.value.kind) : t(deleteErrorState.value.key)
+})
 const cleanupJobId = ref('')
 const controller = new AbortController()
 async function loadComputers() {
   loading.value = true
   try { computers.value = (await runtime.api.computers.list(controller.signal)).computers }
-  catch (error) { if (!(error instanceof ApiError) || error.kind !== 'aborted') message.value = error instanceof ApiError ? error.message : t('computers.loadError') }
+  catch (error) {
+    if (!(error instanceof ApiError) || error.kind !== 'aborted') {
+      errorState.value = error instanceof ApiError ? { type: 'api', kind: error.kind } : { type: 'key', key: 'computers.loadError' }
+    }
+  }
   finally { loading.value = false }
 }
 function requestRemove(computer: ComputerSummary) {
   cleanupJobId.value = ''
   if (deletingId.value !== null) return
   selectedForDeletion.value = computer
-  deleteError.value = ''
+  deleteErrorState.value = null
 }
 function cancelRemove() {
   if (deletingId.value !== null) return
   selectedForDeletion.value = null
-  deleteError.value = ''
+  deleteErrorState.value = null
 }
 async function confirmRemove(installationId: string) {
   if (deletingId.value !== null) return
   deletingId.value = installationId
-  deleteError.value = ''
+  deleteErrorState.value = null
   try {
     const result = await runtime.api.computers.remove(installationId)
     computers.value = computers.value.filter((candidate) => candidate.installation_id !== installationId)
@@ -71,13 +85,13 @@ async function confirmRemove(installationId: string) {
     selectedForDeletion.value = null
     toast.show({ text: t('computers.deletedToast'), tone: 'success' })
   } catch (error) {
-    deleteError.value = error instanceof ApiError ? error.message : t('computers.deleteError')
+    deleteErrorState.value = error instanceof ApiError ? { type: 'api', kind: error.kind } : { type: 'key', key: 'computers.deleteError' }
   }
   finally { deletingId.value = null }
 }
 async function onComputerAdded() {
   showEnrollment.value = false
-  message.value = ''
+  errorState.value = null
   await loadComputers()
   if (!message.value) toast.show({ text: t('computers.addedToast'), tone: 'success' })
 }

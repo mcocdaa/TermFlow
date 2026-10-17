@@ -18,7 +18,7 @@
 </template>
 
 <script setup lang="ts">
-import { ApiError, MobileModifierController, type TerminalConnectionStatus } from '@termflow/client-core'
+import { ApiError, MobileModifierController, safeMessageFor, type ApiErrorKind, type TerminalConnectionStatus } from '@termflow/client-core'
 import type { AgentSetupResponse, TerminalActionResultFrame as TerminalActionResultControl } from '@termflow/client-contracts'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -78,7 +78,12 @@ const connectionStatus = ref<TerminalConnectionStatus>('connecting')
 type DesktopMenu = 'display' | 'tmux'
 const openMenu = ref<DesktopMenu | null>(null)
 const viewportLocked = ref(false)
-const renameError = ref('')
+const renameErrorState = ref<{ type: 'api'; kind: ApiErrorKind } | { type: 'key'; key: string } | null>(null)
+const renameError = computed(() => {
+  void locale.value
+  if (renameErrorState.value === null) return ''
+  return renameErrorState.value.type === 'api' ? safeMessageFor(renameErrorState.value.kind) : t(renameErrorState.value.key)
+})
 const panes = ref<PaneTopology[]>([])
 const terminalCanvas = ref<InstanceType<typeof TerminalCanvas> | null>(null)
 const bindings = ref<BindingSnapshot>({ prefix: t('terminal.unreportedPrefix'), bindings: [] })
@@ -102,9 +107,9 @@ function confirmClose(payload: { paneId: string; confirmed: true }) { terminalCa
 async function updateTermName(name: string) {
   const previous = termName.value
   termName.value = name
-  renameError.value = ''
+  renameErrorState.value = null
   try { termName.value = (await runtime.api.terms.rename(termId.value, name, controller.signal)).name }
-  catch (error) { termName.value = previous; renameError.value = error instanceof ApiError ? error.message : t('terminal.renameError') }
+  catch (error) { termName.value = previous; renameErrorState.value = error instanceof ApiError ? { type: 'api', kind: error.kind } : { type: 'key', key: 'terminal.renameError' } }
 }
 function restoreOrientationView() {
   const saved = orientationViews[orientation.value].viewport
