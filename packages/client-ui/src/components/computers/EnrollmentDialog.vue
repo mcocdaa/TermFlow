@@ -2,34 +2,34 @@
   <div v-if="open" class="dialog-backdrop" @click.self="close">
     <section ref="panel" class="dialog-panel" role="dialog" aria-modal="true" aria-labelledby="enrollment-title" @keydown="onDialogKeydown">
       <header>
-        <h2 id="enrollment-title">添加电脑</h2>
-        <button data-action="close-enrollment" class="icon-button icon-only" type="button" aria-label="关闭" @click="close"><X :size="18" aria-hidden="true" /></button>
+        <h2 id="enrollment-title">{{ t('computers.enrollment.title') }}</h2>
+        <button data-action="close-enrollment" class="icon-button icon-only" type="button" :aria-label="t('common.close')" @click="close"><X :size="18" aria-hidden="true" /></button>
       </header>
       <p v-if="message" role="alert" class="form-error">{{ message }}</p>
       <form v-if="!code" class="enrollment-create-form" @submit.prevent="create()">
-        <label for="enrollment-computer-name">电脑名称</label>
-        <input id="enrollment-computer-name" ref="nameInput" v-model="displayName" name="computer-name" type="text" maxlength="128" placeholder="输入电脑名称" autocomplete="off" required />
-        <button data-action="create-code" class="primary-button" type="submit" :disabled="busy || !displayName">{{ busy ? '正在创建…' : '创建' }}</button>
+        <label for="enrollment-computer-name">{{ t('computers.enrollment.nameLabel') }}</label>
+        <input id="enrollment-computer-name" ref="nameInput" v-model="displayName" name="computer-name" type="text" maxlength="128" :placeholder="t('computers.enrollment.namePlaceholder')" autocomplete="off" required />
+        <button data-action="create-code" class="primary-button" type="submit" :disabled="busy || !displayName">{{ busy ? t('computers.enrollment.creating') : t('computers.enrollment.create') }}</button>
       </form>
       <div v-else class="enrollment-secret">
-        <p class="warning-text">此注册码只显示一次，将在 {{ secondsRemaining }} 秒后过期并自动刷新。</p>
+        <p class="warning-text">{{ t('computers.enrollment.warning', { seconds: secondsRemaining }) }}</p>
         <section data-enrollment-field="code" class="enrollment-field">
-          <h3>注册码</h3>
-          <output class="registration-code" aria-label="一次性注册码">{{ code }}</output>
+          <h3>{{ t('computers.enrollment.codeHeading') }}</h3>
+          <output class="registration-code" :aria-label="t('computers.enrollment.codeAria')">{{ code }}</output>
         </section>
         <section data-enrollment-field="command" class="enrollment-field">
           <div class="enrollment-field-heading">
-            <h3>终端执行</h3>
+            <h3>{{ t('computers.enrollment.commandHeading') }}</h3>
             <span class="help-tooltip">
-              <button data-help="login-command" class="icon-button icon-only" type="button" aria-label="终端执行说明" aria-describedby="login-command-help" title="复制到安装有 TermFlow 的电脑上，在终端中执行">
+              <button data-help="login-command" class="icon-button icon-only" type="button" :aria-label="t('computers.enrollment.commandHelpAria')" aria-describedby="login-command-help" :title="t('computers.enrollment.commandHelpTitle')">
                 <CircleHelp :size="17" aria-hidden="true" />
               </button>
-              <span id="login-command-help" role="tooltip">复制到安装有 TermFlow 的电脑上，在终端中执行。</span>
+              <span id="login-command-help" role="tooltip">{{ t('computers.enrollment.commandHelpText') }}</span>
             </span>
           </div>
           <code class="login-command">{{ command }}</code>
         </section>
-        <button ref="copyButton" data-action="copy-command" class="primary-button enrollment-copy-button" type="button" @click="copy"><Copy :size="17" aria-hidden="true" />{{ copied ? '已复制' : '复制命令' }}</button>
+        <button ref="copyButton" data-action="copy-command" class="primary-button enrollment-copy-button" type="button" @click="copy"><Copy :size="17" aria-hidden="true" />{{ copied ? t('common.copied') : t('computers.enrollment.copyCommand') }}</button>
       </div>
     </section>
   </div>
@@ -39,8 +39,10 @@
 import { CircleHelp, Copy, X } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ApiError } from '@termflow/client-core'
+import { useI18n } from '../../i18n'
 import { useClientRuntime } from '../../runtime'
 
+const { t } = useI18n()
 const emit = defineEmits<{ closed: []; added: [] }>()
 const runtime = useClientRuntime()
 const open = ref(true)

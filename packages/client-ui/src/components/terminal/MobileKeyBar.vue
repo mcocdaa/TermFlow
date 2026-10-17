@@ -1,6 +1,6 @@
 <template>
   <div class="mobile-keybar-shell">
-    <div class="mobile-keybar" aria-label="移动端修饰键" @pointermove.stop>
+    <div class="mobile-keybar" :aria-label="t('terminal.mobileKeybar.aria')" @pointermove.stop>
       <!-- 修饰键组 -->
       <button
         v-for="key in modifierKeys"
@@ -11,7 +11,7 @@
         :aria-pressed="controller.state[key.id] !== 'off'"
         @click="pressModifier(key.id)"
       >
-        {{ key.label }}<span v-if="controller.state[key.id] === 'sticky'" class="locked-indicator" aria-label="已锁定" />
+        {{ key.label }}<span v-if="controller.state[key.id] === 'sticky'" class="locked-indicator" :aria-label="t('terminal.mobileKeybar.locked')" />
       </button>
       <button type="button" class="mobile-key-btn" :disabled="disabled" @click="special('Escape')">Esc</button>
       <button type="button" class="mobile-key-btn" :disabled="disabled" @click="special('Tab')">Tab</button>
@@ -20,7 +20,7 @@
         class="mobile-key-btn"
         :disabled="disabled || !usablePrefix"
         :aria-pressed="controller.state.prefix"
-        :title="usablePrefix ? `实际 Prefix：${prefix}` : 'Prefix 未报告'"
+        :title="usablePrefix ? t('terminal.mobileKeybar.prefixReported', { prefix }) : t('terminal.mobileKeybar.prefixUnreported')"
         @click="sendPrefix"
       >
         Prefix
@@ -28,16 +28,16 @@
 
       <!-- 方向导航组 -->
       <span class="mobile-keybar-divider" aria-hidden="true" />
-      <button type="button" class="mobile-key-btn mobile-key-btn--nav" :disabled="disabled" aria-label="上箭头" @click="sendArrow('\u001b[A')">↑</button>
-      <button type="button" class="mobile-key-btn mobile-key-btn--nav" :disabled="disabled" aria-label="下箭头" @click="sendArrow('\u001b[B')">↓</button>
-      <button type="button" class="mobile-key-btn mobile-key-btn--nav" :disabled="disabled" aria-label="左箭头" @click="sendArrow('\u001b[D')">←</button>
-      <button type="button" class="mobile-key-btn mobile-key-btn--nav" :disabled="disabled" aria-label="右箭头" @click="sendArrow('\u001b[C')">→</button>
+      <button type="button" class="mobile-key-btn mobile-key-btn--nav" :disabled="disabled" :aria-label="t('terminal.mobileKeybar.up')" @click="sendArrow('\u001b[A')">↑</button>
+      <button type="button" class="mobile-key-btn mobile-key-btn--nav" :disabled="disabled" :aria-label="t('terminal.mobileKeybar.down')" @click="sendArrow('\u001b[B')">↓</button>
+      <button type="button" class="mobile-key-btn mobile-key-btn--nav" :disabled="disabled" :aria-label="t('terminal.mobileKeybar.left')" @click="sendArrow('\u001b[D')">←</button>
+      <button type="button" class="mobile-key-btn mobile-key-btn--nav" :disabled="disabled" :aria-label="t('terminal.mobileKeybar.right')" @click="sendArrow('\u001b[C')">→</button>
 
       <!-- 高频控制与中断组 -->
       <span class="mobile-keybar-divider" aria-hidden="true" />
-      <button type="button" class="mobile-key-btn mobile-key-btn--danger" :disabled="disabled" aria-label="中断 (Ctrl+C)" @click="sendInterrupt">^C</button>
+      <button type="button" class="mobile-key-btn mobile-key-btn--danger" :disabled="disabled" :aria-label="t('terminal.mobileKeybar.interrupt')" @click="sendInterrupt">^C</button>
       <button type="button" class="mobile-key-btn" :disabled="disabled" aria-label="EOF (Ctrl+D)" @click="sendEof">^D</button>
-      <button type="button" class="mobile-key-btn mobile-key-btn--primary" :disabled="disabled" aria-label="回车 (Enter)" @click="sendEnter">↵</button>
+      <button type="button" class="mobile-key-btn mobile-key-btn--primary" :disabled="disabled" :aria-label="t('terminal.mobileKeybar.enter')" @click="sendEnter">↵</button>
 
       <!-- 高频 Shell 符号组 -->
       <button type="button" class="mobile-key-btn mobile-key-btn--sym" :disabled="disabled" @click="sendChar('/')">/</button>
@@ -52,8 +52,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { keyNotationBytes, type MobileModifierController, type ModifierKey } from '@termflow/client-core'
+import { useI18n } from '../../i18n'
 import { useClientRuntime } from '../../runtime'
 
+const { t } = useI18n()
 const props = withDefaults(defineProps<{
   prefix: string
   controller: MobileModifierController
@@ -70,7 +72,7 @@ const modifierKeys: Array<{ id: ModifierKey; label: string }> = [
   { id: 'shift', label: 'Shift' },
 ]
 
-const usablePrefix = computed(() => !!props.prefix && !/未报告|未绑定/.test(props.prefix))
+const usablePrefix = computed(() => !!props.prefix && !/未报告|未绑定|Unreported|Unbound/i.test(props.prefix))
 let blurTimer: unknown | null = null
 
 function vibrate(ms = 12) {

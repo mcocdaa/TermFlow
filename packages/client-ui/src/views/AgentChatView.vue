@@ -2,11 +2,11 @@
   <div class="page agent-chat-view">
     <template v-if="!agentBrokerEnabled">
       <header class="page-heading">
-        <div><p class="eyebrow">Agent</p><h1>Agent 控制台</h1></div>
+        <div><p class="eyebrow">Agent</p><h1>{{ t('agent.title') }}</h1></div>
       </header>
       <section class="agent-placeholder" data-agent-disabled>
-        <h2>Agent Broker 未启用</h2>
-        <p>服务器未开启 Agent Broker 能力，无法使用 Agent 会话。</p>
+        <h2>{{ t('agent.disabledTitle') }}</h2>
+        <p>{{ t('agent.disabledDesc') }}</p>
       </section>
     </template>
 
@@ -37,7 +37,9 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import AgentChatSession from '../components/agent/AgentChatSession.vue'
 import { useAgentBroker } from '../composables/useAgentBroker'
+import { useI18n } from '../i18n'
 
+const { t } = useI18n()
 const route = useRoute()
 const conversationId = computed(() => String(route.params.conversationId))
 

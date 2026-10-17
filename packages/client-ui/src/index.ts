@@ -15,6 +15,7 @@ export { default as AgentSetupForm } from './components/agent/AgentSetupForm.vue
 export { default as TerminalAgentPanel } from './components/agent/TerminalAgentPanel.vue'
 export { default as TerminalAgentToggle } from './components/agent/TerminalAgentToggle.vue'
 export * from './theme/theme'
+export * from './i18n'
 export * from './composables/useSession'
 export * from './composables/useBottomToast'
 export * from './composables/useTerminalSession'

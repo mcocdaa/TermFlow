@@ -2,7 +2,7 @@
   <details class="agent-thinking" :open="thinking.status === 'streaming'" :data-state="thinking.status" data-agent-thinking>
     <summary class="agent-thinking__summary">
       <Sparkles :size="14" aria-hidden="true" />
-      <span>思考{{ thinking.status === 'streaming' ? '中…' : '' }}</span>
+      <span>{{ thinking.status === 'streaming' ? t('agent.chat.thinkingStreaming') : t('agent.chat.thinking') }}</span>
     </summary>
     <p class="agent-thinking__text">{{ text }}</p>
   </details>
@@ -14,7 +14,9 @@
 import { computed } from 'vue'
 import { Sparkles } from '@lucide/vue'
 import { stripAnsiOsc, type AgentThinkingState } from '@termflow/client-core'
+import { useI18n } from '../../i18n'
 
+const { t } = useI18n()
 const props = defineProps<{ thinking: AgentThinkingState }>()
 const text = computed(() => stripAnsiOsc(props.thinking.text))
 </script>

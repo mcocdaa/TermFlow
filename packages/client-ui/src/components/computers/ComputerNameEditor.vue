@@ -1,12 +1,12 @@
 <template>
   <div class="name-editor">
     <template v-if="editing">
-      <label class="sr-only" :for="`computer-name-${computerId}`">Computer 显示名称</label>
+      <label class="sr-only" :for="`computer-name-${computerId}`">{{ t('computers.nameEditor.label') }}</label>
       <input :id="`computer-name-${computerId}`" v-model="draft" name="display-name" maxlength="128" @keydown.esc="cancel" @keydown.enter.prevent="save" />
-      <button data-action="save-name" class="primary-button compact" type="button" :disabled="busy" @click="save">保存</button>
-      <button class="text-button compact" type="button" @click="cancel">取消</button>
+      <button data-action="save-name" class="primary-button compact" type="button" :disabled="busy" @click="save">{{ t('common.save') }}</button>
+      <button class="text-button compact" type="button" @click="cancel">{{ t('common.cancel') }}</button>
     </template>
-    <button v-else data-action="edit-name" class="name-edit-trigger" type="button" :aria-label="`修改 Computer 名称：${currentName}`" title="点击修改 Computer 名称" @click="begin"><strong>{{ currentName }}</strong></button>
+    <button v-else data-action="edit-name" class="name-edit-trigger" type="button" :aria-label="t('computers.nameEditor.editAria', { name: currentName })" :title="t('computers.nameEditor.editTitle')" @click="begin"><strong>{{ currentName }}</strong></button>
     <p v-if="message" role="alert" class="form-error">{{ message }}</p>
   </div>
 </template>
@@ -14,8 +14,10 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { ApiError } from '@termflow/client-core'
+import { useI18n } from '../../i18n'
 import { useClientRuntime } from '../../runtime'
 
+const { t } = useI18n()
 const props = defineProps<{ computerId: string; displayName: string }>()
 const emit = defineEmits<{ updated: [name: string] }>()
 const runtime = useClientRuntime()
@@ -32,7 +34,7 @@ function validName(value: string) {
 function begin() { draft.value = currentName.value; message.value = ''; editing.value = true }
 function cancel() { draft.value = currentName.value; message.value = ''; editing.value = false }
 async function save() {
-  if (!validName(draft.value)) { message.value = '显示名称须为 1 至 128 个无控制字符的字符。'; return }
+  if (!validName(draft.value)) { message.value = t('computers.nameEditor.invalid'); return }
   const previous = currentName.value
   currentName.value = draft.value
   editing.value = false
@@ -44,7 +46,7 @@ async function save() {
   } catch (error) {
     currentName.value = previous
     editing.value = true
-    message.value = error instanceof ApiError ? error.message : '无法保存显示名称。'
+    message.value = error instanceof ApiError ? error.message : t('computers.nameEditor.saveError')
   } finally { busy.value = false }
 }
 </script>

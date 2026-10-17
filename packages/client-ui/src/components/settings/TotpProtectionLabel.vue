@@ -1,14 +1,16 @@
 <template>
   <div data-totp-protection-label class="security-setting-label">
-    <strong>启用双重认证登录</strong>
+    <strong>{{ t('settings.totp.protectionLabel') }}</strong>
     <ContextHelp
       data-action="explain-totp-protection"
-      label="说明启用双重认证登录"
-      text="启用后，新的管理员登录和客户端授权都需要验证器生成的一次性验证码。"
+      :label="t('settings.totp.protectionHelpLabel')"
+      :text="t('settings.totp.protectionHelpText')"
     />
   </div>
 </template>
 
 <script setup lang="ts">
 import ContextHelp from '../common/ContextHelp.vue'
+import { useI18n } from '../../i18n'
+const { t } = useI18n()
 </script>

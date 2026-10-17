@@ -183,4 +183,41 @@ describe('shared application routes', () => {
     expect(wrapper.find('[data-action="logout"]').exists()).toBe(true)
     wrapper.unmount()
   })
+
+  it('toggles UI language between Chinese and English via header locale switcher', async () => {
+    const router = createRouter({ history: createMemoryHistory(), routes: clientRoutes })
+    await router.push('/')
+    await router.isReady()
+    const clientUi = createClientUi(createFakeRuntime())
+    await clientUi.session.loginWithToken('test-only-token')
+    const wrapper = mount(App, { global: { plugins: [router, clientUi] } })
+    await flushPromises()
+
+    const toggleBtn = wrapper.get('[data-action="toggle-locale"]')
+    expect(toggleBtn.text()).toContain('EN')
+    expect(wrapper.get('.side-nav a[href="/"]').text()).toBe('控制中心')
+    expect(wrapper.get('.side-nav a[href="/computers"]').text()).toBe('电脑管理')
+    expect(wrapper.get('.side-nav a[href="/settings"]').text()).toBe('设置')
+    expect(wrapper.get('h1').text()).toBe('控制中心')
+
+    await toggleBtn.trigger('click')
+    await flushPromises()
+
+    expect(window.localStorage.getItem('termflow_lang')).toBe('en')
+    expect(toggleBtn.text()).toContain('中文')
+    expect(wrapper.get('.side-nav a[href="/"]').text()).toBe('Dashboard')
+    expect(wrapper.get('.side-nav a[href="/computers"]').text()).toBe('Computers')
+    expect(wrapper.get('.side-nav a[href="/settings"]').text()).toBe('Settings')
+    expect(wrapper.get('h1').text()).toBe('Dashboard')
+    expect(wrapper.get('[data-action="logout"]').attributes('aria-label')).toBe('Sign Out')
+
+    await toggleBtn.trigger('click')
+    await flushPromises()
+
+    expect(window.localStorage.getItem('termflow_lang')).toBe('zh')
+    expect(toggleBtn.text()).toContain('EN')
+    expect(wrapper.get('.side-nav a[href="/"]').text()).toBe('控制中心')
+    expect(wrapper.get('h1').text()).toBe('控制中心')
+    wrapper.unmount()
+  })
 })

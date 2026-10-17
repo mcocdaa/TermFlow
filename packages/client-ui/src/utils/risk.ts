@@ -1,3 +1,5 @@
+import { t } from '../i18n'
+
 export type RiskLevel = 1 | 2 | 3 | 4
 
 export interface RiskAssessment {
@@ -59,7 +61,7 @@ export function assessRisk(params: {
     if (CRITICAL_PATTERNS.some((p) => p.test(text)) || /(-r|--recursive|\*|\/)/i.test(text)) {
       return {
         level: 4,
-        label: '极高危',
+        label: t('agent.risk.level4'),
         badgeClass: 'agent-risk-badge--level-4',
         isCritical: true,
       }
@@ -70,7 +72,7 @@ export function assessRisk(params: {
     if (pattern.test(text)) {
       return {
         level: 4,
-        label: '极高危',
+        label: t('agent.risk.level4'),
         badgeClass: 'agent-risk-badge--level-4',
         isCritical: true,
       }
@@ -81,7 +83,7 @@ export function assessRisk(params: {
     if (pattern.test(text)) {
       return {
         level: 3,
-        label: '高风险',
+        label: t('agent.risk.level3'),
         badgeClass: 'agent-risk-badge--level-3',
         isCritical: false,
       }
@@ -93,7 +95,7 @@ export function assessRisk(params: {
     if (!/\b(rm|write|edit|delete|touch|mkdir|chmod|kill|git\s+commit|git\s+push)\b/i.test(text)) {
       return {
         level: 1,
-        label: '低风险',
+        label: t('agent.risk.level1'),
         badgeClass: 'agent-risk-badge--level-1',
         isCritical: false,
       }
@@ -102,7 +104,7 @@ export function assessRisk(params: {
 
   return {
     level: 2,
-    label: '中风险',
+    label: t('agent.risk.level2'),
     badgeClass: 'agent-risk-badge--level-2',
     isCritical: false,
   }

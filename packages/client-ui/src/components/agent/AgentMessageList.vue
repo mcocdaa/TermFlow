@@ -10,7 +10,7 @@
       @scroll="onScroll"
     >
       <p v-if="items.length === 0" class="agent-message-list__empty" data-agent-message-empty>
-        输入一条消息，开始与 Agent 对话。
+        {{ t('agent.chat.emptyPrompt') }}
       </p>
       <template v-for="item in items" :key="item.key">
         <AgentMessageBubble v-if="item.kind === 'message' || item.kind === 'user'" :message="item.message" />
@@ -41,10 +41,13 @@
 //: (app.css).
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import type { AgentHistoryState, AgentMessageState, AgentPermissionState, AgentThinkingState, AgentToolCallState, AgentUserMessageState } from '@termflow/client-core'
+import { useI18n } from '../../i18n'
 import AgentApprovalCard from './AgentApprovalCard.vue'
 import AgentMessageBubble from './AgentMessageBubble.vue'
 import AgentThinkingBlock from './AgentThinkingBlock.vue'
 import AgentToolActivity from './AgentToolActivity.vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   /** Whole reducer state, exactly as returned by the M6b conversation composable. */

@@ -1,15 +1,17 @@
 <template>
   <div class="dialog-backdrop" @click.self="$emit('cancel')">
     <section ref="panel" class="dialog-panel close-pane-dialog" role="alertdialog" aria-modal="true" aria-labelledby="close-pane-title" aria-describedby="close-pane-description" @keydown="trapFocus">
-      <h2 id="close-pane-title">关闭 Pane？</h2>
-      <p id="close-pane-description">将关闭 <strong>{{ paneName }}</strong>（{{ paneId }}）。Pane 中未保存的工作可能丢失。</p>
-      <div class="dialog-actions"><button ref="cancelButton" class="text-button" type="button" @click="$emit('cancel')">取消</button><button data-action="confirm-close-pane" class="danger-button" type="button" @click="$emit('confirm', { paneId, confirmed: true })">确认关闭 Pane</button></div>
+      <h2 id="close-pane-title">{{ t('terminal.closePane.title') }}</h2>
+      <p id="close-pane-description">{{ t('terminal.closePane.desc', { name: paneName, id: paneId }) }}</p>
+      <div class="dialog-actions"><button ref="cancelButton" class="text-button" type="button" @click="$emit('cancel')">{{ t('common.cancel') }}</button><button data-action="confirm-close-pane" class="danger-button" type="button" @click="$emit('confirm', { paneId, confirmed: true })">{{ t('terminal.closePane.confirm') }}</button></div>
     </section>
   </div>
 </template>
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useI18n } from '../../i18n'
+const { t } = useI18n()
 const props = defineProps<{ paneId: string; paneName: string; returnFocus?: HTMLElement | null }>()
 defineEmits<{ confirm: [payload: { paneId: string; confirmed: true }]; cancel: [] }>()
 const panel = ref<HTMLElement | null>(null)

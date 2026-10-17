@@ -3,7 +3,7 @@
     class="theme-picker"
     data-layout="theme-grid"
     role="radiogroup"
-    aria-label="界面主题"
+    :aria-label="t('settings.appearance.heading')"
     @keydown.right.prevent="move(1)"
     @keydown.down.prevent="move(1)"
     @keydown.left.prevent="move(-1)"
@@ -29,16 +29,18 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import type { ThemeId } from '@termflow/design-tokens'
+import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/theme'
 
+const { t } = useI18n()
 const { active: activeTheme, select: selectTheme } = useTheme()
 
-const themes: ReadonlyArray<{ id: ThemeId; label: string }> = [
-  { id: 'graphite-signal', label: '石墨信号 (默认)' },
-  { id: 'cloud-cobalt', label: '云端钴蓝' },
-  { id: 'midnight-indigo', label: '午夜靛蓝' },
+const themes = computed<ReadonlyArray<{ id: ThemeId; label: string }>>(() => [
+  { id: 'graphite-signal', label: t('settings.theme.graphite-signal') },
+  { id: 'cloud-cobalt', label: t('settings.theme.cloud-cobalt') },
+  { id: 'midnight-indigo', label: t('settings.theme.midnight-indigo') },
   { id: 'catppuccin-mocha', label: 'Catppuccin Mocha' },
   { id: 'catppuccin-latte', label: 'Catppuccin Latte' },
   { id: 'tokyo-night', label: 'Tokyo Night' },
@@ -46,7 +48,7 @@ const themes: ReadonlyArray<{ id: ThemeId; label: string }> = [
   { id: 'dracula', label: 'Dracula' },
   { id: 'solarized-dark', label: 'Solarized Dark' },
   { id: 'solarized-light', label: 'Solarized Light' },
-]
+])
 const radioButtons = ref<HTMLButtonElement[]>([])
 
 function choose(id: ThemeId) {
@@ -54,9 +56,9 @@ function choose(id: ThemeId) {
 }
 
 async function move(offset: number) {
-  const current = themes.findIndex((theme) => theme.id === activeTheme.value)
-  const next = (current + offset + themes.length) % themes.length
-  const theme = themes[next]
+  const current = themes.value.findIndex((theme) => theme.id === activeTheme.value)
+  const next = (current + offset + themes.value.length) % themes.value.length
+  const theme = themes.value[next]
   if (theme === undefined) return
   choose(theme.id)
   await nextTick()

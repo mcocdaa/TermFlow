@@ -14,7 +14,7 @@
           rows="1"
           :maxlength="MAX_AGENT_TEXT_BYTES"
           :disabled="unavailable"
-          aria-label="发送给 Agent 的消息"
+          :aria-label="t('agent.composer.inputAria')"
           data-agent-composer-input
           @keydown="onKeydown"
         />
@@ -23,8 +23,8 @@
           class="icon-button icon-only agent-composer__send"
           :disabled="!canSend"
           data-action="send-message"
-          aria-label="发送消息"
-          title="发送消息"
+          :aria-label="t('agent.composer.sendAria')"
+          :title="t('agent.composer.sendAria')"
           @click="submit"
         >
           <Send :size="18" aria-hidden="true" />
@@ -39,14 +39,14 @@
         data-action="cancel-run"
         @click="cancelRun"
       >
-        {{ canceling ? '正在取消…' : '取消运行' }}
+        {{ canceling ? t('agent.chat.canceling') : t('agent.chat.cancelRun') }}
       </button>
     </div>
     <p v-if="tooLong" class="form-error agent-composer__hint" role="alert" data-agent-composer-hint>
-      文本超出长度限制（最多 {{ MAX_AGENT_TEXT_BYTES }} 字节），请精简后重试。
+      {{ t('agent.composer.tooLong', { max: MAX_AGENT_TEXT_BYTES }) }}
     </p>
     <p v-if="runtimeDown" class="agent-composer__unavailable" role="status" data-agent-composer-unavailable>
-      后端运行时未就绪，暂时无法发送消息。
+      {{ t('agent.composer.unavailable') }}
     </p>
   </div>
 </template>
@@ -68,8 +68,11 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { Send } from '@lucide/vue'
 import { ApiError } from '@termflow/client-core'
+import { useI18n } from '../../i18n'
 import { useClientRuntime } from '../../runtime'
 import { useBottomToast } from '../../composables/useBottomToast'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   conversationId: string

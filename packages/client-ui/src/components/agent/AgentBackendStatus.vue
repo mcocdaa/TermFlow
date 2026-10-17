@@ -12,22 +12,24 @@
 //: value verbatim so wire drift never hides data.
 import { computed } from 'vue'
 import { isBackendRuntimeState, type BackendRuntimeState } from '@termflow/client-core'
+import { useI18n } from '../../i18n'
 
+const { t } = useI18n()
 const props = defineProps<{
   /** Raw STATE_DELTA ``/backend`` value from the history reducer (null before the first delta). */
   state: string | null
 }>()
 
-const LABELS: Record<BackendRuntimeState, string> = {
-  connecting: '连接中',
-  idle: '空闲',
-  busy: '处理中',
-  retry: '重试中',
-  ready: '就绪',
-  unavailable: '不可用',
-  context_lost: '上下文丢失',
-  reconciling: '恢复中',
-  closed: '已关闭',
+const LABEL_KEYS: Record<BackendRuntimeState, string> = {
+  connecting: 'agent.backend.connecting',
+  idle: 'agent.backend.idle',
+  busy: 'agent.backend.busy',
+  retry: 'agent.backend.retry',
+  ready: 'agent.backend.ready',
+  unavailable: 'agent.backend.unavailable',
+  context_lost: 'agent.backend.context_lost',
+  reconciling: 'agent.backend.reconciling',
+  closed: 'agent.backend.closed',
 }
 
 const known = computed<BackendRuntimeState | null>(() =>
@@ -37,5 +39,5 @@ const displayState = computed(() => props.state === null ? 'connecting' : (known
 // Keep the diagnostic attribute faithful to the wire value: null is exposed
 // as ``unknown`` while the visual label still tells the user it is opening.
 const dataState = computed(() => props.state ?? 'unknown')
-const label = computed(() => props.state === null ? LABELS.connecting : (known.value !== null ? LABELS[known.value] : '未知'))
+const label = computed(() => props.state === null ? t(LABEL_KEYS.connecting) : (known.value !== null ? t(LABEL_KEYS[known.value]) : t('common.unknown')))
 </script>

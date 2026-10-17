@@ -9,13 +9,13 @@
       aria-describedby="delete-computer-description"
       @keydown="trapFocus"
     >
-      <h2 id="delete-computer-title">删除电脑？</h2>
+      <h2 id="delete-computer-title">{{ t('computers.deleteDialog.title') }}</h2>
       <div id="delete-computer-description">
-        <p>将永久删除远端注册和控制凭据：<strong>{{ computer.display_name }}</strong>。</p>
-        <p>删除后，这台电脑需要重新注册才能恢复远程控制。</p>
+        <p>{{ t('computers.deleteDialog.desc1') }}<strong>{{ computer.display_name }}</strong>。</p>
+        <p>{{ t('computers.deleteDialog.desc2') }}</p>
       </div>
       <p v-if="error" class="form-error" role="alert">{{ error }}</p>
-      <p v-if="cleanupJobId" role="status">清理待完成 · 任务 {{ cleanupJobId.slice(0, 64) }}</p>
+      <p v-if="cleanupJobId" role="status">{{ t('dashboard.deleteDialog.cleanupPending', { jobId: cleanupJobId.slice(0, 64) }) }}</p>
       <div class="dialog-actions">
         <button
           ref="cancelButton"
@@ -24,14 +24,14 @@
           type="button"
           :disabled="pending"
           @click="cancel"
-        >取消</button>
+        >{{ t('common.cancel') }}</button>
         <button
           data-action="confirm-delete-computer"
           class="danger-button"
           type="button"
           :disabled="pending || Boolean(cleanupJobId)"
           @click="$emit('confirm', computer.installation_id)"
-        >{{ pending ? '正在删除…' : '永久删除电脑' }}</button>
+        >{{ pending ? t('dashboard.deleteDialog.deleting') : t('computers.deleteDialog.confirm') }}</button>
       </div>
     </section>
   </div>
@@ -39,7 +39,9 @@
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useI18n } from '../../i18n'
 import type { ComputerSummary } from '../../types'
+const { t } = useI18n()
 
 const props = defineProps<{ computer: ComputerSummary; pending: boolean; error: string; cleanupJobId?: string }>()
 const emit = defineEmits<{ confirm: [installationId: string]; cancel: [] }>()
