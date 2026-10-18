@@ -95,6 +95,11 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           TERMFLOW_BUILD_VERSION: ${{ inputs.version || vars.TERMFLOW_BUILD_VERSION }}
           SIGNED_ANDROID_CANDIDATE: ${{ inputs.signed_android_candidate }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -110,6 +115,13 @@ jobs:
           fi
           if [[ -n "$release_tag" || "$SIGNED_ANDROID_CANDIDATE" == "true" ]]; then
             android_release_build=true
+            for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD ANDROID_SIGNING_CERT_SHA256; do
+              if [[ -z "${!name}" ]]; then
+                echo "::warning::Android signing secrets not configured; falling back to unsigned/debug APK build"
+                android_release_build=false
+                break
+              fi
+            done
           else
             android_release_build=false
           fi
@@ -330,8 +342,8 @@ jobs:
           set -euo pipefail
           for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD ANDROID_SIGNING_CERT_SHA256; do
             if [[ -z "${!name}" ]]; then
-              echo "Missing required Android release secret: $name" >&2
-              exit 1
+              echo "::warning::Android signing secrets not configured; falling back to unsigned/debug APK build"
+              exit 0
             fi
           done
           keystore="$RUNNER_TEMP/termflow-android-release.jks"
