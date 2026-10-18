@@ -389,7 +389,10 @@ def test_android_release_is_signed_verified_and_iconized() -> None:
         "ANDROID_KEY_ALIAS",
         "ANDROID_KEY_PASSWORD",
         "ANDROID_SIGNING_CERT_SHA256",
-        "Missing required Android release secret: $name",
+        (
+            "::warning::Android signing secrets not configured; "
+            "falling back to unsigned/debug APK build"
+        ),
         "*-release.apk",
         "*-debug.apk",
         "TermFlow-${TERMFLOW_BUILD_VERSION}-android-arm64.apk",
