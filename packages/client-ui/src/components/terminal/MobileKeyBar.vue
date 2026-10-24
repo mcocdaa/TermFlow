@@ -23,7 +23,7 @@
         :title="usablePrefix ? t('terminal.mobileKeybar.prefixReported', { prefix }) : t('terminal.mobileKeybar.prefixUnreported')"
         @click="sendPrefix"
       >
-        Prefix
+        <span class="mobile-keybar__label">{{ t('terminal.mobileKeybar.prefix') }}</span>
       </button>
 
       <!-- Navigation keys -->
@@ -36,7 +36,7 @@
       <!-- Control & interrupt keys -->
       <span class="mobile-keybar-divider" aria-hidden="true" />
       <button type="button" class="mobile-key-btn mobile-key-btn--danger" :disabled="disabled" :aria-label="t('terminal.mobileKeybar.interrupt')" @click="sendInterrupt">^C</button>
-      <button type="button" class="mobile-key-btn" :disabled="disabled" aria-label="EOF (Ctrl+D)" @click="sendEof">^D</button>
+      <button type="button" class="mobile-key-btn" :disabled="disabled" :aria-label="t('terminal.mobileKeybar.eof')" @click="sendEof">^D</button>
       <button type="button" class="mobile-key-btn mobile-key-btn--primary" :disabled="disabled" :aria-label="t('terminal.mobileKeybar.enter')" @click="sendEnter">↵</button>
 
       <!-- Shell symbol keys -->

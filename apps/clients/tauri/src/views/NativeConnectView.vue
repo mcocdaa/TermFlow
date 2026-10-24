@@ -1,26 +1,42 @@
 <template>
   <section class="login-view">
     <div class="auth-card">
-      <p class="eyebrow">Connect to Server</p><h1>连接到服务器</h1>
+      <div class="native-connect-heading">
+        <div>
+          <p class="eyebrow">{{ t('nativeConnect.eyebrow') }}</p>
+          <h1>{{ t('nativeConnect.title') }}</h1>
+        </div>
+        <button
+          data-action="toggle-locale"
+          class="text-button locale-toggle-button"
+          type="button"
+          :aria-label="t('app.switchLangAria')"
+          :title="t('app.switchLangAria')"
+          @click="toggleLocale"
+        >
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+          <span class="locale-badge">{{ t('app.switchLangBadge') }}</span>
+        </button>
+      </div>
       <form @submit.prevent="connect">
-        <label for="server-url">服务器地址</label><input id="server-url" v-model="issuer" type="url" inputmode="url" autocomplete="url" required />
+        <label for="server-url">{{ t('nativeConnect.serverUrl') }}</label><input id="server-url" v-model="issuer" type="url" inputmode="url" autocomplete="url" required />
         <p v-if="message" class="form-error" role="alert">{{ message }}</p>
         <div class="native-auth-options">
           <button
             class="primary-button"
             type="submit"
             data-action="browser-login"
-            title="通过本机系统浏览器登录并审批此客户端。"
+            :title="t('nativeConnect.browserLoginTitle')"
             :disabled="busy"
-          >{{ busy ? '等待浏览器审批' : '本机浏览器登录' }}</button>
+          >{{ busy ? t('nativeConnect.waitingBrowser') : t('nativeConnect.browserLogin') }}</button>
           <button
             class="secondary-button"
             type="button"
             data-action="device-authorize"
-            title="使用已登录的其他设备完成授权，不会打开本机浏览器。"
+            :title="t('nativeConnect.deviceAuthTitle')"
             :disabled="busy"
             @click="connectDevice"
-          >其他设备授权</button>
+          >{{ t('nativeConnect.deviceAuth') }}</button>
         </div>
       </form>
     </div>
@@ -29,76 +45,92 @@
 
 <script setup lang="ts">
 import { ApiError } from '@termflow/client-core'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useBottomToast, useClientRuntime } from '@termflow/client-ui'
+import { useBottomToast, useClientRuntime, useI18n } from '@termflow/client-ui'
 import { authorizeNativeClient, verifyNativeConnection } from '../nativeAuth'
 import { prepareNativeServer } from '../serverPreparation'
 import { canonicalAuthorizeEndpoint, serverConfig } from '../serverConfig'
 
+const { t, locale, toggleLocale } = useI18n()
 const runtime = useClientRuntime(); const router = useRouter(); const route = useRoute()
 const toast = useBottomToast()
-const issuer = ref(serverConfig.current); const message = ref(''); const busy = ref(false)
+const issuer = ref(serverConfig.current); const errorCode = ref<string | null>(null); const busy = ref(false)
 
-function registrationErrorMessage(error: unknown): string {
-  const code = error instanceof ApiError
+function extractErrorCode(error: unknown): string {
+  return error instanceof ApiError
     ? error.kind
     : error instanceof Error
       ? error.message
       : typeof error === 'string' ? error : ''
+}
+
+function registrationErrorMessage(code: string): string {
   if (code === 'http_capability_denied') {
-    return '客户端网络权限配置无效。请升级或重新安装 TermFlow。'
+    return t('nativeConnect.error.http_capability_denied')
   }
   if (code === 'offline' || code === 'network_error') {
-    return '无法连接服务器。请检查服务器地址、网络连接和本机服务是否正在运行。'
+    return t('nativeConnect.error.offline')
   }
   if (code === 'issuer_mismatch') {
-    return '服务器身份与填写地址不一致。请检查反向代理配置后重试。'
+    return t('nativeConnect.error.issuer_mismatch')
   }
   if (code === 'authorization_cancelled' || code === 'aborted') {
-    return '注册申请已取消。请重新申请，并在系统浏览器中完成审批。'
+    return t('nativeConnect.error.cancelled')
   }
   if (code === 'authorization_callback_timeout' || code === 'authorization_callback_invalid' || code === 'authorization_listener_missing') {
-    return '未收到有效的 TermFlow 回调。请确认系统允许 termflow:// 链接打开本应用，然后重新申请。'
+    return t('nativeConnect.error.callback')
   }
   if (code === 'https_required') {
-    return '远程服务器必须使用 HTTPS；只有本机服务器可以使用 HTTP。'
+    return t('nativeConnect.error.https_required')
   }
   if (code === 'authorization_verify_timeout') {
-    return '连接确认超时。请检查服务器是否在线后重试。'
+    return t('nativeConnect.error.verify_timeout')
   }
-  return '无法完成远程控制注册。请检查服务器地址和系统浏览器中的审批状态后重试。'
+  return t('nativeConnect.error.default')
 }
+
+const message = computed(() => {
+  void locale.value
+  return errorCode.value === null ? '' : registrationErrorMessage(errorCode.value)
+})
 
 function prepareServer() {
   return prepareNativeServer(issuer.value, () => runtime.api.oauth.metadata())
 }
 
 async function connectDevice() {
-  busy.value = true; message.value = ''
+  busy.value = true; errorCode.value = null
   try {
     await prepareServer()
     await router.push({ path: '/connect/device', query: route.query })
-  } catch (error) { message.value = registrationErrorMessage(error) }
+  } catch (error) { errorCode.value = extractErrorCode(error) }
   finally { busy.value = false }
 }
 
 async function connect() {
-  busy.value = true; message.value = ''
+  busy.value = true; errorCode.value = null
   try {
     const prepared = await prepareServer()
     const authorizeEndpoint = canonicalAuthorizeEndpoint(prepared.issuer, prepared.metadata.authorization_endpoint)
     await authorizeNativeClient(prepared.issuer, authorizeEndpoint, prepared.metadata.scopes_supported)
     await verifyNativeConnection(runtime)
-    toast.show({ text: '已连接', tone: 'success' })
+    toast.show({ text: t('nativeConnect.connectedToast'), tone: 'success' })
     const target = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') && !route.query.redirect.startsWith('//') ? route.query.redirect : '/'
     await router.replace(target)
-  } catch (error) { message.value = registrationErrorMessage(error) }
+  } catch (error) { errorCode.value = extractErrorCode(error) }
   finally { busy.value = false }
 }
 </script>
 
 <style scoped>
+.native-connect-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
 .native-auth-options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

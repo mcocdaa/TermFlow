@@ -20,7 +20,7 @@ Resilient remote tmux terminal & 4-level guarded Agent Broker across Web, Mobile
 
 ## ✨ Highlights
 
-- **Outbound-Only Node A (`Computer → Term → Window → Pane`)**: Computer A dials out over TLS/WSS to Control Plane B with zero inbound ports (`A 主动连接 B`, `A 不开放端口`); closing browsers or losing mobile connectivity never interrupts running `tmux` jobs.
+- **Outbound-Only Node A (`Computer → Term → Window → Pane`)**: Computer A dials out over TLS/WSS to Control Plane B with zero inbound ports (`A connects outbound to B`, `A opens zero inbound ports`); closing browsers or losing mobile connectivity never interrupts running `tmux` jobs.
 - **Mobile-First Web & Native Terminal**: Responsive `xterm.js` workspace equipped with a tactile `MobileKeyBar` (`Esc`, `Tab`, `Ctrl`, `Alt`, arrow keys, and quick tmux chords) plus 7 curated geek themes.
 - **4-Level Guarded Agent Broker (`OpenCode`)**: Replayable agent event streams with a 4-tier risk guard and mandatory human-in-the-loop approval before any write or critical terminal action executes.
 - **Zero-Trust TOTP & One-Time Pairing**: Control Plane authentication protected by TOTP MFA, short-lived one-time node enrollment tokens, and device authorization via QR code or pairing code.
@@ -77,7 +77,7 @@ Detach anytime with `Ctrl+B` then `D` (`termflow attach project-a` to re-enter).
 
 ### Standalone Control Plane Container (Terminal Only, Without Agent Runtime)
 
-When you only need remote terminal routing without the OpenCode Agent runtime (`B 的 Web/API 通过宿主机 loopback 端口发布；A 主动连接 B，是连接 B 的客户端，不是 B 的网关；A 不开放端口`):
+When you only need remote terminal routing without the OpenCode Agent runtime (Control Plane B's Web/API is published on a host loopback port; Node A connects outbound to B as a client rather than a gateway, with zero inbound ports on A):
 
 ```bash
 mkdir -p data totp-secrets

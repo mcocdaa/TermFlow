@@ -73,7 +73,7 @@ termflow new --name project-a
 按 `Ctrl+B` 再按 `D` 可随时退出当前视图且后台保持运行，使用 `termflow attach project-a` 重新进入。
 
 <details>
-<summary>📦 Standalone Control Plane, Offline Tarball & Packaging Reference</summary>
+<summary>📦 独立控制面、离线归档包与打包参考</summary>
 
 ### 单容器 Control Plane B（仅终端转发，不含 Agent 运行时）
 

@@ -16,7 +16,7 @@
       <span v-else>{{ evidence }}</span>
     </div>
     <div v-if="detail !== null" class="agent-approval-card__detail">
-      <p class="agent-approval-card__field"><span class="agent-approval-card__label">Pane</span><span data-agent-approval-pane>{{ pane }}</span></p>
+      <p class="agent-approval-card__field"><span class="agent-approval-card__label">{{ t('agent.approval.pane') }}</span><span data-agent-approval-pane>{{ pane }}</span></p>
       <p class="agent-approval-card__field"><span class="agent-approval-card__label">{{ t('agent.approval.operation') }}</span><span data-agent-approval-operation>{{ operation }}</span></p>
       <div class="agent-approval-card__summary" data-agent-approval-summary>
         <AgentCollapsibleOutput v-if="isDiff(summary)" :content="summary" />

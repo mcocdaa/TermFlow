@@ -6,12 +6,16 @@ import yaml
 
 def test_docker_a_and_b_use_a_host_reachable_bridge_not_an_internal_network() -> None:
     readme = Path("README.md").read_text()
+    readme_cn = Path("README_CN.md").read_text()
 
     assert "docker network create termflow-net" in readme
     assert "docker network create --internal termflow-net" not in readme
-    assert "A 主动连接 B" in readme
-    assert "A 不开放端口" in readme
-    assert "B 的 Web/API 通过宿主机 loopback 端口发布" in readme
+    assert "Node A connects outbound to B" in readme
+    assert "zero inbound ports on A" in readme
+    assert "Control Plane B's Web/API is published on a host loopback port" in readme
+    assert "A 主动连接 B" in readme_cn
+    assert "A 不开放端口" in readme_cn
+    assert "B 的 Web/API 通过宿主机 loopback 端口发布" in readme_cn
 
 
 def test_compose_keeps_the_hardened_single_worker_deployable_shape() -> None:
