@@ -296,7 +296,7 @@ test('uses the real dashboard, themes, terminal transport, and responsive contro
   const termRow = page.locator(`[data-term-id="${termId}"]`)
   await expect(termRow).toBeVisible()
   await expect(termRow.getByText(termName, { exact: true })).toBeVisible()
-  await expect(termRow.getByText(/\d+ Panes/)).toBeVisible()
+  await expect(termRow.getByText(/\d+ (窗格|Panes)/)).toBeVisible()
   expect(await termRow.evaluate((element) => parseFloat(getComputedStyle(element).borderRadius))).toBeGreaterThan(0)
   await expect(page.locator('.side-nav a[href="/"] svg')).toHaveCount(1)
   await expect(page.locator('.side-nav a[href="/computers"] svg')).toHaveCount(1)

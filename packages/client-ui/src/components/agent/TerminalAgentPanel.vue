@@ -7,7 +7,7 @@
     :class="{ 'terminal-agent-panel--mobile-page': mobilePage }"
     data-agent-floating-panel
     :data-agent-layout="mobilePage ? 'page' : 'floating'"
-    aria-label="Term Agent"
+    :aria-label="t('agent.panel.aria')"
     :aria-hidden="open ? undefined : 'true'"
     :inert="open ? undefined : true"
     :style="mobilePage ? undefined : panelStyle"
@@ -369,7 +369,7 @@ async function commitRename() {
   }
 }
 function cancelRename() { renamingId.value = null }
-const panelTitle = computed(() => selectedEntry.value?.title?.trim() || (selectedConversationId.value ? t('agent.panel.defaultChatTitle') : 'Term Agent'))
+const panelTitle = computed(() => selectedEntry.value?.title?.trim() || (selectedConversationId.value ? t('agent.panel.defaultChatTitle') : t('agent.panel.aria')))
 const disclosureRecoveryRequired = computed(() => setup.value?.state === 'unavailable' && (
   setup.value.reason_code === 'binding_disclosure_stale'
   || setup.value.reason_code === 'binding_disclosure_required'

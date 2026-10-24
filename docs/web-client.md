@@ -11,7 +11,8 @@ Web C 是独立客户端，只调用 B 的公开 `/api/v1` HTTP 和 WebSocket �
 ## 页面
 
 - 登录：使用不带全局导航的极简页面；Admin Token 只用于换取 HttpOnly 会话，启用双重认证
-  时再输入验证器的一次性验证码，成功后立即从组件状态清除；
+  时再输入验证器的一次性验证码，成功后立即从组件状态清除。右上角提供中英文语言切换按钮
+  （`🌐 EN / 🌐 中文`，`[data-action="toggle-locale"]`），与应用顶栏及授权页共享持久化语言偏好；
 - 总览：显示在线 Term、活动 Pane、24 小时交互数和 Computer 卡片；在线 Term 和活动 Pane
   指标可悬浮或聚焦查看解释。每个 Computer 卡片内的 Term 使用独立圆角卡片，在线 Term
   整块可点击进入终端；
@@ -19,8 +20,11 @@ Web C 是独立客户端，只调用 B 的公开 `/api/v1` HTTP 和 WebSocket �
   添加电脑时先输入名称，再创建 60 秒有效的一次性注册码；A 消费注册码时 B 将该名称应用
   为显示名，同时保留 A 上报的真实 hostname。注册码过期时，保持打开的弹窗使用同一名称
   自动换新；
-- Term：显示 A 上真实 tmux client，支持完整键盘、IME、粘贴、状态栏、Window/Pane 与
-  copy mode。
+- Agent 控制台与预览工作台（`/agent`、`/agent/:conversationId` 与 `/agent-preview`）：管理
+  Agent Broker 会话、查看工具调用与 diff 折叠输出、处理四级风险审批请求，并提供免后端连接
+  的 `/agent-preview` Agent Broker 交互与主题预览工作台；
+- Term：显示 A 上真实 tmux client，支持完整键盘、IME、粘贴、状态栏、Window/Pane、
+  copy mode 与浮动/全屏 Term Agent 侧边栏。
 
 列表只显示用户的 Term 名称、Window/Pane 名称和 tmux 原始 `pane_current_command`。
 TermFlow 不根据进程名硬编码 Codex、Claude Code 或其他 Agent 品牌，用户可以自由重命名
@@ -50,10 +54,11 @@ Esc、Tab 和 Prefix 是独立布局行，不覆盖 terminal 画布；关闭 Pan
 
 ## 主题
 
-首版提供三个完整主题：`graphite-signal`（默认）、`cloud-cobalt` 和
-`midnight-indigo`。所有页面、菜单、状态、terminal 外框和焦点环使用同一组语义 design
-tokens。浏览器只持久化主题标识，不持久化凭据或终端正文；未来 App、EXE 和 Linux 安装
-包应复用相同 token 名称，而不是复制组件中的颜色值。
+提供 10 套完整主题：3 套内置基础主题（`graphite-signal` 默认、`cloud-cobalt`、
+`midnight-indigo`）以及 7 套极客终端主题（`catppuccin-mocha`、`catppuccin-latte`、
+`tokyo-night`、`nord`、`dracula`、`solarized-dark`、`solarized-light`）。所有页面、菜单、
+状态、terminal 外框和焦点环使用同一组语义 design tokens。浏览器只持久化主题标识与语言偏好，
+不持久化凭据或终端正文；未来 App、EXE 和 Linux 安装包应复用相同 token 名称，而不是复制组件中的颜色值。
 
 ## Tauri 授权
 

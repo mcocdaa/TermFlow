@@ -85,11 +85,12 @@ describe('NativeConnectView', () => {
   it('presents the remote-control registration action in product language', async () => {
     const { wrapper } = await render()
 
-    expect(wrapper.get('.eyebrow').text()).toBe('Connect to Server')
+    expect(wrapper.get('.eyebrow').text()).toBe('远程连接')
     expect(wrapper.get('h1').text()).toBe('连接到服务器')
     expect(wrapper.get('label[for="server-url"]').text()).toBe('服务器地址')
     expect(wrapper.get('[data-action="browser-login"]').text()).toContain('本机浏览器登录')
     expect(wrapper.get('[data-action="device-authorize"]').text()).toContain('其他设备授权')
+    expect(wrapper.find('[data-action="toggle-locale"]').exists()).toBe(true)
     expect(wrapper.find('.native-auth-options').classes()).toContain('native-auth-options')
     expect(wrapper.get('[data-action="browser-login"]').attributes('title')).toContain('本机系统浏览器')
     expect(wrapper.get('[data-action="device-authorize"]').attributes('title')).toContain('不会打开本机浏览器')
