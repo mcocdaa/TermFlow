@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
 
@@ -39,11 +39,11 @@ jobs:
 
       # contracts:check regenerates the client contracts from the protocol
       # package, so this job needs the locked Python workspace as well.
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "22.23.2"
           cache: npm
@@ -80,7 +80,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
 
@@ -105,7 +105,7 @@ jobs:
 
       - name: Upload test metadata on failure
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
         with:
           name: pytest-metadata
           path: .ci/pytest.xml
@@ -120,7 +120,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "22.23.2"
           cache: npm
@@ -129,7 +129,7 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
         with:
           workspaces: apps/clients/tauri/src-tauri -> target
           # rust-cache keys caches by job id; keep the pre-split `verify`
@@ -194,12 +194,12 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "22.23.2"
           cache: npm
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c  # stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
         with:
           workspaces: apps/clients/tauri/src-tauri -> target
       - run: npm ci
@@ -211,11 +211,11 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "22.23.2"
           cache: npm
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
         with:
           distribution: temurin
           java-version: "17"
@@ -227,7 +227,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c  # stable
         with:
           targets: aarch64-linux-android
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
         with:
           workspaces: apps/clients/tauri/src-tauri -> target
       - run: npm ci
@@ -243,14 +243,14 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "22.23.2"
           cache: npm
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c  # stable
         with:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
         with:
           workspaces: apps/clients/tauri/src-tauri -> target
       - run: npm ci
