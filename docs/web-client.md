@@ -12,7 +12,7 @@ Web C 是独立客户端，只调用 B 的公开 `/api/v1` HTTP 和 WebSocket �
 
 - 登录：使用不带全局导航的极简页面；Admin Token 只用于换取 HttpOnly 会话，启用双重认证
   时再输入验证器的一次性验证码，成功后立即从组件状态清除。右上角提供中英文语言切换按钮
-  （`🌐 EN / 🌐 中文`，`[data-action="toggle-locale"]`），与应用顶栏及授权页共享持久化语言偏好；
+  （`EN / 中文`，`[data-action="toggle-locale"]`），与应用顶栏及授权页共享持久化语言偏好；
 - 总览：显示在线 Term、活动 Pane、24 小时交互数和 Computer 卡片；在线 Term 和活动 Pane
   指标可悬浮或聚焦查看解释。每个 Computer 卡片内的 Term 使用独立圆角卡片，在线 Term
   整块可点击进入终端；

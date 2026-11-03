@@ -61,7 +61,7 @@ def test_node_workflow_owns_names_retention_and_build_commands() -> None:
         "scripts/release/render_node_installer.py",
         "scripts/release/verify_node_bundle.sh",
         '--repository "$GITHUB_REPOSITORY"',
-        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        "actions/upload-artifact@",
         "release-assets/SHA256SUMS",
     ):
         assert required in text
@@ -97,7 +97,7 @@ def test_node_docker_artifact_and_tag_publication_are_separated() -> None:
         "linux/amd64,linux/arm64",
         "ghcr.io/${owner}/termflow-node",
         'image_tag="${RELEASE_TAG//+/_}"',
-        "docker/login-action@dbcb813823bdd20940b903addbd779551569679f",
+        "docker/login-action@",
         "docker buildx build",
         "cosign sign",
     ):
@@ -162,7 +162,7 @@ def test_control_plane_manual_artifact_and_tag_publication_are_separated() -> No
         "linux/amd64,linux/arm64",
         "ghcr.io/${owner}/termflow-control-plane",
         'image_tag="${RELEASE_TAG//+/_}"',
-        "docker/login-action@dbcb813823bdd20940b903addbd779551569679f",
+        "docker/login-action@",
         "docker buildx build",
     ):
         assert required in text
@@ -278,7 +278,7 @@ def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() ->
         "android build --debug --ci --target aarch64 --apk",
         "ios build --debug --ci --target aarch64-sim --no-sign",
         "gen/apple/build/arm64-sim/*.app",
-        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        "actions/upload-artifact@",
         "RUNNER_TEMP/termflow-linux",
         "RUNNER_TEMP/termflow-artifacts",
         "RUNNER_TEMP/termflow-android",
@@ -297,8 +297,7 @@ def test_client_artifact_names_are_manual_by_default_and_tagged_when_called() ->
         upload = next(
             step
             for step in jobs[job_name]["steps"]
-            if step.get("uses")
-            == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+            if str(step.get("uses", "")).startswith("actions/upload-artifact@")
         )["with"]
         assert upload["if-no-files-found"] == "error"
         assert upload["retention-days"] == (

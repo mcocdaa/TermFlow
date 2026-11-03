@@ -15,7 +15,7 @@
           @click="toggleLocale"
         >
           <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
-          <span class="locale-badge">{{ t('app.switchLangBadge') }}</span>
+          <span class="locale-toggle-badge locale-badge">{{ t('app.switchLangBadge') }}</span>
         </button>
       </div>
       <form @submit.prevent="connect">

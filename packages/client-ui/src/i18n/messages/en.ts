@@ -523,7 +523,7 @@ export const enMessages: Record<string, string> = {
   'agent.approval.confirmDesc1': 'Once approved, the Agent will immediately execute ',
   'agent.approval.confirmDesc2': '. This action cannot be undone.',
   'agent.approval.unknownOp': 'unknown operation',
-  'agent.approval.criticalWarning': '⚠️ Critical Risk Warning: This operation is destructive. Please confirm carefully!',
+  'agent.approval.criticalWarning': 'Critical Risk Warning: This operation is destructive. Please confirm carefully!',
   'agent.approval.criticalAck': 'I understand this operation is destructive and confirm execution',
   'agent.approval.confirmApprove': 'Confirm Approve',
   'agent.approval.loadError': 'Unable to load approval list.',

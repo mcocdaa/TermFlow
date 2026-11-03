@@ -12,7 +12,7 @@
           @click="toggleLocale"
         >
           <Globe :size="15" aria-hidden="true" />
-          <span class="locale-badge">{{ t('app.switchLangBadge') }}</span>
+          <span class="locale-toggle-badge locale-badge">{{ t('app.switchLangBadge') }}</span>
         </button>
       </header>
       <p v-if="loading">{{ t('nativeAuth.loading') }}</p>
