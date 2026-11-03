@@ -16,7 +16,7 @@ dependencies = [
   "pyotp>=2.9,<3",
   "pydantic-settings>=2.7,<3",
   "python-multipart>=0.0.20,<1",
-  "sqlalchemy[asyncio]>=2.0,<3",
+  "sqlalchemy[asyncio]>=2.1.6,<3",
   "termflow-protocol",
   "typer>=0.15,<1",
   "uvicorn[standard]>=0.54.0,<1",
