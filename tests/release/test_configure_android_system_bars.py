@@ -45,11 +45,11 @@ def test_preserves_round_launcher_icon_in_manifest_and_keep_xml(tmp_path: Path) 
     manifest = main_dir / "AndroidManifest.xml"
     manifest.write_text(
         '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n'
-        '    <application\n'
+        "    <application\n"
         '        android:icon="@mipmap/ic_launcher"\n'
         '        android:label="@string/app_name">\n'
-        '    </application>\n'
-        '</manifest>\n'
+        "    </application>\n"
+        "</manifest>\n"
     )
 
     preserve_launcher_resources(activity)

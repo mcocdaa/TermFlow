@@ -82,10 +82,10 @@ jobs:
       android_release_build: ${{ steps.version.outputs.android_release_build }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "22.23.2"
           cache: npm
@@ -139,25 +139,25 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
       - name: Materialize build version
         env:
           TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
         run: python scripts/release/prepare_version.py
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "22.23.2"
           cache: npm
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c  # stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
         with:
           workspaces: apps/clients/tauri/src-tauri -> target
       - run: npm ci
       - name: Build unsigned NSIS installer
         run: npm run tauri:build --workspace @termflow/tauri-client -- --bundles nsis --ci
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
         with:
           name: ${{ needs.validate-version.outputs.artifact_prefix }}-windows-x64-nsis
           path: apps/clients/tauri/src-tauri/target/release/bundle/nsis/*-setup.exe
@@ -177,19 +177,19 @@ jobs:
       APPIMAGE_EXTRACT_AND_RUN: "1"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
       - name: Materialize build version
         env:
           TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
         run: python scripts/release/prepare_version.py
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "22.23.2"
           cache: npm
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c  # stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
         with:
           workspaces: apps/clients/tauri/src-tauri -> target
       - name: Install Linux Tauri prerequisites
@@ -221,7 +221,7 @@ jobs:
           cp apps/clients/tauri/src-tauri/target/release/bundle/deb/*.deb \
             apps/clients/tauri/src-tauri/target/release/bundle/appimage/*.AppImage \
             "$RUNNER_TEMP/termflow-linux/"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
         with:
           name: ${{ needs.validate-version.outputs.artifact_prefix }}-linux-x64
           path: ${{ runner.temp }}/termflow-linux/*
@@ -239,19 +239,19 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
       - name: Materialize build version
         env:
           TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
         run: python scripts/release/prepare_version.py
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "22.23.2"
           cache: npm
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c  # stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
         with:
           workspaces: apps/clients/tauri/src-tauri -> target
       - run: npm ci
@@ -278,7 +278,7 @@ jobs:
             exit 1
           fi
           cp "$1" "$RUNNER_TEMP/termflow-artifacts/"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
         with:
           name: ${{ needs.validate-version.outputs.artifact_prefix }}-macos-arm64
           path: ${{ runner.temp }}/termflow-artifacts/*
@@ -296,18 +296,18 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
       - name: Materialize build version
         env:
           TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
         run: python scripts/release/prepare_version.py
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "22.23.2"
           cache: npm
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
         with:
           distribution: temurin
           java-version: "17"
@@ -319,7 +319,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c  # stable
         with:
           targets: aarch64-linux-android
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
         with:
           workspaces: apps/clients/tauri/src-tauri -> target
       - run: npm ci
@@ -411,7 +411,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/termflow-android"
           cp "$APK_PATH" \
             "$RUNNER_TEMP/termflow-android/TermFlow-${TERMFLOW_BUILD_VERSION}-android-arm64.apk"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
         with:
           name: ${{ needs.validate-version.outputs.artifact_prefix }}-android-arm64-apk
           path: ${{ runner.temp }}/termflow-android/*
@@ -435,21 +435,21 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
       - name: Materialize build version
         env:
           TERMFLOW_BUILD_VERSION: ${{ needs.validate-version.outputs.version }}
         run: python scripts/release/prepare_version.py
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "22.23.2"
           cache: npm
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c  # stable
         with:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
         with:
           workspaces: apps/clients/tauri/src-tauri -> target
       - run: npm ci
@@ -469,7 +469,7 @@ jobs:
           fi
           ditto -c -k --sequesterRsrc --keepParent \
             "$1" "$RUNNER_TEMP/termflow-artifacts/TermFlow-ios-simulator-aarch64.app.zip"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
         with:
           name: ${{ needs.validate-version.outputs.artifact_prefix }}-ios-simulator-aarch64
           path: ${{ runner.temp }}/termflow-artifacts/TermFlow-ios-simulator-aarch64.app.zip

@@ -5745,7 +5745,7 @@ class CleanupJobRepository:
     ) -> AgentCleanupReceipt:
         observed = datetime.now(UTC)
         async with self._sessions() as session:
-            changed = await session.scalar(
+            changed: AgentCleanupReceipt | None = await session.scalar(
                 update(AgentCleanupReceipt)
                 .where(
                     AgentCleanupReceipt.id == receipt_id,

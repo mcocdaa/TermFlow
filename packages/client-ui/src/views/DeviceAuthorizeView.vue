@@ -13,7 +13,7 @@
             @click="toggleLocale"
           >
             <Globe :size="15" aria-hidden="true" />
-            <span class="locale-badge">{{ t('app.switchLangBadge') }}</span>
+            <span class="locale-toggle-badge locale-badge">{{ t('app.switchLangBadge') }}</span>
           </button>
           <RouterLink data-action="back-to-login" class="secondary-button" to="/login">{{ t('deviceAuth.backToLogin') }}</RouterLink>
         </div>

@@ -523,7 +523,7 @@ export const zhMessages: Record<string, string> = {
   'agent.approval.confirmDesc1': '批准后 Agent 将立即执行',
   'agent.approval.confirmDesc2': '。此操作不可撤销，请确认内容无误。',
   'agent.approval.unknownOp': '未知操作',
-  'agent.approval.criticalWarning': '⚠️ 极高风险警示：此操作具有高危破坏性，请二次确认！',
+  'agent.approval.criticalWarning': '极高风险警示：此操作具有高危破坏性，请二次确认！',
   'agent.approval.criticalAck': '我已知晓该操作具有高危破坏性，确认执行',
   'agent.approval.confirmApprove': '确认批准',
   'agent.approval.loadError': '无法加载审批列表。',
