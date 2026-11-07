@@ -16,6 +16,8 @@ updates:
       prefix: "chore(deps)"
     groups:
       npm-minor-patch:
+        patterns:
+          - "*"
         update-types:
           - "minor"
           - "patch"
@@ -36,6 +38,8 @@ updates:
       prefix: "chore(deps)"
     groups:
       uv-minor-patch:
+        patterns:
+          - "*"
         update-types:
           - "minor"
           - "patch"
