@@ -8,7 +8,7 @@ dependencies = [
   "platformdirs>=4,<5",
   "pydantic-settings>=2.7,<3",
   "termflow-protocol",
-  "typer>=0.15,<1",
+  "typer>=0.29.2,<1",
   "websockets>=17.1,<18",
 ]
 

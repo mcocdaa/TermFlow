@@ -7,7 +7,7 @@ dependencies = [
   "aiosqlite>=0.20,<1",
   "alembic>=1.14,<2",
   "cryptography>=50,<60",
-  "fastapi>=0.115,<1",
+  "fastapi>=0.163.2,<1",
   # The OpenCode adapter owns its async HTTP client (M4 exit: the compose
   # image must ship it or the first runtime activation crashes on import).
   "httpx>=0.28,<1",

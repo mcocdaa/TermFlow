@@ -327,7 +327,7 @@ wheels = [
 
 [[package]]
 name = "fastapi"
-version = "0.163.0"
+version = "0.163.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-doc" },
@@ -338,9 +338,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "typing-inspection" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f1/98/5411252e1c08bdd919c5d55774cebe9da0bebfb174c4e4ffa1a5821935ff/fastapi-0.163.0.tar.gz", hash = "sha256:ef55fa066d74b922aac7231af7869c4469b88ca00cac5d0421e42ceee213a902", size = 543109, upload-time = "2026-11-14T16:53:16.356Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bf/2f/d173f9bf5aba1285067ff47fd06b7e35bb922e3a1e52588fb7b31319d4ad/fastapi-0.163.2.tar.gz", hash = "sha256:e605c4c9b94be78b43aa8239a62ccf7b6684346cdc9e053633feab0ab21b87c7", size = 547696, upload-time = "2026-11-17T18:29:03.57Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/de/b0/2d68e967b2fc6012ef1e7e91253c8222a2a895a45dee3677562deb93987e/fastapi-0.163.0-py3-none-any.whl", hash = "sha256:7572550ab4935e3ff373dc0191aea410d6c48127cc5477bc290b992fe539e345", size = 154381, upload-time = "2026-11-14T16:53:14.67Z" },
+    { url = "https://files.pythonhosted.org/packages/58/ef/bf79bc47e914dfabc56657bb6a2d33340b1faa5a514b0b92e842aa088d1e/fastapi-0.163.2-py3-none-any.whl", hash = "sha256:825a8fdd18d7bfcb1b86735e9805c59b7400d55c4060d3df5331b62ae452f004", size = 154717, upload-time = "2026-11-17T18:29:02.025Z" },
 ]
 
 [[package]]
@@ -1268,11 +1268,11 @@ crypto = [
 
 [[package]]
 name = "pyotp"
-version = "2.11.1"
+version = "2.11.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/3b/03/c374bdcac560f33bbf7e612af7321f3060a2a47c537e6f374967151519ba/pyotp-2.11.1.tar.gz", hash = "sha256:c7ce82657d7aa8eef39afb68fc49fb470156919ecaa2c1255d89b6ef57e9e1f5", size = 22834, upload-time = "2026-11-14T23:31:39.953Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5d/01/beed98d5c77fdb2b44dfa82f8ee9dadb120ce7466c0d131ce8a3eafdf62e/pyotp-2.11.2.tar.gz", hash = "sha256:651926820da4adccbe9801c77bdc14558552485b1a957d3e1e842d587597cbb0", size = 25534, upload-time = "2026-11-15T01:24:27.588Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/e9/a64b40e4acd26169805031c9f2de3931b9dad9a6a5750e671c10a4b75f04/pyotp-2.11.1-py3-none-any.whl", hash = "sha256:74a92f3bbf5ebb71ad3bee5d6a92422318c3273f26a19ec60d482c457162946c", size = 14282, upload-time = "2026-11-14T23:31:38.796Z" },
+    { url = "https://files.pythonhosted.org/packages/22/1b/ec5b1ac0c4aea3702a20e9c7ee1e21926735cc87159e252616e31e0a87dc/pyotp-2.11.2-py3-none-any.whl", hash = "sha256:d693ddda5c2fd2c368a034ec1ad2fbbe0d3f59d9a662ab00f41ae839a0d00474", size = 16075, upload-time = "2026-11-15T01:24:25.584Z" },
 ]
 
 [[package]]
@@ -1711,7 +1711,7 @@ requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20,<1" },
     { name = "alembic", specifier = ">=1.14,<2" },
     { name = "cryptography", specifier = ">=50,<60" },
-    { name = "fastapi", specifier = ">=0.115,<1" },
+    { name = "fastapi", specifier = ">=0.163.2,<1" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "mcp", specifier = ">=2.0,<3" },
     { name = "pydantic-settings", specifier = ">=2.7,<3" },
@@ -1761,7 +1761,7 @@ requires-dist = [
     { name = "platformdirs", specifier = ">=4,<5" },
     { name = "pydantic-settings", specifier = ">=2.7,<3" },
     { name = "termflow-protocol", editable = "packages/protocol" },
-    { name = "typer", specifier = ">=0.15,<1" },
+    { name = "typer", specifier = ">=0.29.2,<1" },
     { name = "websockets", specifier = ">=17.1,<18" },
 ]
 
@@ -1813,7 +1813,7 @@ wheels = [
 
 [[package]]
 name = "typer"
-version = "0.29.1"
+version = "0.29.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-doc" },
@@ -1822,9 +1822,9 @@ dependencies = [
     { name = "rich" },
     { name = "shellingham" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6c/aa/0de7986aa1fa856adb961c67345189b97d13f6e250b34ba68884df865f07/typer-0.29.1.tar.gz", hash = "sha256:ab6eb3880bf67ce96147734717f9ec333c06f66e361f3ea947d0be43da39f242", size = 205843, upload-time = "2026-11-11T09:18:39.782Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bf/21/37383ece7d0a4995fb8ea97729207c4292b3ff94085002f37b2387063cfb/typer-0.29.2.tar.gz", hash = "sha256:b1998dc5f2c3dedafa1517a9521fa944cc4dc1fadcea085d81a3b10ebcaeb075", size = 205728, upload-time = "2026-11-18T11:09:46.189Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/05/ff/51969745f31cea6bcd12151e668febcf979656316e67a7755942267c1273/typer-0.29.1-py3-none-any.whl", hash = "sha256:00dbc549c13428bec1be55fe1f4d0fb8c6637a310e4f178ef14abe9534ee7b58", size = 121064, upload-time = "2026-11-11T09:18:38.671Z" },
+    { url = "https://files.pythonhosted.org/packages/62/f3/864dcb0e165b52e9f75aa3c7e0aeeb9876f139c66eb14d87856bb173b0fa/typer-0.29.2-py3-none-any.whl", hash = "sha256:f30731f8ca758368b836b3714872e58e395cef8fcaff918c853b1969ed5274e7", size = 121041, upload-time = "2026-11-18T11:09:45.03Z" },
 ]
 
 [[package]]
