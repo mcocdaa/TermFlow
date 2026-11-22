@@ -102,10 +102,12 @@ updates:
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
+      # Contract tests pin Node 22.23.2 (tests/deploy/test_compose_contract.py & tests/docs/test_documentation_contract.py)
       - dependency-name: "node"
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
+          - "version-update:semver-patch"
     groups:
       docker-images:
         patterns:
